@@ -107,6 +107,7 @@ class MarbleContracts(unittest.TestCase):
             {
                 "display_name": "fixture",
                 "model": "marble-1.1",
+                "permission": {"public": False},
                 "seed": 7,
                 "world_prompt": {
                     "type": "image",
@@ -154,6 +155,7 @@ class MarbleContracts(unittest.TestCase):
         expected = {
             "display_name": "fixture",
             "model": "marble-1.1",
+            "permission": {"public": False},
             "seed": 0,
             "world_prompt": {
                 "type": "multi-image",
@@ -183,10 +185,12 @@ class MarbleContracts(unittest.TestCase):
         self.assertEqual(
             self.generated(),
             {
+                "model": "marble-1.1",
+                "permission": {"public": False},
                 "world_prompt": {
                     "type": "video",
                     "video_prompt": {"source": "media_asset", "media_asset_id": "asset-1"},
-                }
+                },
             },
         )
         self.assertEqual(
