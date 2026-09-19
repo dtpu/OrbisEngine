@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does each track still hold the person it started with?
 
-  worker/.venv-da3/bin/python scripts/identity_audit.py --tracks .context/mp/<clip>/tracks \
+  uv run --locked --group inference python scripts/identity_audit.py --tracks .context/mp/<clip>/tracks \
       --clip public/clips/<clip>.mp4 --json-out share/identity-<clip>.json
 
 The check this replaces (`reproject_multiperson.py`, hit-own-box vs hit-rival-box) could not answer
@@ -25,6 +25,7 @@ compares against a real reversed-clip tracker run when one exists.
 --swap-test is the recall control: it relabels the tracks at the midpoint and re-runs the audit.
 A detector with no power reports "ok" on that too, and then its "ok" on the real clip means nothing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,10 +36,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-BANDS = 3          # head / torso / legs, so grey trousers over black trousers is a large residual
+BANDS = 3  # head / torso / legs, so grey trousers over black trousers is a large residual
 H_BINS, S_BINS, V_BINS = 12, 8, 8
 MIN_MASK_PX = 400  # below this the crop is too small for a stable histogram
-MAX_BAD_RUN = 3    # review §4G: fail on any disagreement interval longer than 3 samples
+MAX_BAD_RUN = 3  # review §4G: fail on any disagreement interval longer than 3 samples
 
 
 def load_masks(tracks: Path):
@@ -76,14 +77,15 @@ def descriptor(bgr: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
             parts.append(np.zeros(H_BINS * S_BINS + V_BINS, np.float64))
             continue
         px = hsv[ys[sel], xs[sel]]
-        hs, _, _ = np.histogram2d(px[:, 0], px[:, 1], bins=(H_BINS, S_BINS),
-                                  range=((0, 180), (0, 256)))
+        hs, _, _ = np.histogram2d(
+            px[:, 0], px[:, 1], bins=(H_BINS, S_BINS), range=((0, 180), (0, 256))
+        )
         v, _ = np.histogram(px[:, 2], bins=V_BINS, range=(0, 256))
         hs = hs.ravel() / max(hs.sum(), 1.0)
         v = v / max(v.sum(), 1.0)
         parts.append(np.concatenate([hs, v]))
     d = np.concatenate(parts)
-    return d / max(float(d.sum()), 1e-12)   # one distribution over the whole body, so BC <= 1
+    return d / max(float(d.sum()), 1e-12)  # one distribution over the whole body, so BC <= 1
 
 
 def bhattacharyya(p: np.ndarray, q: np.ndarray) -> float:
@@ -108,15 +110,24 @@ def read_frames(clip: str, indices: list[int]) -> dict[int, np.ndarray]:
     return out
 
 
-def audit(tracks: Path, clip: str, stride: int = 1, swap_at: int | None = None,
-          swap_pair: tuple[int, int] | None = None) -> dict:
+def audit(
+    tracks: Path,
+    clip: str,
+    stride: int = 1,
+    swap_at: int | None = None,
+    swap_pair: tuple[int, int] | None = None,
+) -> dict:
     masks, (h, w) = load_masks(tracks)
     tids = sorted(masks)
     if len(tids) < 2:
-        return dict(ok=None, reason=f"{len(tids)} track(s); identity is not at risk with fewer than 2")
+        return dict(
+            ok=None, reason=f"{len(tids)} track(s); identity is not at risk with fewer than 2"
+        )
 
-    motions = {t: json.loads((tracks / f"track_{t:02d}" / "motion.json").read_text())["frames"]
-               for t in tids}
+    motions = {
+        t: json.loads((tracks / f"track_{t:02d}" / "motion.json").read_text())["frames"]
+        for t in tids
+    }
     src_of = {t: {f["sample"]: f["sourceIndex"] for f in motions[t]} for t in tids}
 
     # People enter and leave the frame, so there need not be one sample where every track is
@@ -132,8 +143,11 @@ def audit(tracks: Path, clip: str, stride: int = 1, swap_at: int | None = None,
         return src_of[present[s][0]].get(s, s)
 
     # the swap control relabels the pair that overlaps most, from the midpoint of their overlap
-    overlap = {(a, b): [s for s in shared if a in present[s] and b in present[s]]
-               for i, a in enumerate(tids) for b in tids[i + 1:]}
+    overlap = {
+        (a, b): [s for s in shared if a in present[s] and b in present[s]]
+        for i, a in enumerate(tids)
+        for b in tids[i + 1 :]
+    }
     pair = max(overlap, key=lambda k: len(overlap[k]))
     pair_mid = overlap[pair][len(overlap[pair]) // 2]
     if swap_at is not None:
@@ -156,7 +170,10 @@ def audit(tracks: Path, clip: str, stride: int = 1, swap_at: int | None = None,
 
     usable = [s for s in shared if sum(s in desc[t] for t in tids) >= 2]
     if len(usable) < 8:
-        return dict(ok=None, reason=f"only {len(usable)} samples where two or more tracks have a usable mask")
+        return dict(
+            ok=None,
+            reason=f"only {len(usable)} samples where two or more tracks have a usable mask",
+        )
 
     # forward reference = the track's first usable sample, backward = its last. Averaging the first
     # and last few would blur a swap that happened early or late, so the endpoints are taken as they are.
@@ -178,9 +195,12 @@ def audit(tracks: Path, clip: str, stride: int = 1, swap_at: int | None = None,
                 own = bhattacharyya(d, ref[t][side])
                 rivals = {o: bhattacharyya(d, ref[o][side]) for o in here if o != t}
                 ro, rv = min(rivals.items(), key=lambda kv: kv[1])
-                entry[side] = dict(own=round(own, 4), rivalTrack=ro, rival=round(rv, 4),
-                                   margin=round(rv - own, 4))
-                worst = entry[side]["margin"] if worst is None else min(worst, entry[side]["margin"])
+                entry[side] = dict(
+                    own=round(own, 4), rivalTrack=ro, rival=round(rv, 4), margin=round(rv - own, 4)
+                )
+                worst = (
+                    entry[side]["margin"] if worst is None else min(worst, entry[side]["margin"])
+                )
             entry["margin"] = worst
             entry["verdict"] = "ok" if worst > 0 else "SWAP"
             if worst <= 0:
@@ -205,21 +225,32 @@ def audit(tracks: Path, clip: str, stride: int = 1, swap_at: int | None = None,
         run_t = best_t = 0
         prev = None
         for s in mine:
-            run_t = run_t + 1 if prev is not None and usable.index(s) == usable.index(prev) + 1 else 1
+            run_t = (
+                run_t + 1 if prev is not None and usable.index(s) == usable.index(prev) + 1 else 1
+            )
             best_t = max(best_t, run_t)
             prev = s
         per_track[t] = dict(longestBadRun=best_t, ok=bool(best_t <= MAX_BAD_RUN))
     failed = [t for t in tids if not per_track[t]["ok"]]
-    return dict(ok=bool(best <= MAX_BAD_RUN), tracks=tids, samples=len(usable),
-                perTrack=per_track, failedTracks=failed,
-                swapPair=list(pair), swapMid=pair_mid,
-                swapSamples=[[s, t] for s, t in bad], longestBadRun=best, maxBadRun=MAX_BAD_RUN,
-                medianMargin=round(float(np.median(margins)), 4),
-                minMargin=round(float(np.min(margins)), 4), frames=rows,
-                method="appearance of the masked source pixels against each track's own first- and "
-                       "last-frame references, audited wherever two or more tracks share a frame; "
-                       "the tracker produced the masks but not the references, and a swap breaks "
-                       "agreement with one of the two")
+    return dict(
+        ok=bool(best <= MAX_BAD_RUN),
+        tracks=tids,
+        samples=len(usable),
+        perTrack=per_track,
+        failedTracks=failed,
+        swapPair=list(pair),
+        swapMid=pair_mid,
+        swapSamples=[[s, t] for s, t in bad],
+        longestBadRun=best,
+        maxBadRun=MAX_BAD_RUN,
+        medianMargin=round(float(np.median(margins)), 4),
+        minMargin=round(float(np.min(margins)), 4),
+        frames=rows,
+        method="appearance of the masked source pixels against each track's own first- and "
+        "last-frame references, audited wherever two or more tracks share a frame; "
+        "the tracker produced the masks but not the references, and a swap breaks "
+        "agreement with one of the two",
+    )
 
 
 def main():
@@ -228,10 +259,16 @@ def main():
     ap.add_argument("--clip", required=True)
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--json-out", type=Path)
-    ap.add_argument("--swap-test", action="store_true",
-                    help="also run with the labels swapped at the midpoint and require a SWAP verdict")
-    ap.add_argument("--tracks-reverse", type=Path,
-                    help="a reversed-clip tracker run, if one exists, for a true forward/backward check")
+    ap.add_argument(
+        "--swap-test",
+        action="store_true",
+        help="also run with the labels swapped at the midpoint and require a SWAP verdict",
+    )
+    ap.add_argument(
+        "--tracks-reverse",
+        type=Path,
+        help="a reversed-clip tracker run, if one exists, for a true forward/backward check",
+    )
     a = ap.parse_args()
 
     doc = audit(a.tracks, a.clip, a.stride)
@@ -244,47 +281,70 @@ def main():
     if a.swap_test:
         mid = doc["swapMid"]
         ctrl = audit(a.tracks, a.clip, a.stride, swap_at=mid, swap_pair=tuple(doc["swapPair"]))
-        doc["swapTest"] = dict(swapAt=mid, detected=not ctrl.get("ok", True),
-                               longestBadRun=ctrl.get("longestBadRun"),
-                               minMargin=ctrl.get("minMargin"))
-        print(f"swap control: labels swapped at sample {mid} -> "
-              f"{'DETECTED' if doc['swapTest']['detected'] else 'MISSED'} "
-              f"(longest bad run {ctrl.get('longestBadRun')})")
+        doc["swapTest"] = dict(
+            swapAt=mid,
+            detected=not ctrl.get("ok", True),
+            longestBadRun=ctrl.get("longestBadRun"),
+            minMargin=ctrl.get("minMargin"),
+        )
+        print(
+            f"swap control: labels swapped at sample {mid} -> "
+            f"{'DETECTED' if doc['swapTest']['detected'] else 'MISSED'} "
+            f"(longest bad run {ctrl.get('longestBadRun')})"
+        )
         if not doc["swapTest"]["detected"]:
             doc["ok"] = False
-            doc["reason"] = ("the swap control was not detected, so this audit has no power on this "
-                            "clip and its 'ok' means nothing")
+            doc["reason"] = (
+                "the swap control was not detected, so this audit has no power on this "
+                "clip and its 'ok' means nothing"
+            )
 
     if a.tracks_reverse:
         rev, _ = load_masks(a.tracks_reverse)
         fwd, _ = load_masks(a.tracks)
         shared = sorted(set(rev) & set(fwd))
         dis = []
-        for s in sorted(set.intersection(*[set(fwd[t]) for t in shared],
-                                         *[set(rev[t]) for t in shared])):
+        for s in sorted(
+            set.intersection(*[set(fwd[t]) for t in shared], *[set(rev[t]) for t in shared])
+        ):
             for t in shared:
-                iou = [(float((fwd[t][s] & rev[o][s]).sum()) / max((fwd[t][s] | rev[o][s]).sum(), 1), o)
-                       for o in shared]
+                iou = [
+                    (
+                        float((fwd[t][s] & rev[o][s]).sum())
+                        / max((fwd[t][s] | rev[o][s]).sum(), 1),
+                        o,
+                    )
+                    for o in shared
+                ]
                 if max(iou)[1] != t:
                     dis.append([s, t])
         doc["forwardBackward"] = dict(disagreements=dis, ok=len(dis) <= MAX_BAD_RUN)
         if not doc["forwardBackward"]["ok"]:
             doc["ok"] = False
     else:
-        doc["forwardBackward"] = "no reversed-clip tracker run supplied; the frame-0/frame-N " \
-                                 "reference pair is standing in for it"
+        doc["forwardBackward"] = (
+            "no reversed-clip tracker run supplied; the frame-0/frame-N "
+            "reference pair is standing in for it"
+        )
 
-    print(f"{doc['samples']} samples, {len(doc['tracks'])} tracks; median margin "
-          f"{doc['medianMargin']:+.4f}, min {doc['minMargin']:+.4f}, "
-          f"{len(doc['swapSamples'])} flagged sample-tracks, longest run {doc['longestBadRun']}")
+    print(
+        f"{doc['samples']} samples, {len(doc['tracks'])} tracks; median margin "
+        f"{doc['medianMargin']:+.4f}, min {doc['minMargin']:+.4f}, "
+        f"{len(doc['swapSamples'])} flagged sample-tracks, longest run {doc['longestBadRun']}"
+    )
     if a.json_out:
         a.json_out.parent.mkdir(parents=True, exist_ok=True)
         a.json_out.write_text(json.dumps(doc, indent=1))
     if not doc["ok"]:
-        print("IDENTITY: " + str(doc.get("reason") or
-              f"a track matched the other person's reference better for "
-              f"{doc['longestBadRun']} consecutive samples (limit {MAX_BAD_RUN}). The tracker may "
-              f"have swapped the two people; do not ship avatars built from these tracks."))
+        print(
+            "IDENTITY: "
+            + str(
+                doc.get("reason")
+                or f"a track matched the other person's reference better for "
+                f"{doc['longestBadRun']} consecutive samples (limit {MAX_BAD_RUN}). The tracker may "
+                f"have swapped the two people; do not ship avatars built from these tracks."
+            )
+        )
         return 3
     print("no swap: every track matched its own frame-0 and frame-N reference at every sample")
     return 0

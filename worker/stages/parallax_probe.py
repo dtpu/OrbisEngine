@@ -22,8 +22,9 @@ clip can support, since that is the baseline SfM will actually get to use.
 
 On this repo's eight clips the split is clean and wide - see docs/experiments/any-clip-pipeline.md.
 
-  python3 worker/experiments/parallax_probe.py --images <dir> [--json out.json]
+  uv run --locked --group inference worker/stages/parallax_probe.py --images <dir> [--json out.json]
 """
+
 from __future__ import annotations
 
 import os
@@ -64,8 +65,13 @@ def pair_ratio(ga, gb, orb, bf) -> dict | None:
     # explanation actually fails, in a unit a person can picture.
     proj = cv2.perspectiveTransform(src.reshape(-1, 1, 2), H).reshape(-1, 2)
     resid = float(np.median(np.linalg.norm(proj - dst, axis=1)))
-    return dict(matches=len(m), homographyInliers=hi, fundamentalInliers=fi,
-                ratio=hi / fi, homographyResidualPx=resid)
+    return dict(
+        matches=len(m),
+        homographyInliers=hi,
+        fundamentalInliers=fi,
+        ratio=hi / fi,
+        homographyResidualPx=resid,
+    )
 
 
 def probe(images: Path, gaps=(2, 8, 24), pairs_per_gap: int = 12, width: int = 720) -> dict:
@@ -96,30 +102,40 @@ def probe(images: Path, gaps=(2, 8, 24), pairs_per_gap: int = 12, width: int = 7
                 rs.append(r["ratio"])
                 ds.append(r["homographyResidualPx"])
         if rs:
-            out[f"gap{g}"] = dict(pairs=len(rs), medianRatio=round(float(np.median(rs)), 4),
-                                  medianHomographyResidualPx=round(float(np.median(ds)), 3))
+            out[f"gap{g}"] = dict(
+                pairs=len(rs),
+                medianRatio=round(float(np.median(rs)), 4),
+                medianHomographyResidualPx=round(float(np.median(ds)), 3),
+            )
     if not out:
-        return dict(frames=n, verdict="inconclusive",
-                    reason="not enough matchable frame pairs to test")
+        return dict(
+            frames=n, verdict="inconclusive", reason="not enough matchable frame pairs to test"
+        )
 
     widest = out[sorted(out, key=lambda k: int(k[3:]))[-1]]
     ratio = widest["medianRatio"]
-    rec = dict(frames=n, byGap=out, widestGapRatio=ratio,
-               widestGapHomographyResidualPx=widest["medianHomographyResidualPx"],
-               threshold=ROTATION_ONLY_RATIO,
-               verdict="rotation-only" if ratio >= ROTATION_ONLY_RATIO else "has-parallax")
+    rec = dict(
+        frames=n,
+        byGap=out,
+        widestGapRatio=ratio,
+        widestGapHomographyResidualPx=widest["medianHomographyResidualPx"],
+        threshold=ROTATION_ONLY_RATIO,
+        verdict="rotation-only" if ratio >= ROTATION_ONLY_RATIO else "has-parallax",
+    )
     rec["headline"] = (
         "The camera turned but did not travel. Every frame maps onto every other by a single flat "
         "warp, so there is no second viewpoint and no depth to recover."
-        if rec["verdict"] == "rotation-only" else
-        "The camera travelled: near and far move by different amounts, which is the parallax a "
-        "reconstruction needs.")
+        if rec["verdict"] == "rotation-only"
+        else "The camera travelled: near and far move by different amounts, which is the parallax a "
+        "reconstruction needs."
+    )
     return rec
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--images", type=Path, required=True)
     ap.add_argument("--gaps", type=int, nargs="*", default=[2, 8, 24])
     ap.add_argument("--json", type=Path)

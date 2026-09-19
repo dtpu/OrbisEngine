@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn the tracking stage's per-track Mask R-CNN masks into a plate-cleaning mask archive.
 
-  worker/.venv-da3/bin/python scripts/tracks_to_clean_masks.py .context/mp/<clip>/tracks \
+  uv run --locked --group inference python scripts/tracks_to_clean_masks.py .context/mp/<clip>/tracks \
       --width 1920 --height 1080 --dilate 30 --bottom-extra 60 --out .context/mp/<clip>/clean-masks.npz
   <modal> run worker/modal_clean_video.py --clip ... --masks-in .context/mp/<clip>/clean-masks.npz ...
 
@@ -14,6 +14,7 @@ so the union of those instance masks is a better plate mask that costs nothing e
 `--masks-in` skips the clean pass's own dilation and downward extension, so both are applied here
 with the same numbers and the same kernel anchoring as worker/modal_clean_video.py.
 """
+
 import argparse, json
 from pathlib import Path
 
@@ -63,22 +64,40 @@ def main():
     # same downward extension as worker/modal_clean_video.py: carry every occupied column to the
     # bottom of the frame so the contact shadow goes with the person
     for m in masks:
-        cols = np.where(m[int(0.6 * H):].any(0))[0]
+        cols = np.where(m[int(0.6 * H) :].any(0))[0]
         if len(cols):
             low = np.argmax(m[::-1], axis=0)
             for c in cols:
-                m[H - 1 - low[c]:, c] = True
+                m[H - 1 - low[c] :, c] = True
     if a.bottom_extra > 0:
         k = np.ones((a.bottom_extra + 1, 2 * a.dilate + 1), np.uint8)
-        masks = np.stack([cv2.dilate(m.astype(np.uint8), k, anchor=(a.dilate, a.bottom_extra)).astype(bool)
-                          for m in masks])
+        masks = np.stack(
+            [
+                cv2.dilate(m.astype(np.uint8), k, anchor=(a.dilate, a.bottom_extra)).astype(bool)
+                for m in masks
+            ]
+        )
 
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(a.out, masks=np.packbits(masks, axis=-1), shape=np.array([n, H, W]),
-                        source=np.array([str(root)]))
-    print(json.dumps(dict(out=a.out, samples=n, samplesWithoutMask=missing,
-                          tracks=doc["trackCount"], maskFraction=float(masks.mean()),
-                          framesCovered=int(masks.reshape(n, -1).any(1).sum())), indent=1))
+    np.savez_compressed(
+        a.out,
+        masks=np.packbits(masks, axis=-1),
+        shape=np.array([n, H, W]),
+        source=np.array([str(root)]),
+    )
+    print(
+        json.dumps(
+            dict(
+                out=a.out,
+                samples=n,
+                samplesWithoutMask=missing,
+                tracks=doc["trackCount"],
+                maskFraction=float(masks.mean()),
+                framesCovered=int(masks.reshape(n, -1).any(1).sum()),
+            ),
+            indent=1,
+        )
+    )
 
 
 if __name__ == "__main__":

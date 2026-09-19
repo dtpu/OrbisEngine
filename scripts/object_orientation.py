@@ -25,6 +25,7 @@ Writes an `orientation` block for `wander.objects/2` §5, including its own prov
   object_orientation.py --track2d bottle2d.json --patches bottle-patches.npz \
       --v0 0.82,1.23,-0.06 --g 0,-5.32,0 --fps 30 --out orientation.json
 """
+
 import argparse, json
 
 import numpy as np
@@ -34,12 +35,13 @@ def perpendicular_extent(track2d, patches, min_area=200):
     """-> (frames, perpendicular extent in px, parallel extent in px)."""
     t = json.load(open(track2d))
     z = np.load(patches)
-    obs = {o['sourceIndex']: o for o in t['observations']}
-    fs = sorted(f for f in obs if obs[f].get('area', 0) > min_area)
-    xs = np.array([obs[f]['x'] for f in fs]); ys = np.array([obs[f]['y'] for f in fs])
+    obs = {o["sourceIndex"]: o for o in t["observations"]}
+    fs = sorted(f for f in obs if obs[f].get("area", 0) > min_area)
+    xs = np.array([obs[f]["x"] for f in fs])
+    ys = np.array([obs[f]["y"] for f in fs])
     out = []
     for i, f in enumerate(fs):
-        d = z.get(f'd{f:04d}')
+        d = z.get(f"d{f:04d}")
         if d is None:
             continue
         d = d.astype(float)
@@ -55,7 +57,11 @@ def perpendicular_extent(track2d, patches, min_area=200):
         v = v / (np.linalg.norm(v) + 1e-9)
         p = np.array([-v[1], v[0]])
         out.append((f, float(np.sqrt(max(p @ C @ p, 0))), float(np.sqrt(max(v @ C @ v, 0)))))
-    return np.array([r[0] for r in out]), np.array([r[1] for r in out]), np.array([r[2] for r in out])
+    return (
+        np.array([r[0] for r in out]),
+        np.array([r[1] for r in out]),
+        np.array([r[2] for r in out]),
+    )
 
 
 def dominant_half_period(frames, signal):
@@ -67,44 +73,58 @@ def dominant_half_period(frames, signal):
     """
     d = signal - np.polyval(np.polyfit(frames, signal, 1), frames)
     sign = np.sign(d)
-    cross = [(frames[i] + frames[i + 1]) / 2.0
-             for i in range(len(d) - 1) if sign[i] != 0 and sign[i + 1] != 0 and sign[i] != sign[i + 1]]
+    cross = [
+        (frames[i] + frames[i + 1]) / 2.0
+        for i in range(len(d) - 1)
+        if sign[i] != 0 and sign[i + 1] != 0 and sign[i] != sign[i + 1]
+    ]
     if len(cross) < 2:
         return None, None, len(cross)
-    gaps = np.diff(cross)                       # one gap = half of the extent signal's period
-    return float(np.mean(gaps) * 2.0), float(np.std(gaps) * 2.0 / max(np.sqrt(len(gaps)), 1)), len(cross)
+    gaps = np.diff(cross)  # one gap = half of the extent signal's period
+    return (
+        float(np.mean(gaps) * 2.0),
+        float(np.std(gaps) * 2.0 / max(np.sqrt(len(gaps)), 1)),
+        len(cross),
+    )
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--track2d', required=True)
-    ap.add_argument('--patches', required=True)
-    ap.add_argument('--v0', required=True, help='release velocity in world units/s, "x,y,z"')
-    ap.add_argument('--g', required=True, help='gravity in world units/s^2, "x,y,z"')
-    ap.add_argument('--fps', type=float, default=30.0)
-    ap.add_argument('--flight-seconds', type=float, default=0.0)
-    ap.add_argument('--out', required=True)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--track2d", required=True)
+    ap.add_argument("--patches", required=True)
+    ap.add_argument("--v0", required=True, help='release velocity in world units/s, "x,y,z"')
+    ap.add_argument("--g", required=True, help='gravity in world units/s^2, "x,y,z"')
+    ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--flight-seconds", type=float, default=0.0)
+    ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
     frames, perp, par = perpendicular_extent(a.track2d, a.patches)
     period_frames, period_err, ncross = dominant_half_period(frames, perp)
 
-    v0 = np.array([float(v) for v in a.v0.split(',')])
-    g = np.array([float(v) for v in a.g.split(',')])
+    v0 = np.array([float(v) for v in a.v0.split(",")])
+    g = np.array([float(v) for v in a.g.split(",")])
     axis = np.cross(v0, g)
     n = np.linalg.norm(axis)
     axis = (axis / n) if n > 1e-9 else np.array([0.0, 0.0, 1.0])
 
     res = dict(
-        mode='measuredRate',
+        mode="measuredRate",
         spinAxisWorld=[round(float(v), 6) for v in axis],
-        axisProvenance=('normal of the plane the throw travels in, v0 x g. A throw tumbles end over '
-                        'end in that plane; this is an assumption about throws, not a measurement '
-                        'of these pixels.'),
-        perpendicularExtentPx=dict(sourceFrames=[int(f) for f in frames],
-                                   perpendicular=[round(float(v), 2) for v in perp],
-                                   parallel=[round(float(v), 2) for v in par]),
-        crossings=int(ncross))
+        axisProvenance=(
+            "normal of the plane the throw travels in, v0 x g. A throw tumbles end over "
+            "end in that plane; this is an assumption about throws, not a measurement "
+            "of these pixels."
+        ),
+        perpendicularExtentPx=dict(
+            sourceFrames=[int(f) for f in frames],
+            perpendicular=[round(float(v), 2) for v in perp],
+            parallel=[round(float(v), 2) for v in par],
+        ),
+        crossings=int(ncross),
+    )
 
     if period_frames:
         # the projected extent of a rod is 180 deg symmetric: one extent period is half a turn
@@ -114,21 +134,27 @@ def main():
             spinRevPerSec=round(float(rev_per_sec), 3),
             spinRevPerSecSigma=round(float(err), 3),
             extentPeriodFrames=round(period_frames, 2),
-            provenance=(f'rate from the perpendicular extent of the in-flight difference blobs over '
-                        f'{len(frames)} frames: {ncross} zero crossings give an extent period of '
-                        f'{period_frames:.1f} frames, and a rod\'s projected extent is 180 deg '
-                        f'symmetric, so one revolution is twice that. Axis assumed from the throw '
-                        f'plane. Phase at release is not resolved by these pixels.'))
+            provenance=(
+                f"rate from the perpendicular extent of the in-flight difference blobs over "
+                f"{len(frames)} frames: {ncross} zero crossings give an extent period of "
+                f"{period_frames:.1f} frames, and a rod's projected extent is 180 deg "
+                f"symmetric, so one revolution is twice that. Axis assumed from the throw "
+                f"plane. Phase at release is not resolved by these pixels."
+            ),
+        )
         if a.flight_seconds:
-            res['revolutionsOverFlight'] = round(float(rev_per_sec * a.flight_seconds), 2)
+            res["revolutionsOverFlight"] = round(float(rev_per_sec * a.flight_seconds), 2)
     else:
-        res.update(mode='velocityAligned', spinRevPerSec=0.0,
-                   provenance='the perpendicular extent showed fewer than two crossings; no rate '
-                              'is claimed and the object is left velocity-aligned.')
+        res.update(
+            mode="velocityAligned",
+            spinRevPerSec=0.0,
+            provenance="the perpendicular extent showed fewer than two crossings; no rate "
+            "is claimed and the object is left velocity-aligned.",
+        )
 
-    json.dump(res, open(a.out, 'w'), indent=1)
-    print(json.dumps({k: v for k, v in res.items() if k != 'perpendicularExtentPx'}, indent=1))
+    json.dump(res, open(a.out, "w"), indent=1)
+    print(json.dumps({k: v for k, v in res.items() if k != "perpendicularExtentPx"}, indent=1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

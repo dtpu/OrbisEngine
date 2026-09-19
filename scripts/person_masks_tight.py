@@ -6,6 +6,7 @@ bottom), so they are 3x the area of the real body and useless as an IoU target. 
 Mask R-CNN instance masks instead, and when a seed box is given picks the instance that
 overlaps it -- which is how the right person is chosen in a multi-person clip.
 """
+
 import argparse, json
 from pathlib import Path
 
@@ -19,7 +20,11 @@ def rcnn():
     global _rcnn
     if _rcnn is None:
         import torch
-        from torchvision.models.detection import maskrcnn_resnet50_fpn_v2, MaskRCNN_ResNet50_FPN_V2_Weights
+        from torchvision.models.detection import (
+            maskrcnn_resnet50_fpn_v2,
+            MaskRCNN_ResNet50_FPN_V2_Weights,
+        )
+
         m = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval()
         dev = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
         _rcnn = (m.to(dev), dev, torch)
@@ -40,7 +45,8 @@ def masks_for(frames, seeds=None, score=0.7):
             ms = (p["masks"][keep, 0] > 0.5).cpu().numpy()
             if seeds is not None and seeds[i] is not None:
                 x0, y0, x1, y1 = seeds[i]
-                box = np.zeros(im.shape[:2], bool); box[max(0, y0):y1, max(0, x0):x1] = True
+                box = np.zeros(im.shape[:2], bool)
+                box[max(0, y0) : y1, max(0, x0) : x1] = True
                 ov = [(m & box).sum() / max(m.sum(), 1) for m in ms]
                 out[i] = ms[int(np.argmax(ov))] if max(ov) > 0.15 else ms[0]
             else:
@@ -49,7 +55,9 @@ def masks_for(frames, seeds=None, score=0.7):
 
 
 def read_frames(clip, idx):
-    cap = cv2.VideoCapture(clip); want = sorted(set(int(i) for i in idx)); got = {}
+    cap = cv2.VideoCapture(clip)
+    want = sorted(set(int(i) for i in idx))
+    got = {}
     n = 0
     while True:
         ok, fr = cap.read()
@@ -66,7 +74,9 @@ def read_frames(clip, idx):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("clip"); ap.add_argument("--frames", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("clip")
+    ap.add_argument("--frames", required=True)
+    ap.add_argument("--out", required=True)
     ap.add_argument("--seeds", help="json: {frameIndex: [x0,y0,x1,y1]}")
     a = ap.parse_args()
     idx = [int(x) for x in a.frames.split(",")]
@@ -75,9 +85,13 @@ if __name__ == "__main__":
     arr = np.stack([fr[i] for i in idx])
     seeds = None
     if a.seeds:
-        s = json.loads(Path(a.seeds).read_text()); seeds = [s.get(str(i)) for i in idx]
+        s = json.loads(Path(a.seeds).read_text())
+        seeds = [s.get(str(i)) for i in idx]
     m = masks_for(arr, seeds)
-    np.savez_compressed(a.out, masks=np.packbits(m, axis=-1), shape=np.array(m.shape),
-                        indices=np.array(idx))
-    print(f"{a.out}: {len(idx)} frames, mean {m.mean()*100:.2f}% of pixels, "
-          f"{int(m.reshape(len(m),-1).any(1).sum())}/{len(m)} non-empty")
+    np.savez_compressed(
+        a.out, masks=np.packbits(m, axis=-1), shape=np.array(m.shape), indices=np.array(idx)
+    )
+    print(
+        f"{a.out}: {len(idx)} frames, mean {m.mean() * 100:.2f}% of pixels, "
+        f"{int(m.reshape(len(m), -1).any(1).sum())}/{len(m)} non-empty"
+    )

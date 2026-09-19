@@ -19,6 +19,7 @@ dark tops crossing paths: their trousers differ, and the mask splits torso from 
 
   python track_people.py --video clip.mp4 --out tracks/ --fps 12 [--cameras cameras.json]
 """
+
 import argparse, hashlib, json, os, sys, time
 from pathlib import Path
 
@@ -54,18 +55,18 @@ def colour_histogram(rgb, mask, box):
         sub_rgb = rgb[lo:hi]
         px = sub_rgb[sub_m] if sub_m.any() else np.zeros((0, 3), np.uint8)
         if len(px) < 30:
-            out.append(np.zeros(HIST_BINS ** 3, np.float32))
+            out.append(np.zeros(HIST_BINS**3, np.float32))
             continue
         q = (px.astype(np.int32) * HIST_BINS // 256).clip(0, HIST_BINS - 1)
         flat = q[:, 0] * HIST_BINS * HIST_BINS + q[:, 1] * HIST_BINS + q[:, 2]
-        h = np.bincount(flat, minlength=HIST_BINS ** 3).astype(np.float32)
+        h = np.bincount(flat, minlength=HIST_BINS**3).astype(np.float32)
         out.append(h / h.sum())
     return np.concatenate(out)
 
 
 def hist_distance(a, b):
     """Bhattacharyya distance on each half, averaged; 0 = identical, 1 = disjoint."""
-    n = HIST_BINS ** 3
+    n = HIST_BINS**3
     d = []
     for s in (slice(0, n), slice(n, 2 * n)):
         pa, pb = a[s], b[s]
@@ -87,7 +88,11 @@ def iou(a, b):
     ix = max(0.0, min(ax1, bx1) - max(ax0, bx0))
     iy = max(0.0, min(ay1, by1) - max(ay0, by0))
     inter = ix * iy
-    ua = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0) + max(0.0, bx1 - bx0) * max(0.0, by1 - by0) - inter
+    ua = (
+        max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+        + max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+        - inter
+    )
     return inter / ua if ua > 0 else 0.0
 
 
@@ -130,13 +135,19 @@ def main():
     ap.add_argument("--repo", default="/opt/lhm")
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument("--cameras")
-    ap.add_argument("--det-thresh", type=float, default=0.15,
-                    help="MultiHMR detection threshold; lower than the single-person 0.3 because a "
-                         "partly occluded second person scores lower than a clear first one")
+    ap.add_argument(
+        "--det-thresh",
+        type=float,
+        default=0.15,
+        help="MultiHMR detection threshold; lower than the single-person 0.3 because a "
+        "partly occluded second person scores lower than a clear first one",
+    )
     ap.add_argument("--new-track-thresh", type=float, default=0.30)
     ap.add_argument("--max-gap", type=int, default=8, help="samples a track may coast unmatched")
     ap.add_argument("--min-track-samples", type=int, default=8)
-    ap.add_argument("--gate", type=float, default=0.22, help="max normalised centre distance for a match")
+    ap.add_argument(
+        "--gate", type=float, default=0.22, help="max normalised centre distance for a match"
+    )
     ap.add_argument("--overlay-every", type=int, default=0, help="0 = only first/middle/last")
     ap.add_argument("--mask-scale", type=float, default=0.5, help="stored mask resolution")
     ap.add_argument("--no-maskrcnn", action="store_true")
@@ -151,6 +162,7 @@ def main():
     from accelerate import Accelerator
     from engine.pose_estimation.pose_estimator import PoseEstimator
     from scipy.optimize import linear_sum_assignment
+
     torch._dynamo.config.disable = True
     torch.set_num_threads(4)
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -160,13 +172,22 @@ def main():
     indices, times, src_fps, count, duration = sample_indices(a.video, a.fps)
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
-    if cameras and (len(cameras) != len(indices) or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))):
+    if cameras and (
+        len(cameras) != len(indices)
+        or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))
+    ):
         raise ValueError("Camera records must correspond exactly to sampled source indices")
 
     rcnn = None
     if not a.no_maskrcnn:
-        from torchvision.models.detection import maskrcnn_resnet50_fpn_v2, MaskRCNN_ResNet50_FPN_V2_Weights
-        rcnn = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval().cuda()
+        from torchvision.models.detection import (
+            maskrcnn_resnet50_fpn_v2,
+            MaskRCNN_ResNet50_FPN_V2_Weights,
+        )
+
+        rcnn = (
+            maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval().cuda()
+        )
 
     estimator = PoseEstimator("./pretrained_models/human_model_files", device="cuda")
     cap = cv2.VideoCapture(a.video)
@@ -189,8 +210,12 @@ def main():
         pl, pt, factor, _, _ = annotation
         if cameras:
             source_K = np.array(cameras[sample]["source_intrinsics"])
-            K = torch.tensor(np.array([[factor, 0, factor * ow + pl], [0, factor, factor * oh + pt], [0, 0, 1]]) @ source_K,
-                             dtype=torch.float32, device="cuda")[None]
+            K = torch.tensor(
+                np.array([[factor, 0, factor * ow + pl], [0, factor, factor * oh + pt], [0, 0, 1]])
+                @ source_K,
+                dtype=torch.float32,
+                device="cuda",
+            )[None]
         else:
             K = estimator.get_camera_parameters()
             source_K = K[0].cpu().numpy().copy()
@@ -198,8 +223,15 @@ def main():
             source_K[0, 2] -= pl / factor + ow
             source_K[1, 2] -= pt / factor + oh
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
-            detected = estimator.mhmr_model(tensor, is_training=False, nms_kernel_size=3,
-                                            det_thresh=a.det_thresh, K=K, idx=None, max_dist=None)
+            detected = estimator.mhmr_model(
+                tensor,
+                is_training=False,
+                nms_kernel_size=3,
+                det_thresh=a.det_thresh,
+                K=K,
+                idx=None,
+                max_dist=None,
+            )
 
         # Mask R-CNN instance masks on the same raw frame.
         inst_masks, inst_boxes = [], []
@@ -234,17 +266,39 @@ def main():
                 mbox = box
                 mask = np.zeros((h, w), bool)
                 x0, y0, x1, y1 = [int(max(0, v)) for v in box]
-                mask[y0:min(h, y1 + 1), x0:min(w, x1 + 1)] = True
-            observations.append(dict(
-                sample=sample, sourceIndex=int(index), time=float(timestamp), det=det_i,
-                score=float(person["scores"]), box=box, maskBox=mbox, center=centre.tolist(),
-                depth=float(j3d[0, 2]), joints=joints, j3dRoot=j3d[0].tolist(),
-                heightFrac=float(box[3] - box[1]) / h, maskArea=float(mask.mean()),
-                inFrame=((joints[:22, 0] >= 0) & (joints[:22, 0] < w) & (joints[:22, 1] >= 0) & (joints[:22, 1] < h)),
-                hist=colour_histogram(raw, mask, mbox), mask=mask,
-                pose={k: v.detach().float().cpu() for k, v in person.items()
-                      if k in ("rotvec", "shape", "transl_pelvis", "j3d", "scores")},
-                source_intrinsics=source_K.tolist(), maskIou=best_iou))
+                mask[y0 : min(h, y1 + 1), x0 : min(w, x1 + 1)] = True
+            observations.append(
+                dict(
+                    sample=sample,
+                    sourceIndex=int(index),
+                    time=float(timestamp),
+                    det=det_i,
+                    score=float(person["scores"]),
+                    box=box,
+                    maskBox=mbox,
+                    center=centre.tolist(),
+                    depth=float(j3d[0, 2]),
+                    joints=joints,
+                    j3dRoot=j3d[0].tolist(),
+                    heightFrac=float(box[3] - box[1]) / h,
+                    maskArea=float(mask.mean()),
+                    inFrame=(
+                        (joints[:22, 0] >= 0)
+                        & (joints[:22, 0] < w)
+                        & (joints[:22, 1] >= 0)
+                        & (joints[:22, 1] < h)
+                    ),
+                    hist=colour_histogram(raw, mask, mbox),
+                    mask=mask,
+                    pose={
+                        k: v.detach().float().cpu()
+                        for k, v in person.items()
+                        if k in ("rotvec", "shape", "transl_pelvis", "j3d", "scores")
+                    },
+                    source_intrinsics=source_K.tolist(),
+                    maskIou=best_iou,
+                )
+            )
         unmatched_rcnn_total += len(inst_boxes) - len(used_inst)
 
         # ---- association ----------------------------------------------------
@@ -291,8 +345,13 @@ def main():
             for o in t.obs:
                 if o["sample"] == sample and o.get("mask") is not None:
                     key = (t.id, sample)
-                    small = cv2.resize(o["mask"].astype(np.uint8), None, fx=a.mask_scale, fy=a.mask_scale,
-                                       interpolation=cv2.INTER_NEAREST).astype(bool)
+                    small = cv2.resize(
+                        o["mask"].astype(np.uint8),
+                        None,
+                        fx=a.mask_scale,
+                        fy=a.mask_scale,
+                        interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
                     mask_store[key] = np.packbits(small)
 
         if sample in overlay_samples or (a.overlay_every and sample % a.overlay_every == 0):
@@ -304,16 +363,26 @@ def main():
                 c = palette[t.id % len(palette)]
                 x0, y0, x1, y1 = [int(v) for v in t.last["box"]]
                 cv2.rectangle(over, (x0, y0), (x1, y1), c, 4)
-                cv2.putText(over, f"t{t.id} {t.last['score']:.2f}", (x0, max(30, y0 - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.1, c, 3)
+                cv2.putText(
+                    over,
+                    f"t{t.id} {t.last['score']:.2f}",
+                    (x0, max(30, y0 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.1,
+                    c,
+                    3,
+                )
                 for px, py in t.last["joints"][:22]:
                     cv2.circle(over, (round(float(px)), round(float(py))), 5, c, -1)
             Image.fromarray(over).save(out / f"track-overlay-{sample:03d}.jpg", quality=88)
 
         for o in observations:
             o.pop("mask", None)
-        print(f"sample {sample + 1}/{len(indices)} detections {len(detected)} "
-              f"rcnn {len(inst_boxes)} live {sum(1 for t in tracks if t.last['sample'] == sample)}", flush=True)
+        print(
+            f"sample {sample + 1}/{len(indices)} detections {len(detected)} "
+            f"rcnn {len(inst_boxes)} live {sum(1 for t in tracks if t.last['sample'] == sample)}",
+            flush=True,
+        )
 
     cap.release()
     del estimator, rcnn
@@ -339,26 +408,43 @@ def main():
     report = []
     for rank, t in enumerate(kept):
         obs_by_sample = {o["sample"]: o for o in t.obs}
-        poses = [obs_by_sample[s]["pose"] if s in obs_by_sample else None for s in range(len(indices))]
+        poses = [
+            obs_by_sample[s]["pose"] if s in obs_by_sample else None for s in range(len(indices))
+        ]
         records = []
         for s in range(len(indices)):
             o = obs_by_sample.get(s)
             if o is None:
                 continue
             joints = o["joints"]
-            records.append(dict(
-                sample=s, sourceIndex=o["sourceIndex"], time=o["time"], detectedPeople=len(by_sample.get(s, [])),
-                score=o["score"], originalSourceTime=o["time"],
-                projectedBodyJoints=joints[:22].tolist(), jointProjectionInImage=o["inFrame"].tolist(),
-                confidenceSemantics="Score is person detection confidence, not per-joint accuracy or visibility confidence.",
-                source_intrinsics=o["source_intrinsics"], rootCamera=o["j3dRoot"],
-                smplTranslationCamera=o["pose"]["transl_pelvis"].reshape(3).tolist(),
-                feetCamera=o["pose"]["j3d"][[7, 8, 10, 11]].tolist(),
-                footJointOrder=["leftAnkle", "rightAnkle", "leftFoot", "rightFoot"],
-                rootRotationVector=o["pose"]["rotvec"][0].tolist(), detectionThreshold=a.det_thresh,
-                trackId=t.id, box=o["box"], maskBox=o["maskBox"], maskIou=o["maskIou"],
-                occludedFraction=o.get("occludedFraction", 0.0), depth=o["depth"],
-                heightFraction=o["heightFrac"], maskAreaFraction=o["maskArea"]))
+            records.append(
+                dict(
+                    sample=s,
+                    sourceIndex=o["sourceIndex"],
+                    time=o["time"],
+                    detectedPeople=len(by_sample.get(s, [])),
+                    score=o["score"],
+                    originalSourceTime=o["time"],
+                    projectedBodyJoints=joints[:22].tolist(),
+                    jointProjectionInImage=o["inFrame"].tolist(),
+                    confidenceSemantics="Score is person detection confidence, not per-joint accuracy or visibility confidence.",
+                    source_intrinsics=o["source_intrinsics"],
+                    rootCamera=o["j3dRoot"],
+                    smplTranslationCamera=o["pose"]["transl_pelvis"].reshape(3).tolist(),
+                    feetCamera=o["pose"]["j3d"][[7, 8, 10, 11]].tolist(),
+                    footJointOrder=["leftAnkle", "rightAnkle", "leftFoot", "rightFoot"],
+                    rootRotationVector=o["pose"]["rotvec"][0].tolist(),
+                    detectionThreshold=a.det_thresh,
+                    trackId=t.id,
+                    box=o["box"],
+                    maskBox=o["maskBox"],
+                    maskIou=o["maskIou"],
+                    occludedFraction=o.get("occludedFraction", 0.0),
+                    depth=o["depth"],
+                    heightFraction=o["heightFrac"],
+                    maskAreaFraction=o["maskArea"],
+                )
+            )
         samples = sorted(obs_by_sample)
         in_frame = np.array([obs_by_sample[s]["inFrame"].all() for s in samples])
         heights = np.array([obs_by_sample[s]["heightFrac"] for s in samples])
@@ -366,59 +452,119 @@ def main():
         scores = np.array([obs_by_sample[s]["score"] for s in samples])
         coverage = len(samples) / len(indices)
         quality = dict(
-            samples=len(samples), coverage=float(coverage),
-            firstSample=int(samples[0]), lastSample=int(samples[-1]),
+            samples=len(samples),
+            coverage=float(coverage),
+            firstSample=int(samples[0]),
+            lastSample=int(samples[-1]),
             gaps=[[int(x), int(y)] for x, y in _gaps(samples)],
-            fullyInFrameFraction=float(in_frame.mean()), medianHeightFraction=float(np.median(heights)),
-            meanOccludedFraction=float(occl.mean()), maxOccludedFraction=float(occl.max()),
+            fullyInFrameFraction=float(in_frame.mean()),
+            medianHeightFraction=float(np.median(heights)),
+            meanOccludedFraction=float(occl.mean()),
+            maxOccludedFraction=float(occl.max()),
             meanScore=float(scores.mean()),
             # One number for ranking: present, big, unoccluded, whole body in shot.
-            score=float(coverage * (0.4 + 0.6 * in_frame.mean()) * min(1.0, np.median(heights) / 0.5)
-                        * (1.0 - 0.5 * occl.mean())))
+            score=float(
+                coverage
+                * (0.4 + 0.6 * in_frame.mean())
+                * min(1.0, np.median(heights) / 0.5)
+                * (1.0 - 0.5 * occl.mean())
+            ),
+        )
         # Avatar-input candidates: full body, tall, unoccluded, confident.
-        cand = sorted(samples, key=lambda s: -(
-            (1.0 if obs_by_sample[s]["inFrame"].all() else 0.3)
-            * obs_by_sample[s]["heightFrac"]
-            * (1.0 - obs_by_sample[s].get("occludedFraction", 0.0))
-            * obs_by_sample[s]["score"]))[:12]
+        cand = sorted(
+            samples,
+            key=lambda s: (
+                -(
+                    (1.0 if obs_by_sample[s]["inFrame"].all() else 0.3)
+                    * obs_by_sample[s]["heightFrac"]
+                    * (1.0 - obs_by_sample[s].get("occludedFraction", 0.0))
+                    * obs_by_sample[s]["score"]
+                )
+            ),
+        )[:12]
         folder = out / f"track_{rank:02d}"
         folder.mkdir(exist_ok=True)
-        torch.save(dict(poses=poses, sourceIndices=indices, timestamps=times), folder / "source-poses.pt")
+        torch.save(
+            dict(poses=poses, sourceIndices=indices, timestamps=times), folder / "source-poses.pt"
+        )
         (folder / "motion.json").write_text(json.dumps(dict(frames=records), indent=1))
-        report.append(dict(
-            track=rank, rawId=t.id, quality=quality,
-            candidateSamples=[dict(sample=int(s), sourceIndex=int(indices[s]),
-                                   box=obs_by_sample[s]["box"], maskBox=obs_by_sample[s]["maskBox"],
-                                   heightFraction=obs_by_sample[s]["heightFrac"],
-                                   fullyInFrame=bool(obs_by_sample[s]["inFrame"].all()),
-                                   occludedFraction=obs_by_sample[s].get("occludedFraction", 0.0),
-                                   score=obs_by_sample[s]["score"]) for s in cand],
-            samples=[int(s) for s in samples]))
+        report.append(
+            dict(
+                track=rank,
+                rawId=t.id,
+                quality=quality,
+                candidateSamples=[
+                    dict(
+                        sample=int(s),
+                        sourceIndex=int(indices[s]),
+                        box=obs_by_sample[s]["box"],
+                        maskBox=obs_by_sample[s]["maskBox"],
+                        heightFraction=obs_by_sample[s]["heightFrac"],
+                        fullyInFrame=bool(obs_by_sample[s]["inFrame"].all()),
+                        occludedFraction=obs_by_sample[s].get("occludedFraction", 0.0),
+                        score=obs_by_sample[s]["score"],
+                    )
+                    for s in cand
+                ],
+                samples=[int(s) for s in samples],
+            )
+        )
         print(f"track {rank} (raw {t.id}): {json.dumps(quality)}", flush=True)
 
     if mask_store:
         remap = {t.id: rank for rank, t in enumerate(kept)}
-        np.savez_compressed(out / "masks.npz",
-                            shape=np.array([h, w, a.mask_scale], np.float64),
-                            **{f"t{remap[tid]}_s{s:03d}": arr for (tid, s), arr in mask_store.items()
-                               if tid in remap})
+        np.savez_compressed(
+            out / "masks.npz",
+            shape=np.array([h, w, a.mask_scale], np.float64),
+            **{
+                f"t{remap[tid]}_s{s:03d}": arr
+                for (tid, s), arr in mask_store.items()
+                if tid in remap
+            },
+        )
 
     doc = dict(
-        video=str(Path(a.video).resolve()), sourceSha256=source_sha, sourceFps=src_fps,
-        sourceFrames=count, duration=duration, fps=a.fps, samples=len(indices),
-        sourceIndices=[int(i) for i in indices], timestamps=[float(t) for t in times],
-        width=w, height=h, detectionThreshold=a.det_thresh, gate=a.gate, maxGap=a.max_gap,
-        minTrackSamples=a.min_track_samples, camerasSha256=hashlib.sha256(Path(a.cameras).read_bytes()).hexdigest() if a.cameras else None,
-        trackCount=len(kept), discardedShortTracks=len(tracks) - len(kept),
-        maskrcnnDetectionsWithoutPose=unmatched_rcnn_total, tracks=report,
-        method=("MultiHMR multi-person detections (one forward pass per sample, all persons kept) "
-                "associated by Hungarian assignment on constant-velocity centre prediction, box-height "
-                "ratio, camera-depth ratio and a Mask R-CNN-masked upper/lower-body RGB histogram. "
-                "Mask R-CNN supplies the per-person instance masks; a Mask R-CNN person with no "
-                "MultiHMR partner is counted but not tracked."),
-        seconds=time.time() - start, gpu=torch.cuda.get_device_name(), torch=torch.__version__)
+        video=str(Path(a.video).resolve()),
+        sourceSha256=source_sha,
+        sourceFps=src_fps,
+        sourceFrames=count,
+        duration=duration,
+        fps=a.fps,
+        samples=len(indices),
+        sourceIndices=[int(i) for i in indices],
+        timestamps=[float(t) for t in times],
+        width=w,
+        height=h,
+        detectionThreshold=a.det_thresh,
+        gate=a.gate,
+        maxGap=a.max_gap,
+        minTrackSamples=a.min_track_samples,
+        camerasSha256=hashlib.sha256(Path(a.cameras).read_bytes()).hexdigest()
+        if a.cameras
+        else None,
+        trackCount=len(kept),
+        discardedShortTracks=len(tracks) - len(kept),
+        maskrcnnDetectionsWithoutPose=unmatched_rcnn_total,
+        tracks=report,
+        method=(
+            "MultiHMR multi-person detections (one forward pass per sample, all persons kept) "
+            "associated by Hungarian assignment on constant-velocity centre prediction, box-height "
+            "ratio, camera-depth ratio and a Mask R-CNN-masked upper/lower-body RGB histogram. "
+            "Mask R-CNN supplies the per-person instance masks; a Mask R-CNN person with no "
+            "MultiHMR partner is counted but not tracked."
+        ),
+        seconds=time.time() - start,
+        gpu=torch.cuda.get_device_name(),
+        torch=torch.__version__,
+    )
     (out / "tracks.json").write_text(json.dumps(doc, indent=1))
-    print(json.dumps({k: v for k, v in doc.items() if k not in ("sourceIndices", "timestamps", "tracks")}, indent=1), flush=True)
+    print(
+        json.dumps(
+            {k: v for k, v in doc.items() if k not in ("sourceIndices", "timestamps", "tracks")},
+            indent=1,
+        ),
+        flush=True,
+    )
 
 
 def _gaps(samples):

@@ -20,6 +20,7 @@ constraints, which is where this project's failures live.
 
 Writes {"text_prompt", "structured": {...}, "frames": [...]} plus the sampled PNGs next to it.
 """
+
 import argparse, json, os, sys
 from pathlib import Path
 
@@ -27,7 +28,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'worker' / 'experiments'))
+sys.path.insert(0, str(ROOT / "worker" / "stages"))
 
 BRIEF = """These images are frames from ONE continuous shot of ONE real place, in time order. A
 generative 3D world model will be given one or more of these frames and must return a world a person
@@ -82,7 +83,7 @@ def sample(clip, frames, n, out_dir):
         s = 1024 / max(w, h)
         if s < 1:
             img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-        p = out_dir / f'frame_{int(f):04d}.png'
+        p = out_dir / f"frame_{int(f):04d}.png"
         cv2.imwrite(str(p), img)
         paths.append(str(p))
     cap.release()
@@ -91,30 +92,35 @@ def sample(clip, frames, n, out_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--clip', required=True)
-    ap.add_argument('--frames', default=None, help='comma-separated frame numbers (default: --n spread over the clip)')
-    ap.add_argument('--n', type=int, default=6)
-    ap.add_argument('--out', required=True)
-    ap.add_argument('--model', default='gpt-6-astra')
+    ap.add_argument("--clip", required=True)
+    ap.add_argument(
+        "--frames",
+        default=None,
+        help="comma-separated frame numbers (default: --n spread over the clip)",
+    )
+    ap.add_argument("--n", type=int, default=6)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--model", default="gpt-6-astra")
     a = ap.parse_args()
 
     out = Path(a.out)
-    frames = [int(x) for x in a.frames.split(',')] if a.frames else None
-    frames, paths = sample(Path(a.clip), frames, a.n, out.parent / (out.stem + '-frames'))
+    frames = [int(x) for x in a.frames.split(",")] if a.frames else None
+    frames, paths = sample(Path(a.clip), frames, a.n, out.parent / (out.stem + "-frames"))
     if not paths:
-        raise SystemExit(f'no frames read from {a.clip}')
-    if 'OPENAI_API_KEY' not in os.environ:
-        raise SystemExit('OPENAI_API_KEY unset; source ~/.openai-env')
-    from vlm_judge import ask_images                                      # noqa: E402
-    rec = ask_images(a.model, paths, BRIEF, detail='high')
-    rec['clip'] = a.clip
-    rec['frames'] = frames
-    rec['framePaths'] = paths
-    rec['model'] = a.model
+        raise SystemExit(f"no frames read from {a.clip}")
+    if "OPENAI_API_KEY" not in os.environ:
+        raise SystemExit("OPENAI_API_KEY unset; source ~/.openai-env")
+    from vlm_judge import ask_images  # noqa: E402
+
+    rec = ask_images(a.model, paths, BRIEF, detail="high")
+    rec["clip"] = a.clip
+    rec["frames"] = frames
+    rec["framePaths"] = paths
+    rec["model"] = a.model
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1))
     print(json.dumps(rec, indent=1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

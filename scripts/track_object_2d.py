@@ -7,6 +7,7 @@ constant-acceleration image-space predictor seeded from the strongest detections
 
 Generic in the object: nothing here knows it is a bottle.
 """
+
 import argparse, json, os
 import numpy as np
 import cv2
@@ -43,21 +44,21 @@ class People:
     def __init__(self, tracks_json):
         self.tj = json.load(open(tracks_json))
         d = os.path.dirname(tracks_json)
-        self.W, self.H = self.tj['width'], self.tj['height']
-        self.src = self.tj['sourceIndices']
-        self.n = self.tj['trackCount']
+        self.W, self.H = self.tj["width"], self.tj["height"]
+        self.src = self.tj["sourceIndices"]
+        self.n = self.tj["trackCount"]
         self.mot = {}
         for t in range(self.n):
-            m = json.load(open(os.path.join(d, f'track_{t:02d}', 'motion.json')))
-            self.mot[t] = {f['sourceIndex']: f for f in m['frames']}
-        z = np.load(os.path.join(d, 'masks.npz'))
-        mh, mw = int(self.H * z['shape'][2]), int(self.W * z['shape'][2])
+            m = json.load(open(os.path.join(d, f"track_{t:02d}", "motion.json")))
+            self.mot[t] = {f["sourceIndex"]: f for f in m["frames"]}
+        z = np.load(os.path.join(d, "masks.npz"))
+        mh, mw = int(self.H * z["shape"][2]), int(self.W * z["shape"][2])
         self.masks = {}
         for t in range(self.n):
-            for s in range(self.tj['samples']):
-                k = f't{t}_s{s:03d}'
+            for s in range(self.tj["samples"]):
+                k = f"t{t}_s{s:03d}"
                 if k in z:
-                    self.masks[(t, s)] = np.unpackbits(z[k])[:mh * mw].reshape(mh, mw)
+                    self.masks[(t, s)] = np.unpackbits(z[k])[: mh * mw].reshape(mh, mw)
         self.mh, self.mw = mh, mw
 
     def bracket(self, sf):
@@ -95,25 +96,25 @@ class People:
             if khi - klo > (2 * max_gap_samples + 1) * step:
                 continue
             w = 0.0 if khi == klo else (sf - klo) / (khi - klo)
-            a = np.array(self.mot[t][klo]['projectedBodyJoints'])
-            b = np.array(self.mot[t][khi]['projectedBodyJoints'])
+            a = np.array(self.mot[t][klo]["projectedBodyJoints"])
+            b = np.array(self.mot[t][khi]["projectedBodyJoints"])
             out[t] = a * (1 - w) + b * w
         return out
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--clip', required=True)
-    ap.add_argument('--tracks', required=True)
-    ap.add_argument('--first', type=int, required=True)
-    ap.add_argument('--last', type=int, required=True)
-    ap.add_argument('--seed', required=True, help='sf:x:y of a hand-picked frame the object is on')
-    ap.add_argument('--out', required=True)
-    ap.add_argument('--patches', default=None)
-    ap.add_argument('--dilate', type=int, default=9)
-    ap.add_argument('--min-area', type=float, default=20.0)
-    ap.add_argument('--max-area', type=float, default=6000.0)
-    ap.add_argument('--gate', type=float, default=45.0, help='px radius around the prediction')
+    ap.add_argument("--clip", required=True)
+    ap.add_argument("--tracks", required=True)
+    ap.add_argument("--first", type=int, required=True)
+    ap.add_argument("--last", type=int, required=True)
+    ap.add_argument("--seed", required=True, help="sf:x:y of a hand-picked frame the object is on")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--patches", default=None)
+    ap.add_argument("--dilate", type=int, default=9)
+    ap.add_argument("--min-area", type=float, default=20.0)
+    ap.add_argument("--max-area", type=float, default=6000.0)
+    ap.add_argument("--gate", type=float, default=45.0, help="px radius around the prediction")
     args = ap.parse_args()
 
     P = People(args.tracks)
@@ -134,7 +135,10 @@ def main():
         d = np.minimum(cv2.absdiff(cur, wp).max(2), cv2.absdiff(cur, wn).max(2))
         d = cv2.GaussianBlur(d, (0, 0), 1.5)
         km = np.where(P.mask(sf, args.dilate) > 0, 0, 255).astype(np.uint8)
-        km[:, :25] = 0; km[:, -25:] = 0; km[:25] = 0; km[-25:] = 0
+        km[:, :25] = 0
+        km[:, -25:] = 0
+        km[:25] = 0
+        km[-25:] = 0
         dm = np.where(km > 0, d, 0)
         dmaps[sf] = dm
         nz = dm[dm > 0]
@@ -150,21 +154,31 @@ def main():
             sel = lab == c
             wgt = dm[sel].astype(np.float64)
             ys, xs = np.nonzero(sel)
-            cands.append(dict(x=float((xs * wgt).sum() / wgt.sum()), y=float((ys * wgt).sum() / wgt.sum()),
-                              area=a, strength=float(wgt.mean()),
-                              bx=[int(stats[c, cv2.CC_STAT_LEFT]), int(stats[c, cv2.CC_STAT_TOP]),
-                                  int(stats[c, cv2.CC_STAT_WIDTH]), int(stats[c, cv2.CC_STAT_HEIGHT])]))
+            cands.append(
+                dict(
+                    x=float((xs * wgt).sum() / wgt.sum()),
+                    y=float((ys * wgt).sum() / wgt.sum()),
+                    area=a,
+                    strength=float(wgt.mean()),
+                    bx=[
+                        int(stats[c, cv2.CC_STAT_LEFT]),
+                        int(stats[c, cv2.CC_STAT_TOP]),
+                        int(stats[c, cv2.CC_STAT_WIDTH]),
+                        int(stats[c, cv2.CC_STAT_HEIGHT]),
+                    ],
+                )
+            )
         det[sf] = cands
 
     # --- link, forward and backward, from the seed
-    sfs, sx, sy = [float(v) for v in args.seed.split(':')]
+    sfs, sx, sy = [float(v) for v in args.seed.split(":")]
     sfs = int(sfs)
-    track = {sfs: dict(x=sx, y=sy, source='seed')}
+    track = {sfs: dict(x=sx, y=sy, source="seed")}
 
     def nearest(sf, px, py):
         best, bd = None, args.gate
         for c in det.get(sf, []):
-            dd = np.hypot(c['x'] - px, c['y'] - py)
+            dd = np.hypot(c["x"] - px, c["y"] - py)
             if dd < bd:
                 best, bd = c, dd
         return best
@@ -186,33 +200,51 @@ def main():
             c = nearest(sf, px, py)
             if c is None:
                 break
-            track[sf] = dict(x=c['x'], y=c['y'], area=c['area'], strength=c['strength'],
-                             bx=c['bx'], source='detected')
-            hist.append((sf, c['x'], c['y']))
+            track[sf] = dict(
+                x=c["x"],
+                y=c["y"],
+                area=c["area"],
+                strength=c["strength"],
+                bx=c["bx"],
+                source="detected",
+            )
+            hist.append((sf, c["x"], c["y"]))
             sf += direction
 
-    out = dict(clip=args.clip, first=args.first, last=args.last, seed=args.seed,
-               method='motion-compensated 3-frame differencing + constant-acceleration linking',
-               observations=[dict(sourceIndex=k, **v) for k, v in sorted(track.items())],
-               allCandidates={str(k): v for k, v in det.items()})
-    json.dump(out, open(args.out, 'w'))
+    out = dict(
+        clip=args.clip,
+        first=args.first,
+        last=args.last,
+        seed=args.seed,
+        method="motion-compensated 3-frame differencing + constant-acceleration linking",
+        observations=[dict(sourceIndex=k, **v) for k, v in sorted(track.items())],
+        allCandidates={str(k): v for k, v in det.items()},
+    )
+    json.dump(out, open(args.out, "w"))
     ks = sorted(track)
-    print('tracked', len(ks), 'frames', ks[0], '..', ks[-1])
+    print("tracked", len(ks), "frames", ks[0], "..", ks[-1])
     for k in ks:
-        print(' ', k, round(track[k]['x'], 1), round(track[k]['y'], 1), track[k].get('area'), track[k]['source'])
+        print(
+            " ",
+            k,
+            round(track[k]["x"], 1),
+            round(track[k]["y"], 1),
+            track[k].get("area"),
+            track[k]["source"],
+        )
 
     if args.patches:
         pat = {}
         for k in ks:
             i = k - base
-            x, y = int(round(track[k]['x'])), int(round(track[k]['y']))
+            x, y = int(round(track[k]["x"])), int(round(track[k]["y"]))
             r = 40
             x0, y0 = max(0, x - r), max(0, y - r)
-            pat[f'f{k:04d}'] = frames[i][y0:y + r, x0:x + r]
-            pat[f'd{k:04d}'] = dmaps[k][y0:y + r, x0:x + r]
-            pat[f'o{k:04d}'] = np.array([x0, y0])
+            pat[f"f{k:04d}"] = frames[i][y0 : y + r, x0 : x + r]
+            pat[f"d{k:04d}"] = dmaps[k][y0 : y + r, x0 : x + r]
+            pat[f"o{k:04d}"] = np.array([x0, y0])
         np.savez_compressed(args.patches, **pat)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

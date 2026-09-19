@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every anchored check share/METHODS-REVIEW.md §4 asks for, per clip, as one gate.
 
-  worker/.venv-da3/bin/python scripts/anchor_checks.py --clip gym --json-out share/anchors-gym.json
+  uv run --locked --group inference python scripts/anchor_checks.py --clip gym --json-out share/anchors-gym.json
 
 Each check here is anchored to something outside the estimate it tests. They FAIL the run; none of
 them warns. What they replace, in order:
@@ -21,6 +21,7 @@ them warns. What they replace, in order:
               non-person pixels. The old sidecar was neither: with no person mask, the walker's
               occlusion shadow was the front surface of the cloud and scored fully observed.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,16 +39,31 @@ PY = sys.executable
 IOU_MIN, AREA_LO, AREA_HI, MIN_FRAMES = 0.75, 0.85, 1.15, 8
 OBS_IN_MASK_MAX, OBS_TEXTURED_MIN = 0.20, 0.80
 
-WORLD_DIR = {"gym": "gym-4d", "elevator": "elevator-4d", "lobby": "lobby-4d",
-             "living": "living-4dpp", "atrium": "atrium-4dpp", "stairs2": "stairs2-4d",
-             "tos31": "tos31-4d"}
+WORLD_DIR = {
+    "gym": "gym-4d",
+    "elevator": "elevator-4d",
+    "lobby": "lobby-4d",
+    "living": "living-4dpp",
+    "atrium": "atrium-4dpp",
+    "stairs2": "stairs2-4d",
+    "tos31": "tos31-4d",
+}
 
 
 def check_ruler(clip: str, extra: list[str], tol: float) -> dict:
     out = ROOT / ".context" / "anchors" / f"ruler-{clip}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [PY, str(ROOT / "scripts" / "world_ruler.py"), "--clip", clip,
-           "--tol", str(tol), "--json-out", str(out), *extra]
+    cmd = [
+        PY,
+        str(ROOT / "scripts" / "world_ruler.py"),
+        "--clip",
+        clip,
+        "--tol",
+        str(tol),
+        "--json-out",
+        str(out),
+        *extra,
+    ]
     p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if not out.exists():
         return dict(ok=False, reason=f"world_ruler.py did not run: {p.stderr.strip()[-400:]}")
@@ -55,86 +71,129 @@ def check_ruler(clip: str, extra: list[str], tol: float) -> dict:
     v = doc["verdict"]
     why = []
     if v.get("weaklyAnchored"):
-        why.append(f"only {len(v['pointAnchors'])} point anchor(s): this clip's metres rest on the "
-                   f"avatar assumption and nothing else")
+        why.append(
+            f"only {len(v['pointAnchors'])} point anchor(s): this clip's metres rest on the "
+            f"avatar assumption and nothing else"
+        )
     for d in v.get("disagreements", []):
         why.append(f"{d['a']} and {d['b']} disagree by {d['offBy']}")
     for b in v.get("bandViolations", []):
-        why.append(f"the adopted metre puts {b['band'].replace('Band', '')} at {b['implied']} "
-                   f"{b['unit']}, outside {b['want']}")
+        why.append(
+            f"the adopted metre puts {b['band'].replace('Band', '')} at {b['implied']} "
+            f"{b['unit']}, outside {b['want']}"
+        )
     pv = doc.get("personVsWorld")
     if pv and not pv["agrees"]:
-        why.append(f"the avatar metre and the world metre differ by {pv['offBy']} "
-                   f"(limit {tol * 100:.0f}%)")
-    return dict(ok=bool(v.get("ok")) and (pv or {}).get("agrees", True), why=why,
-                mpuPerson=doc.get("mpuPerson"), adopted=v.get("adopted"),
-                anchors={k: (a.get("mpu") if a.get("available") else a.get("reason"))
-                         for k, a in doc["anchors"].items()},
-                report=str(out))
+        why.append(
+            f"the avatar metre and the world metre differ by {pv['offBy']} (limit {tol * 100:.0f}%)"
+        )
+    return dict(
+        ok=bool(v.get("ok")) and (pv or {}).get("agrees", True),
+        why=why,
+        mpuPerson=doc.get("mpuPerson"),
+        adopted=v.get("adopted"),
+        anchors={
+            k: (a.get("mpu") if a.get("available") else a.get("reason"))
+            for k, a in doc["anchors"].items()
+        },
+        report=str(out),
+    )
 
 
 def check_silhouette(clip: str, n: int = 12) -> dict:
     """§4D. motion_audit already computes both numbers; this is the floor under them."""
     import motion_audit
+
     wd = ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
-    placement_path = wd / 'placement.json'
+    placement_path = wd / "placement.json"
     placement = json.loads(placement_path.read_text()) if placement_path.exists() else {}
-    if placement.get('silhouetteFit'):
+    if placement.get("silhouetteFit"):
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
         from silhouette_rows import load_track_masks
         from motion_silhouette import splat_silhouette, iou as mask_iou
         from place_solve import read_ply
         from PIL import Image
-        masks, _, _ = load_track_masks(Path(placement['silhouetteFit']['masks']))
-        man = json.loads((wd / 'people.json').read_text())
-        cams = {c['sourceIndex']: c for c in json.loads((wd/'cameras.json').read_text())['cameras']}
-        seqs = {p['id']: json.loads((wd/p['sequence']).read_text()) for p in man['people']}
+
+        masks, _, _ = load_track_masks(Path(placement["silhouetteFit"]["masks"]))
+        man = json.loads((wd / "people.json").read_text())
+        cams = {
+            c["sourceIndex"]: c for c in json.loads((wd / "cameras.json").read_text())["cameras"]
+        }
+        seqs = {p["id"]: json.loads((wd / p["sequence"]).read_text()) for p in man["people"]}
         ratios, overlaps = [], []
-        scale = placement['registrationScale']
-        for sample in np.linspace(0, len(man['sourceIndices'])-1, min(n,len(man['sourceIndices']))).round().astype(int):
-            src = man['sourceIndices'][sample]
+        scale = placement["registrationScale"]
+        for sample in (
+            np.linspace(0, len(man["sourceIndices"]) - 1, min(n, len(man["sourceIndices"])))
+            .round()
+            .astype(int)
+        ):
+            src = man["sourceIndices"][sample]
             if src not in cams:
                 continue
-            cam = cams[src]; hw = tuple(cam['source_image_size'][::-1])
+            cam = cams[src]
+            hw = tuple(cam["source_image_size"][::-1])
             pred, gt = np.zeros(hw, bool), np.zeros(hw, bool)
-            for person in man['people']:
-                pid = person['id']; seq = seqs[pid]
-                mask = masks.get(person['track'],{}).get(sample)
-                if src not in seq['sourceIndices'] or mask is None:
+            for person in man["people"]:
+                pid = person["id"]
+                seq = seqs[pid]
+                mask = masks.get(person["track"], {}).get(sample)
+                if src not in seq["sourceIndices"] or mask is None:
                     continue
-                k = seq['sourceIndices'].index(src)
-                v = read_ply((wd/person['sequence']).parent/seq['frames'][k])
-                xyz = np.column_stack([v['x'],v['y'],v['z']])
-                sizes = np.column_stack([v['scale_0'],v['scale_1'],v['scale_2']])
-                pp = placement['perPerson'][pid]; size = pp.get('sizeScale',1)
-                offset = pp.get('offsetUnits', placement['offsetUnits'])[k]
-                xyz = xyz*size + (np.array(placement['pos0'])+pp['constantUnits']+np.array(offset))/scale
-                pred |= splat_silhouette(xyz,v['opacity'],sizes+np.log(size),cam,hw,30000)
-                gt |= np.array(Image.fromarray(mask).resize((hw[1],hw[0]),Image.Resampling.NEAREST))
+                k = seq["sourceIndices"].index(src)
+                v = read_ply((wd / person["sequence"]).parent / seq["frames"][k])
+                xyz = np.column_stack([v["x"], v["y"], v["z"]])
+                sizes = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
+                pp = placement["perPerson"][pid]
+                size = pp.get("sizeScale", 1)
+                offset = pp.get("offsetUnits", placement["offsetUnits"])[k]
+                xyz = (
+                    xyz * size
+                    + (np.array(placement["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
+                )
+                pred |= splat_silhouette(xyz, v["opacity"], sizes + np.log(size), cam, hw, 30000)
+                gt |= np.array(
+                    Image.fromarray(mask).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
+                )
             if gt.any():
-                ratios.append(float(pred.sum()/gt.sum())); overlaps.append(mask_iou(pred,gt))
-        area, overlap = float(np.mean(ratios)),float(np.mean(overlaps))
-        why=[]
-        if overlap < IOU_MIN: why.append(f'silhouette IoU {overlap:.3f} < {IOU_MIN}')
-        if not AREA_LO <= area <= AREA_HI: why.append(f'area ratio {area:.3f} outside {AREA_LO}-{AREA_HI}')
-        if len(ratios)<MIN_FRAMES: why.append(f'only {len(ratios)} measured frames')
-        return dict(ok=not why,n=len(ratios),iou=overlap,areaRatio=area,why=why,
-                    inSample=True,method='all tracked people, applied placement; CPU splat approximation; verify in live viewer')
+                ratios.append(float(pred.sum() / gt.sum()))
+                overlaps.append(mask_iou(pred, gt))
+        area, overlap = float(np.mean(ratios)), float(np.mean(overlaps))
+        why = []
+        if overlap < IOU_MIN:
+            why.append(f"silhouette IoU {overlap:.3f} < {IOU_MIN}")
+        if not AREA_LO <= area <= AREA_HI:
+            why.append(f"area ratio {area:.3f} outside {AREA_LO}-{AREA_HI}")
+        if len(ratios) < MIN_FRAMES:
+            why.append(f"only {len(ratios)} measured frames")
+        return dict(
+            ok=not why,
+            n=len(ratios),
+            iou=overlap,
+            areaRatio=area,
+            why=why,
+            inSample=True,
+            method="all tracked people, applied placement; CPU splat approximation; verify in live viewer",
+        )
     seq = json.loads((wd / "person" / "sequence.json").read_text())
     src = seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")
     rows = motion_audit.audit_world(wd, src, n)
     if len(rows) < MIN_FRAMES:
-        return dict(ok=False, n=len(rows),
-                    why=[f"only {len(rows)} frames had a usable person mask; {MIN_FRAMES} needed"])
+        return dict(
+            ok=False,
+            n=len(rows),
+            why=[f"only {len(rows)} frames had a usable person mask; {MIN_FRAMES} needed"],
+        )
     iou = float(np.mean([r["iou"] for r in rows]))
     area = float(np.mean([r["predPx"] / max(r["gtPx"], 1) for r in rows]))
     why = []
     if iou < IOU_MIN:
         why.append(f"silhouette IoU {iou:.3f} < {IOU_MIN}")
     if not (AREA_LO <= area <= AREA_HI):
-        why.append(f"area ratio {area:.3f} outside {AREA_LO}-{AREA_HI}: the avatar is the wrong "
-                   f"SIZE on him, which the in-frame fraction cannot see")
+        why.append(
+            f"area ratio {area:.3f} outside {AREA_LO}-{AREA_HI}: the avatar is the wrong "
+            f"SIZE on him, which the in-frame fraction cannot see"
+        )
     return dict(ok=not why, n=len(rows), iou=round(iou, 4), areaRatio=round(area, 4), why=why)
 
 
@@ -142,23 +201,32 @@ def check_camera_trace(place: dict) -> dict:
     """§4E."""
     t = ((place.get("surface") or {}).get("sizeCheck") or {}).get("cameraHeightTrace")
     if not t:
-        return dict(ok=False, why=["placement.json has no camera-height trace; re-run place_solve.py"])
+        return dict(
+            ok=False, why=["placement.json has no camera-height trace; re-run place_solve.py"]
+        )
     why = []
     if t["verdict"] == "drift":
-        why.append(f"the source camera climbs {t['endToEndSlopeM']:+.2f} m end to end: that is solve "
-                   f"drift, and a per-sample placement table absorbs it silently")
+        why.append(
+            f"the source camera climbs {t['endToEndSlopeM']:+.2f} m end to end: that is solve "
+            f"drift, and a per-sample placement table absorbs it silently"
+        )
     elif t["verdict"] == "flat out of band":
-        why.append(f"the trace is flat at {t['medianM']:.2f} m, outside 1.15-1.85 m: a scale error, "
-                   f"not drift")
-    return dict(ok=not why, verdict=t["verdict"], medianM=t["medianM"],
-                slopeM=t["endToEndSlopeM"], why=why)
+        why.append(
+            f"the trace is flat at {t['medianM']:.2f} m, outside 1.15-1.85 m: a scale error, "
+            f"not drift"
+        )
+    return dict(
+        ok=not why, verdict=t["verdict"], medianM=t["medianM"], slopeM=t["endToEndSlopeM"], why=why
+    )
 
 
 def check_noise_floor(place: dict) -> dict:
     """§4J."""
     nf = place.get("noiseFloor")
     if nf is None:
-        return dict(ok=False, why=["placement.json predates the noise-floor rule; re-run place_solve.py"])
+        return dict(
+            ok=False, why=["placement.json predates the noise-floor rule; re-run place_solve.py"]
+        )
     return dict(ok=bool(nf["ok"]), why=list(nf["refusals"]), contactCm=nf["contactCm"])
 
 
@@ -175,6 +243,7 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
     """
     import cv2
     import export_observation_confidence as eo
+
     wd = ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
     place = wd / "placement.json"
     if sidecar is None or not sidecar.exists():
@@ -189,8 +258,10 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
     xyz = eo.read_spz_xyz(world)
     alpha = np.ones(len(xyz), np.float32)
     if len(xyz) != len(conf):
-        return dict(ok=False, why=[f"{sidecar.name} has {len(conf):,} entries, {world.name} has "
-                                   f"{len(xyz):,} splats"])
+        return dict(
+            ok=False,
+            why=[f"{sidecar.name} has {len(conf):,} entries, {world.name} has {len(xyz):,} splats"],
+        )
     cams = json.loads((wd / "cameras.json").read_text())["cameras"]
     pick = [cams[i] for i in np.linspace(0, len(cams) - 1, frames).round().astype(int)]
     ins, outs = [], []
@@ -236,26 +307,40 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
     a, b = float(np.mean(ins)), float(np.mean(outs))
     why = []
     if a > OBS_IN_MASK_MAX:
-        why.append(f"mean confidence inside the walker's mask is {a:.2f} (want < {OBS_IN_MASK_MAX}): "
-                   f"his occlusion shadow is being sold to the viewer as observed geometry")
+        why.append(
+            f"mean confidence inside the walker's mask is {a:.2f} (want < {OBS_IN_MASK_MAX}): "
+            f"his occlusion shadow is being sold to the viewer as observed geometry"
+        )
     if b < OBS_TEXTURED_MIN:
-        why.append(f"mean confidence on non-person pixels is {b:.2f} (want > {OBS_TEXTURED_MIN}): "
-                   f"the sidecar is fading geometry the cameras did see")
+        why.append(
+            f"mean confidence on non-person pixels is {b:.2f} (want > {OBS_TEXTURED_MIN}): "
+            f"the sidecar is fading geometry the cameras did see"
+        )
     return dict(ok=not why, inMask=round(a, 3), outMask=round(b, 3), frames=len(ins), why=why)
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--clip", required=True)
     ap.add_argument("--tol", type=float, default=0.15)
     ap.add_argument("--obs-sidecar", type=Path)
-    ap.add_argument("--placement", type=Path,
-                    help="a placement.json to read instead of the one beside the person; use this to "
-                         "check a fresh solve without overwriting what the viewer ships")
-    ap.add_argument("--skip", default="", help="comma list of checks to skip (they then report 'skipped')")
-    ap.add_argument("--ruler-arg", action="append", default=[],
-                    help="passed through to world_ruler.py, e.g. --ruler-arg=--vlm")
+    ap.add_argument(
+        "--placement",
+        type=Path,
+        help="a placement.json to read instead of the one beside the person; use this to "
+        "check a fresh solve without overwriting what the viewer ships",
+    )
+    ap.add_argument(
+        "--skip", default="", help="comma list of checks to skip (they then report 'skipped')"
+    )
+    ap.add_argument(
+        "--ruler-arg",
+        action="append",
+        default=[],
+        help="passed through to world_ruler.py, e.g. --ruler-arg=--vlm",
+    )
     ap.add_argument("--json-out", type=Path)
     ap.add_argument("--no-gate", action="store_true", help="report without failing the run")
     a = ap.parse_args()
@@ -302,8 +387,10 @@ def main():
         a.json_out.write_text(json.dumps(doc, indent=1))
         print(f"  wrote {a.json_out}")
     if bad and not a.no_gate:
-        print(f"\nFAILED: {', '.join(bad)}. These are the checks that can see the error they are "
-              f"named for; do not ship this clip until they pass or the failure is understood.")
+        print(
+            f"\nFAILED: {', '.join(bad)}. These are the checks that can see the error they are "
+            f"named for; do not ship this clip until they pass or the failure is understood."
+        )
         return 3
     return 0
 

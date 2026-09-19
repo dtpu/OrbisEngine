@@ -2,6 +2,7 @@
 of the static scene, so drop their pixels before exporting points. SegFormer-b0 (ADE20K) on CPU
 or MPS, ~0.1 s per frame. ADE20K class 12 = person.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -19,12 +20,18 @@ def _load():
 
         proc = AutoImageProcessor.from_pretrained(MODEL_ID)
         model = SegformerForSemanticSegmentation.from_pretrained(MODEL_ID).eval()
-        dev = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        dev = (
+            torch.device("mps")
+            if torch.backends.mps.is_available()
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
         _bundle = (proc, model.to(dev), dev)
     return _bundle
 
 
-def people_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,), batch_size: int = 8) -> np.ndarray:
+def people_masks(
+    images: np.ndarray, dilate_px: int = 6, classes=(PERSON,), batch_size: int = 8
+) -> np.ndarray:
     """images uint8 (N,H,W,3) -> bool (N,H,W), True where a person is (dilated)."""
     import torch
     import torch.nn.functional as F
@@ -39,12 +46,15 @@ def people_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,), batc
             logits = model(**inputs).logits  # (b, C, h/4, w/4)
             # upsample one frame at a time: 150 classes at 1080p is ~1.2 GB per frame
             for b in range(len(batch)):
-                up = F.interpolate(logits[b:b + 1].float(), size=(H, W), mode="bilinear", align_corners=False)
+                up = F.interpolate(
+                    logits[b : b + 1].float(), size=(H, W), mode="bilinear", align_corners=False
+                )
                 lab = up.argmax(1).cpu().numpy()
                 out[i + b] = np.isin(lab, classes)[0]
     if dilate_px > 0:
         try:
             import cv2
+
             k = np.ones((2 * dilate_px + 1, 2 * dilate_px + 1), np.uint8)
             for i in range(N):
                 out[i] = cv2.dilate(out[i].astype(np.uint8), k).astype(bool)
@@ -64,13 +74,13 @@ def people_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,), batc
 # are scene - so a component of one of these classes is only taken when the residual says it
 # moved or it touches the person (something carried).
 MOVABLE = (
-    12,   # person
-    20,   # car
-    55,   # case  (suitcase, the survey's worst class)
-    76,   # boat
-    80,   # bus
-    83,   # truck
-    90,   # airplane
+    12,  # person
+    20,  # car
+    55,  # case  (suitcase, the survey's worst class)
+    76,  # boat
+    80,  # bus
+    83,  # truck
+    90,  # airplane
     102,  # van
     103,  # ship
     108,  # plaything
@@ -80,8 +90,8 @@ MOVABLE = (
     119,  # ball
     126,  # animal
     127,  # bicycle
-    14,   # door
-    58,   # screen door
+    14,  # door
+    58,  # screen door
 )
 
 # the subset a person can plausibly hold, wear or lead. Only these may enter the mask on contact
@@ -106,7 +116,9 @@ def segment_labels(images: np.ndarray, batch_size: int = 8) -> np.ndarray:
             inputs = proc(images=batch, return_tensors="pt").to(dev)
             logits = model(**inputs).logits
             for b in range(len(batch)):
-                up = F.interpolate(logits[b:b + 1].float(), size=(H, W), mode="bilinear", align_corners=False)
+                up = F.interpolate(
+                    logits[b : b + 1].float(), size=(H, W), mode="bilinear", align_corners=False
+                )
                 out[i + b] = up.argmax(1).cpu().numpy()[0].astype(np.uint8)
     return out
 
@@ -115,6 +127,7 @@ def _dilate(mask: np.ndarray, px: int) -> np.ndarray:
     if px <= 0:
         return mask
     import cv2
+
     k = np.ones((2 * px + 1, 2 * px + 1), np.uint8)
     return cv2.dilate(mask.astype(np.uint8), k).astype(bool)
 
@@ -122,6 +135,7 @@ def _dilate(mask: np.ndarray, px: int) -> np.ndarray:
 def _homography(gi: np.ndarray, gj: np.ndarray, ignore: np.ndarray):
     """j -> i, from LK tracks seeded outside `ignore`. None if it cannot be estimated."""
     import cv2
+
     ok = (~ignore).astype(np.uint8) * 255
     pts = cv2.goodFeaturesToTrack(gj, maxCorners=900, qualityLevel=0.01, minDistance=7, mask=ok)
     if pts is None or len(pts) < 30:
@@ -136,13 +150,28 @@ def _homography(gi: np.ndarray, gj: np.ndarray, ignore: np.ndarray):
     return Hm, int(inl.sum()) if inl is not None else 0
 
 
-def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,), batch_size: int = 8,
-                        work_px: int = 640, gaps=(2, 5), resid_k: float = 4.0, resid_floor: float = 6.0,
-                        resid_norm: float = 2.0, grad_floor: float = 8.0,
-                        open_px: int = 2, min_area_frac: float = 3e-4, grow_px: int | None = None,
-                        shadow: bool = True, shadow_radius_frac: float = 1.0, max_comp_frac: float = 0.12,
-                        max_added_frac: float = 0.05, extra_classes: bool = True,
-                        warp_fn=None, far_px: int = 60) -> dict:
+def moved_content_masks(
+    images: np.ndarray,
+    dilate_px: int = 6,
+    classes=(PERSON,),
+    batch_size: int = 8,
+    work_px: int = 640,
+    gaps=(2, 5),
+    resid_k: float = 4.0,
+    resid_floor: float = 6.0,
+    resid_norm: float = 2.0,
+    grad_floor: float = 8.0,
+    open_px: int = 2,
+    min_area_frac: float = 3e-4,
+    grow_px: int | None = None,
+    shadow: bool = True,
+    shadow_radius_frac: float = 1.0,
+    max_comp_frac: float = 0.12,
+    max_added_frac: float = 0.05,
+    extra_classes: bool = True,
+    warp_fn=None,
+    far_px: int = 60,
+) -> dict:
     """images uint8 (N,H,W,3) -> {"person", "moved", "residual", "stats"}.
 
     "person" is exactly what people_masks returns today, so a caller can hand the person layer
@@ -175,11 +204,21 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
     w = min(work_px, W)
     h = max(1, int(round(H * w / W)))
     sw, sh = w / W, h / H
-    small = np.stack([cv2.resize(images[i], (w, h), interpolation=cv2.INTER_AREA) for i in range(N)])
+    small = np.stack(
+        [cv2.resize(images[i], (w, h), interpolation=cv2.INTER_AREA) for i in range(N)]
+    )
     gray = np.stack([cv2.cvtColor(small[i], cv2.COLOR_RGB2GRAY) for i in range(N)])
-    pers_s = np.stack([cv2.resize(person[i].astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
-                       for i in range(N)])
-    lab_s = np.stack([cv2.resize(labels[i], (w, h), interpolation=cv2.INTER_NEAREST) for i in range(N)])
+    pers_s = np.stack(
+        [
+            cv2.resize(person[i].astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(
+                bool
+            )
+            for i in range(N)
+        ]
+    )
+    lab_s = np.stack(
+        [cv2.resize(labels[i], (w, h), interpolation=cv2.INTER_NEAREST) for i in range(N)]
+    )
     # never seed the camera-motion fit on something that can move: a tracked suitcase filling the
     # frame will otherwise win the RANSAC and the fit locks onto the object, not the scene
     seed_out = np.stack([pers_s[i] | np.isin(lab_s[i], UNSTABLE) for i in range(N)])
@@ -196,8 +235,8 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
     INF = np.float32(1e9)
     for i in range(N):
         gi = gray[i].astype(np.float32)
-        best = np.full((h, w), -1.0, np.float32)   # -1 = never measured
-        ref = small[i].astype(np.float32)          # brightest warped neighbour = unshadowed background
+        best = np.full((h, w), -1.0, np.float32)  # -1 = never measured
+        ref = small[i].astype(np.float32)  # brightest warped neighbour = unshadowed background
         ref_lum = np.full((h, w), -1.0, np.float32)
         fits = 0
         for gap in gaps:
@@ -215,8 +254,12 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
                     if Hm is None:
                         continue
                     fits += 1
-                    wg = cv2.warpPerspective(gray[j].astype(np.float32), Hm, (w, h), flags=cv2.INTER_LINEAR)
-                    wc = cv2.warpPerspective(small[j].astype(np.float32), Hm, (w, h), flags=cv2.INTER_LINEAR)
+                    wg = cv2.warpPerspective(
+                        gray[j].astype(np.float32), Hm, (w, h), flags=cv2.INTER_LINEAR
+                    )
+                    wc = cv2.warpPerspective(
+                        small[j].astype(np.float32), Hm, (w, h), flags=cv2.INTER_LINEAR
+                    )
                     valid_j = cv2.warpPerspective(np.ones((h, w), np.float32), Hm, (w, h)) > 0.99
                 d = np.abs(gi - wg)
                 # MIN over the two sides cancels one-sided disocclusion: background revealed at i
@@ -233,9 +276,22 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
         ref_ok = ref_lum >= 0
         if not valid.any():
             moved[i] = person[i]
-            stats.append(dict(frame=i, personPx=int(person[i].sum()), movedPx=int(person[i].sum()),
-                              residPx=0, classPx=0, shadowPx=0, addedPx=0, addedFarPx=0,
-                              addedFrac=0.0, rejected=False, homographies=fits, thresh=0.0))
+            stats.append(
+                dict(
+                    frame=i,
+                    personPx=int(person[i].sum()),
+                    movedPx=int(person[i].sum()),
+                    residPx=0,
+                    classPx=0,
+                    shadowPx=0,
+                    addedPx=0,
+                    addedFarPx=0,
+                    addedFrac=0.0,
+                    rejected=False,
+                    homographies=fits,
+                    thresh=0.0,
+                )
+            )
             continue
         r = np.where(valid, np.maximum(best, 0), 0).astype(np.float32)
         noise = float(np.median(r[valid])) * 1.4826 + 1e-3
@@ -244,8 +300,12 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
         # local image gradient: wind in foliage and any near, high-contrast edge light up. Dividing
         # by the local gradient separates misalignment from real change - a cast shadow on asphalt
         # is a large residual over almost no gradient, moving leaves are the reverse.
-        gm = cv2.GaussianBlur(np.abs(cv2.Sobel(gi, cv2.CV_32F, 1, 0, ksize=3)) +
-                              np.abs(cv2.Sobel(gi, cv2.CV_32F, 0, 1, ksize=3)), (0, 0), 2.0)
+        gm = cv2.GaussianBlur(
+            np.abs(cv2.Sobel(gi, cv2.CV_32F, 1, 0, ksize=3))
+            + np.abs(cv2.Sobel(gi, cv2.CV_32F, 0, 1, ksize=3)),
+            (0, 0),
+            2.0,
+        )
         raw = (r > thr) & (r > resid_norm * (gm + grad_floor)) & valid
         raw = cv2.morphologyEx(raw.astype(np.uint8), cv2.MORPH_OPEN, open_k)
         raw = cv2.morphologyEx(raw, cv2.MORPH_CLOSE, open_k)
@@ -261,8 +321,10 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
         if extra_classes:
             cand = np.isin(lab_s[i], MOVABLE) & ~pers_s[i]
             if cand.any():
-                contact = cv2.dilate(pers_s[i].astype(np.uint8),
-                                     np.ones((2 * contact_s + 1, 2 * contact_s + 1), np.uint8)).astype(bool)
+                contact = cv2.dilate(
+                    pers_s[i].astype(np.uint8),
+                    np.ones((2 * contact_s + 1, 2 * contact_s + 1), np.uint8),
+                ).astype(bool)
                 n2, l2, s2, _ = cv2.connectedComponentsWithStats(cand.astype(np.uint8), 8)
                 for c in range(1, n2):
                     comp = l2 == c
@@ -273,8 +335,12 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
                     # carried: a movable class in contact with the person. An umbrella is class
                     # "tent" and never overlaps the body by much, so an overlap test misses it and
                     # a contact test finds it. Size-capped, or a wall-sized "door" comes in too.
-                    carried = (lab_s[i][comp][0] in CARRIABLE and (comp & contact).sum() >= 25
-                               and a <= max_comp_frac * w * h and a <= 1.5 * max(pers_s[i].sum(), 1))
+                    carried = (
+                        lab_s[i][comp][0] in CARRIABLE
+                        and (comp & contact).sum() >= 25
+                        and a <= max_comp_frac * w * h
+                        and a <= 1.5 * max(pers_s[i].sum(), 1)
+                    )
                     if it_moved or carried:
                         extra |= comp
 
@@ -285,7 +351,8 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
             # near subject's own height would swallow the shot around the distant ones
             np_, lp, sp, _ = cv2.connectedComponentsWithStats(pers_s[i].astype(np.uint8), 8)
             dist, near_lab = cv2.distanceTransformWithLabels(
-                (~pers_s[i]).astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_CCOMP)
+                (~pers_s[i]).astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_CCOMP
+            )
             # near_lab indexes components of the ZERO set (the people); map each to its own radius
             rad_of = np.zeros(near_lab.max() + 2, np.float32)
             for c in range(1, np_):
@@ -293,7 +360,9 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
                     continue
                 l = near_lab[lp == c]
                 if len(l):
-                    rad_of[np.bincount(l.ravel()).argmax()] = max(8.0, shadow_radius_frac * sp[c, cv2.CC_STAT_HEIGHT])
+                    rad_of[np.bincount(l.ravel()).argmax()] = max(
+                        8.0, shadow_radius_frac * sp[c, cv2.CC_STAT_HEIGHT]
+                    )
             near = dist <= rad_of[np.clip(near_lab, 0, len(rad_of) - 1)]
             cur = small[i].astype(np.float32) + 4.0
             rf = ref + 4.0
@@ -328,15 +397,32 @@ def moved_content_masks(images: np.ndarray, dilate_px: int = 6, classes=(PERSON,
             resid = np.zeros_like(resid)
             shadow_m = np.zeros_like(shadow_m)
         add_s = cv2.dilate((resid | extra | shadow_m).astype(np.uint8), grow_k).astype(bool)
-        add_full = cv2.resize(add_s.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST).astype(bool)
+        add_full = cv2.resize(
+            add_s.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST
+        ).astype(bool)
         moved[i] = person[i] | add_full
         added = moved[i] & ~person[i]
-        far = added & ~cv2.resize(cv2.dilate(pers_s[i].astype(np.uint8),
-                                             np.ones((2 * far_s + 1, 2 * far_s + 1), np.uint8)),
-                                  (W, H), interpolation=cv2.INTER_NEAREST).astype(bool)
-        stats.append(dict(frame=i, personPx=int(person[i].sum()), movedPx=int(moved[i].sum()),
-                          residPx=int(resid.sum() / (sw * sh)), classPx=int(extra.sum() / (sw * sh)),
-                          shadowPx=int(shadow_m.sum() / (sw * sh)), addedPx=int(added.sum()),
-                          addedFarPx=int(far.sum()), addedFrac=float(added.mean()),
-                          rejected=bool(rejected), homographies=fits, thresh=float(thr)))
+        far = added & ~cv2.resize(
+            cv2.dilate(
+                pers_s[i].astype(np.uint8), np.ones((2 * far_s + 1, 2 * far_s + 1), np.uint8)
+            ),
+            (W, H),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(bool)
+        stats.append(
+            dict(
+                frame=i,
+                personPx=int(person[i].sum()),
+                movedPx=int(moved[i].sum()),
+                residPx=int(resid.sum() / (sw * sh)),
+                classPx=int(extra.sum() / (sw * sh)),
+                shadowPx=int(shadow_m.sum() / (sw * sh)),
+                addedPx=int(added.sum()),
+                addedFarPx=int(far.sum()),
+                addedFrac=float(added.mean()),
+                rejected=bool(rejected),
+                homographies=fits,
+                thresh=float(thr),
+            )
+        )
     return dict(person=person, moved=moved, residual=resid_out, stats=stats)

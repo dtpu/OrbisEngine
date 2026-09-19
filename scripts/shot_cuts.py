@@ -16,12 +16,14 @@ Two checks live here, one before the spend and one after the solve:
   --poses DIR    the teleport guard, run on a pi3x output directory after the solve. Catches a cut
                  too soft for the scene score, and solve failure generally.
 
-  python3 scripts/shot_cuts.py --video public/clips/x.mp4 --json cuts.json
-  python3 scripts/shot_cuts.py --poses .context/run/x/pi3x            # 3 = teleport, 4 = unchecked
+  uv run --locked --group inference python scripts/shot_cuts.py --video public/clips/x.mp4 --json cuts.json
+  uv run --locked --group inference python scripts/shot_cuts.py --poses .context/run/x/pi3x            # 3 = teleport, 4 = unchecked
 """
+
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse, json, re, shutil, subprocess, sys, tempfile
@@ -70,16 +72,36 @@ TELEPORT_SPIKE = 8.0
 
 
 def ffprobe(video: Path) -> dict:
-    s = json.loads(subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=width,height,avg_frame_rate,nb_frames,duration", "-show_entries",
-         "format=duration", "-of", "json", str(video)],
-        check=True, stdout=subprocess.PIPE).stdout)
+    s = json.loads(
+        subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,avg_frame_rate,nb_frames,duration",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(video),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+    )
     st = s["streams"][0]
     num, den = st["avg_frame_rate"].split("/")
     dur = float(st.get("duration") or s.get("format", {}).get("duration") or 0)
-    return dict(width=int(st["width"]), height=int(st["height"]), fps=float(num) / float(den),
-                frames=int(st.get("nb_frames") or 0), duration=dur)
+    return dict(
+        width=int(st["width"]),
+        height=int(st["height"]),
+        fps=float(num) / float(den),
+        frames=int(st.get("nb_frames") or 0),
+        duration=dur,
+    )
 
 
 # ---------------------------------------------------------------- cut detection
@@ -90,9 +112,25 @@ def scene_scores(video: Path, threshold: float, width: int = 320) -> list[tuple[
     pass is several times cheaper than a full-resolution one.
     """
     p = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(video), "-an", "-sn",
-         "-vf", f"scale={width}:-2,select='gt(scene,{threshold})',metadata=print:file=-",
-         "-f", "null", "-"], check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-an",
+            "-sn",
+            "-vf",
+            f"scale={width}:-2,select='gt(scene,{threshold})',metadata=print:file=-",
+            "-f",
+            "null",
+            "-",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
     out, t = [], None
     for line in p.stdout.splitlines():
         m = re.search(r"pts_time:([0-9.]+)", line)
@@ -111,9 +149,29 @@ def scene_scores(video: Path, threshold: float, width: int = 320) -> list[tuple[
 
 def _gray(video: Path, t: float, width: int = 320):
     import cv2, numpy as np
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(t, 0):.4f}", "-i", str(video),
-                          "-frames:v", "1", "-vf", f"scale={width}:-2", "-f", "image2pipe",
-                          "-vcodec", "png", "-"], check=True, stdout=subprocess.PIPE).stdout
+
+    raw = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            f"{max(t, 0):.4f}",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-vf",
+            f"scale={width}:-2",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
     return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_GRAYSCALE)
 
 
@@ -124,6 +182,7 @@ def match_across(video: Path, t: float, fps: float) -> float | None:
     Across a cut there is nothing to pair with, whatever the two shots look like as a whole.
     """
     import cv2
+
     a, b = _gray(video, t - 1.5 / max(fps, 1e-3)), _gray(video, t)
     if a is None or b is None:
         return None
@@ -131,13 +190,17 @@ def match_across(video: Path, t: float, fps: float) -> float | None:
     ka, da = orb.detectAndCompute(a, None)
     kb, db = orb.detectAndCompute(b, None)
     if da is None or db is None or len(ka) < 30 or len(kb) < 30:
-        return None                              # too featureless to judge; falls back to the score
+        return None  # too featureless to judge; falls back to the score
     m = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(da, db)
     return len([x for x in m if x.distance < 48]) / min(len(ka), len(kb))
 
 
-def detect_cuts(video: Path, threshold: float = SCENE_CANDIDATE, fps: float | None = None,
-                certain: float = SCENE_CERTAIN) -> list[dict]:
+def detect_cuts(
+    video: Path,
+    threshold: float = SCENE_CANDIDATE,
+    fps: float | None = None,
+    certain: float = SCENE_CERTAIN,
+) -> list[dict]:
     """Every candidate frame, each marked cut or not. See the threshold comment at the top.
 
     The rejected candidates are returned too: a frame that scored 0.30 and was cleared by the
@@ -156,9 +219,13 @@ def detect_cuts(video: Path, threshold: float = SCENE_CANDIDATE, fps: float | No
             m = rec["match"]
             rec["match"] = None if m is None else round(m, 3)
             rec["cut"] = m is not None and m < CUT_MATCH_MAX
-            rec["why"] = ("scene score confirmed by feature match" if rec["cut"] else
-                          f"content carries across it ({rec['match']} of features match)"
-                          if m is not None else "too featureless to confirm; not called a cut")
+            rec["why"] = (
+                "scene score confirmed by feature match"
+                if rec["cut"]
+                else f"content carries across it ({rec['match']} of features match)"
+                if m is not None
+                else "too featureless to confirm; not called a cut"
+            )
         out.append(rec)
     return out
 
@@ -168,19 +235,43 @@ def shots_from_cuts(cuts: list[dict], duration: float, min_seconds: float) -> li
     shots = []
     for i in range(len(bounds) - 1):
         a, b = bounds[i], bounds[i + 1]
-        shots.append(dict(index=i, start=round(a, 3), end=round(b, 3), seconds=round(b - a, 3),
-                          tooShort=(b - a) < min_seconds))
+        shots.append(
+            dict(
+                index=i,
+                start=round(a, 3),
+                end=round(b, 3),
+                seconds=round(b - a, 3),
+                tooShort=(b - a) < min_seconds,
+            )
+        )
     return shots
 
 
 # ---------------------------------------------------------------- shot scoring
 def extract(video: Path, shot: dict, out: Path, n: int, width: int) -> list[Path]:
-    shutil.rmtree(out, ignore_errors=True); out.mkdir(parents=True)
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
     fps = n / max(shot["seconds"], 1e-3)
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{shot['start']:.3f}",
-                    "-t", f"{shot['seconds']:.3f}", "-i", str(video),
-                    "-vf", f"fps={fps:.4f},scale={width}:-2", "-q:v", "3", str(out / "f_%04d.jpg")],
-                   check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{shot['start']:.3f}",
+            "-t",
+            f"{shot['seconds']:.3f}",
+            "-i",
+            str(video),
+            "-vf",
+            f"fps={fps:.4f},scale={width}:-2",
+            "-q:v",
+            "3",
+            str(out / "f_%04d.jpg"),
+        ],
+        check=True,
+    )
     return sorted(out.glob("*.jpg"))
 
 
@@ -191,14 +282,21 @@ def person_stats(frames: list[Path], n: int = 3) -> dict:
     fraction of frame height, and whether that person's box clears the frame edges (full body).
     """
     import numpy as np
+
     try:
         import torch
-        from torchvision.models.detection import maskrcnn_resnet50_fpn_v2, MaskRCNN_ResNet50_FPN_V2_Weights
-    except Exception as e:                      # scoring degrades, it does not fail
+        from torchvision.models.detection import (
+            maskrcnn_resnet50_fpn_v2,
+            MaskRCNN_ResNet50_FPN_V2_Weights,
+        )
+    except Exception as e:  # scoring degrades, it does not fail
         return dict(available=False, reason=f"{type(e).__name__}: {e}")
     from PIL import Image
+
     net = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval()
-    pick = [frames[round(k * (len(frames) - 1) / max(n - 1, 1))] for k in range(min(n, len(frames)))]
+    pick = [
+        frames[round(k * (len(frames) - 1) / max(n - 1, 1))] for k in range(min(n, len(frames)))
+    ]
     counts, heights, full = [], [], []
     for f in pick:
         rgb = np.asarray(Image.open(f).convert("RGB"))
@@ -206,8 +304,11 @@ def person_stats(frames: list[Path], n: int = 3) -> dict:
         x = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255
         with torch.no_grad():
             r = net([x])[0]
-        boxes = [[float(v) for v in r["boxes"][i].numpy()] for i in range(len(r["labels"]))
-                 if int(r["labels"][i]) == 1 and float(r["scores"][i]) > 0.7]
+        boxes = [
+            [float(v) for v in r["boxes"][i].numpy()]
+            for i in range(len(r["labels"]))
+            if int(r["labels"][i]) == 1 and float(r["scores"][i]) > 0.7
+        ]
         counts.append(len(boxes))
         if boxes:
             x0, y0, x1, y1 = max(boxes, key=lambda b: b[3] - b[1])
@@ -215,16 +316,22 @@ def person_stats(frames: list[Path], n: int = 3) -> dict:
             # Full body = the box does not run off the bottom or the top of the frame. A subject
             # cropped at the waist gives LHM nothing to build legs from.
             full.append(y0 > 0.01 * h and y1 < 0.99 * h)
-    counts.sort(); heights.sort()
-    return dict(available=True, frames=len(pick), peopleMedian=counts[len(counts) // 2] if counts else 0,
-                peopleMax=max(counts) if counts else 0,
-                personHeightFraction=round(heights[len(heights) // 2], 3) if heights else 0.0,
-                fullBody=bool(full and sum(full) > len(full) / 2))
+    counts.sort()
+    heights.sort()
+    return dict(
+        available=True,
+        frames=len(pick),
+        peopleMedian=counts[len(counts) // 2] if counts else 0,
+        peopleMax=max(counts) if counts else 0,
+        personHeightFraction=round(heights[len(heights) // 2], 3) if heights else 0.0,
+        fullBody=bool(full and sum(full) > len(full) / 2),
+    )
 
 
 def camera_stats(frames_dir: Path) -> dict:
-    sys.path.insert(0, str(ROOT / "worker/experiments"))
+    sys.path.insert(0, str(ROOT / "worker/stages"))
     from parallax_probe import probe as parallax_probe
+
     try:
         return parallax_probe(frames_dir, gaps=(2, 8, 16), pairs_per_gap=6)
     except Exception as e:
@@ -240,7 +347,8 @@ def score_shot(shot: dict) -> tuple[float, list[str]]:
     """
     par, per, why = shot.get("camera") or {}, shot.get("person") or {}, []
     translation = {"has-parallax": 1.0, "inconclusive": 0.3, "rotation-only": 0.0}.get(
-        par.get("verdict"), 0.3)
+        par.get("verdict"), 0.3
+    )
     why.append(f"camera {par.get('verdict', '?')}")
     if per.get("available"):
         n = per["peopleMedian"]
@@ -249,8 +357,10 @@ def score_shot(shot: dict) -> tuple[float, list[str]]:
         # Pixel height: 0.25 of the frame is about the smallest the avatar chain has worked from,
         # 0.7 is a comfortable full figure. Taller than that is a close-up and scores no higher.
         px = min(max((per["personHeightFraction"] - 0.25) / 0.45, 0.0), 1.0)
-        why.append(f"{n} person(s), {'full body' if per['fullBody'] else 'cropped'}, "
-                   f"{per['personHeightFraction']:.2f} of frame height")
+        why.append(
+            f"{n} person(s), {'full body' if per['fullBody'] else 'cropped'}, "
+            f"{per['personHeightFraction']:.2f} of frame height"
+        )
     else:
         one = body = px = 0.5
         why.append("no person detector available")
@@ -261,8 +371,14 @@ def score_shot(shot: dict) -> tuple[float, list[str]]:
     return round(score, 4), why
 
 
-def score_shots(video: Path, shots: list[dict], work: Path, frames: int = 16,
-                width: int = 640, people: bool = True) -> None:
+def score_shots(
+    video: Path,
+    shots: list[dict],
+    work: Path,
+    frames: int = 16,
+    width: int = 640,
+    people: bool = True,
+) -> None:
     """Fill in camera/person/score on each shot that is long enough to be a candidate."""
     candidates = [s for s in shots if not s["tooShort"]]
     candidates.sort(key=lambda s: -s["seconds"])
@@ -281,16 +397,30 @@ def choose(shots: list[dict]) -> dict | None:
     return max(scored, key=lambda s: s["score"]) if scored else None
 
 
-def cut_report(video: Path, threshold: float = SCENE_CANDIDATE,
-               min_seconds: float = MIN_SHOT_SECONDS, work: Path | None = None,
-               score: bool = True, people: bool = True) -> dict:
+def cut_report(
+    video: Path,
+    threshold: float = SCENE_CANDIDATE,
+    min_seconds: float = MIN_SHOT_SECONDS,
+    work: Path | None = None,
+    score: bool = True,
+    people: bool = True,
+) -> dict:
     info = ffprobe(video)
     candidates = detect_cuts(video, threshold, info["fps"])
     cuts = [c for c in candidates if c["cut"]]
     shots = shots_from_cuts(cuts, info["duration"], min_seconds)
-    doc = dict(video=str(video), source=info, threshold=threshold, minSeconds=min_seconds,
-               cuts=cuts, cutCount=len(cuts), cleared=[c for c in candidates if not c["cut"]],
-               shots=shots, shotCount=len(shots), continuous=not cuts)
+    doc = dict(
+        video=str(video),
+        source=info,
+        threshold=threshold,
+        minSeconds=min_seconds,
+        cuts=cuts,
+        cutCount=len(cuts),
+        cleared=[c for c in candidates if not c["cut"]],
+        shots=shots,
+        shotCount=len(shots),
+        continuous=not cuts,
+    )
     if cuts and score:
         tmp = None
         if work is None:
@@ -319,9 +449,31 @@ def trim(video: Path, shot: dict, out: Path, fps: float) -> Path:
     f = 1.0 / max(fps, 1e-3)
     start, dur = shot["start"] + 0.5 * f, max(shot["seconds"] - 2.0 * f, 0.1)
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{start:.4f}", "-t", f"{dur:.4f}",
-                    "-i", str(video), "-an", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast",
-                    "-pix_fmt", "yuv420p", str(out)], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{start:.4f}",
+            "-t",
+            f"{dur:.4f}",
+            "-i",
+            str(video),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "16",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],
+        check=True,
+    )
     return out
 
 
@@ -329,6 +481,7 @@ def trim(video: Path, shot: dict, out: Path, fps: float) -> Path:
 def scene_depth(pi3x: Path) -> float | None:
     """Median distance from the first anchor camera to its own points: the scene's own scale."""
     import numpy as np
+
     f = pi3x / "anchors.npz"
     if not f.exists():
         return None
@@ -346,6 +499,7 @@ def teleport_check(pi3x: Path) -> dict:
     downstream places a person against these poses.
     """
     import numpy as np
+
     cj = pi3x / "cameras.json"
     if not cj.exists():
         return dict(ok=None, reason=f"{cj} does not exist; the solve wrote no cameras")
@@ -360,45 +514,74 @@ def teleport_check(pi3x: Path) -> dict:
     depth = scene_depth(pi3x)
     if not depth:
         return dict(ok=None, reason="no anchors.npz, so the scene has no scale to measure against")
-    speed = steps / dt / depth                       # scene depths per second
+    speed = steps / dt / depth  # scene depths per second
     typical = max(float(np.median(steps)), 1e-9)
     spike = steps / typical
     i = int(np.argmax(speed))
-    worst = dict(afterCamera=i, frame=cams[i + 1].get("sourceIndex", i + 1),
-                 timeSeconds=round(float(T[i + 1]), 3), stepUnits=round(float(steps[i]), 4),
-                 sceneDepthUnits=round(depth, 3), depthsPerSecond=round(float(speed[i]), 2),
-                 spikeOverMedian=round(float(spike[i]), 2))
-    over = [int(k) for k in np.where((speed >= TELEPORT_DEPTHS_PER_SEC) & (spike >= TELEPORT_SPIKE))[0]]
+    worst = dict(
+        afterCamera=i,
+        frame=cams[i + 1].get("sourceIndex", i + 1),
+        timeSeconds=round(float(T[i + 1]), 3),
+        stepUnits=round(float(steps[i]), 4),
+        sceneDepthUnits=round(depth, 3),
+        depthsPerSecond=round(float(speed[i]), 2),
+        spikeOverMedian=round(float(spike[i]), 2),
+    )
+    over = [
+        int(k) for k in np.where((speed >= TELEPORT_DEPTHS_PER_SEC) & (spike >= TELEPORT_SPIKE))[0]
+    ]
     bad = bool(over)
-    return dict(ok=not bad, cameras=len(cams), medianStepUnits=round(typical, 4),
-                worst=worst, teleports=len(over),
-                teleportFrames=[cams[k + 1].get("sourceIndex", k + 1) for k in over[:12]],
-                limits=dict(depthsPerSecond=TELEPORT_DEPTHS_PER_SEC, spikeOverMedian=TELEPORT_SPIKE),
-                message=None if not bad else (
-                    f"camera teleport at frame {worst['frame']} (t={worst['timeSeconds']:.2f}s): it "
-                    f"moves {worst['stepUnits']:.3f} units in {round(float(dt[i]), 3)} s through a "
-                    f"scene {depth:.2f} units deep -- {worst['depthsPerSecond']:.1f} scene depths per "
-                    f"second, {worst['spikeOverMedian']:.0f}x the median step. No camera did "
-                    f"that ({len(over)} step(s) like it). Either there is a cut the scene-score detector missed at that frame, or "
-                    f"the solve failed to register across it. Trim to one continuous shot "
-                    f"(scripts/shot_cuts.py --video <clip>) or re-solve; do not place people "
-                    f"against these poses."))
+    return dict(
+        ok=not bad,
+        cameras=len(cams),
+        medianStepUnits=round(typical, 4),
+        worst=worst,
+        teleports=len(over),
+        teleportFrames=[cams[k + 1].get("sourceIndex", k + 1) for k in over[:12]],
+        limits=dict(depthsPerSecond=TELEPORT_DEPTHS_PER_SEC, spikeOverMedian=TELEPORT_SPIKE),
+        message=None
+        if not bad
+        else (
+            f"camera teleport at frame {worst['frame']} (t={worst['timeSeconds']:.2f}s): it "
+            f"moves {worst['stepUnits']:.3f} units in {round(float(dt[i]), 3)} s through a "
+            f"scene {depth:.2f} units deep -- {worst['depthsPerSecond']:.1f} scene depths per "
+            f"second, {worst['spikeOverMedian']:.0f}x the median step. No camera did "
+            f"that ({len(over)} step(s) like it). Either there is a cut the scene-score detector missed at that frame, or "
+            f"the solve failed to register across it. Trim to one continuous shot "
+            f"(scripts/shot_cuts.py --video <clip>) or re-solve; do not place people "
+            f"against these poses."
+        ),
+    )
 
 
 # ---------------------------------------------------------------- cli
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--video", type=Path)
-    ap.add_argument("--poses", type=Path, help="a pi3x output directory (cameras.json + anchors.npz)")
-    ap.add_argument("--threshold", type=float, default=SCENE_CANDIDATE,
-                    help="scene score above which a frame is a candidate cut")
+    ap.add_argument(
+        "--poses", type=Path, help="a pi3x output directory (cameras.json + anchors.npz)"
+    )
+    ap.add_argument(
+        "--threshold",
+        type=float,
+        default=SCENE_CANDIDATE,
+        help="scene score above which a frame is a candidate cut",
+    )
     ap.add_argument("--min-seconds", type=float, default=MIN_SHOT_SECONDS)
     ap.add_argument("--work", type=Path, help="keep the per-shot frames here instead of a temp dir")
-    ap.add_argument("--no-score", action="store_true", help="detect cuts only, do not rank the shots")
+    ap.add_argument(
+        "--no-score", action="store_true", help="detect cuts only, do not rank the shots"
+    )
     ap.add_argument("--no-people", action="store_true", help="skip the Mask R-CNN pass")
     ap.add_argument("--json", type=Path)
-    ap.add_argument("--report", type=Path, help="with --trim: an earlier --json report to trim from")
-    ap.add_argument("--trim", type=int, metavar="INDEX", help="write shot INDEX of --report to --out")
+    ap.add_argument(
+        "--report", type=Path, help="with --trim: an earlier --json report to trim from"
+    )
+    ap.add_argument(
+        "--trim", type=int, metavar="INDEX", help="write shot INDEX of --report to --out"
+    )
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
     if a.trim is not None:
@@ -406,8 +589,10 @@ def main():
             sys.exit("--trim needs --report and --out")
         doc = json.loads(a.report.read_text())
         shot = next(s for s in doc["shots"] if s["index"] == a.trim)
-        print(f"shot {a.trim}: {shot['start']:.3f}-{shot['end']:.3f} s -> "
-              f"{trim(Path(doc['video']), shot, a.out, doc['source']['fps'])}")
+        print(
+            f"shot {a.trim}: {shot['start']:.3f}-{shot['end']:.3f} s -> "
+            f"{trim(Path(doc['video']), shot, a.out, doc['source']['fps'])}"
+        )
         return 0
     if not (a.video or a.poses):
         sys.exit("--video or --poses")
@@ -419,15 +604,19 @@ def main():
             # An unchecked solve is not a passed solve. hp33 -- the clip this guard was written for
             # -- never wrote cameras.json, so returning 0 here passed the exact case it was built to
             # catch. "I could not look" exits 4, distinct from 3 = "I looked and it teleported".
-            print(f"POSES NOT CHECKED: {doc['reason']}. This is a FAILURE, not a pass: the solve "
-                  f"cannot be shown to be a continuous camera path, so nothing may be placed "
-                  f"against it. Re-solve, or point --poses at a directory that has cameras.json "
-                  f"and anchors.npz.")
+            print(
+                f"POSES NOT CHECKED: {doc['reason']}. This is a FAILURE, not a pass: the solve "
+                f"cannot be shown to be a continuous camera path, so nothing may be placed "
+                f"against it. Re-solve, or point --poses at a directory that has cameras.json "
+                f"and anchors.npz."
+            )
             return 4
         w = doc["worst"]
-        print(f"{doc['cameras']} cameras, median step {doc['medianStepUnits']} u, worst "
-              f"{w['stepUnits']} u at frame {w['frame']} = {w['depthsPerSecond']} scene depths/s, "
-              f"{w['spikeOverMedian']}x median")
+        print(
+            f"{doc['cameras']} cameras, median step {doc['medianStepUnits']} u, worst "
+            f"{w['stepUnits']} u at frame {w['frame']} = {w['depthsPerSecond']} scene depths/s, "
+            f"{w['spikeOverMedian']}x median"
+        )
         if not doc["ok"]:
             print("TELEPORT: " + doc["message"])
             return 3
@@ -442,11 +631,15 @@ def main():
     if doc["continuous"]:
         print(f"one continuous shot, {doc['source']['duration']:.2f} s")
         return 0
-    print(f"{doc['cutCount']} cut(s), {doc['shotCount']} shots in {doc['source']['duration']:.2f} s")
+    print(
+        f"{doc['cutCount']} cut(s), {doc['shotCount']} shots in {doc['source']['duration']:.2f} s"
+    )
     for s in doc["shots"]:
         tag = "too short" if s["tooShort"] else s.get("skipped", f"score {s.get('score', '-')}")
-        print(f"  shot {s['index']:2d}  {s['start']:7.2f}-{s['end']:7.2f} s  {s['seconds']:6.2f} s  "
-              f"{tag}" + (f"  ({'; '.join(s['why'])})" if s.get("why") else ""))
+        print(
+            f"  shot {s['index']:2d}  {s['start']:7.2f}-{s['end']:7.2f} s  {s['seconds']:6.2f} s  "
+            f"{tag}" + (f"  ({'; '.join(s['why'])})" if s.get("why") else "")
+        )
     if "best" in doc:
         print(f"best: shot {doc['best']} -- {doc['bestWhy']}")
     return 1

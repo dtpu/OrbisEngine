@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Silhouette agreement between a packaged person sequence and the real person in the clip.
 
-  python scripts/motion_silhouette.py public/worlds/gym-4d --masks .context/run/gym/masks.npz
+  uv run --locked --group inference python scripts/motion_silhouette.py public/worlds/gym-4d --masks .context/run/gym/masks.npz
 
 Projects the posed splats into every sampled source frame with that frame's Pi3X camera and
 reports IoU against the person mask. Two numbers, because two different agents own the two
@@ -9,6 +9,7 @@ failure modes:
   iou          as packaged -- includes any world placement error
   iouAligned   after the 2D shift that maximises overlap -- pose/shape only
 """
+
 import argparse, json
 from pathlib import Path
 
@@ -35,7 +36,9 @@ def splat_silhouette(xyz, opa, scales, cam, hw, subsample=None):
     if subsample and len(xyz) > subsample:
         sel = np.random.default_rng(0).choice(len(xyz), subsample, replace=False)
         xyz, scales = xyz[sel], scales[sel]
-    m = np.array(cam["camera_to_world"]); u, _, vt = np.linalg.svd(m[:3, :3]); Rw = u @ vt
+    m = np.array(cam["camera_to_world"])
+    u, _, vt = np.linalg.svd(m[:3, :3])
+    Rw = u @ vt
     K = np.array(cam["source_intrinsics"])
     loc = (xyz - m[:3, 3]) @ Rw @ FLIP
     z = loc[:, 2]
@@ -49,12 +52,15 @@ def splat_silhouette(xyz, opa, scales, cam, hw, subsample=None):
     r_px = float(np.median(K[0, 0] * r_world / z))
     r = int(np.clip(round(r_px * 1.5), 1, 24))
     img = np.zeros((H, W), np.uint8)
-    xs = np.round(p[:, 0]).astype(int); ys = np.round(p[:, 1]).astype(int)
+    xs = np.round(p[:, 0]).astype(int)
+    ys = np.round(p[:, 1]).astype(int)
     ok = (xs >= 0) & (xs < W) & (ys >= 0) & (ys < H)
     img[ys[ok], xs[ok]] = 1
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
     img = cv2.dilate(img, k)
-    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+    img = cv2.morphologyEx(
+        img, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    )
     return img.astype(bool)
 
 
@@ -67,8 +73,10 @@ def best_shift_iou(pred, gt, radius=80, step=4):
     """IoU after the translation that maximises it: pose quality with placement divided out."""
     if not pred.any() or not gt.any():
         return 0.0, (0, 0)
-    ys, xs = np.nonzero(pred); py, px = ys.mean(), xs.mean()
-    ys, xs = np.nonzero(gt); gy, gx = ys.mean(), xs.mean()
+    ys, xs = np.nonzero(pred)
+    py, px = ys.mean(), xs.mean()
+    ys, xs = np.nonzero(gt)
+    gy, gx = ys.mean(), xs.mean()
     dy0, dx0 = int(round(gy - py)), int(round(gx - px))
     best, arg = -1.0, (0, 0)
     for s in (step * 4, step):
@@ -101,20 +109,36 @@ def audit(world, masks_path, limit=None, subsample=30000):
         pred = splat_silhouette(xyz, np.asarray(v["opacity"]), sc, c, hw, subsample)
         g = gt[fi]
         a, sh = best_shift_iou(pred, g)
-        rows.append(dict(frame=fi, iou=iou(pred, g), iouAligned=a, shift=sh,
-                         predPx=int(pred.sum()), gtPx=int(g.sum())))
+        rows.append(
+            dict(
+                frame=fi,
+                iou=iou(pred, g),
+                iouAligned=a,
+                shift=sh,
+                predPx=int(pred.sum()),
+                gtPx=int(g.sum()),
+            )
+        )
     return rows
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("world"); ap.add_argument("--masks", required=True)
-    ap.add_argument("--limit", type=int, default=24); ap.add_argument("--json-out")
+    ap.add_argument("world")
+    ap.add_argument("--masks", required=True)
+    ap.add_argument("--limit", type=int, default=24)
+    ap.add_argument("--json-out")
     a = ap.parse_args()
     rows = audit(a.world, a.masks, a.limit)
-    iou_m = np.mean([r["iou"] for r in rows]); al = np.mean([r["iouAligned"] for r in rows])
+    iou_m = np.mean([r["iou"] for r in rows])
+    al = np.mean([r["iouAligned"] for r in rows])
     area = np.mean([r["predPx"] / max(r["gtPx"], 1) for r in rows])
-    print(f"{a.world}: n={len(rows)} IoU {iou_m:.3f}  IoU-aligned {al:.3f}  pred/gt area {area:.2f}")
+    print(
+        f"{a.world}: n={len(rows)} IoU {iou_m:.3f}  IoU-aligned {al:.3f}  pred/gt area {area:.2f}"
+    )
     if a.json_out:
-        Path(a.json_out).write_text(json.dumps(dict(world=a.world, rows=rows,
-            iou=iou_m, iouAligned=al, areaRatio=area), indent=1))
+        Path(a.json_out).write_text(
+            json.dumps(
+                dict(world=a.world, rows=rows, iou=iou_m, iouAligned=al, areaRatio=area), indent=1
+            )
+        )

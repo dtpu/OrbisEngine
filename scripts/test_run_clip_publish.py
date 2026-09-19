@@ -1,4 +1,5 @@
 """No-spend checks for the pipeline's S3 completion hook."""
+
 import importlib.util
 import sys
 import unittest
@@ -13,10 +14,18 @@ spec.loader.exec_module(module)
 
 class PublishCompletionTests(unittest.TestCase):
     def run_main(self, stage_status=0, publish_status=0, extra=()):
-        with patch.object(sys, "argv", ["run_clip.py", "--clip", "unused.mp4", "--name", "fixture", *extra]), \
-             patch.object(module, "resolve_shots", return_value=[("fixture", Path("unused.mp4"), None)]), \
-             patch.object(module, "Pipeline") as pipeline, \
-             patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=publish_status)) as publish:
+        with (
+            patch.object(
+                sys, "argv", ["run_clip.py", "--clip", "unused.mp4", "--name", "fixture", *extra]
+            ),
+            patch.object(
+                module, "resolve_shots", return_value=[("fixture", Path("unused.mp4"), None)]
+            ),
+            patch.object(module, "Pipeline") as pipeline,
+            patch.object(
+                module.subprocess, "run", return_value=SimpleNamespace(returncode=publish_status)
+            ) as publish,
+        ):
             pipeline.return_value.go.return_value = stage_status
             with self.assertRaises(SystemExit) as result:
                 module.main()
@@ -26,7 +35,7 @@ class PublishCompletionTests(unittest.TestCase):
         status, calls = self.run_main()
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[0][:2], ["node", "scripts/publish-runs.mjs"])
+        self.assertEqual(calls[0].args[0][:2], ["bun", "scripts/publish-runs.mjs"])
 
     def test_failed_and_gated_runs_are_saved(self):
         for code in (1, 2):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score every frame of a clip as an avatar reference, and pick the best one (or best N views).
 
-  KMP_DUPLICATE_LIB_OK=TRUE worker/.venv-da3/bin/python scripts/score_reference_frames.py \
+  KMP_DUPLICATE_LIB_OK=TRUE uv run --locked --group inference python scripts/score_reference_frames.py \
       public/clips/atrium.mp4 --stride 2 --n 8 --out .context/pose/frames/atrium.json --sheet share/frames-atrium.png
 
 Avatar identity, build and clothing all come from the two-to-eight reference frames, so a bad pick
@@ -34,6 +34,7 @@ score to 0 for any candidate it could not read. Frames with no probe entry keep 
 reported as unverified; `estimatorReadable` on each row records which of the three it is. No local
 detector substitutes for this: torchvision's keypoint R-CNN reads bedroom f198 at 0.999.
 """
+
 import argparse, json, sys
 from pathlib import Path
 
@@ -42,9 +43,19 @@ import numpy as np
 
 # COCO-17: 0 nose, 1/2 eyes, 3/4 ears, 5/6 shoulders, 7/8 elbows, 9/10 wrists,
 # 11/12 hips, 13/14 knees, 15/16 ankles
-KP_W = np.array([1., .6, .6, .5, .5, 1., 1., .7, .7, 1.4, 1.4, 1., 1., .9, .9, 1.6, 1.6])
-WEIGHTS = dict(height=0.20, sharp=0.12, complete=0.18, unoccluded=0.10,
-               facing=0.22, face=0.12, exposure=0.03, framed=0.03)
+KP_W = np.array(
+    [1.0, 0.6, 0.6, 0.5, 0.5, 1.0, 1.0, 0.7, 0.7, 1.4, 1.4, 1.0, 1.0, 0.9, 0.9, 1.6, 1.6]
+)
+WEIGHTS = dict(
+    height=0.20,
+    sharp=0.12,
+    complete=0.18,
+    unoccluded=0.10,
+    facing=0.22,
+    face=0.12,
+    exposure=0.03,
+    framed=0.03,
+)
 YUNET = ".context/pose/yunet.onnx"
 
 _m = None
@@ -64,19 +75,33 @@ def models():
     global _m
     if _m is None:
         import torch
-        from torchvision.models.detection import (maskrcnn_resnet50_fpn_v2, MaskRCNN_ResNet50_FPN_V2_Weights,
-                                                  keypointrcnn_resnet50_fpn, KeypointRCNN_ResNet50_FPN_Weights)
+        from torchvision.models.detection import (
+            maskrcnn_resnet50_fpn_v2,
+            MaskRCNN_ResNet50_FPN_V2_Weights,
+            keypointrcnn_resnet50_fpn,
+            KeypointRCNN_ResNet50_FPN_Weights,
+        )
+
         dev = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-        mk = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval().to(dev)
-        kp = keypointrcnn_resnet50_fpn(weights=KeypointRCNN_ResNet50_FPN_Weights.DEFAULT).eval().to(dev)
+        mk = (
+            maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT)
+            .eval()
+            .to(dev)
+        )
+        kp = (
+            keypointrcnn_resnet50_fpn(weights=KeypointRCNN_ResNet50_FPN_Weights.DEFAULT)
+            .eval()
+            .to(dev)
+        )
         _m = (mk, kp, dev, torch)
     return _m
 
 
 def _iou(a, b):
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     inter = ix * iy
-    ua = (a[2]-a[0])*(a[3]-a[1]) + (b[2]-b[0])*(b[3]-b[1]) - inter
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
     return inter / ua if ua > 0 else 0.0
 
 
@@ -85,17 +110,22 @@ def score_frame(rgb, seed=None):
     H, W = rgb.shape[:2]
     t = torch.from_numpy(rgb).permute(2, 0, 1).float().div(255).to(dev)
     with torch.no_grad():
-        r = mk([t])[0]; k = kp([t])[0]
-    keep = [i for i in range(len(r["labels"])) if int(r["labels"][i]) == 1 and float(r["scores"][i]) > 0.7]
+        r = mk([t])[0]
+        k = kp([t])[0]
+    keep = [
+        i
+        for i in range(len(r["labels"]))
+        if int(r["labels"][i]) == 1 and float(r["scores"][i]) > 0.7
+    ]
     if not keep:
         return dict(empty=True, score=0.0)
     boxes = [[float(v) for v in r["boxes"][i].cpu().numpy()] for i in keep]
     if seed is not None:
         bi = int(np.argmax([_iou(seed, b) for b in boxes]))
     else:
-        bi = int(np.argmax([(b[3]-b[1]) for b in boxes]))          # the tallest person is the subject
+        bi = int(np.argmax([(b[3] - b[1]) for b in boxes]))  # the tallest person is the subject
     box = boxes[bi]
-    mask = (r["masks"][keep[bi], 0].cpu().numpy() > 0.5)
+    mask = r["masks"][keep[bi], 0].cpu().numpy() > 0.5
     if mask.sum() < 400:
         return dict(empty=True, score=0.0)
 
@@ -115,7 +145,8 @@ def score_frame(rgb, seed=None):
     solid = 0.0
     if cnt:
         c = max(cnt, key=cv2.contourArea)
-        hull = cv2.convexHull(c); ha = cv2.contourArea(hull)
+        hull = cv2.convexHull(c)
+        ha = cv2.contourArea(hull)
         solid = float(cv2.contourArea(c) / ha) if ha > 0 else 0.0
     others = max([_iou(box, b) for j, b in enumerate(boxes) if j != bi] or [0.0])
     unocc = float(np.clip((solid - 0.35) / 0.45, 0, 1)) * (1.0 - min(1.0, others * 2.0))
@@ -166,10 +197,23 @@ def score_frame(rgb, seed=None):
 
     framed = 1.0 - 0.5 * float(x0 <= 1 or x1 >= W - 2) - 0.5 * float(y1 >= H - 2)
     framed = max(0.0, framed)
-    return dict(empty=False, box=[x0, y0, x1, y1], mask_px=int(mask.sum()), sharp_raw=sharp_raw,
-                height=height, complete=complete, unoccluded=unocc, facing=facing,
-                face=face, facePx=facepx, exposure=exposure, framed=framed, yawDeg=yaw,
-                ankles=bool(vis[15] or vis[16]), wrists=bool(vis[9] or vis[10]))
+    return dict(
+        empty=False,
+        box=[x0, y0, x1, y1],
+        mask_px=int(mask.sum()),
+        sharp_raw=sharp_raw,
+        height=height,
+        complete=complete,
+        unoccluded=unocc,
+        facing=facing,
+        face=face,
+        facePx=facepx,
+        exposure=exposure,
+        framed=framed,
+        yawDeg=yaw,
+        ankles=bool(vis[15] or vis[16]),
+        wrists=bool(vis[9] or vis[10]),
+    )
 
 
 def load_probe(path, clip=None):
@@ -194,7 +238,10 @@ def finish(rows, probe=None):
     smax = max([r["sharp_raw"] for r in good] or [1.0])
     for r in rows:
         if r.get("empty"):
-            r["score"] = 0.0; r["sharp"] = 0.0; r["estimatorReadable"] = None; continue
+            r["score"] = 0.0
+            r["sharp"] = 0.0
+            r["estimatorReadable"] = None
+            continue
         r["sharp"] = float(np.clip(r["sharp_raw"] / (smax + 1e-9), 0, 1) ** 0.5)
         s = sum(WEIGHTS[k] * r[k] for k in WEIGHTS)
         gate = 1.0 if r["height"] > 0.15 else 0.0
@@ -203,7 +250,9 @@ def finish(rows, probe=None):
         p = probe.get(r["index"])
         r["estimatorReadable"] = None if p is None else bool(p.get("detected"))
         if p is not None and not p.get("detected"):
-            r["estimatorReason"] = p.get("reason", "MultiHMR found no person in the whitened cut-out")
+            r["estimatorReason"] = p.get(
+                "reason", "MultiHMR found no person in the whitened cut-out"
+            )
             gate = 0.0
         r["score"] = float(s * gate)
     return rows
@@ -246,20 +295,33 @@ def track_seeds(motion):
     the two men as they pass -- and the second avatar would then be built from the first man's face.
     """
     rows = json.loads(Path(motion).read_text())["frames"]
-    return {int(r["sourceIndex"]): [float(v) for v in r["maskBox"]] for r in rows if r.get("maskBox")}
+    return {
+        int(r["sourceIndex"]): [float(v) for v in r["maskBox"]] for r in rows if r.get("maskBox")
+    }
 
 
-def score_video(video, stride=3, n=8, out=None, compare=None, max_frames=260, keep_images=False,
-                probe=None, clip_name=None, seeds=None):
+def score_video(
+    video,
+    stride=3,
+    n=8,
+    out=None,
+    compare=None,
+    max_frames=260,
+    keep_images=False,
+    probe=None,
+    clip_name=None,
+    seeds=None,
+):
     """Score every sampled frame and choose a set. Returns the same dict the CLI writes."""
     cap = cv2.VideoCapture(str(video))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)); fps = cap.get(cv2.CAP_PROP_FRAME_COUNT) and cap.get(cv2.CAP_PROP_FPS)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FRAME_COUNT) and cap.get(cv2.CAP_PROP_FPS)
     stride = max(stride, int(np.ceil(total / max_frames)))
     want = set(range(0, total, stride))
     comp = [int(x) for x in compare.split(",")] if compare else []
     want |= set(comp)
     if seeds:
-        want &= set(seeds)                       # a track is only present where it was tracked
+        want &= set(seeds)  # a track is only present where it was tracked
     rows, keepimg, k = [], {}, 0
     while True:
         ok, fr = cap.read()
@@ -267,7 +329,9 @@ def score_video(video, stride=3, n=8, out=None, compare=None, max_frames=260, ke
             break
         if k in want:
             rgb = cv2.cvtColor(fr, cv2.COLOR_BGR2RGB)
-            r = score_frame(rgb, seed=seeds.get(k) if seeds else None); r["index"] = k; r["time"] = k / fps
+            r = score_frame(rgb, seed=seeds.get(k) if seeds else None)
+            r["index"] = k
+            r["time"] = k / fps
             rows.append(r)
             if keep_images:
                 keepimg[k] = rgb
@@ -277,15 +341,27 @@ def score_video(video, stride=3, n=8, out=None, compare=None, max_frames=260, ke
     rows = finish(rows, probe_rows)
     chosen = pick_set(rows, n)
     by = {r["index"]: r for r in rows}
-    res = dict(video=str(video), frames=total, fps=fps, stride=stride, weights=WEIGHTS,
-               scored=len(rows), rows=rows, chosen=[r["index"] for r in chosen],
-               chosenBest=max(chosen, key=lambda r: r["score"])["index"] if chosen else None,
-               current=comp, currentScores={i: by[i]["score"] for i in comp if i in by},
-               estimatorProbe=str(probe) if probe else None,
-               estimatorProbed=sorted(probe_rows),
-               estimatorRejected=sorted([i for i, v in probe_rows.items() if not v.get("detected")]),
-               chosenEstimatorReadable=(by[max(chosen, key=lambda r: r["score"])["index"]]["estimatorReadable"]
-                                        if chosen else None))
+    res = dict(
+        video=str(video),
+        frames=total,
+        fps=fps,
+        stride=stride,
+        weights=WEIGHTS,
+        scored=len(rows),
+        rows=rows,
+        chosen=[r["index"] for r in chosen],
+        chosenBest=max(chosen, key=lambda r: r["score"])["index"] if chosen else None,
+        current=comp,
+        currentScores={i: by[i]["score"] for i in comp if i in by},
+        estimatorProbe=str(probe) if probe else None,
+        estimatorProbed=sorted(probe_rows),
+        estimatorRejected=sorted([i for i, v in probe_rows.items() if not v.get("detected")]),
+        chosenEstimatorReadable=(
+            by[max(chosen, key=lambda r: r["score"])["index"]]["estimatorReadable"]
+            if chosen
+            else None
+        ),
+    )
     if out:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(json.dumps(res, indent=1, default=float))
@@ -294,44 +370,73 @@ def score_video(video, stride=3, n=8, out=None, compare=None, max_frames=260, ke
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("video"); ap.add_argument("--stride", type=int, default=3)
-    ap.add_argument("--n", type=int, default=8); ap.add_argument("--out", required=True)
-    ap.add_argument("--sheet"); ap.add_argument("--compare", help="comma list of the frames chosen today")
+    ap.add_argument("video")
+    ap.add_argument("--stride", type=int, default=3)
+    ap.add_argument("--n", type=int, default=8)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--sheet")
+    ap.add_argument("--compare", help="comma list of the frames chosen today")
     ap.add_argument("--max-frames", type=int, default=260)
-    ap.add_argument("--estimator-probe", help="scripts/probe_pose_estimator.py output: frames MultiHMR "
-                                              "could not read are scored 0 however well they rank")
-    ap.add_argument("--clip-name", help="which clip to read from the probe file (default: video stem)")
-    ap.add_argument("--track-motion", help="one track's motion.json: score THAT identity, not the "
-                                           "tallest person in each frame (multi-person clips)")
+    ap.add_argument(
+        "--estimator-probe",
+        help="scripts/probe_pose_estimator.py output: frames MultiHMR "
+        "could not read are scored 0 however well they rank",
+    )
+    ap.add_argument(
+        "--clip-name", help="which clip to read from the probe file (default: video stem)"
+    )
+    ap.add_argument(
+        "--track-motion",
+        help="one track's motion.json: score THAT identity, not the "
+        "tallest person in each frame (multi-person clips)",
+    )
     a = ap.parse_args()
-    out, keepimg = score_video(a.video, stride=a.stride, n=a.n, out=a.out, compare=a.compare,
-                               max_frames=a.max_frames, keep_images=True,
-                               probe=a.estimator_probe, clip_name=a.clip_name,
-                               seeds=track_seeds(a.track_motion) if a.track_motion else None)
-    rows = out["rows"]; chosen = [r for r in rows if r["index"] in out["chosen"]]
-    comp = out["current"]; by = {r["index"]: r for r in rows}
+    out, keepimg = score_video(
+        a.video,
+        stride=a.stride,
+        n=a.n,
+        out=a.out,
+        compare=a.compare,
+        max_frames=a.max_frames,
+        keep_images=True,
+        probe=a.estimator_probe,
+        clip_name=a.clip_name,
+        seeds=track_seeds(a.track_motion) if a.track_motion else None,
+    )
+    rows = out["rows"]
+    chosen = [r for r in rows if r["index"] in out["chosen"]]
+    comp = out["current"]
+    by = {r["index"]: r for r in rows}
     print(f"{a.video}: {len(rows)} frames scored (stride {out['stride']})")
     print("  rank  frame   score  height sharp compl unocc facing face expos framed   yaw")
     top = sorted([r for r in rows if r["score"] > 0], key=lambda r: -r["score"])[:6]
     for r in top:
-        print(f"        {r['index']:5d}  {r['score']:.3f}   {r['height']:.2f}  {r['sharp']:.2f}  "
-              f"{r['complete']:.2f}  {r['unoccluded']:.2f}  {r['facing']:.2f}  {r['face']:.2f} "
-              f"{r['exposure']:.2f}  {r['framed']:.2f}  {'' if r['yawDeg'] is None else round(r['yawDeg']):>5}")
+        print(
+            f"        {r['index']:5d}  {r['score']:.3f}   {r['height']:.2f}  {r['sharp']:.2f}  "
+            f"{r['complete']:.2f}  {r['unoccluded']:.2f}  {r['facing']:.2f}  {r['face']:.2f} "
+            f"{r['exposure']:.2f}  {r['framed']:.2f}  {'' if r['yawDeg'] is None else round(r['yawDeg']):>5}"
+        )
     if comp:
         print("  frames chosen today:")
         for i in comp:
             r = by.get(i)
             if r:
                 rank = 1 + sorted([q["score"] for q in rows], reverse=True).index(r["score"])
-                print(f"        {i:5d}  {r['score']:.3f}  rank {rank}/{len(rows)}  facing {r['facing']:.2f} "
-                      f"yaw {'' if r['yawDeg'] is None else round(r['yawDeg'])}  face {r['face']:.2f} "
-                      f"height {r['height']:.2f} compl {r['complete']:.2f}")
+                print(
+                    f"        {i:5d}  {r['score']:.3f}  rank {rank}/{len(rows)}  facing {r['facing']:.2f} "
+                    f"yaw {'' if r['yawDeg'] is None else round(r['yawDeg'])}  face {r['face']:.2f} "
+                    f"height {r['height']:.2f} compl {r['complete']:.2f}"
+                )
     if out["estimatorProbe"]:
-        print(f"  estimator probe: {len(out['estimatorProbed'])} candidates, "
-              f"rejected {out['estimatorRejected'] or 'none'}")
+        print(
+            f"  estimator probe: {len(out['estimatorProbed'])} candidates, "
+            f"rejected {out['estimatorRejected'] or 'none'}"
+        )
     else:
-        print("  estimator readability UNVERIFIED (no --estimator-probe): the top frame may still "
-              "be one MultiHMR cannot read")
+        print(
+            "  estimator readability UNVERIFIED (no --estimator-probe): the top frame may still "
+            "be one MultiHMR cannot read"
+        )
     print(f"  picked set: {[r['index'] for r in chosen]}")
     if a.sheet:
         tiles = []
@@ -341,14 +446,22 @@ def main():
                 im = keepimg.get(i)
                 if im is None:
                     continue
-                r = by[i]; c = im.copy()
+                r = by[i]
+                c = im.copy()
                 if not r.get("empty"):
                     x0, y0, x1, y1 = r["box"]
-                    c = c[max(0, y0 - 20):y1 + 20, max(0, x0 - 20):x1 + 20]
+                    c = c[max(0, y0 - 20) : y1 + 20, max(0, x0 - 20) : x1 + 20]
                 c = cv2.resize(c, (220, 380))
                 cv2.rectangle(c, (0, 0), (219, 26), (0, 0, 0), -1)
-                cv2.putText(c, f"{lab[0]}{i} s{r['score']:.2f} f{r['facing']:.1f}", (4, 19),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                cv2.putText(
+                    c,
+                    f"{lab[0]}{i} s{r['score']:.2f} f{r['facing']:.1f}",
+                    (4, 19),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (255, 255, 0),
+                    1,
+                )
                 row.append(c)
             if row:
                 tiles.append(np.concatenate(row, 1))

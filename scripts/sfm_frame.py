@@ -13,11 +13,12 @@ of run_clip.py) the reframe keeps camera 0 at the origin and puts GRAVITY on +y 
 comes out pitched by exactly what the phone was pitched, which is how Marble already has it.
 Without the file the old convention is returned unchanged, so every historical package is
 byte-identical. Every script that re-anchors the raw frame on camera 0 -- the packagers,
-bake_video_colours, finetune_export_bedroom -- goes through here, so there is one convention.
+bake_video_colours, finetune_export -- goes through here, so there is one convention.
 
 numpy only: this is imported by the packagers and by bake_video_colours, which frame_align.py
 itself imports.
 """
+
 import json
 from pathlib import Path
 
@@ -39,11 +40,13 @@ def orthonormal(R):
 def align_rotation(g):
     """Minimal rotation taking g to +y (no yaw about gravity)."""
     g = unit(g)
-    v = np.cross(g, UP); s = np.linalg.norm(v); c = float(g @ UP)
+    v = np.cross(g, UP)
+    s = np.linalg.norm(v)
+    c = float(g @ UP)
     if s < 1e-12:
         return np.eye(3) if c > 0 else np.diag([1.0, -1.0, -1.0])
     vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2)
+    return np.eye(3) + vx + vx @ vx * ((1 - c) / s**2)
 
 
 def quat_xyzw(R):
@@ -52,7 +55,8 @@ def quat_xyzw(R):
         s = np.sqrt(t + 1.0) * 2
         q = [(R[2, 1] - R[1, 2]) / s, (R[0, 2] - R[2, 0]) / s, (R[1, 0] - R[0, 1]) / s, 0.25 * s]
     else:
-        i = int(np.argmax(np.diag(R))); j, k = (i + 1) % 3, (i + 2) % 3
+        i = int(np.argmax(np.diag(R)))
+        j, k = (i + 1) % 3, (i + 2) % 3
         s = np.sqrt(1.0 + R[i, i] - R[j, j] - R[k, k]) * 2
         q = [0, 0, 0, (R[k, j] - R[j, k]) / s]
         q[i], q[j], q[k] = 0.25 * s, (R[j, i] + R[i, j]) / s, (R[k, i] + R[i, k]) / s
@@ -77,17 +81,20 @@ def camera0_reframe(cameras_path, origin_frame: int = 0):
     """
     cams = json.loads(Path(cameras_path).read_text())["cameras"]
     c0 = np.array(cams[origin_frame]["camera_to_world"], float)
-    R0 = orthonormal(c0[:3, :3]); t0 = c0[:3, 3]
+    R0 = orthonormal(c0[:3, :3])
+    t0 = c0[:3, 3]
     R, t = R0.T, -R0.T @ t0
     fa = read_framealign(cameras_path)
     if fa is not None:
-        Rg = align_rotation(R0.T @ np.asarray(fa["gravityRaw"], float))   # gravity as camera 0 sees it
+        Rg = align_rotation(
+            R0.T @ np.asarray(fa["gravityRaw"], float)
+        )  # gravity as camera 0 sees it
         R, t = Rg @ R, Rg @ t
     return R, t, fa
 
 
 def origin_c2w(cameras_path, origin_frame: int = 0):
-    """The 4x4 that bake_video_colours / finetune_export_bedroom call `origin_c2w`: the inverse of
+    """The 4x4 that bake_video_colours / finetune_export call `origin_c2w`: the inverse of
     the reframe, i.e. the camera-to-world of the levelled origin. Equals cameras[origin_frame]
     exactly when there is no framealign.json."""
     R, t, fa = camera0_reframe(cameras_path, origin_frame)
@@ -100,5 +107,7 @@ def origin_c2w(cameras_path, origin_frame: int = 0):
 def describe(fa) -> str:
     if fa is None:
         return "camera 0 = identity (origin, y up, looking -z)"
-    return (f"camera 0 at the origin, gravity on +y (camera 0 pitched {fa['tiltFromYDeg']:.1f} deg, "
-            f"frame_align.py {fa['source']})")
+    return (
+        f"camera 0 at the origin, gravity on +y (camera 0 pitched {fa['tiltFromYDeg']:.1f} deg, "
+        f"frame_align.py {fa['source']})"
+    )
