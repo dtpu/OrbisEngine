@@ -27,7 +27,7 @@ failed or uncertain Modal invocations are never automatically resubmitted.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, threading, time
+import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile, threading, time
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
@@ -187,7 +187,7 @@ class GateStop(Exception):
 
 
 class QualityStop(Exception):
-    """Paid-stage accounting or recovery lacks sufficient evidence to continue."""
+    """Quality review, paid-stage accounting or recovery cannot safely continue."""
 
     def __init__(self, status, reason):
         super().__init__(reason)
@@ -934,21 +934,59 @@ class Pipeline:
         )
 
     def verify(self):
-        """Render the world we got back from the clip's own poses and score it against the footage."""
-        out = self.ctx / "verify"
+        """Import an offline static-world review; diagnostics alone never establish acceptance."""
+        from world_quality_review import assess
+
+        self.state.record("_verify", status="blocked", passed=False, errors=["Review incomplete"])
         scale0 = (self.state.data["stages"].get("_scale") or {}).get("scale0")
-        if scale0 is None:
-            raise RuntimeError("no fitted scale0 in state.json; the scale_fit stage has not run")
+        if (
+            isinstance(scale0, bool)
+            or not isinstance(scale0, (int, float))
+            or not math.isfinite(scale0)
+            or scale0 <= 0
+        ):
+            raise QualityStop("blocked", "No finite positive fitted scale0; run scale_fit first")
         # verify_world renders with the viewer's own mapping (no re-anchoring), so it needs the
         # packaged, levelled cameras.json, not the raw Pi3X one
         packaged = ROOT / "public" / "worlds" / f"{self.name}-4d" / "cameras.json"
+        cameras = packaged if packaged.exists() else self.cameras()
+        review = [
+            getattr(self.a, field, None)
+            for field in ("quality_plan", "quality_result", "quality_evidence_root")
+        ]
+        if any(review):
+            if not all(review):
+                raise QualityStop(
+                    "blocked",
+                    "Supply --quality-plan, --quality-result and --quality-evidence-root together",
+                )
+            result = assess(
+                plan_path=Path(review[0]),
+                result_path=Path(review[1]),
+                evidence_root=Path(review[2]),
+                clip=self.clip,
+                world=self.world_spz(),
+                cameras=cameras,
+                scale0=scale0,
+            )
+            self.state.record("_verify", **result, passed=result["status"] == "passed")
+            if result["status"] != "passed":
+                raise QualityStop(result["status"], "; ".join(result["errors"]))
+            say("   Manual static-world review passed; whole-scene promotion remains separate")
+            return
+
+        # Keep every diagnostic and prior reviewed image intact. This CPU-only renderer cannot
+        # call a model, and its output always requires a separate explicit human review.
+        verify_dir = self.ctx / "verify"
+        verify_dir.mkdir(exist_ok=True)
+        out = Path(tempfile.mkdtemp(prefix="diagnostic-", dir=verify_dir))
         cmd = [
             PY,
             "scripts/verify_world.py",
             "--world",
             str(self.world_spz()),
             "--cameras",
-            str(packaged if packaged.exists() else self.cameras()),
+            str(cameras),
             "--clip",
             str(self.clip),
             "--scale0",
@@ -959,26 +997,21 @@ class Pipeline:
             str(out),
             "--share",
             str(SHARE),
+            "--no-vlm",
         ]
-        if self.prompt_json.exists():
-            cmd += ["--prompt-file", str(self.prompt_json)]
-        run(cmd, self.ctx / "verify.log", attempts=2)
-        rep = json.loads((out / "report.json").read_text())
+        run(cmd, verify_dir / f"{out.name}.log", attempts=1)
+        reason = (
+            "Static-world acceptance requires an explicit manual review; "
+            f"diagnostics retained in {out}. See docs/quality-judging.md"
+        )
         self.state.record(
             "_verify",
-            medianScore=rep.get("medianScore"),
-            passed=rep.get("pass"),
-            regenerate=rep.get("regenerate"),
-            sheet=rep.get("sheet"),
+            status="blocked",
+            passed=False,
+            errors=[reason],
+            diagnosticReport=str(out / "report.json"),
         )
-        say(
-            f"   world fidelity {rep.get('medianScore')}/100, pass {rep.get('pass')}; sheet {rep.get('sheet')}"
-        )
-        for v in rep.get("verdicts", []):
-            say(f"     f{v.get('frame')}: {v.get('score')} -- {v.get('worst_error')}")
-        if rep.get("regenerate"):
-            say(f"   CORRECTED PROMPT: {rep['correction']['text_prompt']}")
-            say(f"   {rep['correction']['why']}")
+        raise QualityStop("blocked", reason)
 
     def pi3x(self):
         self.paid_run(
@@ -2356,8 +2389,39 @@ class Pipeline:
         wanted = set(a.only.split(",")) if a.only else set(self.stages)
         if a.skip_finetune:
             wanted.discard("finetune")
+        if "verify" not in wanted and (
+            "verify" in self.state.data["stages"] or "_verify" in self.state.data["stages"]
+        ):
+            # Even a cached-only subset or a no-world graph may follow changed files.
+            # A skipped review cannot retain a current acceptance claim.
+            self.state.record("verify", status="pending")
+            self.state.record(
+                "_verify", status="blocked", passed=False, errors=["Review not reassessed"]
+            )
+        if (
+            any(
+                getattr(a, field, None)
+                for field in ("quality_plan", "quality_result", "quality_evidence_root")
+            )
+            and "verify" not in wanted
+        ):
+            self.state.record(
+                "_verify",
+                status="blocked",
+                passed=False,
+                errors=["Review excluded by stage selection"],
+            )
+            say("Review inputs require verify in this run's selected stages")
+            return 1
         forced = set(a.force.split(",")) if a.force else set()
         todo = {s for s in wanted if s in self.stages and (s in forced or not self.state.done(s))}
+        if "verify" in wanted:
+            # Stage success is not an evidence cache: re-import and hash the review on every
+            # resume, including legacy verify=ok and changes to source/world/cameras/images.
+            todo.add("verify")
+        if "verify" in self.stages and todo:
+            self.state.record("_verify", status="blocked", passed=False, errors=["Review pending"])
+            self.state.record("verify", status="pending")
         for s in todo:
             self.state.record(s, status="pending")
         say(
@@ -2400,7 +2464,7 @@ class Pipeline:
                     self.state.record(
                         stage, status=e.status, seconds=time.time() - start, error=str(e)
                     )
-                    say(f"!! {stage} recovery/accounting {e.status}: {e}")
+                    say(f"!! {stage} quality/recovery/accounting {e.status}: {e}")
                 except Exception as e:
                     self.state.record(
                         stage, status="failed", seconds=time.time() - start, error=str(e)
@@ -2487,43 +2551,101 @@ def cut_check(a) -> dict:
     clip = Path(a.clip).resolve()
     out = ROOT / ".context" / "run" / a.name / "cuts.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    st = clip.stat()
+    source_hash = hashlib.sha256()
+    with clip.open("rb") as source:
+        for chunk in iter(lambda: source.read(1 << 20), b""):
+            source_hash.update(chunk)
+    detector = ROOT / "scripts" / "shot_cuts.py"
+    detector_hash = hashlib.sha256(detector.read_bytes()).hexdigest()
+    no_score = a.shot is not None or a.all_shots
+    cache_key = {
+        "sourceSha256": source_hash.hexdigest(),
+        "sourcePath": str(clip),
+        "threshold": float(a.cut_threshold),
+        "detectorArgs": ["--threshold", str(a.cut_threshold)]
+        + (["--no-score"] if no_score else []),
+        "detectorSha256": detector_hash,
+    }
+
+    def valid_report(value):
+        return (
+            isinstance(value, dict)
+            and isinstance(value.get("continuous"), bool)
+            and isinstance(value.get("cutCount"), int)
+            and not isinstance(value.get("cutCount"), bool)
+            and value["cutCount"] >= 0
+            and isinstance(value.get("cuts"), list)
+            and isinstance(value.get("shots"), list)
+            and value["cutCount"] == len(value["cuts"])
+            and value["continuous"] == (value["cutCount"] == 0)
+        )
+
     if out.exists():
         try:
             doc = json.loads(out.read_text())
-            if doc.get("_source") == [str(clip), st.st_size, int(st.st_mtime)]:
+            if valid_report(doc) and doc.get("_cacheKey") == cache_key:
                 say(f"cut check: {doc['cutCount']} cut(s) (cached from {out})")
                 return doc
-        except Exception:
+        except (OSError, TypeError, ValueError, AttributeError):
             pass
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=out.parent, prefix=f".{out.name}.", suffix=".json", delete=False
+    ) as detector_output:
+        temporary = Path(detector_output.name)
     cmd = [
         PY,
         "scripts/shot_cuts.py",
         "--video",
         str(clip),
         "--json",
-        str(out),
+        str(temporary),
         "--threshold",
         str(a.cut_threshold),
     ]
     if a.shot is not None or a.all_shots:
         cmd.append("--no-score")  # the choice is already made; do not pay to rank
     say("cut check: looking for cuts before anything is spent")
-    p = subprocess.run(
-        cmd,
-        cwd=ROOT,
-        env=dict(os.environ, **LOCAL_ENV),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    for line in p.stdout.strip().splitlines():
-        say(f"   {line}")
-    if not out.exists():
-        raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
-    doc = json.loads(out.read_text())
-    doc["_source"] = [str(clip), st.st_size, int(st.st_mtime)]
-    out.write_text(json.dumps(doc, indent=1))
+    try:
+        p = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            env=dict(os.environ, **LOCAL_ENV),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        for line in p.stdout.strip().splitlines():
+            say(f"   {line}")
+        # shot_cuts exits 1 for a valid report containing cuts; that is admission data,
+        # not a detector crash. Require its report and exit status to agree below.
+        if p.returncode not in (0, 1):
+            raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
+        if not temporary.exists():
+            raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
+        doc = json.loads(temporary.read_text())
+        if not valid_report(doc):
+            raise ValueError("cut detector report is malformed")
+        if p.returncode != int(not doc["continuous"]):
+            raise ValueError("cut detector exit status disagrees with its continuity report")
+        doc["_cacheKey"] = cache_key
+        published = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=out.parent, prefix=f".{out.name}.", suffix=".json", delete=False
+            ) as handle:
+                published = Path(handle.name)
+                json.dump(doc, handle, indent=1)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(published, out)
+        finally:
+            if published is not None:
+                published.unlink(missing_ok=True)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"the cut check failed before cache publication: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
     return doc
 
 
@@ -2772,6 +2894,9 @@ def main():
         help="objects: package a proxy instead of generating a shape on Modal",
     )
     ap.add_argument("--only", help="comma-separated subset of stages")
+    ap.add_argument("--quality-plan", help="offline manual static-world review plan JSON")
+    ap.add_argument("--quality-result", help="explicit human review JSON bound to that plan")
+    ap.add_argument("--quality-evidence-root", help="directory containing retained review evidence")
     ap.add_argument(
         "--force", help="comma-separated stages to rerun; existing LHM outputs are recovery-only"
     )
@@ -2788,7 +2913,7 @@ def main():
     ap.add_argument(
         "--no-publish",
         action="store_true",
-        help="keep this run local; normally outputs and run artifacts are saved to private S3",
+        help="keep this run local; normally outputs are archived privately without viewer promotion",
     )
     a = ap.parse_args()
     if a.marble_key and os.environ.get(a.marble_key, "").startswith("-"):
@@ -2804,18 +2929,22 @@ def main():
             rc = max(rc, Pipeline(a, clip, name, shot).go())
     finally:
         if not a.no_publish:
-            say("Saving viewer assets and run artifacts to private S3...")
-            command = ["bun", "scripts/publish-runs.ts"]
+            say("Archiving outputs privately without promoting the shared viewer...")
+            command = ["bun", "run", "runs:publish", "--archive-only"]
             if os.environ.get("WANDER_EVIDENCE_DIR"):
                 command += ["--evidence-dir", os.environ["WANDER_EVIDENCE_DIR"]]
             try:
                 result = subprocess.run(command, cwd=ROOT)
                 if result.returncode:
-                    say("S3 publish FAILED; local results are intact. Retry: bun run runs:publish")
+                    say(
+                        "S3 archive FAILED; local results are intact. "
+                        "Retry: bun run runs:publish --archive-only"
+                    )
                     rc = max(rc, 3)
             except OSError as error:
                 say(
-                    f"S3 publish could not start ({type(error).__name__}); retry bun run runs:publish"
+                    f"S3 archive could not start ({type(error).__name__}); "
+                    "retry bun run runs:publish --archive-only"
                 )
                 rc = max(rc, 3)
     sys.exit(rc)
