@@ -78,9 +78,8 @@ def world_half(marble: str):
         deps["clean_multi"] = []
     if marble == "none":
         return stages, deps, None
-    # The prompt is written from the clip BEFORE anything is generated, and it is what
-    # disable_recaption then pins. Without it Marble captions the clip itself and generates from the
-    # caption (share/HP-MARBLE-VERDICT.md).
+    # Write a source-grounded description before generation. All input modes receive it;
+    # image modes also request disable_recaption. Captioning does not prove pixels are ignored.
     stages.append("world_prompt")
     deps["world_prompt"] = []
     stages.append("review")
@@ -823,7 +822,8 @@ class Pipeline:
         self.marble_world("image", self.first_png, "image", extra)
 
     def marble_video(self):
-        self.marble_world("video", self.clean_mp4, "clean")
+        extra = ["--prompt-file", str(self.prompt_json)] if self.prompt_json.exists() else []
+        self.marble_world("video", self.clean_mp4, "clean", extra)
 
     # ---- vision-written prompt, measured mode choice, verification ----------
     @property
@@ -835,11 +835,9 @@ class Pipeline:
         return self.ctx / "mode.json"
 
     def world_prompt(self):
-        """Look at the clip and write the text_prompt disable_recaption will pin.
+        """Describe the source clip for all modes; image modes additionally disable recaptioning.
 
-        Marble's video mode captions the clip and generates from its own caption; image and
-        multi-image do the same unless disable_recaption is set with a prompt of ours. Every prompt
-        before this stage existed was hand-written per clip.
+        A generated description is an input aid, not proof of geometry or reduced hallucination.
         """
         run(
             [
@@ -859,15 +857,18 @@ class Pipeline:
         say(f"   prompt: {rec['text_prompt']}")
 
     def world_mode(self, decide_only=False):
-        """Measured image-vs-multi-image choice (scripts/select_world_mode.py). Uses the Pi3X poses
-        when a previous run left them; before any solve exists it falls back to the coarse
-        pre-solve's heading sweep, and with neither it says so rather than guessing."""
+        """Video-first recommendation, or measured still alternatives for explicit --marble multi.
+
+        Camera spread is diagnostic; it does not validate cleaned coverage or generated geometry.
+        """
         # Ordering note: the Pi3X solve runs after the world half in this graph, so on a first pass
         # `--marble multi` wants `--only pi3x` run first, or a saved coarse admission.json.
         # Image and video modes need neither.
         cam = self.ctx / "pi3x" / "cameras.json"
         pred = self.ctx / "admission.json"
         cmd = [PY, "scripts/select_world_mode.py", "--out", str(self.mode_json)]
+        if self.marble == "multi":
+            cmd.append("--still-images")
         if cam.exists():
             cmd += ["--cameras", str(cam), "--clip", str(self.clip)]
         elif pred.exists():
@@ -2629,7 +2630,7 @@ def main():
         default="video",
         choices=MARBLE_MODES,
         help="which world(s) to generate. video (default) = ONE 1600-credit world from "
-        "the cleaned clip; image = one from the first cleaned frame; both = TWO "
+        "the cleaned clip; image/multi = explicit still-image alternatives; both = TWO "
         "worlds, 3200 credits; none = spend nothing",
     )
     ap.add_argument(

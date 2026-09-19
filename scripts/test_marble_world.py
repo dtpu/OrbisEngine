@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -201,6 +202,76 @@ class MarbleContracts(unittest.TestCase):
         self.assertNotIn("[fixture]", text)
         self.assertIn("world world-1 https://example.invalid/world metric_scale_factor", text)
 
+    def test_video_uses_reviewed_prompt_and_records_exact_submitted_input(self):
+        prompt = self.root / "video-prompt.json"
+        prompt.write_text(json.dumps({"text_prompt": "The recorded kitchen has a central island"}))
+        self.invoke("video", "submit", self.mp4, "--prompt-file", prompt, "--model", "marble-1.1")
+        request = self.generated()
+        self.assertEqual(
+            request["world_prompt"]["text_prompt"], "The recorded kitchen has a central island"
+        )
+        self.assertNotIn("disable_recaption", request["world_prompt"])
+        self.assertNotIn("reconstruct_images", request["world_prompt"])
+        upload = next(r for r in self.requests if r[0] == "PUT")
+        self.assertEqual(upload[3]["raw"], self.mp4.read_bytes())
+        saved = json.loads((self.directory / "fixture-request.json").read_text())
+        self.assertEqual(saved, request)
+        receipt = json.loads((self.directory / "fixture-generation.json").read_text())
+        self.assertEqual(
+            receipt["inputs"][0]["sha256"], hashlib.sha256(upload[3]["raw"]).hexdigest()
+        )
+        self.assertEqual(receipt["inputs"][0]["bytes"], len(upload[3]["raw"]))
+        self.assertEqual(
+            receipt["request_sha256"],
+            hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest(),
+        )
+
+    def test_documented_upload_id_and_required_headers_are_used(self):
+        def documented_call(method, path, body=None, **kwargs):
+            if path.endswith("prepare_upload"):
+                return 200, {
+                    "media_asset": {"id": "documented-video-id"},
+                    "upload_info": {
+                        "upload_url": "https://example.invalid/upload",
+                        "upload_method": "PUT",
+                        "required_headers": {
+                            "x-goog-content-length-range": "0,1048576000",
+                            "x-required": "value",
+                        },
+                    },
+                }
+            return self.call(method, path, body, **kwargs)
+
+        with patch.object(client, "call", side_effect=documented_call):
+            self.invoke("video", "submit", self.mp4)
+        self.assertEqual(
+            self.generated()["world_prompt"]["video_prompt"]["media_asset_id"],
+            "documented-video-id",
+        )
+        upload = next(r for r in self.requests if r[0] == "PUT")
+        self.assertEqual(upload[3]["headers"]["x-required"], "value")
+        self.assertEqual(upload[3]["headers"]["x-goog-content-length-range"], "0,1048576000")
+
+    def test_invalid_video_prompt_fails_before_any_remote_request(self):
+        prompt = self.root / "bad-prompt.json"
+        prompt.write_text('{"text_prompt": []}')
+        with self.assertRaises(SystemExit):
+            self.invoke("video", "submit", self.mp4, "--prompt-file", prompt)
+        self.assertEqual(self.requests, [])
+        self.assertFalse((self.directory / "fixture-generation.json").exists())
+
+    def test_mutated_input_is_not_uploaded_with_stale_provenance(self):
+        original_upload = client.upload
+
+        def mutate(a, path, identity):
+            path.write_bytes(b"changed after receipt")
+            return original_upload(a, path, identity)
+
+        with patch.object(client, "upload", side_effect=mutate), self.assertRaises(SystemExit):
+            self.invoke("video", "submit", self.mp4)
+        self.assertEqual(self.requests, [])
+        self.assertTrue((self.directory / "fixture-generation.json").exists())
+
     def test_poll_and_fetch_only_read_and_preserve_downloaded_assets(self):
         for input_type in ("image", "multi", "video"):
             for mode in ("poll", "fetch"):
@@ -297,11 +368,11 @@ class MarbleContracts(unittest.TestCase):
     def test_exclusive_receipt_blocks_a_competing_process_before_upload(self):
         original_upload = client.upload
 
-        def competing_upload(args, path):
+        def competing_upload(args, path, identity):
             with self.assertRaises(SystemExit):
                 self.invoke("video", "submit", self.mp4)
             self.assertEqual(self.requests, [])
-            return original_upload(args, path)
+            return original_upload(args, path, identity)
 
         with patch.object(client, "upload", side_effect=competing_upload):
             self.invoke("image", "submit", self.png)
@@ -428,6 +499,20 @@ class MarbleTransport(unittest.TestCase):
     def test_api_request_authenticates(self):
         headers = self.request_headers("/marble/v1/credits")
         self.assertEqual(headers["wlt-api-key"], "test-only-credential")
+
+    def test_api_credential_is_not_forwarded_by_redirects(self):
+        response = io.BytesIO(b"{}")
+        response.status = 200
+        response.headers = {"Content-Type": "application/json"}
+        with (
+            patch.dict(client.os.environ, {"WLT_API_KEY": "test-only-credential"}),
+            patch.object(client.urllib.request, "urlopen", return_value=response) as opened,
+        ):
+            client.call("GET", "/marble/v1/credits")
+        redirected = client.urllib.request.HTTPRedirectHandler().redirect_request(
+            opened.call_args.args[0], None, 302, "redirect", {}, "https://example.invalid/next"
+        )
+        self.assertNotIn("wlt-api-key", {k.lower() for k, _ in redirected.header_items()})
 
     def test_presigned_upload_never_receives_api_credential(self):
         for host in ("storage.googleapis.com", "api.worldlabs.ai.example.invalid"):

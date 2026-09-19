@@ -1,50 +1,15 @@
 #!/usr/bin/env python3
-"""Pick the Marble generation mode for a clip by MEASURING its camera motion, not by guessing.
+"""Recommend video first; measure sparse still alternatives only when explicitly requested.
 
-Marble has three input modes and they do not degrade gracefully into one another:
+Camera angles and image sharpness do not establish scene coverage, successful cleaning,
+fixture consistency or generated geometry quality. They cannot justify discarding the
+video's temporal evidence automatically. World Labs documents video input, not a general
+caption-only limitation: https://docs.worldlabs.ai/api.
 
-  image        one frame -> one pano -> splats. Real pixels in one direction, invented everywhere
-               else. Won on the forward-dolly corridor clip.
-  multi-image  up to 8 frames with `reconstruct_images: true`. Real pixels in every direction the
-               frames face -- but only if the frames genuinely face different directions. Won on
-               the orbiting bedroom clip; FAILED on the dolly, where eight frames from a forward
-               walk are eight views of the same wall and the reconstruction has nothing to triangulate.
-  video        the clip is auto-captioned and the caption is generated from. This is why a Diagon
-               Alley clip became a generic wizard street (share/HP-MARBLE-VERDICT.md). Never chosen
-               here; it is available only behind --allow-video.
-
-So the decision is one question with a number behind it: do the frames we would send face
-genuinely different directions? The measurement is `spread8` -- greedily pick the 8 frames whose
-forward vectors are as far apart as possible, then report the SMALLEST angle between any two of
-them. That is exactly "how different are the eight images", not "does one outlier frame look away".
-
-Measured on this project's own clips (Pi3X poses, public/worlds/*/cameras.json):
-
-  clip       spreadMax  spread8   outcome on record
-  corridor       ~1.5     ~0.2    dolly; image mode won, multi-image FAILED
-  elevator       14.7      1.9
-  tos-hall       20.7      2.5    walk down a hall
-  stairs2        24.9      3.3    tracking alongside, camera never turns
-  atrium2        32.5      3.9
-  selfie         36.9      4.7
-  atrium         46.9      5.5    walking away across a floor
-  living         64.1      7.7
-  bedroom        73.2      9.0    orbit; multi-image WON
-  lobby          91.1     11.1    wide look-around but only 0.56 u of travel
-  gym           131.8     20.1    a real 180 deg arc -- the widest in the project
-
-The threshold sits between the two decided cases: the dolly that failed multi-image (spread8 ~0.2)
-and the orbit that won it (9.0). MULTI_MIN is set at 9 deg, at bedroom, so bedroom and everything
-wider is routed to multi-image and every dolly on record is routed to image mode.
-Raise it if a multi-image world comes back stitched at the wrong scale.
-
-Before the world is bought there are no Pi3X poses yet, so the same decision can be taken off the
-a saved coarse admission report from the archived pipeline. Its `motion.headingSweepDeg` is
-a coarse spreadMax; across the clips above spread8 is spreadMax/6.6..8.3, so the MULTI_MIN of 9 deg
-lands at a heading sweep of about 72 deg, which is SWEEP_MIN below.
-
-  select_world_mode.py --cameras public/worlds/gym-4d/cameras.json [--clip c.mp4] [--max-images 8]
-  select_world_mode.py --predict-json .context/run/gym/admission.json
+Use --still-images to evaluate the historical image/multi-image angular heuristic as an
+explicit alternative. Its thresholds come from a few project clips, not a quality benchmark.
+Every selected input still needs cleaning/coverage review before generation; no decision here
+certifies reduced hallucination. --allow-video remains a compatibility alias for the default.
 """
 
 import argparse, json
@@ -151,48 +116,61 @@ def measure(cameras_json, k=8, clip=None):
     )
 
 
-def decide(m, allow_video=False):
+def video_decision():
+    return dict(
+        mode="video",
+        quality_verified=False,
+        why="video-first: retain temporal coverage instead of automatically selecting sparse stills; "
+        "review cleaning, coverage and moving fixtures before generation. "
+        "Reduced hallucination has not been verified by a controlled comparison",
+    )
+
+
+def decide(m, *, still_images=False):
+    if not still_images:
+        return video_decision()
     if m["spread8"] >= MULTI_MIN and m["spreadMax"] >= ORBIT_MIN:
         return dict(
             mode="multi-image",
             reconstruct_images=True,
+            quality_verified=False,
             frames=m["pick"],
             azimuth=m["pickAzimuth"],
-            why=f"8 frames separated by at least {m['spread8']} deg over a {m['spreadMax']} deg sweep: "
-            f"genuinely different directions, which is what reconstruction mode needs "
-            f"(threshold {MULTI_MIN}/{ORBIT_MIN})",
-        )
-    if allow_video:
-        return dict(
-            mode="video",
-            why="forced by --allow-video; the clip is auto-captioned and the "
-            "caption is generated from, so content fidelity is not expected",
+            why=f"explicit still-image alternative: separation {m['spread8']} deg over "
+            f"{m['spreadMax']} deg meets the angular heuristic ({MULTI_MIN}/{ORBIT_MIN}); "
+            "this does not verify structural coverage, cleaning or output quality",
         )
     return dict(
         mode="image",
+        quality_verified=False,
         frames=m["pick"][:1],
-        why=f"only {m['spread8']} deg between the most separated frames over a {m['spreadMax']} deg "
-        f"sweep (threshold {MULTI_MIN}/{ORBIT_MIN}): eight frames would face the same way, "
-        f"which is the case multi-image failed on",
+        why=f"explicit still-image alternative: separation {m['spread8']} deg over "
+        f"{m['spreadMax']} deg does not meet the multi-image angular heuristic "
+        f"({MULTI_MIN}/{ORBIT_MIN}); a single image still invents unobserved structure",
     )
 
 
-def decide_from_prediction(pred):
-    """The same call before any credits are spent, from the coarse solve's heading sweep."""
+def decide_from_prediction(pred, *, still_images=False):
+    """A coarse heading estimate is diagnostic, never evidence of generated quality."""
     sweep = float((pred.get("motion") or {}).get("headingSweepDeg", 0.0))
+    if not still_images:
+        return {**video_decision(), "headingSweepDeg": round(sweep, 1)}
     if pred.get("status") != "registered":
         return dict(
             mode="image",
+            quality_verified=False,
             headingSweepDeg=sweep,
-            why=f"coarse solve status {pred.get('status')}: "
-            "no usable camera motion, so one image is all that can be trusted",
+            why=f"explicit still-image alternative; coarse solve status {pred.get('status')} "
+            "does not support selecting multiple views. Input/output review remains required",
         )
     mode = "multi-image" if sweep >= SWEEP_MIN else "image"
     return dict(
         mode=mode,
+        quality_verified=False,
         headingSweepDeg=round(sweep, 1),
         reconstruct_images=(mode == "multi-image"),
-        why=f"pre-solve heading sweep {sweep:.1f} deg vs threshold {SWEEP_MIN} deg",
+        why=f"explicit still-image alternative: heading sweep {sweep:.1f} deg vs heuristic "
+        f"{SWEEP_MIN} deg; coverage, cleaning and output quality are unverified",
     )
 
 
@@ -207,11 +185,23 @@ def main():
     ap.add_argument(
         "--clip", help="source clip: nudges each pick to the most structured nearby frame"
     )
-    ap.add_argument("--allow-video", action="store_true")
+    policy = ap.add_mutually_exclusive_group()
+    policy.add_argument(
+        "--still-images",
+        action="store_true",
+        help="explicitly evaluate image/multi-image alternatives; does not certify quality",
+    )
+    policy.add_argument(
+        "--allow-video",
+        action="store_true",
+        help="compatibility alias; video is already the default",
+    )
     ap.add_argument("--out", help="write the decision for the first --cameras here as JSON")
     a = ap.parse_args()
     if a.predict_json and not a.cameras:
-        rec = decide_from_prediction(json.loads(Path(a.predict_json).read_text()))
+        rec = decide_from_prediction(
+            json.loads(Path(a.predict_json).read_text()), still_images=a.still_images
+        )
         print(json.dumps(rec))
         if a.out:
             Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +211,7 @@ def main():
         raise SystemExit("need --cameras or --predict-json")
     for c in a.cameras:
         m = measure(c, a.max_images, a.clip)
-        d = decide(m, a.allow_video)
+        d = decide(m, still_images=a.still_images)
         rec = {**m, **d}
         print(json.dumps(rec))
         if a.out and c == a.cameras[0]:
