@@ -1,0 +1,191 @@
+# Overnight execution runbook
+
+Read the root `AGENTS.md`, [TONIGHT.md](TONIGHT.md), and [RULES.md](RULES.md) first. The task list and resource
+ceilings come from `TONIGHT.md`; this document explains how to execute them. Do not launch
+inference merely to test access. Fill the task placeholder before handing off an unattended run.
+
+## Start and record the baseline
+
+1. Fetch `origin` and inspect new commits. Start the named working branch from current `main`;
+   preserve teammates' work and push only that working branch. Never force-push to resolve drift.
+2. Install with `bun install --frozen-lockfile` and `uv sync --locked --group inference`.
+   FFmpeg and Chrome are also required. Follow [author credentials](../shared-assets.md#author-credentials).
+   The read-only viewer key cannot publish or read archive intermediates. Export `.env.author`
+   into the launching shell; never print its contents or use shell tracing around secrets.
+3. Record the commit, private S3 snapshot, active viewer mode, local disk available, clip inventory,
+   and current provider usage in `LOG.md`. Keep detailed manifests and measurements under
+   `.context/evidence/overnight/`. Record model/effort choices and any unavailable capabilities.
+4. Run relevant local checks before paying for a baseline that already has a known code failure.
+   `bun run build`, `bun run format:check`, `bun run test:pull-assets`, and `bun run test:marble`
+   cover build, formatting, recovery, and Marble submission contracts. Select audio/object/viewer
+   checks for affected work as described in their docs.
+
+Read-only Modal preflight after credential setup:
+
+```sh
+uv run --locked modal profile list --json
+uv run --locked modal volume list --profile dtpu --json
+uv run --locked modal volume ls --profile dtpu wander-clean-video-cache /lama --json
+uv run --locked modal volume ls --profile dtpu wander-overnight-lhm-cache /data/pretrained_models --json
+uv run --locked modal volume ls --profile dtpu wander-overnight-motion-cache /huggingface --json
+uv run --locked modal app list --profile dtpu --json
+```
+
+Missing model caches are a setup blocker. Check the intended shared workspace/profile before
+building or downloading replacements. Environment Modal tokens override saved-profile tokens;
+the `dtpu` label alone does not identify the billed workspace. Do not print tokens when diagnosing.
+`modal run worker/modal_lhm.py` without arguments is **not** a free preflight: it can build images
+and invoke staging. The uv-based GPU image definitions passed local checks, but cold builds
+have not been verified on paid GPU infrastructure.
+
+## Recover inputs and previous runs
+
+```sh
+# Bun loads the private viewer environment; listing pins the current snapshot without media download.
+bun run assets:pull --out .context/overnight-inputs --list
+bun run assets:pull --out .context/overnight-inputs --path /clips/elevator.mp4
+# Authors only: inspect the archive before selecting an existing run prefix.
+bun run assets:pull --out .context/overnight-archive --archive --list
+bun run assets:pull --out .context/overnight-archive --archive --prefix runs/elevator/
+```
+
+Use exact paths/prefixes present in the returned manifest. The downloader preserves hierarchy
+under `--out`, verifies SHA-256 and size, and resumes matching files. `.wander-pull.json` pins
+the snapshot; use a new output directory for another snapshot. `--snapshot` can select a
+historical manifest. It refuses differing local files without `--overwrite` and rejects symlink
+destinations. See [shared assets](../shared-assets.md#recover-input-clips-and-runs) for bulk selection.
+
+Published `/clips/` contains trimmed/transcoded inputs, including elevator, lobby, stairs2,
+atrium, HP, and Tears of Steel. Full-length camera originals and full films are **not guaranteed**
+to be in S3. The five picker presets are not the complete input inventory: `tos31` actually uses
+`tos31d.mp4`, and direct presets include HP. Exclude generated cinematic outputs, deduplicate
+identical source/trim aliases, and confirm provenance before treating an uploaded MP4 as a source.
+
+For each input, record its SHA-256, duration, trim, previous options, world/operation ID, and
+baseline manifest. Missing inputs, existing world IDs, or required settings become explicit
+blocked rows. Do not regenerate a world simply because the metadata is missing. Restore prior
+audio manifests/WAVs and evidence from the same snapshot before comparing: the five main
+packaged videos themselves are silent; their authentic mixes are external sidecars.
+
+## Execute isolated candidates
+
+Use a fresh name for each candidate and the same basename for its input video. The head-track
+packager derives its run path from the clip basename. A new run name with the old source basename
+can accidentally use old head tracks. Never run two processes against the same run name.
+
+For example, after downloading elevator above, first check that neither `elevator-candidate`
+outputs nor its run directory exist. Copy the unchanged clip without overwriting any existing file:
+
+```sh
+mkdir -p public/clips
+cp -n .context/overnight-inputs/clips/elevator.mp4 public/clips/elevator-candidate.mp4
+
+MODAL_PROFILE=dtpu uv run --locked --group inference scripts/run_clip.py \
+  --clip public/clips/elevator-candidate.mp4 --name elevator-candidate \
+  --marble image --reuse-world 065f7002-cb5c-42b6-a872-88e7fabe2c21 \
+  --all-people --fps 12 --skip-finetune --no-objects --no-gate --no-publish
+```
+
+That world ID comes from elevator's original generation record. This is a **paid, bounded
+diagnostic example**, not a free setup check or a command for every clip. It omits objects and
+fine-tuning; the final regression must retain each clip's recorded settings and applicable
+stages. `--all-people` caps people at four; record when a clip needs an explicit `--people` cap.
+`--reuse-world` prevents a new Marble generation only: cleaning, world prompting, verification,
+and GPU reconstruction can still cost money. Fetching an existing world requires the Marble key
+unless matching metadata and splats are already local. Keep `--marble none` for existing clips
+that use that lane. Fine-tuning needs separately configured SSH/GPU infrastructure.
+
+The runner's cache is stage-status based. It does not automatically invalidate on changed code,
+source, settings, or missing outputs. `--force` does not invalidate descendants, and `--only`
+does not run prerequisites automatically. Prefer fresh candidate state; log every stage that
+actually ran. Copying old `state.json` defeats a final rerun. Reuse weights and existing worlds,
+not stale reconstruction results. If a fix affects several descendants, rerun all of them.
+
+Packaging replaces the candidate world directory. Generate head/audio sidecars after the final
+package step and preserve them before repackaging. `package_head_track.py` is a separate command:
+
+```sh
+uv run --locked --group inference scripts/package_head_track.py --world elevator-candidate-4d
+```
+
+Consult [audio](../audio.md) before restoring sound. An unchanged clip can use its verified
+original mix; changed trims require new sample offsets and duration checks. Do not copy spatial
+anchors from a different reconstruction or fabricate speaker stems/review approvals. The current
+HP wide package remains silent because no soundtrack has been recovered.
+
+## View, measure, and preserve
+
+Use the URL printed by the pipeline, retaining its fitted floor/scale values, and add `&walk=1`.
+Use `place=1`/`rotfix=1` only when the intended placement/alignment artifacts are present. Check
+frame zero and representative playback frames against source and baseline, then inspect sideways
+views, floor contact, map placement, collisions, and audio timing. Read `verify/report.json` and
+its comparison sheet: a failed fidelity verdict can still accompany a zero pipeline exit code.
+
+Unpublished candidates require **local asset mode**. When port 5399 is free, start:
+
+```sh
+WANDER_ASSETS_MODE=local bun run demo
+```
+
+If a server already owns that port, use it and coordinate a mode/snapshot restart with its owner.
+Do not kill it or silently start a second server on another port. S3 mode deliberately returns
+404 for unpublished local assets. If you cannot obtain a suitable viewer, preserve the candidate
+and mark visual acceptance blocked. A CLI success is not a substitute. A new published snapshot
+also requires a coordinated restart before the existing S3 viewer can see it.
+
+When all writers are idle, publish candidates and evidence with the configured author AWS identity:
+
+```sh
+bun run runs:publish --evidence-dir .context/evidence/overnight
+```
+
+This publishes `public/`, `.context/run/`, and selected evidence, not arbitrary local source
+folders. Preserve any new input under an appropriate ignored `public/clips/` path as well.
+Keep candidate asset paths separate; uploading them does not require changing demo presets.
+Record the immutable snapshot and archive keys. A publish conflict means another author changed
+the pointer; inspect their result and retry when writes are idle, never overwrite their changes.
+Only promote candidates with passing visual comparisons. Finish with every inventory row marked
+passed, failed, or blocked and its evidence, spend, source hash, and final code commit.
+
+## Budget and failure recovery
+
+Maintain a resource ledger with: provider/account alias, starting usage/balance, confirmed spend
+since start, estimates, in-flight reserved cost, remaining allowance, and last evidence checked.
+Use the limits in `TONIGHT.md`, shared across all workers and clips. Start one bounded paid
+candidate at a time until actual costs are measured. Before each next stage/batch, include cold
+image builds, idle GPU time, retries, and other teammates' spend. Set bounded job timeouts and
+record the stop condition. Do not launch work whose remaining cost cannot fit the allowance.
+
+Worker `estimatedComputeUSD` values and elapsed times are estimates, not provider invoices.
+`vlm_judge.ask_images` currently drops OpenAI token-usage metadata and may retry up to three times;
+only some artifacts, such as world-ruler answers, preserve usage. Missing token counts do not mean
+zero cost. There is no global automatic dollar/token cutoff in the runner. Check provider usage
+and the coding host's separate usage view; record unknowns rather than claiming exact totals.
+
+OpenAI spend alerts alone do not stop requests. A configured organization/project **hard spend
+limit** does, with possible small overshoot during enforcement propagation. Confirm the applicable
+control before relying on it; this repository does not change account settings. Monthly limits
+apply to total monthly spend, not the remaining allowance for this run. Stop on billing-limit
+errors; do not top up, raise limits, or rotate accounts to continue.
+See [OpenAI spend controls](https://developers.openai.com/api/docs/guides/spend-limits).
+
+Keep exact commands, exit statuses, provider app/function-call IDs, Marble operation/world IDs,
+and bounded logs. To inspect an existing Modal app without relaunching:
+
+```sh
+uv run --locked modal app logs APP_ID --profile dtpu --tail 100 --timestamps --show-function-call-id
+```
+
+Diagnose once before retrying. Rate limits may justify a bounded delay; unchanged model failures
+need a new hypothesis. Known Marble operation IDs are recovered by polling, existing world IDs
+by fetching/`--reuse-world`, never by resubmitting. A timeout with no saved operation ID may still
+have spent credits: preserve the submission record and block generation until the account's
+operation history resolves it. Do not delete receipts or rename an input to bypass this protection.
+The guard covers one generation name/mode in its retained metadata directory; it is not
+cross-machine or source-hash idempotency. Assign one owner per clip. Preserve the matching
+`*-generation.json`, operation/world metadata, and operation logs from `WANDER_MARBLE_DIR`
+(default `.context/marble`) under the selected evidence directory before publishing. That metadata
+directory is not otherwise included by the default run archive. Restore those records before
+recovering on another machine; never start a second submission because its local history is absent.
+Stop only jobs you started, and preserve partial outputs/evidence even when a budget or service
+failure prevents the full final rerun.

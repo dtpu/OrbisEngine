@@ -79,9 +79,40 @@ uv run --locked --group inference scripts/run_clip.py --help
 
 The help command checks the local CLI only; it does not authenticate or launch work. Source this
 file in the shell that will start the run. Both private files are gitignored; never use `VITE_`
-prefixes for secrets. Agree on the overnight task and spend limit, and preserve the cleaned-frame
-review gate and one-credit-per-new-clip Marble rule. The pipeline has no single cross-provider
-hard budget cap; credentials alone do not bound spending. Revoke temporary shared access afterward.
+prefixes for secrets. Agree on the overnight task and spend limit. Interactive runs retain the
+cleaned-frame review gate; the explicit unattended policy in [overnight rules](overnight/RULES.md)
+uses `--no-gate`. Both retain the one-generation-per-new-clip Marble rule. The pipeline has no
+single cross-provider hard budget cap; credentials alone do not bound spending. Revoke temporary
+shared access afterward. See the [overnight runbook](overnight/RUNBOOK.md) before paid work.
+
+## Recover input clips and runs
+
+The private viewer snapshot includes trimmed/transcoded input clips, including elevator, lobby,
+stairs2, atrium, HP, and Tears of Steel. This does not guarantee that the full phone originals or
+full-length films are archived. Generated cinematic videos are outputs, not reconstruction inputs.
+
+```sh
+bun run assets:pull --out .context/inputs --list
+bun run assets:pull --out .context/inputs --path /clips/elevator.mp4
+# Explicit bulk selection, excluding cinematic outputs unless opted in:
+bun run assets:pull --out .context/inputs --prefix /clips/
+# Authors can inspect and recover intermediates with their normal AWS credentials:
+bun run assets:pull --out .context/recovered --archive --list
+bun run assets:pull --out .context/recovered --archive --prefix runs/elevator/
+```
+
+Paths are preserved below `--out`, for example `.context/inputs/clips/elevator.mp4`. Downloads
+verify SHA-256 and size before becoming visible, and verified local files are reused. Different
+local files require an explicit `--overwrite`; symlink destinations are rejected. Nothing is
+written into `public/` or uploaded by this command. Outputs must be inside this checkout's `.context`.
+
+The first list/download pins a snapshot in `.wander-pull.json`. Reuse that output directory to
+resume consistently, or choose a new one for a newer snapshot. `--snapshot viewer/snapshots/<id>.json`
+selects history; use an `archive/snapshots/...` key with `--archive`. Repeat `--path`/`--prefix` for
+several selections. Broad selections omit `/clips/cinematic/` unless `--include-cinematic` is set;
+an exact cinematic path/prefix also opts in. List output is an inventory, not a provenance verdict.
+Viewer downloads use the private `WANDER_ASSET_*` pair when present, otherwise normal AWS access;
+archive downloads always require normal author AWS access.
 
 ## Authors: publish runs
 
