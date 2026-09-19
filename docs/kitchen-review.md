@@ -100,3 +100,10 @@ inspection, Playwright and recorded provenance, not a successful external AI app
 Private source images, screenshots, hashes, browser reports and detailed audits remain in
 `.context/evidence/branch-comparison/` and `.context/evidence/integration-final/`, outside Git.
 No new Marble generation or GPU inference was launched for this investigation.
+
+## September 19 delivery recovery
+
+A later, separate `kitchen-cooking` run was recovered with 610 detections across two appearance
+fragments. [The delivery report](gym-kitchen-delivery.md) describes its source mapping, one duplicate
+suppression, 609 retained samples, original audio and full-duration preview. It does not promote
+the old `test1.mov` alignment or claim that the new kitchen geometry/object reconstruction passed.
