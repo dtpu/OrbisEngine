@@ -306,6 +306,17 @@
         text-align: center;
         white-space: pre-wrap;
       }
+      #loadretry {
+        color: var(--ink);
+        background: #252a31;
+        border: 1px solid #4a515b;
+        border-radius: 7px;
+        padding: 10px 16px;
+        cursor: pointer;
+      }
+      #loading.failed #loadbar {
+        visibility: hidden;
+      }
       #loadvid {
         width: min(46%, 560px);
         aspect-ratio: 16/9;
@@ -469,6 +480,9 @@
 
       /* fact card */
       #fact {
+        z-index: 7;
+        max-height: calc(100% - 100px);
+        overflow-y: auto;
         right: 20px;
         top: 20px;
         width: 315px;
@@ -483,8 +497,8 @@
         display: none;
       }
       #fact {
-        pointer-events: none;
-      } /* a drag that starts on the card still turns the camera */
+        pointer-events: auto;
+      }
       #fact h2 {
         margin: 0;
         font-size: 15px;
@@ -651,7 +665,7 @@
       </header>
 
       <nav id="rail">
-        <div class="railhead">The reel<span id="railcount"></span></div>
+        <div class="railhead">Scenes<span id="railcount"></span></div>
         <div id="primary"></div>
         <button class="moretoggle" id="moretoggle">Spares and experiments ▾</button>
         <div id="spares" hidden></div>
@@ -665,7 +679,7 @@
         ></iframe>
 
         <div class="ov" id="srccap">
-          <div class="lab">Input · the whole of it</div>
+          <div class="lab">Source clip</div>
           <div class="txt" id="srctxt"></div>
         </div>
 
@@ -675,11 +689,11 @@
           <p id="flead"></p>
           <ul id="fproof"></ul>
           <div class="freebar">
-            <div class="k">Camera freedom</div>
+            <div class="k">Explore</div>
             <div class="v" id="ffree"></div>
           </div>
           <div class="caveat">
-            <div class="k">Say it before they see it</div>
+            <div class="k">Limitations</div>
             <p id="fcaveat"></p>
           </div>
         </div>
@@ -707,11 +721,12 @@
         </div>
 
         <div class="ov" id="loading">
-          <div id="loadlab">Input · one ordinary clip</div>
+          <div id="loadlab">Source clip</div>
           <video id="loadvid" muted loop playsinline autoplay></video>
           <div id="loadtitle"></div>
           <div id="loadbar" class="indet"><i></i></div>
-          <div id="loadmsg">loading…</div>
+          <div id="loadmsg" role="status" aria-live="polite">loading…</div>
+          <button id="loadretry" hidden>Retry scene</button>
         </div>
 
         <div class="ov" id="reelwrap">
@@ -730,98 +745,98 @@
       // on by default; ?walk=0 gives the free camera back for authoring.
       const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
-      /* ---------------- clip data ----------------
-   Numbers are the measured ones from share/JUDGE-CHECKLIST.md, MULTIPERSON-STATUS.md,
-   OBJECTS-STATUS.md, MOVIE-CLIP-2-STATUS.md and PIPELINE-PERF.md. Don't invent any. */
+      // Scene descriptions reflect source review and matched viewer captures.
+      // Refresh them when the selected scene changes; avoid unmeasured quality claims.
       const CLIPS = [
         {
           id: 'elevator',
-          title: 'Two people, one clip',
+          title: 'Two people, one handheld take',
           place: 'Fourth-floor lift lobby · phone · 10.0 s',
           src: '/clips/elevator.mp4',
           poster: 1.4,
-          sub: 'Both men and the bottle between them, out of one handheld take',
-          free: '≈2 m off the recorded path',
-          lead: 'Two men reconstructed from a single phone clip, standing in the real lobby they were filmed in — and the water bottle one throws to the other flies between them on an arc fitted to its own pixels.',
+          sub: 'Two men, a lift lobby, and a bottle moving between them',
+          free: 'Explore close to the recorded path; the railings set the boundary',
+          lead: 'Two men are reconstructed from one phone clip in the lift lobby where they were filmed. The source shows several bottle throws and catches; the viewer includes the bottle and backpack alongside the people.',
           proof: [
-            '2 tracks, 120/120 frames, no identity swap',
-            'feet on the floor to 2.8 cm rms',
-            'bottle: 14 straight frames, zero interpolation',
-            'arc reprojects at 3.56 px rms; 0.53 s of flight',
+            'Two principal people remain visible through the source clip',
+            'The lift doors, railings, and floor provide the scene landmarks',
+            'The source contains throws around 0.9–1.3 s, 5.6–6.5 s, and 7.7–8.2 s',
           ],
           caveat:
-            'The band of floor they walk on is a grey smear — their own occlusion shadow, which no world fixes. Past about 2 m the escalator balustrade takes the right of the frame.',
+            'The floor and door headers soften away from the recorded views. The bottle and backpack are present, while their fine timing and the wider walking boundary remain uncertain.',
           srctxt:
             'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
         },
         {
           id: 'lobby',
-          title: 'The room that holds up furthest',
+          title: 'A lobby with a waving subject',
           place: 'Office lobby · phone · 9.6 s',
           src: '/clips/lobby.mp4',
           poster: 1.0,
-          sub: 'Biggest room in the set, 3 m in any direction',
-          free: '3.0 m in any direction — never failed in the sweep',
-          lead: 'The safest one to hand to a judge and let them drive. Three metres off the recorded path in any direction and it is still the real lobby: the clock, the notices, the exit sign, the doors.',
+          sub: 'One phone clip, a tracked walk, and a turn toward camera',
+          free: 'Try small moves around the recorded path; inspect the doors and furniture',
+          lead: 'A man walks across an office lobby, turns, and waves. The reconstruction keeps the lobby layout and the person together so you can compare the same action with the source clip.',
           proof: [
-            '3.0 m of freedom, measured, in every direction',
-            'his face is real — the clip shows it frontally twice',
+            'The source turns and waves around 3.9–4.8 s and again near the end',
+            'The elevator doors, notices, and open doorway are useful alignment landmarks',
           ],
           caveat:
-            'The armchairs render as a crumpled metallic mass. It is the one thing in that room that does not read; everything else holds to 3 m.',
+            'The chair geometry is visibly distorted and late views lean against the room layout. The avatar has a light patch absent from the source; a matching pose is not a promise of matching appearance.',
           srctxt: 'One 9.6-second phone clip: a man walks toward the camera and waves.',
         },
         {
           id: 'stairs2',
-          title: 'The cleanest world match',
+          title: 'A short stair ascent',
           place: 'Red stairwell · phone · 4.1 s',
           src: '/clips/stairs2.mp4',
           poster: 1.6,
-          sub: 'Distinct treads, the real chrome handrail, 4 seconds of input',
-          free: '2.5 m to the left · about 1.0 m to the right',
-          lead: 'Four seconds of phone video. The only clip in the project whose world passes the strict depth gate end to end — the treads, the chrome handrail and the mezzanine offices are all where the clip says they are.',
+          sub: 'A man climbs, turns toward the rail, and leans across it',
+          free: 'Watch stair contact',
+          lead: 'A four-second phone clip follows a man up a red stairwell. He turns toward the chrome rail and leans across it while the treads and mezzanine stay in view.',
           proof: [
-            'depth ratio 0.986–1.015 across the whole clip',
-            'both feet on a step in every single frame',
-            'four seconds of input is enough — short is fine, wrong-shaped is fatal',
+            'The source shows the man turning toward the right rail around 2.2 s',
+            'The stair edges, handrail, and upper offices remain visible landmarks',
+            'The source ends with him leaning toward the rail rather than completing a clean stair-contact check',
           ],
           caveat:
-            'Rainbow-streaked geometry outside the right balustrade. Drive left, not right; the scripted move deliberately runs right to left.',
+            'Rendered contact with the treads and stair depth diverges by the end. Geometry outside the right balustrade streaks; keep the camera toward the rail and treads.',
           srctxt: 'One 4.1-second phone clip, tracking alongside a man climbing stairs.',
         },
         {
           id: 'atrium',
-          title: 'Night, handheld, four storeys',
+          title: 'Night atrium, partial view',
           place: 'Atrium · phone · 5.4 s · night',
           src: '/clips/atrium.mp4',
           poster: 2.0,
-          sub: 'The hardest input that still works, and the tightest world',
-          free: '1.5 m — the tightest of the five',
-          lead: 'A soft handheld night clip, and the world that comes out is a real four-storey atrium: the glass wall, the red benches, the balconies. The camera move ends face on to him.',
+          sub: 'A man circles a landing while the camera turns',
+          free: 'Stay near the landing and railing; the open void is not a walkable floor',
+          lead: 'A soft handheld night clip follows a man around an atrium landing. Glass, red benches, balconies, and the stair opening give the viewer a difficult scene with a short, moving source.',
           proof: [
-            'the subject is only 482 px tall in the source',
-            'avatar rebuilt from 8 views, 162 frames, 60k splats',
+            'The subject turns through the landing and faces the camera near the end',
+            'A partial extra person appears at the left opening in the source',
+            'The viewer follows the main subject; the partial extra person is missing',
           ],
           caveat:
-            'His face is invented from eight views of the back of his head — a plausible young man with his haircut and build, not a likeness. His backpack is missing entirely: the body model silently drops anything worn or carried. Past about 2 m the camera is inside a wall and the frame goes black.',
-          srctxt: 'One 5.4-second handheld phone clip, shot at night, of a man walking away.',
+            'The late wall and floor stretch, and the middle avatar appears over the stair opening where the source shows support on the landing. The face is an appearance approximation, and the backpack is not represented; the void beyond the railing is not a walkable floor.',
+          srctxt:
+            'One 5.4-second handheld phone clip, shot at night, of a man walking around a landing.',
         },
         {
           id: 'tos31',
-          title: 'A real film clip, and 6 m of freedom',
+          title: 'Tears of Steel · shot 31',
           place: 'Tears of Steel, shot 31 · CC BY 3.0 · 9.9 s',
           src: '/clips/tos31d.mp4',
           poster: 4.0,
-          sub: 'The freest camera in the project — walk around, not just along',
-          free: '≈6 m either side · full detail to 3 m',
-          lead: 'Not a phone clip: ten seconds of a real live-action film, CC BY. Every other stop here holds one to three metres off the recorded path. This one holds about six, and it is the only world you can walk <em>around</em> in rather than along.',
+          sub: 'A film shot with a rear-view walk through a machinery hall',
+          free: 'Walk behind or beside the actor',
+          lead: 'Ten seconds from Tears of Steel, a Blender Foundation film released under CC BY 3.0. The actor turns, briefly shows part of his face and shoulder, then walks away through a machinery hall.',
           proof: [
-            '119/119 camera frames solved, no seam jumps',
-            'anchor frame spans a 10× depth range — that is the whole difference',
-            'trimming the clip by half a second is what made it run at all',
+            'The source follows one older man turning and walking away',
+            'The hall, reflective floor, rope, and machinery are visible checks on scene layout',
+            'This viewer scene uses the 9.9-second trim shown in the source card',
           ],
           caveat:
-            'He is filmed only from behind for the entire shot, so his face and the front of his coat are invented. The scripted move stays behind and beside him for exactly that reason.',
+            'Only part of the face and front shoulder appear at the opening; most of the walk is seen from behind. A rope is absent from the reconstructed foreground and machinery placement differs, so wider moves are exploratory.',
           srctxt:
             'Ten seconds of Tears of Steel (Blender Foundation, CC BY 3.0) — a released film, treated like any other clip.',
         },
@@ -834,15 +849,15 @@
           place: 'Gym · phone · 18 s',
           src: '/clips/gym.mp4',
           poster: 8,
-          sub: 'Cut from the reel; the bench was rebuilt afterwards',
-          free: '2.5 m to −x · about 0.8 m to +x',
-          lead: 'A man lying on an incline bench — the hardest pose the pipeline was given — in the real gym. Cut from the 65-second reel on quality, then fixed: Marble never built the bench he is lying on, so a bench was reconstructed from his own back.',
+          sub: 'A man on an incline bench with dumbbells in hand',
+          free: 'Watch the bench and held weights',
+          lead: 'A phone clip circles a man lying on an incline bench in a gym. The bench and dumbbells make this a close-occlusion test for pose and held objects.',
           proof: [
-            'his back is the instrument: 8 slices, planar to 2.9 cm, in all 215 frames',
-            'underside-to-surface gap +50.4 cm → −8.0 cm',
+            'The source keeps the man, bench, and dumbbells in the same action',
+            'Mirrors and a second person at the left add background movement',
           ],
           caveat:
-            'The reel was cut before the bench landed and has not been re-cut. His forearms and the dumbbells still dissolve into a pale column of smear — his own occlusion shadow. The +x side is a wall 0.8 m out.',
+            'His forearms and the dumbbells still dissolve into a pale column of smear during occlusion. The side wall closes the useful camera path.',
           srctxt: 'One 18-second phone clip, camera arcing around a man on a bench.',
         },
         {
@@ -852,9 +867,9 @@
           src: '/clips/lobby.mp4',
           poster: 1.0,
           sub: 'The man from the lobby clip, walking down a different world',
-          free: 'experiment — not measured',
-          lead: 'Proof that the person and the place really are separable: the man from the lobby clip, dropped into a street generated from an entirely different video. Offer it as an experiment, never lead with it.',
-          proof: ['the picture-in-picture here is where the *person* came from, not the place'],
+          free: 'Experiment: person and place are separate',
+          lead: 'The man from the lobby clip is shown walking through a street generated from another video. It demonstrates the separation between an animated person and a generated place.',
+          proof: ['The picture-in-picture shows the source of the person, not the street'],
           caveat:
             "His light is wrong. He is lit by his lobby's overhead fluorescents in a street lit by warm lanterns, and he casts no shadow into the scene.",
           srctxt:
@@ -866,12 +881,12 @@
           place: 'Tears of Steel · CC BY 3.0',
           src: '/clips/tos-hall-walk.mp4',
           poster: 3,
-          sub: 'Superseded by tos31; keep for the A/B',
-          free: 'tighter than tos31',
-          lead: 'The first Tears of Steel shot that worked. Superseded by shot 31, which is both a better shot and a far freer camera. Useful only as a before.',
-          proof: ['the actor is seen only from behind in all 189 frames'],
+          sub: 'An earlier hall walk from the same film',
+          free: 'Stay with the rear-view walk',
+          lead: 'An earlier Tears of Steel hall shot, released by the Blender Foundation under CC BY 3.0. The actor walks away through the machinery hall while the camera follows.',
+          proof: ['The source keeps the actor mostly in rear view'],
           caveat:
-            'Tighter camera and a softer world than tos31. There is no reason to show this one unless someone asks what changed.',
+            'The hall is softer and the camera stays closer than the main shot. The actor’s front appearance remains unseen.',
           srctxt: 'Tears of Steel (Blender Foundation, CC BY 3.0), the earlier hall shot.',
         },
         {
@@ -880,12 +895,12 @@
           place: 'Living room · phone',
           src: '/clips/living.mp4',
           poster: 2,
-          sub: 'Out of the reel — stays on its fine-tuned world',
-          free: 'not in the reel',
-          lead: "The most metrically consistent clip in the project — its body height agrees with the world's own metric scale to 3 %. It is out of the reel for a rendering reason, not a measurement one.",
-          proof: ["body height 1.7 m, within 3 % of the world's own metric scale"],
+          sub: 'A man waves, then walks around a sofa and table',
+          free: 'Watch the furniture occlusions',
+          lead: 'A phone clip follows a man waving and then walking around a living room. The sofa, table, and bright windows shape what the camera can see of his lower body.',
+          proof: ['The source shows a wave followed by a walk around the sofa and table'],
           caveat:
-            'It stays on its fine-tuned world. The raw world for that room is sharper but reinstates a desk, a monitor and two office chairs that do not exist in it.',
+            'The lower body is hidden by furniture in parts of the source. The room has a sharper alternate reconstruction with extra desk and chair geometry; this card uses the selected scene.',
           srctxt: 'One phone clip of a man waving, then walking between a sofa and a table.',
         },
       ];
@@ -983,13 +998,23 @@
       /* ---------------- stage ---------------- */
       const frame = $('frame');
       let ready = false,
-        pollTimer = 0;
+        pollTimer = 0,
+        loadTimer = 0,
+        loadStarted = 0,
+        loadFailed = false;
 
       function select(id) {
         const c = ALL.find((x) => x.id === id);
         if (!c || c.id === current) return;
         current = c.id;
         ready = false;
+        loadFailed = false;
+        loadStarted = performance.now();
+        clearInterval(pollTimer);
+        clearTimeout(loadTimer);
+        loadTimer = setTimeout(() => {
+          if (!ready) failLoad('Loading is taking too long. Check your connection and retry.');
+        }, 180000);
         for (const el of document.querySelectorAll('.card'))
           el.classList.toggle('on', el.dataset.id === id);
 
@@ -1000,13 +1025,16 @@
         [...$('fproof').children].forEach((li, i) => (li.textContent = c.proof[i]));
         $('ffree').textContent = c.free;
         $('fcaveat').textContent = c.caveat;
+        $('facttoggle').firstChild.textContent = 'Notes ';
         $('srctxt').textContent = c.srctxt;
 
         $('play').disabled = true;
         setPlayLabel(false);
         driving.clear();
         $('loading').classList.remove('gone');
-        $('loadmsg').textContent = 'building the world…';
+        $('loading').classList.remove('failed');
+        $('loadretry').hidden = true;
+        $('loadmsg').textContent = 'loading the scene…';
         $('loadtitle').textContent = c.title;
         $('loadbar').className = 'indet';
         $('loadbar').firstChild.style.width = '0';
@@ -1028,6 +1056,23 @@
         history.replaceState(null, '', `?${outer}`);
       }
 
+      function failLoad(message) {
+        if (loadFailed) return;
+        loadFailed = true;
+        clearInterval(pollTimer);
+        clearTimeout(loadTimer);
+        $('loading').classList.add('failed');
+        $('loadmsg').textContent = message;
+        $('loadretry').hidden = false;
+        $('loadvid').pause();
+      }
+
+      $('loadretry').addEventListener('click', () => {
+        const id = current;
+        current = null;
+        select(id);
+      });
+
       frame.addEventListener('load', () => {
         let win;
         try {
@@ -1042,16 +1087,32 @@
         pollTimer = setInterval(() => {
           const w = win.wander;
           const st = win.document.getElementById('st');
+          if (win.__wanderStartupError || w?.people?.some((p) => p.loadError)) {
+            failLoad('The scene could not finish loading. Retry, or choose another scene.');
+            return;
+          }
+          if (!w?.ready && performance.now() - loadStarted > 180000) {
+            failLoad('Loading is taking too long. Check your connection and retry.');
+            return;
+          }
           if (!ready) loadProgress(w, st);
           if (w && w.ready) {
             ready = true;
             clearInterval(pollTimer);
+            clearTimeout(loadTimer);
             $('play').disabled = false;
             $('loading').classList.add('gone');
             const lv = $('loadvid');
             lv.pause();
             lv.removeAttribute('src');
             lv.load();
+            if (w.objectWarnings?.length) {
+              $('facttoggle').firstChild.textContent = 'Notes · incomplete ';
+              const c = ALL.find((item) => item.id === current);
+              $('fcaveat').textContent =
+                'Some objects are unavailable in this replay. The rest of the scene is still shown. ' +
+                c.caveat;
+            }
             try {
               win.focus();
             } catch {}
@@ -1059,14 +1120,13 @@
         }, 180);
       });
 
-      // The wait is 15-25 s warm and up to a minute cold (measured), so it has to say what it is doing.
       // Before the viewer API exists the world is loading; after it, the per-frame person files stream in
       // and `loaded/nF` on each person is the honest progress.
       function loadProgress(w, st) {
         const bar = $('loadbar');
         if (!w || !w.people) {
           const line = ((st && st.textContent) || '').split('\n').filter(Boolean)[0] || '';
-          $('loadmsg').textContent = /world/.test(line) ? 'reconstructing the room…' : 'loading…';
+          $('loadmsg').textContent = /world/.test(line) ? 'loading the room…' : 'loading…';
           bar.className = 'indet';
           return;
         }
