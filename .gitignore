@@ -15,6 +15,7 @@ scripts/.venv*/
 
 # Runtime media, generated worlds, model weights, archives, and evidence stay private.
 public/
+assets/
 share/
 worker/outputs/
 scripts/.frames/

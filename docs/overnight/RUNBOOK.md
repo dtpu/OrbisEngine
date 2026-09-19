@@ -4,6 +4,26 @@ Read the root `AGENTS.md`, [TONIGHT.md](TONIGHT.md), and [RULES.md](RULES.md) fi
 ceilings come from `TONIGHT.md`; this document explains how to execute them. Do not launch
 inference merely to test access. Fill the task placeholder before handing off an unattended run.
 
+## Seven-hour clock
+
+Start the seven-hour clock when unattended execution actually begins, not when the plan or prompt
+is written. Record that UTC start and the resulting deadline in `LOG.md`. Context compaction,
+restarts, and resumed sessions keep the original clock and resource ledger; they do not start a new
+seven-hour allowance. The deadline and the budget ceilings in `TONIGHT.md` override full coverage.
+When either prevents a required run or comparison, stop launching work and leave an explicit
+blocked inventory row with the missing evidence and reason.
+
+- **0:00–1:00:** establish the inventory and baseline, watch every available source and baseline,
+  record the manual flaw inventory, and trace each applicable pipeline step.
+- **1:00–4:30:** implement the highest-priority bounded general fixes and measure them. A parallel
+  frontend task is useful only when it has independent files, acceptance checks, and budget.
+- **4:30–6:30:** freeze code early enough for final affected-stage reruns, matched source/baseline/
+  candidate comparisons, and reporting of rows that cannot complete. Earlier reruns are welcome;
+  rerun again only when a later change invalidates them.
+- **6:30–7:00:** publish authorized private outputs, finish the report and recovery references,
+  stop jobs started by this run, and preserve partial evidence. At the deadline, stop even if the
+  complete inventory has not run.
+
 ## Start and record the baseline
 
 1. Fetch `origin` and inspect new commits. Start the named working branch from current `main`;
@@ -19,6 +39,20 @@ inference merely to test access. Fill the task placeholder before handing off an
    `bun run build`, `bun run format:check`, `bun run test:pull-assets`, and `bun run test:marble`
    cover build, formatting, recovery, and Marble submission contracts. Select audio/object/viewer
    checks for affected work as described in their docs.
+
+For this run, admit `assets/test1.mov` and `assets/test2.mov` relative to the repository root as
+new inputs using their full clips unless `TONIGHT.md` specifies an exact trim. Label their
+comparison rows **no prior baseline** unless a verified prior output is recovered. Before processing, record each original's
+SHA-256, byte size, duration, frame rate, dimensions, codecs/audio streams, and continuity result.
+Keep the originals unchanged and preserve their recorded audio words and timing. Work from ignored
+copies where a stage requires another location or basename. The candidate input basename must
+match the runner `--name`, because downstream packaging resolves artifacts by that basename.
+
+Watch every available source video and baseline from beginning to end before choosing fixes. Build
+a manual flaw inventory with clip, source time/range, view or camera path, severity, observed flaw,
+and evidence reference. For every applicable pipeline step, record its input, output, observed
+quality, failure or limitation, start/end/elapsed time, and estimated then confirmed cost. Missing
+or unreadable evidence is an unknown, not a pass.
 
 Read-only Modal preflight after credential setup:
 
@@ -121,6 +155,27 @@ frame zero and representative playback frames against source and baseline, then 
 views, floor contact, map placement, collisions, and audio timing. Read `verify/report.json` and
 its comparison sheet: a failed fidelity verdict can still accompany a zero pipeline exit code.
 
+Capture comparisons in batches at matching source-camera timestamps and, when a baseline exists,
+matching baseline timestamps and paths. Add off-axis and walk views that expose geometry hidden
+from the recorded camera. Keep the manual full-video review authoritative evidence alongside any
+sampled automation; still frames alone cannot establish temporal quality.
+
+An LLM quality judge is a proposed addition for this run, not an existing end-to-end quality gate.
+Before changing it, inspect the current `vlm_judge`/`verify_world.py` integration, prompts, image
+limits, retry behavior, outputs, and token accounting, then reuse it only where its contract fits.
+The criterion definitions and critical checkpoints live in `TONIGHT.md`. The initial proposal is
+at least 75% for every applicable criterion, every critical checkpoint passing, and any critical
+failure vetoing acceptance. Calibrate that proposal against clear manual passes and failures before
+using it; it is a triage signal, not proof of visual quality. Unknown, missing, or incomparable
+evidence blocks the affected criterion and final acceptance rather than receiving a passing score.
+
+Benchmark compression and speed on representative fixed inputs: record original and packaged
+bytes, settings, compression ratio, encode/package wall time, viewer transfer/load-to-first-frame,
+and playback behavior, with matched visual evidence for any quality claim. Check the actual viewer
+at narrow and wide desktop sizes for usable controls, source comparison/projector presentation,
+resize behavior, loading/error states, and interaction responsiveness. Record physical projector
+or headset checks only when that hardware was actually observed.
+
 Unpublished candidates require **local asset mode**. When port 5399 is free, start:
 
 ```sh
@@ -140,12 +195,17 @@ bun run runs:publish --evidence-dir .context/evidence/overnight
 ```
 
 This publishes `public/`, `.context/run/`, and selected evidence, not arbitrary local source
-folders. Preserve any new input under an appropriate ignored `public/clips/` path as well.
+folders. The supplied originals for this run stay in gitignored `assets/` for local use; do not
+copy those originals into publication trees. Git ignore rules do not control S3 publication.
 Keep candidate asset paths separate; uploading them does not require changing demo presets.
 Record the immutable snapshot and archive keys. A publish conflict means another author changed
 the pointer; inspect their result and retry when writes are idle, never overwrite their changes.
 Only promote candidates with passing visual comparisons. Finish with every inventory row marked
 passed, failed, or blocked and its evidence, spend, source hash, and final code commit.
+Private asset access authorizes only the private recovery and publication paths specified in
+`TONIGHT.md` and the shared-assets documentation. Do not purchase credits, publish media publicly,
+or deploy to an unspecified target. In the final report, distinguish features actually implemented
+and exercised from proposals or planned work, and identify unverified behavior explicitly.
 
 ## Budget and failure recovery
 
@@ -155,6 +215,17 @@ Use the limits in `TONIGHT.md`, shared across all workers and clips. Start one b
 candidate at a time until actual costs are measured. Before each next stage/batch, include cold
 image builds, idle GPU time, retries, and other teammates' spend. Set bounded job timeouts and
 record the stop condition. Do not launch work whose remaining cost cannot fit the allowance.
+
+For a quality failure, allow at most two quality-motivated retries after the first stage execution
+(three total executions of that stage). Every retry needs a changed, justified parameter or code
+hypothesis and recorded before/after evidence, timing, and cost. Never loosen an acceptance
+threshold to make a retry pass. API transport errors may use a separately bounded retry/backoff
+policy, but count every request and its elapsed time and possible cost; a transport retry does not
+grant another quality attempt. The shared deadline and provider budgets can stop retries sooner.
+The one-generation-per-new-clip Marble rule overrides every retry allowance: recover or poll the
+recorded operation instead of submitting another generation. `--no-gate` skips only the current
+human cleaned-frame stop; it does not waive manual review or bypass any future automated quality
+gate added by the run.
 
 Worker `estimatedComputeUSD` values and elapsed times are estimates, not provider invoices.
 `vlm_judge.ask_images` currently drops OpenAI token-usage metadata and may retry up to three times;
