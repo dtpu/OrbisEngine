@@ -1,23 +1,30 @@
 # Working on Wander
 
-Read `README.md` first. Audio and asset contracts are in
-`docs/audio.md` and `docs/shared-assets.md`.
+This file is durable: rules that hold for every session. Do not edit it or record progress here.
+Read `README.md` for context and commands.
+Before changing an area, read its doc: `docs/audio.md`, `docs/objects.md`, or `docs/shared-assets.md`.
+Check `docs/known-limits.md` before trying a new approach.
+When running unattended, also follow `docs/overnight/RULES.md`.
 
-- Measure before claiming success. Check the real viewer at `http://127.0.0.1:5399`;
-  keep screenshots and measurements outside Git. Simulated XR is not headset evidence.
-- Use Bun for viewer commands and `uv run --locked` for local Python tools. Keep `bun.lock` and
-  `uv.lock` current. Run `bun run format:check` after Python edits; use ordinary readable blocks.
-- At most two subagents may work at once. Give them independent tasks; do not poll them.
-- Start Vite only with `bunx --bun vite --port 5399 --host 127.0.0.1`. Do not kill someone else's
-  server, pipeline, or Modal job. `RECORD=1` disables reload during captures.
-- Use `MODAL_PROFILE=dtpu` for GPU launches. Existing model volumes may belong to the primary
-  profile; check availability before launching. Launch paid jobs only within the user-authorized task and budget.
-- Marble: one generation credit per new clip after every no-spend gate passes; tell the user
-  before spending. The pipeline's cleaned-frame review gate remains required.
-- Never commit footage, generated scenes, model weights, run outputs, screenshots, credentials,
-  or keys. Keep media in private shared storage. Do not paste secrets into chat or logs.
-- Never use bare `git stash`; worktrees share it. Preserve other agents' changes.
-- No per-clip constants in runtime code. Use measured manifests and general flags.
-- Quote body-heights; metre estimates assume a subject height. Label unobserved geometry and
-  invented appearance. Preserve recorded audio words and timing; do not invent speaker stems.
-- Check results adversarially against source footage before calling them settled.
+## Never
+
+- Commit footage, generated scenes, weights, run outputs, screenshots, credentials, or keys; media lives in private shared storage.
+- Paste secrets into chat or logs.
+- Use bare `git stash` (worktrees share it), rewrite pushed history, or discard other agents' changes.
+- Kill a Vite server, pipeline run, or Modal job you did not start.
+- Skip, weaken, or delete a test to get to green.
+- Add per-clip constants to runtime code; use measured manifests and general flags.
+
+## Tooling
+
+- Bun for viewer commands, `uv run --locked` for Python tools. Keep `bun.lock` and `uv.lock` current.
+- Run `bun run format:check` after code edits (Ruff for Python, Prettier for web code); use ordinary readable blocks.
+- Start Vite only with `bunx --bun vite --port 5399 --host 127.0.0.1`. `RECORD=1` disables reload during captures.
+- At most two subagents at once, on independent tasks; do not poll them.
+
+## Evidence
+
+- Exit codes and passing tests do not prove visual quality. Check the real viewer at `http://127.0.0.1:5399` against the source footage, adversarially.
+- Keep screenshots and measurements under `.context/evidence/`, never in Git. Simulated XR is not headset evidence.
+- Quote body-heights, not metres (metres assume a 1.70 m subject). Label unobserved geometry and invented appearance.
+- Preserve recorded audio words and timing; do not invent speaker stems.
