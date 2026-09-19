@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = "https://api.worldlabs.ai"
@@ -148,17 +149,23 @@ def claim_submission(a):
 
 
 def call(method, path, body=None, raw=None, headers=None, timeout=120):
-    api_key = os.environ.get("WLT_API_KEY")
-    if not api_key:
-        sys.exit("set WLT_API_KEY")
-    h = {"WLT-Api-Key": api_key}
+    url = BASE + path if path.startswith("/") else path
+    parsed = urllib.parse.urlsplit(url)
+    is_api = parsed.scheme == "https" and parsed.netloc == "api.worldlabs.ai"
+    h = {}
+    if is_api:
+        api_key = os.environ.get("WLT_API_KEY")
+        if not api_key:
+            sys.exit("set WLT_API_KEY")
+        h["WLT-Api-Key"] = api_key
     if body is not None:
         raw = json.dumps(body).encode()
         h["Content-Type"] = "application/json"
     h.update(headers or {})
-    request = urllib.request.Request(
-        BASE + path if path.startswith("/") else path, data=raw, method=method, headers=h
-    )
+    if not is_api:
+        # Presigned media uploads authenticate through their URL, not the API key.
+        h = {k: v for k, v in h.items() if k.lower() != "wlt-api-key"}
+    request = urllib.request.Request(url, data=raw, method=method, headers=h)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read()
