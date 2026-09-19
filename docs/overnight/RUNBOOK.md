@@ -101,6 +101,73 @@ blocked rows. Do not regenerate a world simply because the metadata is missing. 
 audio manifests/WAVs and evidence from the same snapshot before comparing: the five main
 packaged videos themselves are silent; their authentic mixes are external sidecars.
 
+## Provided key pool and job ownership
+
+Aayan authorizes use of the existing provider keys supplied by the team, including rotation across
+those supplied accounts. Do not stop an entire run because the first key has no credits when
+another authorized account has capacity. Keys for the same account share its limits; changing a
+key may not resolve throttling. Keep secret values only in ignored private environment/config
+files. Logs and commands shown in reports use aliases, never key values or fragments.
+
+Before launching, inventory the authorized pool with provider, key alias, account/workspace alias,
+verified balance/quota, any account-specific cap, and model/cache access. Record unavailable checks
+as unknown. Aggregate all spending against the run caps in `TONIGHT.md`; do not multiply those
+caps by the number of keys. Do not create accounts, claim new trials, purchase credits, or raise
+limits automatically. Provided credentials do not themselves establish that an account has funds.
+
+Use this selection and recovery order:
+
+1. Resolve source hash, exact trim and verified aliases against the team's existing world/run
+   inventory. Reuse an existing world. Assign one owner for every new source before submission.
+2. Select a supplied account with verified capacity and reserve the possible cost in the shared
+   ledger. Record key/account aliases, source/request hashes, attempt number and output path
+   **before** launching. Use an atomic claim across workers; local receipts do not coordinate
+   different machines. If a shared lock/ledger is unavailable, partition clip ownership explicitly.
+3. Persist the provider operation/app/function-call ID immediately, together with its owning
+   account alias. Poll, fetch, cancel or recover using that account's credential. Switching the
+   default key does not transfer ownership of an existing operation or access to its assets.
+4. On a confirmed pre-submission quota/billing refusal with no accepted job, retire the refusal
+   atomically and select another supplied account with capacity. Preserve the refusal record and
+   count requests. Only one worker may reserve the next attempt. A real failed generation still
+   consumes the one-generation allowance; key rotation cannot reset it.
+5. On throttling, honor the provider's retry delay and bound retries. Do not relaunch a paid GPU
+   command merely because its output contains `rate limit`; a job may already have run. On a
+   timeout, disconnect or ambiguous response, recover the existing job or inspect operation
+   history with the owning account. If the outcome remains unknown, block that source's new
+   submission and continue independent work. Do not try another key to resolve an unknown job.
+6. For a permitted new call on another supplied account, retain the original source allowance,
+   attempt ledger, deadline and aggregate budget. Never rotate accounts to bypass an access
+   restriction. OpenAI requests may be retried within the recorded request/cost allowance;
+   non-idempotent generation launches require the stronger ownership checks above.
+
+For Modal, keep `MODAL_PROFILE=dtpu` and verify the actual workspace selected by environment
+credentials. Recover jobs and access volumes in their owning workspace. A missing volume/model
+is a setup problem: stage caches deliberately, validate model/revision and path, then perform one
+bounded smoke inference when authorized. Separate setup/build cost from actual GPU inference.
+Do not substitute a silent CPU/low-quality fallback or omit people just to make a command succeed.
+
+## Bounded execution and output provenance
+
+Start with one paid pipeline and measure stage time, memory, provider limits and cost. Declare a
+finite queue size before increasing concurrency; reserve budget for all active calls, cold builds,
+and recovery. Coordinate at the account level across teammates. Spawning dozens of run processes,
+then limiting only each process's own retries or launch spacing, is not a shared concurrency limit.
+Keep publishing out of that queue: use `--no-publish` for active candidates and one publisher after
+writers are idle. Never delete another run's `.part` file without establishing its owner is inactive.
+
+Treat each stage as a recorded contract: source hash/time mapping, parameters/model/code version,
+input/output hashes, status, attempt, start/end time, provider IDs and estimated/confirmed cost.
+A manifest file or exit code alone does not establish correct execution. Check that stages really
+ran, required models were loaded, and outputs cover the expected frames/people/objects. Link every
+published scene to those receipts. Preserve camera, mask, ROI, depth and registration sample time
+together; mixing references from different frames can corrupt placement even when inference passes.
+
+Before merging an overnight harness, test at least ambiguous submit failures, simultaneous claims,
+resume after interruption, changed source/settings/code, missing/corrupt outputs, forced descendants,
+exhausted attempts/budget and failed publication. Never auto-enable bad-size/weak-anchor/scale-spread
+flags from log text or disable the visual judge after an arbitrary exception. Such fallbacks need
+an explicit contract, visible degraded status and source comparison, not a success label.
+
 ## Execute isolated candidates
 
 Use a fresh name for each candidate and the same basename for its input video. The head-track
@@ -169,9 +236,17 @@ failure vetoing acceptance. Calibrate that proposal against clear manual passes 
 using it; it is a triage signal, not proof of visual quality. Unknown, missing, or incomparable
 evidence blocks the affected criterion and final acceptance rather than receiving a passing score.
 
+Pin immutable baseline and candidate snapshots independently; the shared latest pointer may
+include outputs from other branches. Use matching code/manifest formats, exact source times and
+cameras, and record missing capabilities rather than substituting unrelated demo presets.
+
 Benchmark compression and speed on representative fixed inputs: record original and packaged
 bytes, settings, compression ratio, encode/package wall time, viewer transfer/load-to-first-frame,
-and playback behavior, with matched visual evidence for any quality claim. Check the actual viewer
+and playback behavior, with matched visual evidence for any quality claim. Separate first visible
+world, first usable motion and complete readiness. Measure fresh-browser/cold-server-cache and
+warm-cache runs separately, record timeouts and failed requests, and test one active renderer at a
+time. Report repeat count, network/cache conditions and frame pacing; compression does not imply
+better geometry. Inject missing first/later motion frames to verify failure states, not just success. Check the actual viewer
 at narrow and wide desktop sizes for usable controls, source comparison/projector presentation,
 resize behavior, loading/error states, and interaction responsiveness. Record physical projector
 or headset checks only when that hardware was actually observed.
@@ -219,9 +294,9 @@ record the stop condition. Do not launch work whose remaining cost cannot fit th
 For a quality failure, allow at most two quality-motivated retries after the first stage execution
 (three total executions of that stage). Every retry needs a changed, justified parameter or code
 hypothesis and recorded before/after evidence, timing, and cost. Never loosen an acceptance
-threshold to make a retry pass. API transport errors may use a separately bounded retry/backoff
-policy, but count every request and its elapsed time and possible cost; a transport retry does not
-grant another quality attempt. The shared deadline and provider budgets can stop retries sooner.
+threshold to make a retry pass. Read-only API transport errors may use a separately bounded retry/backoff
+policy. Paid launch wrappers must not repeat a submitted or ambiguous job. Count every request and
+its elapsed time and possible cost; a transport retry does not grant another quality attempt. The shared deadline and provider budgets can stop retries sooner.
 The one-generation-per-new-clip Marble rule overrides every retry allowance: recover or poll the
 recorded operation instead of submitting another generation. `--no-gate` skips only the current
 human cleaned-frame stop; it does not waive manual review or bypass any future automated quality
@@ -233,11 +308,12 @@ only some artifacts, such as world-ruler answers, preserve usage. Missing token 
 zero cost. There is no global automatic dollar/token cutoff in the runner. Check provider usage
 and the coding host's separate usage view; record unknowns rather than claiming exact totals.
 
-OpenAI spend alerts alone do not stop requests. A configured organization/project **hard spend
-limit** does, with possible small overshoot during enforcement propagation. Confirm the applicable
-control before relying on it; this repository does not change account settings. Monthly limits
-apply to total monthly spend, not the remaining allowance for this run. Stop on billing-limit
-errors; do not top up, raise limits, or rotate accounts to continue.
+Do not assume usage dashboards or spend alerts enforce the run budget. Verify the account
+control actually available and keep local reservations regardless; this repository does not
+change account settings. Monthly account limits are not a fresh per-run allowance. A billing
+refusal stops calls on that exhausted account. Another team-supplied account may be selected
+under the shared run cap and [key-pool recovery rules](#provided-key-pool-and-job-ownership).
+Do not top up, raise limits, or add an unprovided account automatically.
 See [OpenAI spend controls](https://developers.openai.com/api/docs/guides/spend-limits).
 
 Keep exact commands, exit statuses, provider app/function-call IDs, Marble operation/world IDs,
