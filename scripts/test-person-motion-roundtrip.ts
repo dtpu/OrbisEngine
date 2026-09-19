@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { parseGaussianPly } from '../src/gaussian-ply.ts';
 import {
   decodeMotionFrame,
+  loadMotionOrPlys,
   motionTrackBytes,
   motionTrackUsable,
   type MotionRecord,
@@ -50,17 +51,27 @@ function writePerson(): string {
       const n = Math.hypot(...q);
       for (let k = 0; k < 4; k++) rows[s * 17 + 13 + k] = q[k] / n;
     }
+    rows[2] = -0;
+    rows[17 + 2] = Math.fround(1e-44); // float32 subnormal, preserved without quantization
     const name = `frame_${String(f).padStart(3, '0')}.ply`;
     writeFileSync(join(dir, name), plyBytes(rows));
     names.push(name);
   }
-  writeFileSync(join(dir, 'sequence.json'), JSON.stringify({ frames: names, fps: 12 }));
+  writeFileSync(
+    join(dir, 'sequence.json'),
+    JSON.stringify({
+      frames: names,
+      fps: 12,
+      timestamps: [0, 0.1, 0.15, 0.25, 0.38],
+      duration: 0.45,
+    }),
+  );
   return dir;
 }
 
 function pack(dir: string, lossless: boolean) {
   const args = ['run', '--locked', 'scripts/package_person_motion.py', dir];
-  if (lossless) args.push('--lossless');
+  if (!lossless) args.push('--quantize');
   const run = spawnSync('uv', args, { encoding: 'utf8' });
   assert.equal(run.status, 0, `packager failed:\n${run.stdout}\n${run.stderr}`);
   const seq = JSON.parse(readFileSync(join(dir, 'sequence.json'), 'utf8'));
@@ -69,7 +80,7 @@ function pack(dir: string, lossless: boolean) {
   const raw = readFileSync(join(dir, record.file));
   const buf = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
   assert.equal(buf.byteLength, motionTrackBytes(record));
-  return { record, buf };
+  return { record, buf, seq };
 }
 
 function plyChannels(dir: string, frame: number): Float32Array {
@@ -87,7 +98,10 @@ for (const lossless of [false, true]) {
   test(`frames packed by the Python packager decode in the viewer (${lossless ? 'float32' : 'uint16'})`, () => {
     const dir = writePerson();
     try {
-      const { record, buf } = pack(dir, lossless);
+      const { record, buf, seq } = pack(dir, lossless);
+      assert.deepEqual(seq.timestamps, [0, 0.1, 0.15, 0.25, 0.38]);
+      assert.equal(seq.duration, 0.45);
+      assert.equal(seq.fps, 12);
       assert.equal(record.dtype, lossless ? 'float32' : 'uint16');
       const worst = new Array(7).fill(0); // per channel, like the record's maxAbsError
       for (let f = 0; f < FRAMES; f++) {
@@ -96,14 +110,17 @@ for (const lossless of [false, true]) {
         for (let i = 0; i < want.length; i++)
           worst[i % 7] = Math.max(worst[i % 7], Math.abs(got[i] - want[i]));
       }
-      if (lossless) assert.deepEqual(worst, new Array(7).fill(0));
-      else
-        worst.forEach((w, c) => {
-          // the decoder works in float32 where the packager measured in float64: allow a few ulp
-          assert.ok(
-            w <= record.maxAbsError[c] + 1e-6,
-            `channel ${c}: ${w} > ${record.maxAbsError[c]}`,
+      if (lossless) {
+        assert.deepEqual(worst, new Array(7).fill(0));
+        for (let f = 0; f < FRAMES; f++)
+          assert.deepEqual(
+            new Uint8Array(decodeMotionFrame(buf, record, f, null, SPLATS).buffer),
+            new Uint8Array(plyChannels(dir, f).buffer),
           );
+      } else
+        worst.forEach((w, c) => {
+          // The packager records the error after the same float32 rounding as the viewer.
+          assert.ok(w <= record.maxAbsError[c], `channel ${c}: ${w} > ${record.maxAbsError[c]}`);
           assert.ok(w < 2e-4, `channel ${c}: quantisation error ${w} too large for a 6 u range`);
         });
       // a splat selection reads the same rows the PLY holds at those indices
@@ -118,3 +135,92 @@ for (const lossless of [false, true]) {
     }
   });
 }
+
+test('verified real packages load exactly; corruption, wrong base and missing tracks use original PLYs', async () => {
+  const dir = writePerson();
+  try {
+    const { record, buf, seq } = pack(dir, true);
+    const baseRaw = readFileSync(join(dir, seq.frames[0]));
+    const basePly = baseRaw.buffer.slice(
+      baseRaw.byteOffset,
+      baseRaw.byteOffset + baseRaw.byteLength,
+    );
+    for (const fault of [
+      'none',
+      'same-size-corruption',
+      'wrong-base',
+      'missing',
+      'truncated',
+      'order',
+      'legacy',
+      'fallback-failure',
+    ]) {
+      const installed = new Map<number, Float32Array>();
+      let fallback = 0;
+      let reason = '';
+      const payload = buf.slice(0);
+      if (fault === 'same-size-corruption' || fault === 'fallback-failure')
+        new Uint8Array(payload)[8] ^= 1;
+      const base = basePly.slice(0);
+      if (fault === 'wrong-base') new Uint8Array(base)[base.byteLength - 4] ^= 1;
+      const r =
+        fault === 'order'
+          ? { ...record, frameFiles: [...record.frameFiles].reverse() }
+          : { ...record };
+      if (fault === 'legacy') delete (r as Partial<MotionRecord>).base;
+      const loading = loadMotionOrPlys({
+        record: r,
+        frameFiles: seq.frames,
+        splats: SPLATS,
+        basePly: base,
+        selection: null,
+        selectedSplats: SPLATS,
+        fetchPayload: async () => {
+          if (fault === 'missing') throw new Error('HTTP 404');
+          return fault === 'truncated' ? payload.slice(0, -4) : payload;
+        },
+        installFrame: (f, values) => installed.set(f, values),
+        onFallback: (error) => {
+          reason = error.message;
+        },
+        fallback: async () => {
+          fallback++;
+          assert.equal(installed.size, 0, 'no compact keys were installed before rejection');
+          if (fault === 'fallback-failure') throw new Error('original PLY missing');
+          for (let f = 1; f < FRAMES; f++) installed.set(f, plyChannels(dir, f));
+        },
+      });
+      if (fault === 'fallback-failure') {
+        await assert.rejects(loading, /original PLY missing/);
+        continue;
+      }
+      assert.equal(await loading, fault === 'none' ? 'motion' : 'ply');
+      assert.equal(fallback, fault === 'none' ? 0 : 1);
+      assert.equal(reason.length > 0, fault !== 'none');
+      assert.equal(installed.size, FRAMES - 1);
+      for (const [f, values] of installed)
+        assert.deepEqual(new Uint8Array(values.buffer), new Uint8Array(plyChannels(dir, f).buffer));
+    }
+    const lossy = pack(dir, false);
+    let fallback = false;
+    const options = {
+      record: lossy.record,
+      frameFiles: seq.frames,
+      splats: SPLATS,
+      basePly,
+      selection: null,
+      selectedSplats: SPLATS,
+      fetchPayload: async () => lossy.buf,
+      installFrame: () => {},
+      onFallback: () => {},
+      fallback: async () => {
+        fallback = true;
+      },
+    };
+    assert.equal(await loadMotionOrPlys(options), 'ply');
+    assert.equal(fallback, true, 'quantization is never enabled by asset metadata alone');
+    assert.equal(await loadMotionOrPlys({ ...options, allowQuantized: true }), 'motion');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
