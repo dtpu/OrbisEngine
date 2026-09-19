@@ -55,13 +55,38 @@ For uint16, `value = code * scale[channel] + min[channel]`, rounded to float32 b
 `maxAbsError` measures that final float32 error. Existing historical byte/speed measurements for
 quantized packages do not establish sizes or performance for the new lossless default.
 
+## Published demo verification
+
+Shared snapshot `efe034d2-badf-48c5-9a71-2c0257995b15` enables lossless tracks for stairs and both
+people in elevator. The publication changed exactly six paths: three sequence manifests and three
+motion payloads. Every original PLY remains available; all unrelated viewer entries and the existing
+archive pointer were preserved, including the separately published gym review work.
+
+| Sequence | Frames × splats | Original PLY bytes | Motion + base PLY bytes |
+| --- | --- | --- | --- |
+| Stairs person | 50 × 40,000 | 136,020,750 | 58,720,415 |
+| Elevator person | 120 × 40,000 | 326,449,800 | 137,120,415 |
+| Elevator person_01 | 120 × 40,000 | 326,449,800 | 137,120,415 |
+
+All 81.2 million position/rotation values were checked bit-for-bit, with unchanged static appearance,
+source-frame hashes and timing metadata. All six published files passed independent fresh-download
+SHA-256 and size checks before the conditional snapshot update. Playwright then checked the published
+snapshot: all 50/120/120 frames loaded as float32 without fallback or page errors, source playback
+advanced, Enter controlled transport, original audio ran, and both elevator objects were present.
+Screenshots were visually inspected. This browser check used a warm cache seeded only with bytes
+matching the independently verified downloads; its roughly 5-second loads are not cold-network
+benchmarks. Earlier matched-camera PLY/compact captures were pixel-identical outside the changing
+performance HUD. These checks establish lossless delivery, not improved reconstruction or physical
+headset performance. Receipts and private images remain under `.context/evidence/integration-final/`.
+
 ## Checks and credits
 
 Run `bun run test:person-motion` for Python packaging checks and real Python-to-TypeScript
 round trips, including zero-error float32, static appearance rejection, preserved timing,
-SHA-256 failures, wrong keyframes, reordered frames, missing payloads, explicit quantization
-failure propagation when original frames also fail, and stance invariance under seeks/delayed frames. Tests need no media, network, GPU,
-compression streams or provider credentials, and run on Bun 1.2.21.
+SHA-256 failures, wrong keyframes, reordered frames, missing payloads, explicit quantization,
+failure propagation when original frames also fail, and stance invariance under seeks/delayed
+frames. Tests need no media, network, GPU, compression streams or provider credentials, and run
+on Bun 1.2.21.
 
 The packer, decoder, pipeline hooks, PLY parser and round-trip tests were selected from James's
 branch commits `d08706d`, `4d3c95b`, `6a34c12`, `265397f`, `6f18244`, `57c8954`, and `5f020e9`.
