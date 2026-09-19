@@ -1,24 +1,14 @@
 #!/usr/bin/env python3
-"""Look at the clip, then write the prompt the world model is generated from.
+"""Write a source-grounded description to accompany Marble video or image inputs.
 
-Nothing in this pipeline ever looked at a clip before asking Marble for a world. Video mode
-auto-captions the clip and generates from its own caption -- that is how a Diagon Alley clip became
-a generic wizard street (share/HP-MARBLE-VERDICT.md). `disable_recaption: true` with our own
-`text_prompt` replaces that caption, and a controlled experiment showed prompting genuinely governs
-what gets invented where the camera never looked: naming "plain plaster, no signage" removed
-invented CJK-lettered banners and framed portraits (share/FINETUNE-STATUS.md, the bare-walls run).
-Every such prompt so far was hand-written per clip. This writes it, from the frames, unattended.
+Video remains the default visual input. A description can state observed materials and constrain
+unsupported additions, but does not pin visible geometry or prove that hallucination is reduced.
+Unknown, occluded and unobserved regions must remain labeled as such. Review the sampled evidence
+and the full cleaned clip before generation; a few prompt frames do not prove temporal coverage.
 
-What the prompt is FOR, and this is the whole design: the part of the scene the camera filmed is
-already pinned by the input image(s). The prompt only governs the regions Marble has to invent --
-behind the camera, past the far wall, the ceiling, the space beyond a doorway. So the brief asks
-for materials, architecture, lighting and what the space opens onto, and for explicit negative
-constraints, which is where this project's failures live.
+  world_prompt.py --clip public/clips/gym.mp4 --n 6 --out .context/prompt/gym.json
 
-  world_prompt.py --clip public/clips/gym.mp4 --n 6 --out .context/prompt/gym.json \
-      [--frames 0,108,216,324,432,540] [--model gpt-6-astra]
-
-Writes {"text_prompt", "structured": {...}, "frames": [...]} plus the sampled PNGs next to it.
+Writes {"text_prompt", "structured": {...}, "frames": [...]} plus sampled PNGs next to it.
 """
 
 import argparse, json, os, sys
@@ -30,28 +20,25 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker" / "stages"))
 
-BRIEF = """These images are frames from ONE continuous shot of ONE real place, in time order. A
-generative 3D world model will be given one or more of these frames and must return a world a person
-can walk around inside. You are writing the text prompt it generates from.
+BRIEF = """These images sample ONE continuous shot of a real place in time order. A generative
+3D world model will receive the cleaned video, or explicitly selected still images. Write a factual
+supporting description. The description and visual input do not guarantee correct geometry.
 
-Understand what the prompt controls. The parts of the room these frames show are already pinned by
-the input image itself. Your words govern only the regions the camera NEVER filmed: behind the
-camera, beyond the far wall, above the top of frame, through any opening. Those regions are where
-this pipeline's failures live -- invented signage, invented furniture, invented corridors, a ceiling
-that does not exist. So describe the place factually and then constrain what must not be invented.
+Describe only structure, fixtures and materials supported by the supplied images. Do not complete a
+floor plan from assumptions or invent what lies behind the camera, beyond an occlusion, or through an
+opening. Label ambiguous or unseen details as unknown; they are not evidence that a surface is absent.
+Preserve observed details. Negative constraints must not ask to remove real recorded features.
 
-Rules, each from a measured result on this pipeline:
- - Material, surface, lighting and time-of-day words are followed.
- - Negative constraints are followed: "no signage, no readable text, no framed pictures, plain
-   plaster walls" measurably removed exactly those things on an earlier clip.
- - Spatial instructions are NOT followed. Never write "the door is on the left" or "the stairs are
-   behind the camera". Do not spend words on placement.
- - Mirrors are the known hard case: the model rebuilds a reflection as more room. If you see a
-   mirrored wall, say it is a flat mirror on a solid wall and that the space does not continue
-   behind it.
- - Ignore any people: they are removed before generation. Never describe or ask for people.
- - No style, mood or camera words ("cinematic", "8k", "beautiful"). This is a description, not art
-   direction.
+Rules:
+ - Describe visible materials, surfaces, fixtures and lighting without guessing hidden structure.
+ - Describe what is actually visible through openings; otherwise say 'nothing visible'.
+ - Do not invent additional rooms, corridors, furniture, signage, windows or doors.
+ - If a surface is visibly a mirror, describe it as a flat mirror on a solid wall, not another room.
+   If reflection versus opening is ambiguous, say so rather than guessing.
+ - People are removed before world generation; do not request people or their body parts.
+ - Do not add style, mood or camera adjectives such as 'cinematic', '8k' or 'beautiful'.
+ - If sampled views conflict because an object moved or a door opened, record that uncertainty;
+   do not blend incompatible fixture states into a confident description.
 
 Answer with JSON and nothing else:
 {"space": "<what kind of room or place, one clause>",
