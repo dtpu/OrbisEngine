@@ -1,7 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Immutable, checksum-verified objects first; the shared pointer is updated LAST.
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
@@ -9,6 +8,14 @@ import { PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { ROOT, config, client, getJSON, hashFile, filesUnder, mime } from './lib/shared-storage.ts';
 import type { PutObjectCommandInput } from '@aws-sdk/client-s3';
 import type { AssetEntry, CatalogPointer, ScannedFile } from './lib/shared-storage.ts';
+import { uploadBlob } from './lib/publish-transport.ts';
+
+// Bun 1.3.9 drops Content-Length on larger Node-compatible streaming requests,
+// invalidating the S3 signature. Keep uploads streamed through Node's transport.
+if (process.versions.bun) {
+  throw new Error('Publishing requires Node.js. Run bun run runs:publish.');
+}
+
 interface UploadCacheEntry {
   size: number;
   mtimeMs: number;
@@ -137,18 +144,14 @@ async function worker() {
                 throw new Error(`File exceeds single-object uploader limit: ${t.path}`);
               for (let attempt = 0; ; attempt++) {
                 try {
-                  await s3.send(
-                    new PutObjectCommand({
-                      Bucket: config.bucket,
-                      Key: key,
-                      Body: createReadStream(t.file),
-                      ContentLength: t.size,
-                      ContentType: mime(t.path),
-                      ChecksumSHA256: Buffer.from(sha, 'hex').toString('base64'),
-                      Metadata: { sha256: sha },
-                      IfNoneMatch: '*',
-                    }),
-                  );
+                  await uploadBlob(s3, {
+                    bucket: config.bucket,
+                    key,
+                    file: t.file,
+                    size: t.size,
+                    contentType: mime(t.path),
+                    sha256: sha,
+                  });
                   break;
                 } catch (e) {
                   if ((e as StorageFailure).$metadata?.httpStatusCode === 412) break;

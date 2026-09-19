@@ -116,6 +116,16 @@ archive downloads always require normal author AWS access.
 
 ## Authors: publish runs
 
+Publishing uses Node.js 22.18+ on the 22.x line, or Node.js 24+ (see `package.json`).
+Keep invoking it with `bun run runs:publish`; that command selects Node for streaming S3 uploads.
+Austin's source investigation measured a Bun 1.3.9 transport failure that removed the signed
+`Content-Length` on a large streamed body and produced `SignatureDoesNotMatch`; the Node upload
+retained the header and passed its SHA-256 check. Native TypeScript execution uses
+[Node's type stripping](https://nodejs.org/api/typescript.html#type-stripping).
+`bun run test:publish-transport` checks the production streaming upload helper against a local
+HTTP fixture with fake credentials, including byte integrity, signed headers, and error propagation.
+It does not contact S3 or publish a snapshot.
+
 After the [author credential setup](#author-credentials), use your configured AWS author profile,
 separately from the teammate environment file:
 

@@ -2863,7 +2863,7 @@ def main():
     finally:
         if not a.no_publish:
             say("Saving viewer assets and run artifacts to private S3...")
-            command = ["bun", "scripts/publish-runs.ts"]
+            command = ["bun", "run", "runs:publish"]
             if os.environ.get("WANDER_EVIDENCE_DIR"):
                 command += ["--evidence-dir", os.environ["WANDER_EVIDENCE_DIR"]]
             try:
