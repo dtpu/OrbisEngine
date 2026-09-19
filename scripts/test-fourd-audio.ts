@@ -324,3 +324,41 @@ test('recovered silent-video manifest enables original audio and displays safe s
   assert.equal(safeCredit.children[0].href, undefined);
   unsafe.audio.dispose();
 });
+
+test('a listener without AudioParams is positioned through the legacy calls, not thrown at', async () => {
+  const s = setup();
+  await s.audio.load('/audio.json');
+  await s.audio.unlock();
+  const c = s.context();
+  // Firefox exposes neither the listener nor the panner AudioParams, only these two calls.
+  const calls: { position?: number[]; orientation?: number[]; panner?: number[] } = {};
+  c.listener = {
+    setPosition: (...a: number[]) => {
+      calls.position = a;
+    },
+    setOrientation: (...a: number[]) => {
+      calls.orientation = a;
+    },
+  } as never;
+  const created = c.createPanner.bind(c);
+  c.createPanner = () => {
+    const panner = created() as unknown as Record<string, unknown>;
+    delete panner.positionX;
+    delete panner.positionY;
+    delete panner.positionZ;
+    panner.setPosition = (...a: number[]) => {
+      calls.panner = a;
+    };
+    return panner as never;
+  };
+  s.audio.tick(0, true, new THREE.Vector3(3, 1, 0), new THREE.Quaternion());
+  assert.deepEqual(calls.position, [3, 1, 0]);
+  assert.deepEqual(calls.orientation, [0, 0, -1, 0, 1, 0]);
+  assert.deepEqual(calls.panner, [2, 1, 0]);
+  // a second frame must not throw either, which is what made the viewer crawl
+  s.audio.tick(1, true, new THREE.Vector3(0, 1, 2), new THREE.Quaternion());
+  assert.deepEqual(calls.position, [0, 1, 2]);
+  assert.deepEqual(calls.panner, [2.2, 1, 0]);
+  assert.equal(s.audio.state.mode, 'spatial');
+  s.audio.dispose();
+});
