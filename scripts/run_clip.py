@@ -27,7 +27,7 @@ failed or uncertain Modal invocations are never automatically resubmitted.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, threading, time
+import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile, threading, time
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
@@ -2487,43 +2487,101 @@ def cut_check(a) -> dict:
     clip = Path(a.clip).resolve()
     out = ROOT / ".context" / "run" / a.name / "cuts.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    st = clip.stat()
+    source_hash = hashlib.sha256()
+    with clip.open("rb") as source:
+        for chunk in iter(lambda: source.read(1 << 20), b""):
+            source_hash.update(chunk)
+    detector = ROOT / "scripts" / "shot_cuts.py"
+    detector_hash = hashlib.sha256(detector.read_bytes()).hexdigest()
+    no_score = a.shot is not None or a.all_shots
+    cache_key = {
+        "sourceSha256": source_hash.hexdigest(),
+        "sourcePath": str(clip),
+        "threshold": float(a.cut_threshold),
+        "detectorArgs": ["--threshold", str(a.cut_threshold)]
+        + (["--no-score"] if no_score else []),
+        "detectorSha256": detector_hash,
+    }
+
+    def valid_report(value):
+        return (
+            isinstance(value, dict)
+            and isinstance(value.get("continuous"), bool)
+            and isinstance(value.get("cutCount"), int)
+            and not isinstance(value.get("cutCount"), bool)
+            and value["cutCount"] >= 0
+            and isinstance(value.get("cuts"), list)
+            and isinstance(value.get("shots"), list)
+            and value["cutCount"] == len(value["cuts"])
+            and value["continuous"] == (value["cutCount"] == 0)
+        )
+
     if out.exists():
         try:
             doc = json.loads(out.read_text())
-            if doc.get("_source") == [str(clip), st.st_size, int(st.st_mtime)]:
+            if valid_report(doc) and doc.get("_cacheKey") == cache_key:
                 say(f"cut check: {doc['cutCount']} cut(s) (cached from {out})")
                 return doc
-        except Exception:
+        except (OSError, TypeError, ValueError, AttributeError):
             pass
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=out.parent, prefix=f".{out.name}.", suffix=".json", delete=False
+    ) as detector_output:
+        temporary = Path(detector_output.name)
     cmd = [
         PY,
         "scripts/shot_cuts.py",
         "--video",
         str(clip),
         "--json",
-        str(out),
+        str(temporary),
         "--threshold",
         str(a.cut_threshold),
     ]
     if a.shot is not None or a.all_shots:
         cmd.append("--no-score")  # the choice is already made; do not pay to rank
     say("cut check: looking for cuts before anything is spent")
-    p = subprocess.run(
-        cmd,
-        cwd=ROOT,
-        env=dict(os.environ, **LOCAL_ENV),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    for line in p.stdout.strip().splitlines():
-        say(f"   {line}")
-    if not out.exists():
-        raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
-    doc = json.loads(out.read_text())
-    doc["_source"] = [str(clip), st.st_size, int(st.st_mtime)]
-    out.write_text(json.dumps(doc, indent=1))
+    try:
+        p = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            env=dict(os.environ, **LOCAL_ENV),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        for line in p.stdout.strip().splitlines():
+            say(f"   {line}")
+        # shot_cuts exits 1 for a valid report containing cuts; that is admission data,
+        # not a detector crash. Require its report and exit status to agree below.
+        if p.returncode not in (0, 1):
+            raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
+        if not temporary.exists():
+            raise SystemExit(f"the cut check failed (exit {p.returncode}); see the output above")
+        doc = json.loads(temporary.read_text())
+        if not valid_report(doc):
+            raise ValueError("cut detector report is malformed")
+        if p.returncode != int(not doc["continuous"]):
+            raise ValueError("cut detector exit status disagrees with its continuity report")
+        doc["_cacheKey"] = cache_key
+        published = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=out.parent, prefix=f".{out.name}.", suffix=".json", delete=False
+            ) as handle:
+                published = Path(handle.name)
+                json.dump(doc, handle, indent=1)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(published, out)
+        finally:
+            if published is not None:
+                published.unlink(missing_ok=True)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"the cut check failed before cache publication: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
     return doc
 
 
