@@ -25,7 +25,10 @@ export default defineConfig(({ mode }) => ({
     },
     hmr: process.env.RECORD ? false : undefined,
     watch: {
-      ignored: ['worker', 'assets', 'scripts/.frames'].map(
+      // .venv and .context hold tens of thousands of files and no code; watching them exhausts
+      // the file-descriptor limit (EMFILE). public/ must stay watched: Vite only serves files it
+      // has seen there, so a world staged after start-up would otherwise answer with index.html.
+      ignored: ['worker', 'assets', 'scripts/.frames', '.venv', '.context'].map(
         (dir) => path.resolve(import.meta.dirname, dir) + '/**',
       ),
     },
