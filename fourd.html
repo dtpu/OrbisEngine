@@ -136,6 +136,7 @@
   import { loadMotionOrPlys, verifySha256 } from '/src/person-motion.ts';
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import { createStanceResolver } from '/src/person-stance.ts';
+  import { personVisibility } from '/src/person-visibility.ts';
   import {
     parseStaticColliders,
     highestSupport,
@@ -2321,18 +2322,16 @@
     }
     // a person exists only during their own samples; outside them the whole group is hidden rather
     // than frozen on a last pose (a no-op for a track that covers the clip)
-    const runs = meta.visibleSampleRuns || null,
-      first = meta.firstSample ?? 0;
-    function visibleAt(tt, i) {
-      if (!runs) return true;
-      if (tt < ts[0] - 1e-3 || tt > ts[nF - 1] + 1.001 / fps) return false;
-      const s = first + i;
-      return runs.some(([a, b]) => s >= a && s <= b);
-    }
+    const first = meta.firstSample ?? 0;
+    const visibleAt = personVisibility(
+      meta.visibleSampleRuns,
+      manifest?.timestamps,
+      manifest?.duration,
+    );
     // advance this person to time tt; returns the ms its splat interpolation took
     function step(tt, snapOn) {
       let [i, u] = frameAt(tt);
-      const on = visibleAt(tt, i);
+      const on = visibleAt(tt);
       if (person.visible !== on) person.visible = on;
       if (shadow) shadow.visible = on;
       if (!on) return 0;
