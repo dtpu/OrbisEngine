@@ -1,0 +1,53 @@
+{
+  "name": "wander",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Step inside any video: one 2D clip -> orbitable 3D moment in the browser",
+  "scripts": {
+    "dev": "bunx --bun vite --port 5399 --host 127.0.0.1",
+    "demo": "bunx --bun vite --port 5399 --host 127.0.0.1",
+    "build": "bunx --bun tsc --noEmit && bunx --bun vite build",
+    "runs:publish": "bun scripts/publish-runs.ts",
+    "assets:pull": "bun scripts/pull-assets.ts",
+    "test:pull-assets": "bun test ./scripts/test-pull-assets.ts",
+    "test:shared-assets": "bun test ./scripts/test-shared-assets.ts",
+    "test:publish-hook": "uv run --locked scripts/test_run_clip_publish.py",
+    "test:audio": "bun test ./scripts/test-fourd-audio.ts",
+    "test:audio-browser": "bun scripts/test-fourd-audio-browser.ts",
+    "smoke:xr": "bun scripts/smoke-xr.ts",
+    "capture:shared": "bun scripts/capture-shared-demo.ts",
+    "capture:walk": "bun scripts/capture-walk-attack.ts",
+    "capture:collision": "bun scripts/capture-walk-collide.ts",
+    "capture:audio": "bun scripts/capture-audio-demo.ts",
+    "test:audio-package": "uv run --locked scripts/test_package_audio.py",
+    "test:marble": "uv run --locked scripts/test_marble_world.py",
+    "format": "bun run format:python && bun run format:web",
+    "format:check": "uv run --locked --group dev ruff format --check scripts worker && bunx --bun prettier --check \"src/**/*.{ts,js}\" \"scripts/**/*.{ts,js}\" \"server/**/*.ts\" \"*.html\" vite.config.ts package.json tsconfig.json",
+    "format:python": "uv run --locked --group dev ruff format scripts worker",
+    "format:web": "bunx --bun prettier --write \"src/**/*.{ts,js}\" \"scripts/**/*.{ts,js}\" \"server/**/*.ts\" \"*.html\" vite.config.ts package.json tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1136.0",
+    "@sparkjsdev/spark": "^2.2.0",
+    "three": "^0.186.0",
+    "webxr-polyfill": "^2.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "@types/three": "^0.186.0",
+    "playwright-core": "1.63.0",
+    "prettier": "3.9.8",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.0"
+  },
+  "engines": {
+    "bun": ">=1.2.21"
+  },
+  "packageManager": "bun@1.2.21",
+  "prettier": {
+    "singleQuote": true,
+    "printWidth": 100,
+    "tabWidth": 2
+  }
+}

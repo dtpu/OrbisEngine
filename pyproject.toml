@@ -1,0 +1,47 @@
+[project]
+name = "wander-tools"
+version = "0.1.0"
+description = "Local authoring and validation tools for Wander"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "certifi",
+    "modal>=1.1",
+    "numpy>=1.26,<2",
+    "scipy",
+    "pillow",
+    "opencv-python-headless<4.12",
+    "matplotlib",
+    "numba",
+    "plyfile",
+    "trimesh",
+]
+
+[dependency-groups]
+dev = ["ruff==0.16.8"]
+# Local masks and pose-artifact readers; no LHM/Pi3/gsplat GPU worker environment.
+inference = [
+    "torch>=2.6,<3",
+    "torchvision>=0.21,<1",
+    "transformers>=4.46,<5",
+    "huggingface-hub",
+    "safetensors",
+]
+
+[tool.uv]
+package = false
+
+# Linux/Windows local tools use CPU wheels. macOS uses PyPI's native wheels (MPS capable).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+required-version = "==0.16.8"
+target-version = "py311"
+line-length = 100
+cache-dir = ".context/ruff-cache"
