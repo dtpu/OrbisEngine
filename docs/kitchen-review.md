@@ -1,5 +1,9 @@
 # Kitchen investigation and input review policy
 
+This records the original investigation. The subsequent authorized live kitchen **and gym** video
+tests, prompt-recaption defect/fix, candidate identities and separate API/visual conclusions are in
+[the video-input evaluation](video-input-evaluation.md). The old kitchen remains preserved.
+
 The poor kitchen preview combines an imperfect generated environment, damaged cleaned inputs,
 and unvalidated camera/person registration. Export corruption is ruled out for the inspected asset.
 A clean-looking origin panorama is not evidence that displaced viewpoints will hold up.
@@ -48,7 +52,9 @@ translational parallax or consistent moving fixtures.
 
 The provider documents [video input](https://docs.worldlabs.ai/api) and automatic caption generation
 when a prompt is omitted. That does not establish that video pixels are discarded. Video requests now
-retain the pipeline's source-grounded description, pin `marble-1.1`, and request private permissions.
+send the pipeline's source-grounded description, pin `marble-1.1`, and request private permissions.
+Prompted video now also requests `disable_recaption=true`; sending text alone did not preserve it in
+the live provider response. Request intent is not proof of either retention or visual correctness.
 The entire cleaned clip at the configured processing frame rate is uploaded; this does not mean every
 original source frame or unmodified source pixel is retained. Input bytes/SHA-256 and the exact request
 are saved in the existing submission receipts. Existing operation recovery still prevents resubmission.
@@ -56,7 +62,8 @@ are saved in the existing submission receipts. Existing operation recovery still
 Offline tests verify video-first decisions, explicit still overrides, full input-byte transfer to the
 mock transport, prompt/model/private request fields, input mutation rejection, credential handling,
 and recovery. They do **not** establish fewer hallucinations or improved kitchen geometry. No new
-video-versus-stills generation was run for this change. Such a comparison must bind the same source
+video-versus-stills generation was run for the original policy change; the later live evaluation
+linked above documents actual trials and their confounds. A controlled comparison must bind the same source
 and cleaned inputs, record model/settings, and judge matching held-out and displaced views; a prompt
 or a successful API request is not a visual acceptance result.
 
