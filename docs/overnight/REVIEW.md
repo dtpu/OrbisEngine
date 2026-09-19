@@ -1,11 +1,12 @@
 # Overnight integration review
 
-Keep the measured improvements as separate changes. None of the three branches currently
+The selected viewer/audio/object fixes, durable paid-job recovery and lossless compact animation
+have been integrated with original authors and coauthors preserved. The other branch work remains
+separate. None of the three branches currently
 justifies replacing all of `main`, and a published world is not a completed reconstructed replay.
 Austin's gym world is a visual improvement in the tested front and sideways views and a candidate to retain;
-James's compact person animation gives the clearest measured delivery improvement. The compact
-packages are opt-in review paths; the default demo wrapper does not forward arbitrary person-path
-overrides, so opening James's ordinary demo alone does not reproduce the compact-package comparison. Daniel has
+James's compact person animation gives the clearest measured delivery improvement. The historical quantized compact
+packages were opt-in review paths; their measurements below do not describe the new lossless default. Daniel has
 valuable reconstruction and paid-job recovery work, with different integration requirements.
 
 ## Versions and evidence
@@ -156,8 +157,41 @@ credit is additional and does not replace human authorship.
    each candidate against source cameras, motion and support geometry. Promote per clip, preserving
    a rollback snapshot; do not promote a whole branch merely because one world looks better.
 
-The supplied-key rotation policy is now explicit in the runbook. Main does not yet implement an
-automatic key-pool selector or all the harness safeguards described here. This review is a
-selection and integration plan, not a claim that those implementation changes have landed.
+The supplied-key rotation policy is explicit in the runbook. Main does not implement an
+automatic key-pool selector or all the harness safeguards described here. The selected integration
+below is narrower than this review's remaining reconstruction and quality-review plan.
 Full-inventory reconstruction, physical Quest performance, live billing reconciliation and every
 possible failure mode remain outside the independently completed checks above.
+
+
+## Completed selective integration
+
+All 18 local integration commits were retained. The selected Austin failure/retry, object timing and
+validation fixes; Daniel audio compatibility, model-cache and durable recovery/attempt accounting;
+and James compact motion dependency chain were combined without replacing their authors/coauthors.
+No gym/body/bench improvements or permissive quality fallbacks were promoted.
+
+Combined verification passed the production typecheck/build, full Ruff/Prettier check, 40 Bun
+regressions, 95 Python tests and native Chromium audio rendering. Tests exercised fixtures and mocked
+providers; they did not run cloud inference or certify physical headset performance.
+
+The current packer verified 81.2 million decoded position/rotation values bit-identical across the
+real stairs and two elevator sequences, with unchanged static appearance and timing. Including the
+appearance PLY, person delivery is 58.72 MB versus 136.02 MB for stairs, and 274.24 MB versus 652.90 MB
+for elevator (57–58% smaller). Every original PLY remains available.
+
+Playwright on the live viewer verified advancing source-video playback, Enter play/pause, original
+mix audio, map/walking, the elevator bottle/backpack and mobile layout. Missing, corrupt and
+wrong-base compact data fell back to original PLYs. First/later required-frame failures displayed
+retry and recovered after the injected failure was removed, without false readiness.
+
+Rendered comparison exposed an existing stance-cache dependency on frame arrival and seek order.
+The integration fixes it by deriving only complete predecessor chains and leaving missing data
+uncached. Direct/backward seeks and out-of-order frame arrivals have focused regressions. After the
+fix, matched stairs/elevator lossless and original-PLY captures were pixel-identical outside the
+changing performance HUD. Measured 4–8 second local loads used cached worlds and local asset routes;
+they are not cold-network speed claims.
+
+See [the kitchen investigation](../kitchen-review.md) for verified export identity, cleaning/selection
+problems, unresolved native-renderer comparison and failed registration. Austin's fetched gym tip
+`405dcbc` remains separate and WIP; availability is not visual acceptance.
