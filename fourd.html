@@ -135,6 +135,7 @@
   import { validateBakedTrack } from '/src/object-track.ts';
   import { loadMotionOrPlys, verifySha256 } from '/src/person-motion.ts';
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
+  import { createStanceResolver } from '/src/person-stance.ts';
   import {
     SparkRenderer,
     SplatMesh,
@@ -1967,23 +1968,12 @@
       mPerNative = 1,
       basePos = new THREE.Vector3();
     // stance lock: while the low cluster stays put (< 3 cm/keyframe) subtract its drift, decay in swing
-    const stance = new Array(nF).fill(null);
+    const resolveStance = createStanceResolver((k) => {
+      measureFeet(k);
+      return feet[k];
+    });
     function stanceAt(k) {
-      if (stance[k]) return stance[k];
-      if (k === 0 || !feet[k] || !feet[k - 1]) return (stance[k] = [0, 0]);
-      const p = stanceAt(k - 1),
-        dx = feet[k][1] - feet[k - 1][1],
-        dz = feet[k][2] - feet[k - 1][2];
-      const planted = (Math.hypot(dx, dz) * scale0) / upm < 0.03;
-      let ox = planted ? p[0] - dx : p[0] * 0.6,
-        oz = planted ? p[1] - dz : p[1] * 0.6;
-      const lim = (0.1 * upm) / scale0,
-        m = Math.hypot(ox, oz);
-      if (m > lim) {
-        ox *= lim / m;
-        oz *= lim / m;
-      }
-      return (stance[k] = [ox, oz]);
+      return resolveStance(k, scale0, upm);
     }
     // ---- foot lock (?feetlock=1): per-foot stance from the avatar's own splats ----
     // The pose estimator's contact flags are unusable (GVHMR's fire on 80% of the lobby frames and
