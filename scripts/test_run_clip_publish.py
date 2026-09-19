@@ -37,12 +37,14 @@ class PublishCompletionTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].args[0][:3], ["bun", "run", "runs:publish"])
+        self.assertIn("--archive-only", calls[0].args[0])
 
     def test_failed_and_gated_runs_are_saved(self):
         for code in (1, 2):
             status, calls = self.run_main(stage_status=code)
             self.assertEqual(status, code)
             self.assertEqual(len(calls), 1)
+            self.assertIn("--archive-only", calls[0].args[0])
 
     def test_publish_failure_is_not_reported_as_success(self):
         status, _ = self.run_main(publish_status=1)
@@ -59,7 +61,14 @@ class PublishCompletionTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(
             calls[0].args[0],
-            ["bun", "run", "runs:publish", "--evidence-dir", "/tmp/review evidence"],
+            [
+                "bun",
+                "run",
+                "runs:publish",
+                "--archive-only",
+                "--evidence-dir",
+                "/tmp/review evidence",
+            ],
         )
 
     def test_publish_start_failure_keeps_nonzero_status(self):
@@ -83,6 +92,7 @@ class PublishCompletionTests(unittest.TestCase):
         ):
             module.main()
         publish.assert_called_once()
+        self.assertIn("--archive-only", publish.call_args.args[0])
 
 
 if __name__ == "__main__":

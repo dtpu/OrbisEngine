@@ -83,6 +83,8 @@ stay outside Git. Viewer installation and builds do not launch inference or down
 
 `scripts/run_clip.py` is the current end-to-end pipeline. It checks shot continuity, runs camera,
 people, and world stages, fits placement, packages assets, and publishes results to private S3.
+Automatic completion archives outputs without changing the shared viewer. Explicit author
+publication follows separate visual acceptance.
 This is author tooling: it needs [uv](https://docs.astral.sh/uv/getting-started/installation/),
 Python 3.11–3.12, FFmpeg, local inference dependencies, configured
 Modal access and model caches, Marble credentials, and an OpenAI key for visual review. GPU/model
@@ -120,6 +122,10 @@ Unattended runs pass `--no-gate` to skip this stop.
 `--marble none` avoids Marble generation but can still run paid GPU/API stages. `--no-publish`
 keeps results local. Repeating a command resumes its saved stages; `--only` and `--force` select
 stages explicitly. Run `uv run --locked --group inference scripts/run_clip.py --help` for all options.
+The world `verify` stage now requires an explicit offline manual review of its static room evidence.
+Without one it retains CPU-rendered diagnostics and stops as blocked. Legacy vision scores cannot
+accept a world. See [quality judging](docs/quality-judging.md) for the review contract and remaining
+calibration limits; static-world review alone does not certify people, motion or walking.
 Paid Modal stages retain their outputs and share a local execution ledger. See
 [paid stage accounting and recovery](docs/paid-recovery.md) before retrying an interrupted run.
 
