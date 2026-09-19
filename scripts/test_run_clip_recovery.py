@@ -100,9 +100,13 @@ class RunnerRecoveryTests(unittest.TestCase):
         for mode in ("frozen", "motion"):
             with self.subTest(mode=mode):
                 dest = self.checkpoint(mode)
-                with patch.object(run_clip, "run", side_effect=self.recover_command) as invoke:
+                with (
+                    patch.object(run_clip, "run", side_effect=self.recover_command) as invoke,
+                    patch.object(self.pipeline, "paid_run") as paid,
+                ):
                     getattr(self.pipeline, "lhm_" + mode)()
                 invoke.assert_called_once()
+                paid.assert_not_called()
                 receipt = json.loads((dest / "recovery-receipt.json").read_text())
                 self.assertEqual(receipt["status"], "recovered")
                 self.assertEqual(receipt["functionCallId"], "fc-expired")
@@ -198,10 +202,10 @@ class RunnerRecoveryTests(unittest.TestCase):
 
     def test_new_single_person_stages_submit_once_with_existing_arguments(self):
         for mode in ("frozen", "motion"):
-            with self.subTest(mode=mode), patch.object(run_clip, "run") as invoke:
+            with self.subTest(mode=mode), patch.object(self.pipeline, "paid_run") as invoke:
                 getattr(self.pipeline, "lhm_" + mode)()
                 invoke.assert_called_once()
-                command = invoke.call_args.args[0]
+                command = invoke.call_args.args[1]
                 self.assertEqual(command[:3], [run_clip.MODAL, "run", "worker/modal_lhm.py"])
                 self.assertEqual(command[command.index("--out") + 1], str(self.destination(mode)))
                 if mode == "frozen":
