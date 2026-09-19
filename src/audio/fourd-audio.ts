@@ -372,14 +372,29 @@ export class FourDAudio {
     const l = ctx.listener;
     this.forward.set(0, 0, -1).applyQuaternion(rotation);
     this.up.set(0, 1, 0).applyQuaternion(rotation);
-    for (const [params, vector] of [
-      [[l.positionX, l.positionY, l.positionZ], this.pos.copy(position).divideScalar(unit)],
-      [[l.forwardX, l.forwardY, l.forwardZ], this.forward],
-      [[l.upX, l.upY, l.upZ], this.up],
-    ] as [AudioParam[], THREE.Vector3][]) {
-      params[0].value = vector.x;
-      params[1].value = vector.y;
-      params[2].value = vector.z;
+    const listenerPosition = this.pos.copy(position).divideScalar(unit);
+    if (l.positionX) {
+      for (const [params, vector] of [
+        [[l.positionX, l.positionY, l.positionZ], listenerPosition],
+        [[l.forwardX, l.forwardY, l.forwardZ], this.forward],
+        [[l.upX, l.upY, l.upZ], this.up],
+      ] as [AudioParam[], THREE.Vector3][]) {
+        params[0].value = vector.x;
+        params[1].value = vector.y;
+        params[2].value = vector.z;
+      }
+    } else {
+      // Firefox has no listener AudioParams. Without this the assignment above threw on every
+      // animation frame, which both silenced spatial audio and made the whole viewer crawl.
+      l.setPosition(listenerPosition.x, listenerPosition.y, listenerPosition.z);
+      l.setOrientation(
+        this.forward.x,
+        this.forward.y,
+        this.forward.z,
+        this.up.x,
+        this.up.y,
+        this.up.z,
+      );
     }
     for (const item of this.loaded)
       if (item.anchor) {
@@ -395,9 +410,11 @@ export class FourDAudio {
           item.panner.rolloffFactor = 0.5;
           item.panner.connect(this.master!);
         }
-        item.panner.positionX.value = this.pos.x;
-        item.panner.positionY.value = this.pos.y;
-        item.panner.positionZ.value = this.pos.z;
+        if (item.panner.positionX) {
+          item.panner.positionX.value = this.pos.x;
+          item.panner.positionY.value = this.pos.y;
+          item.panner.positionZ.value = this.pos.z;
+        } else item.panner.setPosition(this.pos.x, this.pos.y, this.pos.z);
       }
     const active =
       running &&
