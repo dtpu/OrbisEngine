@@ -2,14 +2,13 @@
 """Synthetic gaussian PLY sequences only; no real media, GPU, or services required."""
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
-from plyfile import PlyData, PlyElement
-
 from package_person_motion import CHANNELS, load_frames, package
+from plyfile import PlyData, PlyElement
 
 FIELDS = (
     "x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2", "opacity",
@@ -104,6 +103,36 @@ class MotionTrack(unittest.TestCase):
         back = self.read_back(record)
         self.assertTrue(np.all(back[:, :, 2] == 2.5))
         self.assertEqual(record["maxAbsError"][2], 0.0)
+
+
+class PackagerIntegration(unittest.TestCase):
+    """package_person_sequence.add_motion_track: track on success, PLYs untouched on refusal."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.person = Path(self.tmp.name) / "person"
+        self.person.mkdir()
+
+    def test_track_is_added_and_reported(self):
+        from package_person_sequence import add_motion_track
+
+        sequence(self.person, frames=3, splats=8)
+        report = add_motion_track(self.person)
+        self.assertEqual(report["file"], "motion.u16")
+        self.assertEqual(report["bytes"], 3 * 8 * 7 * 2)
+        self.assertTrue((self.person / "motion.u16").exists())
+        self.assertIn("motion", json.loads((self.person / "sequence.json").read_text()))
+
+    def test_refused_sequence_ships_without_a_track(self):
+        from package_person_sequence import add_motion_track
+
+        names = sequence(self.person, frames=3, splats=8, drift_field="scale_1")
+        before = [(self.person / n).read_bytes() for n in names]
+        self.assertIsNone(add_motion_track(self.person))
+        self.assertFalse((self.person / "motion.u16").exists())
+        self.assertEqual([(self.person / n).read_bytes() for n in names], before)
+        self.assertNotIn("motion", json.loads((self.person / "sequence.json").read_text()))
 
 
 if __name__ == "__main__":
