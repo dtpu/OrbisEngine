@@ -1,0 +1,31 @@
+# Depth Anything 3 environment (recommended Track B backend). Verified on macOS arm64 / MPS.
+# The upstream README says `pip install xformers`; it has no macOS wheel and DA3 never imports it.
+#   uv venv .venv-da3 --python 3.11
+#   git clone --depth 1 https://github.com/ByteDance-Seed/Depth-Anything-3.git /tmp/da3
+#   uv pip install --python .venv-da3/bin/python -e /tmp/da3 --no-deps
+#   uv pip install --python .venv-da3/bin/python -r requirements-da3.txt
+#   export KMP_DUPLICATE_LIB_OK=TRUE   # pycolmap + torch both bundle libomp on macOS
+torch
+torchvision
+einops
+huggingface_hub
+imageio
+numpy<2
+opencv-python-headless
+pillow
+omegaconf
+plyfile
+safetensors
+trimesh
+typer
+requests
+moviepy==1.0.3
+e3nn
+evo
+addict
+pycolmap
+scipy
+onnxruntime
+fastapi
+uvicorn[standard]
+python-multipart
