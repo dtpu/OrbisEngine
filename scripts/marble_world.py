@@ -10,7 +10,8 @@
 
 Only submit uploads inputs and generates a world. Poll/fetch recover existing results without
 spending generation credits. The input type preserves each mode's payload and ops-log format;
-video intentionally does not send image-only display_name/model/seed/prompt fields.
+video intentionally does not send image-only display_name/seed/prompt fields.
+All submissions pin their model and request private world permissions.
 """
 
 import argparse
@@ -332,7 +333,10 @@ def submit(a):
             entry["azimuth"] = angle
         entries.append(entry)
     if a.input_type == "video":
-        body = {"world_prompt": {"type": "video", "video_prompt": entries[0]["content"]}}
+        body = {
+            "model": a.model,
+            "world_prompt": {"type": "video", "video_prompt": entries[0]["content"]},
+        }
     else:
         world_prompt = (
             {
@@ -354,6 +358,7 @@ def submit(a):
         body = {"display_name": a.name, "model": a.model, "world_prompt": world_prompt}
         if a.seed is not None:
             body["seed"] = a.seed
+    body["permission"] = {"public": False}
     if a.input_type == "multi":
         (Path(a.marble_dir) / f"{a.name}-request.json").write_text(json.dumps(body, indent=1))
     receipt.update(
@@ -401,11 +406,11 @@ def parser():
         ap.add_argument("--spz")
         ap.add_argument("--thumb")
         ap.add_argument("--interval", type=int, default=60)
+        ap.add_argument("--model", default="marble-1.1")
         if input_type != "video":
             ap.add_argument("--ops", help="ops log stem (default name)")
             ap.add_argument("--prompt", default="" if input_type == "image" else None)
             ap.add_argument("--seed", type=int)
-            ap.add_argument("--model", default="marble-1.1")
             ap.add_argument("--note", default="")
         if input_type == "multi":
             ap.add_argument("--images", nargs="+", default=[], help="path[:azimuth_deg] per view")
