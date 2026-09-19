@@ -134,6 +134,7 @@
   import { normalizePlaybackTime } from '/src/playback-time.ts';
   import { validateBakedTrack } from '/src/object-track.ts';
   import { decodeMotionFrame, motionTrackUsable } from '/src/person-motion.ts';
+  import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import {
     SparkRenderer,
     SplatMesh,
@@ -1668,18 +1669,9 @@
     );
   }
   async function loadPly(url) {
-    const buf = await (await fetch(url)).arrayBuffer();
-    const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(4096, buf.byteLength)));
-    const hi = head.indexOf('end_header\n');
-    const headerLen = new TextEncoder().encode(head.slice(0, hi + 11)).length;
-    const lines = head.slice(0, hi).split('\n');
-    const props = lines.filter((l) => l.startsWith('property')).map((l) => l.split(' ')[2]);
-    const n = +lines.find((l) => l.startsWith('element vertex')).split(' ')[2];
-    return {
-      props,
-      n,
-      data: new Float32Array(buf.slice(headerLen, headerLen + n * props.length * 4)),
-    };
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+    return parseGaussianPly(await r.arrayBuffer(), url);
   }
 
   // One person: its own frames, its own interpolated mesh, its own feet/stance/lock/shadow. The world
