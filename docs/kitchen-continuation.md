@@ -48,3 +48,27 @@ optimizing articulation. It has not been implemented or accepted at this checkpo
 
 Private evidence is under `.context/evidence/kitchen-continuation/`. The current source, frames,
 previews and published snapshot are documented in [the delivery report](gym-kitchen-delivery.md).
+
+## Main and shared-storage checkpoint
+
+The focused delivery changes landed on `dtpu/htn2026` main at `119260a`, on top of the newer
+video-input evaluation work. The author branch remains `austin/gym-kitchen` at `919eac8` before
+this receipt update. Neither push rewrote history or included the other session's unfinished XR work.
+
+The verified private S3 viewer/archive snapshot is
+`ebdbb33d-1cc7-4d57-8764-c3a76464a538` in `wander-shared-797639045717`.
+All five new/updated viewer entries passed remote SHA-256 and size checks. Fresh downloads of both
+previews, both review pages and the people manifest matched. The 16,878 unaffected viewer entries
+and all 25,729 prior archive entries were preserved; the delivery index is the sole updated prior
+viewer path. New repair evidence is namespaced separately from prior receipts.
+
+Open [both scenes and previews](http://127.0.0.1:5399/reviews/gym-kitchen/index.html), or the
+[unaccepted observed-geometry experiment](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html).
+A server pins its snapshot at startup; only restart a server you own. This checkout's immediate
+[local review link](http://127.0.0.1:5399/@fs/Users/austinjian/htn2026/public/reviews/gym-kitchen/index.html)
+works through the existing server without interrupting it.
+
+The new-main video evaluation records two additional kitchen generations and one gym generation,
+4,800 provider credits total across the three. Those receipts remain separate historical spending;
+this continuation submitted none. Neither the new credentials nor those evaluation results reset
+stage allowances. See [the evaluation](video-input-evaluation.md).
