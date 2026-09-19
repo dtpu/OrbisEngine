@@ -139,12 +139,23 @@ The commands above select the `default` profile; replace it with your author pro
 standard AWS environment credentials instead, omit the `AWS_PROFILE=default` prefix and leave
 `AWS_PROFILE` unset.
 
-`scripts/run_clip.py` automatically publishes `public/` and `.context/run/` at the end, including
-failed/gated runs. `WANDER_EVIDENCE_DIR=/path/to/share` adds evidence to that automatic publish.
-A publish failure returns an error and leaves local results intact; retry the command above.
+`scripts/run_clip.py` automatically archives `public/` and `.context/run/` at the end, including
+failed/gated runs, using `--archive-only`. Public outputs are stored privately under `public/` in
+the author archive; automatic completion does not promote them to the viewer. Review the local
+result before explicitly running the publish command above to update the viewer.
+`WANDER_EVIDENCE_DIR=/path/to/share` adds evidence to that automatic archive.
+A publish failure returns an error and leaves local results intact; retry an automatic archive
+with `bun run runs:publish --archive-only` (and the same evidence directory when supplied).
 `--no-publish` is the explicit offline opt-out. Standalone experimental scripts outside `run_clip.py`
 need `bun run runs:publish` after finishing. Hard-killed processes cannot run a completion hook;
 resume them or publish their partial outputs manually.
+
+`--archive-only` preserves existing archive paths and conditionally updates only the archive
+reference in an existing shared pointer, retaining its viewer snapshot. It creates no viewer
+blobs or snapshot. If no shared pointer exists, it saves the immutable archive without creating
+a viewer pointer; recover it using the archive key in `.context/shared-storage/last-publish.json`
+and `bun run assets:pull --archive --snapshot archive/snapshots/<id>.json --out .context/recovered --list`.
+It cannot be combined with `--assets-only`.
 
 To inspect unpublished local work, start Vite with `WANDER_ASSETS_MODE=local bun run demo`.
 Remote mode never silently falls back to files on disk. The standard install downloads no local model assets.
