@@ -30,16 +30,25 @@ Conversely, re-encoding the same recording must not create a fresh paid-stage al
 
 ## Correct input provenance before another alignment attempt
 
-`worker/modal_clean_video.py` resamples with FFmpeg, then approximates source indices using rounded
-average FPS. That does not preserve the exact decoded frame selected by the filter. Daniel's later
-log reports 305/609 mismatched labels, including four selected kitchen inputs one source frame later
-than their labels. This review confirmed the formula in current code, but did not recover the original
-framehash artifact to independently reproduce those counts.
+The former `worker/modal_clean_video.py` resampled with FFmpeg, then approximated source indices
+using rounded average FPS. Recovery of Daniel's two archived framehash files now independently
+confirms 609 unique exact pixel-hash matches and 305 incorrect labels. These artifacts preserve
+their recorded framehash PTS; they do not recover the original file's native container timebase.
 
-Persist actual decoded index and PTS through resampling, cleaning and selection, bound to the source
-hash. Validate each exact image/camera pair and rerun held-out registration before accepting placement.
-Do not patch four clip-specific indices or assume a one-frame correction repairs generated geometry.
-This provenance repair is follow-up work, outside the selected integration.
+New cleaning runs observe the actual FFmpeg filter selections, cross-check frame checksums before
+and after resampling, and join them to decoded source ordinals and FFprobe PTS. Reports and mask
+archives retain the source SHA-256 and timebase; each returned cleaned image has its own hash and
+source binding. Partial selection preserves the requested order. The full cleaned video is hashed.
+Missing/nonmonotonic PTS or unsupported FFmpeg diagnostics fail explicitly.
+
+Multi-image selection now requires source-bound camera metadata and exact retained frame indices
+and PTS before paid cleaning. Submission verifies the image hashes and selection receipt. Existing
+world reuse and known-operation recovery remain read-only paths without new cleaning prerequisites.
+Run `uv run --locked scripts/test_source_timing.py` for the offline pixel-identity and recovery tests.
+
+These changes do not relabel existing outputs or prove camera geometry. A reconstructed historical
+mapping needs independent pixel corroboration, and placement still needs held-out registration.
+Do not patch clip-specific indices or assume a timing correction repairs generated geometry.
 
 ## Video-first policy
 
