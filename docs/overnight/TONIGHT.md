@@ -5,7 +5,9 @@ The agent uses the priorities and time boxes below, then completes the final val
 under [RULES.md](RULES.md). The unattended agent does not edit this file unless the human asks.
 Progress goes in [LOG.md](LOG.md).
 
-Branch: `daniel/overnight`
+Branch: use the isolated branch assigned in the launch prompt. If none is assigned, create
+`overnight/<owner>-<run-id>` from current `main` and record the resolved name in `LOG.md`.
+Do not reuse another teammate's candidate paths or push unattended changes to `main`.
 
 Objective: make verified progress on **as many of the pipeline and frontend goals below as
 possible within seven hours**, while preserving or improving previously processed clips. Review
@@ -39,12 +41,20 @@ the full-inventory rerun requirement; missing coverage must remain explicit.
   the available amount. Use the project key shared privately as `OPENAI_API_KEY` in `.env.author`.
 - Marble: reuse existing worlds for all existing clips. For each explicitly listed new clip,
   allow at most one generation only after confirming sufficient existing account credits;
-  log the intended spend for Aayan before submitting. Unknown or exhausted credits block that
-  generation. Do not create/cycle trial accounts or obtain new credits automatically.
+  log the intended spend and selected account alias for Aayan before submitting. The keys supplied
+  by Aayan and teammates form an authorized pool: rotate among those existing keys/accounts when
+  needed, after checking each account's balance and any recorded cap. Exhausting one key does not
+  block the run while another supplied account has authorized capacity. Follow the ownership and
+  uncertain-submission rules in [RUNBOOK.md](RUNBOOK.md#provided-key-pool-and-job-ownership).
+  Do not create new accounts, obtain new trials, buy credits, or change account limits automatically.
 - Coding-agent tokens: no numeric cap supplied. Follow the task-based model policy in
   `AGENTS.md`; track host usage when available, keep handoffs concise, and reserve capacity
   for integration, validation, and the final report. API dollars and chat-plan usage are separate
   unless the agent host is explicitly billed to the same API project.
+
+These caps apply to the whole run across every supplied key and worker, not separately to each
+key, account, clip, branch, or resumed chat. Reconcile earlier spending and pending jobs before
+continuing; these figures do not grant a fresh allowance on restart.
 
 These are ceilings, not spending targets. Apply the smaller of the cap remaining and the
 provider balance remaining, accounting for other users and jobs still running. Budget and time limits
@@ -263,12 +273,14 @@ or missing prerequisite; do not exceed seven hours to finish the inventory.
 - Record the code commit and baseline S3 snapshot/output for each existing clip before rerunning.
   Retain the recorded trim, frame rate, and processing options unless a change is intentional
   and logged. Use separate candidate run names/output paths so the demo and baseline remain usable.
-- Actually rerun reconstruction and packaging with the final code. A successful exit that only
-  resumes cached completed stages is not a rerun: prefer fresh candidate names/state and record
-  which stages ran. `--force` does not invalidate downstream stages; if used, identify and rerun
-  every affected descendant explicitly. Reuse downloaded weights and existing generated
-  Marble worlds (`--reuse-world`); keep `--marble none` for clips using that lane. Do not buy
-  replacement worlds for existing clips.
+- Execute the final pipeline for every admitted input within the shared limits. Rerun changed
+  stages and every affected descendant; revalidate packaging and viewer ingestion. Unchanged
+  stages may reuse verified artifacts only when source/time mapping, options, model/code identity,
+  and required outputs still match. Record **executed**, **verified reuse**, and **not run** per
+  stage; a cached exit is not a fresh reconstruction. Main currently lacks this complete cache
+  contract: use isolated fresh state or manually verify the dependencies rather than trusting
+  `state.json`. `--force` alone does not invalidate descendants. Reuse model weights and existing
+  generated worlds (`--reuse-world`); do not buy replacements just to complete the regression.
 - Process specified new clips through the applicable pipeline, with at most one new Marble
   generation per new clip. Record any admission failure instead of forcing unsuitable footage
   through. Apply the unattended execution policy in `docs/overnight/RULES.md`.
@@ -308,9 +320,9 @@ those explicitly in the handoff, alongside any improvements and remaining regres
   and a blocked reason. Use matched times/views, include visible failure cases, and preserve audio
   timing where sound exists. Do not present selected stills as proof of temporal quality.
 - Keep the generated index and its media outside Git under
-  `public/reviews/daniel-overnight/`, with relative asset links. Publish to private S3 when writers
+  `public/reviews/<run-id>/`, with relative asset links. Publish to private S3 when writers
   are idle and record the exact snapshot. After adopting that snapshot, teammates should be able
-  to open `http://127.0.0.1:5399/reviews/daniel-overnight/index.html` in their local viewer. Validate
+  to open `http://127.0.0.1:5399/reviews/<run-id>/index.html` in their local viewer. Validate
   that path and its assets; provide pinned `assets:pull` recovery instructions in the results too.
 - Commit/push code and the text report on the working branch; publish media, run intermediates,
   and detailed evidence to S3. Finish with direct instructions to open the comparisons and test
@@ -318,7 +330,9 @@ those explicitly in the handoff, alongside any improvements and remaining regres
 
 ## Out of scope
 
-- Unrelated product rewrites or repository/history cleanup; changing provider accounts or raising
-  budgets; regenerating existing Marble worlds; overwriting shipping assets before comparisons pass.
+- Unrelated product rewrites or repository/history cleanup; adding unprovided provider accounts or
+  raising budgets; regenerating existing Marble worlds without explicit authorization; overwriting
+  shipping assets before comparisons pass. Selecting another supplied key/account is authorized
+  under the shared caps and recovery rules above.
 - Simulated XR does not establish Quest performance. Physical headset measurements require an
   available connected device; otherwise record that limitation and complete desktop comparisons.

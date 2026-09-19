@@ -56,4 +56,16 @@ To start a run, the human fills in [TONIGHT.md](TONIGHT.md) and launches the age
   remaining time/budget is insufficient or cannot be bounded. Bound job timeouts by the remaining
   window and preserve partial outputs before stopping your jobs at the deadline. Stop every Modal
   job you started once it is idle; never stop another teammate's job.
-- Use `MODAL_PROFILE=dtpu` for GPU launches. Model volumes may belong to the primary profile; check availability first.
+- Supplied credentials are an authorized pool. Rotate among keys/accounts explicitly provided by
+  Aayan or teammates when capacity requires it; keep one shared run budget and retry ledger.
+  A key change never grants a new clip generation or resets attempts. Do not create accounts,
+  obtain trials, buy credits, or raise limits automatically. Follow the runbook's job ownership rules.
+- Use `MODAL_PROFILE=dtpu` for GPU launches. Confirm the actual authenticated workspace and
+  model-volume access; environment tokens override the saved profile. Switching an authorized
+  token does not move jobs, operation ownership, or model volumes to the new account.
+- Treat submitted/unknown paid operations as recoverable jobs, not retryable commands. Recover
+  their recorded operation/call with its owning account before any new launch. Do not infer that
+  submission failed from a timeout, a missing local file, or a generic rate-limit log line.
+- These are execution requirements, not claims that main already enforces them. Preflight the
+  checked-out implementation and record absent enforcement; use explicit orchestration controls
+  instead of trusting an untested fanout script or a zero exit status.
