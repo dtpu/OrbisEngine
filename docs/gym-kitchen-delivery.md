@@ -8,7 +8,7 @@ have not passed acceptance. No new paid generation, cleaning or inference was su
 ## Open the scenes
 
 [Delivery page](http://127.0.0.1:5399/reviews/gym-kitchen/index.html) contains both scenes and videos.
-It includes the current compiled viewer, so the visibility correction travels with the media.
+Use the `austin/gym-kitchen` branch for the current viewer and visibility correction.
 A teammate server must adopt the delivery snapshot; a running server pins its older snapshot.
 Only restart a server you own. See [shared assets](shared-assets.md).
 
@@ -115,4 +115,25 @@ submissions. Shared account activity prevents a reliable remaining-dollar balanc
 reset or topped up. Delivery inference/API spend is zero; S3 transfer/storage costs are unmeasured.
 Other Modal jobs, caches and the existing Vite server were preserved.
 
-Publication receipt and independently checked snapshot identity follow after upload verification.
+## Publication
+
+Bucket: `wander-shared-797639045717` (private).
+Viewer snapshot: `viewer/snapshots/e9d8f46d-9509-4fcd-961e-2a5a088083e6.json`.
+Archive snapshot: `archive/snapshots/e9d8f46d-9509-4fcd-961e-2a5a088083e6.json`.
+The snapshot contains 16,879 viewer paths and 25,729 archive paths.
+The delivery adds 622 viewer paths without changing the original 16,257 entries.
+Two publications uploaded 804,353,655 bytes total; existing blobs were reused.
+The second publication corrected the shared page's application link after the compiled local
+application was excluded by the scanner; it did not regenerate media.
+
+Preview SHA-256: `e8874482b9dc92eeaa8c49178adf73bde630f5c9bcf96a98459aa2cc75fa2fbf`.
+Kitchen source video SHA-256: `deba36ec9a58811133603fd96bcab58d33b71ee10203d81e5bb7e9029ea08d99`.
+Independent S3 SHA-256 checksum/size checks passed for all 622 new viewer paths,
+including both float32 motion payloads. Fresh downloads of both previews, the delivery page and the
+people manifest matched their hashes. All 16,257 prior viewer entries and
+25,534 prior archive entries remain identical. Verification is recorded in
+ignored `.context/evidence/gym-kitchen/publication-verification.json`.
+
+The compiled viewer is available for immediate local filesystem access only. Its embedded vendor
+WebAssembly triggers the conservative text secret scanner, so it is excluded from S3 publication.
+The scanner remains unchanged; shared links use the checked-out viewer code instead.
