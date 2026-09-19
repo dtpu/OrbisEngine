@@ -53,6 +53,34 @@ function storage(
   return { s3, snapshot, calls, objects, bodies };
 }
 
+test('recovers archive-only public outputs alongside retained run evidence', async () =>
+  fixture(async (root) => {
+    const asset = entry('unpromoted world', 'archive');
+    const store = storage(
+      { 'public/worlds/candidate.spz': asset, 'runs/candidate/report.json': asset },
+      { [asset.key]: 'unpromoted world' },
+      true,
+    );
+    const result = await pullAssets(
+      { out: '.context/recovered', archive: true, paths: ['public/worlds/candidate.spz'] },
+      store.s3,
+      root,
+    );
+    assert.equal(result.files[0].status, 'downloaded');
+    assert.equal(
+      await readFile(path.join(root, '.context/recovered/public/worlds/candidate.spz'), 'utf8'),
+      'unpromoted world',
+    );
+    await assert.rejects(
+      pullAssets(
+        { out: '.context/recovered', archive: true, paths: ['public/../private/key'] },
+        store.s3,
+        root,
+      ),
+      /path|Invalid|unsafe/i,
+    );
+  }));
+
 test('pins snapshot across resumes and verifies existing bytes without fetching the blob again', async () =>
   fixture(async (root) => {
     const asset = entry('recorded clip');
