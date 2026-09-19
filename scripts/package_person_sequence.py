@@ -196,7 +196,7 @@ def add_motion_track(person: Path):
     ships without a track, which the viewer handles by reading the PLYs as before.
     """
     try:
-        record = package_person_motion.package(person)
+        record = package_person_motion.package(person, lossless=True)
     except ValueError as error:
         print(f"motion track skipped: {error}", flush=True)
         return None

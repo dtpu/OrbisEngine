@@ -16,7 +16,20 @@ function track(frames: number, splats: number, dtype: 'uint16' | 'float32') {
   for (let i = 0; i < truth.length; i++) truth[i] = Math.sin(i * 0.37) * (1 + (i % 7));
   const min = Array.from({ length: 7 }, (_, c) => -(1 + c));
   const scale = Array.from({ length: 7 }, (_, c) => (2 * (1 + c)) / 65535);
-  const record: MotionRecord = { file: 'motion.u16', dtype, frames, splats, channels, min, scale };
+  const record: MotionRecord = {
+    schema: 'wander.person-motion/1',
+    file: 'motion.u16',
+    dtype,
+    frames,
+    splats,
+    channels,
+    min,
+    scale,
+    frameFiles: Array.from({ length: frames }, (_, i) => `frame_${i}.ply`),
+    base: { file: 'frame_0.ply', bytes: 1024, sha256: 'a'.repeat(64) },
+    bytes: frames * splats * 7 * (dtype === 'float32' ? 4 : 2),
+    sha256: 'b'.repeat(64),
+  };
   let buf: ArrayBuffer;
   if (dtype === 'float32') {
     record.file = 'motion.f32';
@@ -66,6 +79,12 @@ test('a record that does not match the sequence or a short buffer is refused', (
   assert.ok(!motionTrackUsable(rec({ channels: channels.slice(1) }), 4, 6));
   assert.ok(!motionTrackUsable(rec({ min: undefined }), 4, 6));
   assert.ok(!motionTrackUsable(null, 4, 6));
+  assert.ok(!motionTrackUsable(rec({ sha256: undefined }), 4, 6));
+  assert.ok(!motionTrackUsable(rec({ base: undefined }), 4, 6));
+  assert.ok(!motionTrackUsable(rec({ scale: [NaN, 0, 0, 0, 0, 0, 0] }), 4, 6));
+  assert.ok(!motionTrackUsable(rec({ file: '../wrong.f32' }), 4, 6));
   assert.throws(() => decodeMotionFrame(buf.slice(0, 100), record, 0, null, 6), /100 bytes/);
   assert.throws(() => decodeMotionFrame(buf, record, 4, null, 6), RangeError);
+  assert.throws(() => decodeMotionFrame(buf, record, 0, [-1], 1), RangeError);
+  assert.throws(() => decodeMotionFrame(buf, record, 0, [6], 1), RangeError);
 });
