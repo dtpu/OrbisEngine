@@ -138,6 +138,7 @@ bun run test:marble
 bun run test:audio
 bun run test:audio-browser
 bun run test:audio-package
+bun run test:person-motion
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
@@ -148,6 +149,9 @@ The audio browser check needs installed Chrome. With the live demo running, use 
 for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/directory` for
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
+Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
+checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)
+separates input, generation, export, rendering and registration findings.
 Build output contains app code only, not public media. Use `bun run demo` for local testing with
 the private asset middleware; the compiled files alone are not a complete deployment.
 
