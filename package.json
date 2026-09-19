@@ -14,6 +14,7 @@
     "test:shared-assets": "bun test ./scripts/test-shared-assets.ts",
     "test:publish-hook": "uv run --locked scripts/test_run_clip_publish.py",
     "test:publish-transport": "node --test scripts/test-publish-transport.ts",
+    "test:publish-policy": "node --test scripts/test-publish-policy.ts",
     "test:audio": "bun test ./scripts/test-fourd-audio.ts",
     "test:static-colliders": "bun test ./scripts/test-static-colliders.ts",
     "test:audio-browser": "bun scripts/test-fourd-audio-browser.ts",
