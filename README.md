@@ -33,6 +33,11 @@ WANDER_ASSETS_MODE=local bun run demo
 Select only scenes installed by that bundle. No model downloads run during `bun install --frozen-lockfile`. If another
 Vite server already owns port 5399, use it and coordinate changes instead of stopping it.
 
+Austin’s accepted gym reconstruction is available in the [gym review](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail).
+Use its **Walk around the bench** link for a single-scene view. The original gym preset remains
+the comparison baseline. See [the gym delivery notes](docs/gym-delivery.md) for the accepted asset
+version, retained limitations, and the older review page’s historical work-in-progress labels.
+
 ## Controls
 
 - **Enter / Space:** play or pause.
@@ -145,6 +150,7 @@ bun run test:audio
 bun run test:audio-browser
 bun run test:audio-package
 bun run test:person-motion
+bun run test:static-colliders
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
@@ -160,6 +166,9 @@ checks, original-PLY fallback and explicit quantization opt-in. The [kitchen rev
 separates input, generation, export, rendering and registration findings.
 Build output contains app code only, not public media. Use `bun run demo` for local testing with
 the private asset middleware; the compiled files alone are not a complete deployment.
+
+The [pipeline walkthrough plan](docs/pipeline-walkthrough.md) describes a simple visual presentation
+of each stage and its saved outputs for judges. It is a plan, not an implemented viewer feature.
 
 ## Repository scope
 
