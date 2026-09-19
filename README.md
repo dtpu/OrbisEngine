@@ -119,12 +119,18 @@ with `WANDER_SHARE_DIR`, `WANDER_CLIPS_DIR`, and `WANDER_MARBLE_DIR`. Use `WANDE
 when publishing an external evidence directory. Packaged viewer assets live under `public/` and
 remain untracked. See the [code map](#code-map) and [object packaging](docs/objects.md).
 
+For an unattended improvement run, fill [TONIGHT.md](docs/overnight/TONIGHT.md), then follow the
+[overnight runbook](docs/overnight/RUNBOOK.md). It covers recovering source clips from S3,
+checking caches, budgets and model selection, isolated candidate runs, visual acceptance,
+and recovery without duplicate Marble generations.
+
 ## Checks
 
 ```sh
 bun run build
 bun run format:check
 bun run test:shared-assets
+bun run test:pull-assets
 bun run test:publish-hook
 bun run test:marble
 bun run test:audio
