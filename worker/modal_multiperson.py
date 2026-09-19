@@ -52,7 +52,6 @@ image = (
         "roma",
         "accelerate",
         "smplx",
-        "chumpy",
         "decord==0.6.0",
         "diffusers==0.32.0",
         "gsplat==1.4.0",
@@ -87,6 +86,8 @@ image = (
         "tb-nightly",
         "yapf",
     )
+    .uv_pip_install("pip==24.3.1")
+    .uv_pip_install("chumpy==0.70", extra_options="--no-build-isolation --no-deps")
     .run_commands(
         "git clone https://github.com/XPixelGroup/BasicSR.git /opt/basicsr && git -C /opt/basicsr checkout 8d56e3a045f9fb3e1d8872f92ee4a4f07f886b0a",
     )
