@@ -1059,7 +1059,7 @@
   window.__stages = {};
   const stage = (k, msg) => {
     window.__stages[k] = performance.now() / 1000;
-    st.textContent = msg;
+    if (!window.__wanderStartupError) st.textContent = msg;
   };
   let worldUrl = q.get('world') || '/marble-kitchen.spz';
   // ?world=none: a clip with no generated world - the people over an empty background. One fully
@@ -1589,6 +1589,8 @@
     ? floorFit?.levels?.C_sharedDriftPlusConstant?.translationY || null
     : null;
   const status = () => {
+    // Late frame completions must not erase a fatal startup diagnostic.
+    if (window.__wanderStartupError) return;
     const mode = interp ? ' (interpolated, 1 mesh)' : ' (132 meshes)';
     const objectWarningText = objectTrackWarnings.length
       ? `\nObjects skipped: ${objectTrackWarnings.join(', ')}`
