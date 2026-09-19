@@ -14,18 +14,137 @@ video intentionally does not send image-only display_name/model/seed/prompt fiel
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 
 BASE = "https://api.worldlabs.ai"
 UPLOAD_LIMIT = 104857600
+
+
+def write_json(path, value):
+    """Persist recovery metadata atomically, before progressing to the next remote action."""
+    path = Path(path)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(value, handle, indent=1)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        sync_directory(path.parent)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def submission_history(directory, name, ops=None):
+    """Inspect persisted receipts and legacy outputs without contacting the API."""
+    directory = Path(directory)
+    for filename in (f"{name}-world.json", f"{name}.spz"):
+        if (directory / filename).exists():
+            return "world", str(directory / filename)
+    operation_ids = set()
+    attempted = False
+    world_id = None
+    for suffix in ("generation", "op"):
+        path = directory / f"{name}-{suffix}.json"
+        if not path.exists():
+            continue
+        attempted = True
+        try:
+            doc = json.loads(path.read_text())
+            operation_id = doc.get("operation_id")
+            if isinstance(operation_id, str) and operation_id:
+                operation_ids.add(operation_id)
+            if suffix == "op" and doc.get("done") and not doc.get("error"):
+                world_id = (doc.get("metadata") or {}).get("world_id")
+        except (ValueError, AttributeError) as error:
+            raise ValueError(
+                f"Unreadable generation history {path}; inspect it before recovery"
+            ) from error
+    path = directory / f"{ops or name}-ops.txt"
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if ops and ops != name and f"[{name}] " not in line:
+                continue
+            attempted = True
+            match = re.search(r"\bop (\S+) (?:submitted|recovery:)", line)
+            if match:
+                operation_ids.add(match[1])
+    attempted |= (directory / f"{name}-request.json").exists()
+    if len(operation_ids) > 1:
+        raise ValueError(
+            f"Multiple operations recorded for {name}; recover an explicit ID, never resubmit"
+        )
+    if operation_ids:
+        return "operation", operation_ids.pop()
+    if isinstance(world_id, str) and world_id:
+        return "completed", world_id
+    return ("uncertain", name) if attempted else ("new", None)
+
+
+def recover_submission(a):
+    kind, value = submission_history(a.marble_dir, a.name, getattr(a, "ops", None))
+    if kind == "new":
+        return False
+    if kind == "world":
+        raise ValueError(
+            f"Existing world metadata {value}; refusing another generation. "
+            "Use --reuse-world WORLD_ID in run_clip.py, or fetch WORLD_ID here."
+        )
+    if kind == "operation":
+        log(a, f"op {value} recovery: polling the recorded attempt, never resubmitting")
+        poll(a, value)
+    elif kind == "completed":
+        fetch(a, value)
+    else:
+        raise ValueError(
+            f"A prior attempt for {a.name} has no recoverable operation ID; its charge status "
+            "is unknown. Check the provider account and recover with poll/fetch. "
+            "Do not delete the receipt or resubmit."
+        )
+    return True
+
+
+def claim_submission(a):
+    """An exclusive, durable receipt prevents competing processes from generating twice."""
+    directory = Path(a.marble_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{a.name}-generation.json"
+    receipt = {
+        "schema": "wander.marble-attempt/1",
+        "name": a.name,
+        "input_type": a.input_type,
+        "status": "preparing",
+    }
+    try:
+        with path.open("x") as handle:
+            json.dump(receipt, handle, indent=1)
+            handle.flush()
+            os.fsync(handle.fileno())
+        sync_directory(directory)
+    except FileExistsError as error:
+        raise ValueError(
+            f"Another attempt already reserved {a.name}; rerun to inspect recovery, never resubmit"
+        ) from error
+    return path, receipt
 
 
 def call(method, path, body=None, raw=None, headers=None, timeout=120):
@@ -104,7 +223,7 @@ def poll(a, operation_id):
     directory.mkdir(parents=True, exist_ok=True)
     while True:
         _, operation = call("GET", f"/marble/v1/operations/{operation_id}")
-        (directory / f"{a.name}-op.json").write_text(json.dumps(operation, indent=1))
+        write_json(directory / f"{a.name}-op.json", {**operation, "operation_id": operation_id})
         progress = (operation.get("metadata") or {}).get("progress") or {}
         print(
             time.strftime("%H:%M:%S"),
@@ -190,8 +309,14 @@ def upload(a, path):
 
 
 def submit(a):
+    if recover_submission(a):
+        return
+    if a.spz and Path(a.spz).exists():
+        raise ValueError(
+            "Output SPZ already exists; use --reuse-world or fetch, never generate over it"
+        )
     items, prompt = inputs(a)
-    Path(a.marble_dir).mkdir(parents=True, exist_ok=True)
+    receipt_path, receipt = claim_submission(a)
     entries = []
     for path, angle in items:
         asset_id = upload(a, path)
@@ -224,8 +349,19 @@ def submit(a):
             body["seed"] = a.seed
     if a.input_type == "multi":
         (Path(a.marble_dir) / f"{a.name}-request.json").write_text(json.dumps(body, indent=1))
+    receipt.update(
+        status="submitting",
+        request_sha256=hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest(),
+    )
+    write_json(receipt_path, receipt)
     _, operation = call("POST", "/marble/v1/worlds:generate", body)
     operation_id = operation["operation_id"]
+    if not isinstance(operation_id, str) or not operation_id:
+        raise ValueError(
+            "Generation returned no operation ID; keep the receipt and inspect the provider account"
+        )
+    receipt.update(status="submitted", operation_id=operation_id)
+    write_json(receipt_path, receipt)
     if a.input_type == "video":
         detail = f"asset {asset_id}"
     elif a.input_type == "image":
