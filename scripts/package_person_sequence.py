@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
+import package_person_motion
 from sfm_frame import camera0_reframe, describe as describe_frame
 from plyfile import PlyData, PlyElement
 
@@ -173,12 +174,33 @@ def main():
         sourceSha256=hashlib.sha256(Path(a.clip).read_bytes()).hexdigest(),
     )
     (person / "sequence.json").write_text(json.dumps(seq_out, indent=2))
+    motion_track = add_motion_track(person)
     print(
         json.dumps(
-            dict(frames=len(frames), gaussians=sorted(counts), finite=finite_all, out=str(out)),
+            dict(
+                frames=len(frames),
+                gaussians=sorted(counts),
+                finite=finite_all,
+                motionTrack=motion_track,
+                out=str(out),
+            ),
             indent=1,
         )
     )
+
+
+def add_motion_track(person: Path):
+    """The compact per-frame track the viewer prefers over one PLY per frame; the PLYs stay.
+
+    A sequence whose colour, opacity or scale change between frames is refused by the packer and
+    ships without a track, which the viewer handles by reading the PLYs as before.
+    """
+    try:
+        record = package_person_motion.package(person)
+    except ValueError as error:
+        print(f"motion track skipped: {error}", flush=True)
+        return None
+    return dict(file=record["file"], bytes=record["bytes"], plyBytes=record["plyBytes"])
 
 
 if __name__ == "__main__":

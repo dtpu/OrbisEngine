@@ -30,7 +30,13 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from package_person_sequence import orthonormal, quat_from_matrix, quat_mul, transform_ply  # noqa: E402
+from package_person_sequence import (  # noqa: E402
+    add_motion_track,
+    orthonormal,
+    quat_from_matrix,
+    quat_mul,
+    transform_ply,
+)
 from sfm_frame import camera0_reframe, describe as describe_frame  # noqa: E402
 
 
@@ -363,6 +369,7 @@ def main():
             sourceSha256=hashlib.sha256(Path(a.clip).read_bytes()).hexdigest(),
         )
         (person / "sequence.json").write_text(json.dumps(seq_out, indent=2))
+        add_motion_track(person)
 
         body, feet = body_stats(person / frames[0])
         reg = (
