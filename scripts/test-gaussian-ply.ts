@@ -3,7 +3,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGaussianPly } from '../src/gaussian-ply.ts';
 
-const FIELDS = ['x', 'y', 'z', 'nx', 'ny', 'nz', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity'];
+const FIELDS = [
+  'x',
+  'y',
+  'z',
+  'nx',
+  'ny',
+  'nz',
+  'f_dc_0',
+  'f_dc_1',
+  'f_dc_2',
+  'opacity',
+  'scale_0',
+  'scale_1',
+  'scale_2',
+  'rot_0',
+  'rot_1',
+  'rot_2',
+  'rot_3',
+];
 
 function ply(n: number, props = FIELDS, format = 'binary_little_endian 1.0', type = 'float') {
   const header =
@@ -34,4 +52,16 @@ test('rejects an HTML answer, a text PLY, non-float properties and truncated dat
   assert.throws(() => parseGaussianPly(ply(2, FIELDS, undefined, 'uchar').buf), /not float/);
   const { buf } = ply(4);
   assert.throws(() => parseGaussianPly(buf.slice(0, buf.byteLength - 8)), /header promises/);
+});
+
+test('rejects ambiguous element layouts, duplicate or missing properties, and nonfinite values', () => {
+  assert.throws(() => parseGaussianPly(ply(2, [...FIELDS, 'opacity']).buf), /malformed/);
+  assert.throws(() => parseGaussianPly(ply(2, FIELDS.slice(1)).buf), /Gaussian properties/);
+  assert.throws(() => parseGaussianPly(ply(0).buf), /malformed/);
+  const { buf } = ply(2);
+  const extra = new Uint8Array(buf.byteLength + 4);
+  extra.set(new Uint8Array(buf));
+  assert.throws(() => parseGaussianPly(extra.buffer), /header promises/);
+  new DataView(buf).setFloat32(buf.byteLength - 4, NaN, true);
+  assert.throws(() => parseGaussianPly(buf), /nonfinite/);
 });
