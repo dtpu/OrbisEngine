@@ -137,6 +137,13 @@
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import { createStanceResolver } from '/src/person-stance.ts';
   import {
+    parseStaticColliders,
+    highestSupport,
+    capsuleIntersects,
+    capsuleSweepBlocked,
+    supportPlane,
+  } from '/src/static-colliders.ts';
+  import {
     SparkRenderer,
     SplatMesh,
     SplatEdit,
@@ -3286,6 +3293,68 @@
   let walkFloor = floorY,
     walkHomeFloor = floorY; // floor height under the camera; an unknown floor keeps the last one
   let walkHasSupport = false;
+  // Explicit geometry supplements noisy splat occupancy. Animated actors still
+  // follow their recorded poses; their placement must use the same supports offline.
+  let staticColliders = [];
+  const colliderUrl = q.get('colliders');
+  if (colliderUrl && colliderUrl !== '0') {
+    const response = await fetch(colliderUrl);
+    if (!response.ok) throw new Error(`Requested colliders could not load (${response.status})`);
+    staticColliders = parseStaticColliders(await response.json(), worldUrl);
+  }
+  const colliderDebug =
+    q.get('colliderdebug') === '1' && staticColliders.length
+      ? document.createElement('canvas')
+      : null;
+  if (colliderDebug) {
+    colliderDebug.style.cssText =
+      'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:7';
+    document.body.append(colliderDebug);
+  }
+  function drawColliderDebug() {
+    if (!colliderDebug) return;
+    const width = innerWidth,
+      height = innerHeight;
+    if (colliderDebug.width !== width || colliderDebug.height !== height) {
+      colliderDebug.width = width;
+      colliderDebug.height = height;
+    }
+    const context = colliderDebug.getContext('2d');
+    context.clearRect(0, 0, width, height);
+    camera.updateMatrixWorld(true);
+    for (const box of staticColliders) {
+      const corners = [];
+      for (const x of [-1, 1])
+        for (const y of [-1, 1])
+          for (const z of [-1, 1])
+            corners.push(
+              new THREE.Vector3(x, y, z)
+                .multiply(box.halfExtents)
+                .applyMatrix4(box.localToWorld)
+                .project(camera),
+            );
+      context.strokeStyle = box.walkable ? '#55ff99' : '#ffbb44';
+      context.fillStyle = context.strokeStyle;
+      context.lineWidth = 2;
+      context.beginPath();
+      for (let i = 0; i < 8; i++)
+        for (const bit of [1, 2, 4]) {
+          const j = i ^ bit,
+            a = corners[i],
+            b = corners[j];
+          if (j <= i || Math.abs(a.z) > 1 || Math.abs(b.z) > 1) continue;
+          context.moveTo(((a.x + 1) * width) / 2, ((1 - a.y) * height) / 2);
+          context.lineTo(((b.x + 1) * width) / 2, ((1 - b.y) * height) / 2);
+        }
+      context.stroke();
+      const c = box.center.clone().project(camera);
+      if (Math.abs(c.z) <= 1)
+        context.fillText(box.id, ((c.x + 1) * width) / 2, ((1 - c.y) * height) / 2);
+    }
+  }
+
+  const walkerRadius = WALK_RADIUS_M * upm;
+  const walkerHeight = walkStature || collisionStature || 1.7 * upm;
   function gridFromJson(o) {
     const n = o.width * o.height,
       floor = new Float32Array(n),
@@ -3502,17 +3571,22 @@
       j = Math.floor(z / g.cell) - g.oz;
     return i >= 0 && i < g.width && j >= 0 && j < g.height ? j * g.width + i : -1;
   };
-  function walkCell(x, z) {
-    if (!walkGrid) return { floor: NaN, inside: 1, dist: 0, solid: 0 };
-    const k = walkIdx(x, z);
-    return k < 0
-      ? { floor: NaN, inside: 0, dist: 65535, solid: 0 }
-      : {
-          floor: walkGrid.floor[k],
-          inside: walkGrid.inside[k],
-          dist: walkGrid.dist[k],
-          solid: walkGrid.solid[k],
-        };
+  function walkCell(x, z, maximumSupport = walkFloor + WALK_STEP_UP) {
+    const k = walkGrid ? walkIdx(x, z) : -1;
+    const cell = !walkGrid
+      ? { floor: NaN, inside: 1, dist: 0, solid: 0 }
+      : k < 0
+        ? { floor: NaN, inside: 0, dist: 65535, solid: 0 }
+        : {
+            floor: walkGrid.floor[k],
+            inside: walkGrid.inside[k],
+            dist: walkGrid.dist[k],
+            solid: walkGrid.solid[k],
+          };
+    const support = highestSupport(staticColliders, x, z, maximumSupport, walkerRadius);
+    if (support !== undefined && (!Number.isFinite(cell.floor) || support > cell.floor))
+      cell.floor = support;
+    return cell;
   }
   function walkBandMask(h) {
     // the solid bins a body standing on floor h would occupy
@@ -3533,10 +3607,12 @@
   // steps, not a wall (measured from his floor, the tread two cells ahead sat in the band). A cell
   // with no floor, or a lower one, takes the band from his.
   function walkBlocked(x, z, h = walkFloor) {
-    if (!walkGrid) return 0;
+    let n = staticColliders.filter((box) =>
+      capsuleIntersects(box, new THREE.Vector3(x, h, z), walkerHeight, walkerRadius),
+    ).length;
+    if (!walkGrid) return n;
     const r = WALK_RADIUS_M * upm,
       mask = walkBandMask(h);
-    let n = 0;
     for (let dx = -r; dx <= r + 1e-9; dx += walkGrid.cell)
       for (let dz = -r; dz <= r + 1e-9; dz += walkGrid.cell) {
         const k = walkIdx(x + dx, z + dz);
@@ -3552,17 +3628,35 @@
   // the void); never more blocked than it already is (so a start pose inside grid noise can always
   // slide out); never up more than one stair
   function walkCan(x, z, from) {
-    if (!walkGrid) return true;
+    if (!walkGrid && !staticColliders.length) return true;
     const c = walkCell(x, z);
+    if (Number.isFinite(c.floor) && c.floor > walkFloor + WALK_STEP_UP) return false;
+    // Only follow a floor that settling can reach; unknown/deep void cells keep
+    // the current height, as they did before explicit colliders were available.
+    const reachableDrop = walkHasSupport ? WALK_STEP_DOWN : WALK_FOLLOW_DROP;
+    const targetFloor =
+      staticColliders.length && Number.isFinite(c.floor) && c.floor >= walkFloor - reachableDrop
+        ? c.floor
+        : walkFloor;
+    if (
+      capsuleSweepBlocked(
+        staticColliders,
+        new THREE.Vector3(from.x, walkFloor, from.z),
+        new THREE.Vector3(x, targetFloor, z),
+        walkerHeight,
+        walkerRadius,
+      )
+    )
+      return false;
     if (!c.inside && c.dist > from.dist) return false;
-    const b = walkBlocked(x, z);
+    const b = walkBlocked(x, z, targetFloor);
     if (b > 0 && b > from.blocked) return false;
-    return !(c.floor === c.floor && c.floor > walkFloor + WALK_STEP_UP);
+    return true;
   }
   function walkMove(d) {
     // d in the floor plane; slide along the free axis when the full step is refused
     const p = camera.position,
-      from = { blocked: walkBlocked(p.x, p.z), dist: walkCell(p.x, p.z).dist };
+      from = { x: p.x, z: p.z, blocked: walkBlocked(p.x, p.z), dist: walkCell(p.x, p.z).dist };
     if (walkCan(p.x + d.x, p.z + d.z, from)) {
       p.x += d.x;
       p.z += d.z;
@@ -4123,7 +4217,7 @@
   // Map picks use known ground and the same body footprint as walking, at the destination height.
   function walkCanStand(x, z) {
     if (!walkGrid || !Number.isFinite(x) || !Number.isFinite(z)) return false;
-    const c = walkCell(x, z);
+    const c = walkCell(x, z, Infinity);
     return (
       !!c.inside &&
       Number.isFinite(c.floor) &&
@@ -4136,7 +4230,7 @@
   }
   function walkStand(x, z) {
     if (!walkOn || possess || !walkCanStand(x, z)) return false;
-    walkFloor = walkCell(x, z).floor;
+    walkFloor = walkCell(x, z, Infinity).floor;
     walkHasSupport = true;
     reel = null;
     camera.position.set(x, walkFloor + walkEye, z);
@@ -4436,6 +4530,7 @@
       exact.setTime(t);
       exact.render(renderer, scene, camera);
     } else renderer.render(scene, camera);
+    drawColliderDebug();
   });
 
   window.wander = {
@@ -4478,6 +4573,11 @@
     dur,
     people,
     objects,
+    colliders: {
+      boxes: staticColliders,
+      supportAt: (x, z) => highestSupport(staticColliders, x, z, Infinity, walkerRadius),
+      planes: staticColliders.map((box) => ({ id: box.id, ...supportPlane(box) })),
+    },
     get objectWarnings() {
       return objectTrackWarnings.slice();
     },
