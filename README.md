@@ -114,7 +114,9 @@ Video is the default Marble input. It submits the cleaned clip at the configured
 rate with the source description, a pinned model and private permissions. `--marble image` and
 `--marble multi` are explicit still-image alternatives; camera spread alone does not select them.
 This policy preserves more temporal input, but reduced hallucination has not been established by a
-controlled comparison. See [the kitchen review](docs/kitchen-review.md#video-first-policy).
+controlled comparison. See [the kitchen review](docs/kitchen-review.md#video-first-policy) and
+[live kitchen/gym results](docs/video-input-evaluation.md). The real video path works, but the new
+candidates were not promoted; prompted video now explicitly disables automatic recaptioning.
 
 The run stops at the cleaned-frame review gate before generating its Marble world. Inspect the
 reported frames, then repeat the command with `--gate-pass` only after approving that input.
