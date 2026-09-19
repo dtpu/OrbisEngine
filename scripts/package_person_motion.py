@@ -20,8 +20,8 @@ opacity or scale drift would render wrongly from a motion track, so it is refuse
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import numpy as np
 from plyfile import PlyData
@@ -85,22 +85,22 @@ def package(person: Path, lossless: bool = False):
         payload = codes.astype("<u2").tobytes()
     out.write_bytes(payload)
     ply_bytes = sum((person / f).stat().st_size for f in seq["frames"])
-    record = dict(
-        file=out.name,
-        dtype=dtype,
-        frames=frames,
-        splats=splats,
-        channels=list(CHANNELS),
-        layout="frame-major, then splat, then channel; little-endian; value = code * scale + min",
-        min=lo.tolist(),
-        scale=scale.tolist(),
-        maxAbsError=err.tolist(),
-        bytes=len(payload),
-        sha256=hashlib.sha256(payload).hexdigest(),
-        plyBytes=ply_bytes,
-        note="frame_000.ply stays the appearance keyframe; colour, opacity, scale and the zero "
+    record = {
+        "file": out.name,
+        "dtype": dtype,
+        "frames": frames,
+        "splats": splats,
+        "channels": list(CHANNELS),
+        "layout": "frame-major, then splat, then channel; little-endian; value = code * scale + min",
+        "min": lo.tolist(),
+        "scale": scale.tolist(),
+        "maxAbsError": err.tolist(),
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "plyBytes": ply_bytes,
+        "note": "frame_000.ply stays the appearance keyframe; colour, opacity, scale and the zero "
         "normals were verified identical across every frame before this track was written",
-    )
+    }
     seq["motion"] = record
     seq_path.write_text(json.dumps(seq, indent=2))
     return record
