@@ -131,6 +131,7 @@
   import * as THREE from 'three';
   import { VideoProjectionLayer } from '/src/video-projection.ts';
   import { FourDAudio } from '/src/audio/fourd-audio.ts';
+  import { normalizePlaybackTime } from '/src/playback-time.ts';
   import { validateBakedTrack } from '/src/object-track.ts';
   import {
     SparkRenderer,
@@ -3064,7 +3065,7 @@
   }
   function setTime(sec) {
     sceneAudio.invalidate();
-    t = ((sec % dur) + dur) % dur;
+    t = normalizePlaybackTime(sec, dur);
     if (videoOk && Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
     applyTime();
   }
