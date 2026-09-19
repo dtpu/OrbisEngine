@@ -10,7 +10,8 @@
 
 Only submit uploads inputs and generates a world. Poll/fetch recover existing results without
 spending generation credits. The input type preserves each mode's payload and ops-log format;
-Video accepts an optional source description and does not send image-only recaptioning fields.
+Video accepts an optional source description. A nonempty supplied video prompt disables recaptioning
+so the provider is asked to use that text as-is; absent or empty prompts retain automatic captioning.
 All submissions pin their model and request private world permissions.
 """
 
@@ -493,8 +494,8 @@ def submit(a):
             "model": a.model,
             "world_prompt": {"type": "video", "video_prompt": entries[0]["content"]},
         }
-        if prompt is not None:
-            body["world_prompt"]["text_prompt"] = prompt
+        if prompt:
+            body["world_prompt"].update(text_prompt=prompt, disable_recaption=True)
     else:
         world_prompt = (
             {
