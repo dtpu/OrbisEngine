@@ -17,3 +17,7 @@ Next: <what follows from this>
 Ported Austin's API-origin credential restriction and transport regressions from `b028c7c`.
 Presigned media uploads use their URL authentication and receive no World Labs API key.
 This integration does not launch or authorize a replacement world generation.
+
+Ported Austin's `31a6b69`: video submissions pin `marble-1.1` like image submissions, and all
+new worlds explicitly request private permissions. Original author metadata is retained.
+These request-contract changes do not establish improved generated geometry.
