@@ -5,20 +5,23 @@
   "type": "module",
   "description": "Step inside any video: one 2D clip -> orbitable 3D moment in the browser",
   "scripts": {
-    "dev": "vite --port 5399 --host 127.0.0.1",
-    "demo": "vite --port 5399 --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "runs:publish": "node scripts/publish-runs.mjs",
-    "test:shared-assets": "node --test scripts/test-shared-assets.mjs",
-    "test:publish-hook": "python3 scripts/test_run_clip_publish.py",
-    "test:audio": "node scripts/test-fourd-audio.mjs",
-    "test:audio-browser": "node scripts/test-fourd-audio-browser.mjs",
-    "smoke:xr": "node scripts/smoke-xr.mjs",
-    "capture:shared": "node scripts/capture-shared-demo.mjs",
-    "capture:walk": "node scripts/capture-walk-attack.mjs",
-    "capture:collision": "node scripts/capture-walk-collide.mjs",
-    "capture:audio": "node scripts/capture-audio-demo.mjs",
-    "test:audio-package": "python3 scripts/test_package_audio.py"
+    "dev": "bunx --bun vite --port 5399 --host 127.0.0.1",
+    "demo": "bunx --bun vite --port 5399 --host 127.0.0.1",
+    "build": "bunx --bun tsc --noEmit && bunx --bun vite build",
+    "runs:publish": "bun scripts/publish-runs.mjs",
+    "test:shared-assets": "bun test ./scripts/test-shared-assets.mjs",
+    "test:publish-hook": "uv run --locked scripts/test_run_clip_publish.py",
+    "test:audio": "bun test ./scripts/test-fourd-audio.mjs",
+    "test:audio-browser": "bun scripts/test-fourd-audio-browser.mjs",
+    "smoke:xr": "bun scripts/smoke-xr.mjs",
+    "capture:shared": "bun scripts/capture-shared-demo.mjs",
+    "capture:walk": "bun scripts/capture-walk-attack.mjs",
+    "capture:collision": "bun scripts/capture-walk-collide.mjs",
+    "capture:audio": "bun scripts/capture-audio-demo.mjs",
+    "test:audio-package": "uv run --locked scripts/test_package_audio.py",
+    "test:marble": "uv run --locked scripts/test_marble_world.py",
+    "format": "uv run --locked --group dev ruff format scripts worker",
+    "format:check": "uv run --locked --group dev ruff format --check scripts worker"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
@@ -27,12 +30,15 @@
     "webxr-polyfill": "^2.0.3"
   },
   "devDependencies": {
+    "@types/bun": "1.4.2",
     "@types/three": "^0.186.0",
     "playwright-core": "1.63.0",
+    "prettier": "3.9.8",
     "typescript": "^5.9.0",
     "vite": "^8.3.0"
   },
   "engines": {
-    "node": "^22.12.0 || >=24.0.0"
-  }
+    "bun": ">=1.2.21"
+  },
+  "packageManager": "bun@1.2.21"
 }

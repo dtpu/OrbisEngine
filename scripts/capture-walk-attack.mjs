@@ -4,7 +4,7 @@
 // it ever stepped further into the void than it stood. Then stairs2 straight ahead (the climb),
 // R after the climb (walk.floor must return to the start floor), the elevator right strafe, and
 // the atrium start (must move). Coverage per grid is printed.
-//   node scripts/capture-walk-attack.mjs [--clips elevator,lobby,stairs2,atrium,hpwide] [--secs 6] [--out dir]
+//   bun scripts/capture-walk-attack.mjs [--clips elevator,lobby,stairs2,atrium,hpwide] [--secs 6] [--out dir]
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';

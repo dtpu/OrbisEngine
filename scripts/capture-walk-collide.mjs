@@ -5,7 +5,7 @@
 //   elevator walk 2.5 s in, then strafe left into the escalator well wall (-x) and right into the
 //            escalator (+x): x must stop short of where the grid says the wall is
 // Trace is sampled every 100 ms and printed; screenshots go to --out.
-//   node scripts/capture-walk-collide.mjs [--out dir] [--base http://127.0.0.1:5399]
+//   bun scripts/capture-walk-collide.mjs [--out dir] [--base http://127.0.0.1:5399]
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';

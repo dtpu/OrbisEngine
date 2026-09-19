@@ -68,7 +68,7 @@ export function sharedAssets(env = {}, dependencies = {}) {
     const c=await catalog();
     if(status){res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify({mode:'s3',snapshot:c.snapshot,createdAt:c.createdAt,assets:Object.keys(c.files).length}));return;}
     const f=c.files[pathname];
-    if(!f){res.statusCode=404;res.end('Asset is not in the shared snapshot. Authors: publish it with npm run runs:publish.');return;}
+    if(!f){res.statusCode=404;res.end('Asset is not in the shared snapshot. Authors: publish it with bun run runs:publish.');return;}
     const etag=`"${f.sha256}"`;
     res.setHeader('ETag',etag);res.setHeader('Cache-Control','private, max-age=0, must-revalidate');
     res.setHeader('X-Wander-Asset-Source','s3');res.setHeader('X-Wander-Snapshot',c.snapshot);

@@ -4,7 +4,7 @@ import { chromium } from 'playwright-core';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 const out=process.argv[2];
-if(!out)throw new Error('Usage: node scripts/capture-shared-demo.mjs /absolute/evidence/directory');
+if(!out)throw new Error('Usage: bun scripts/capture-shared-demo.mjs /absolute/evidence/directory');
 await mkdir(out,{recursive:true});
 const base='http://127.0.0.1:5399';
 const status=await (await fetch(`${base}/api/shared-assets`)).json();
@@ -42,4 +42,11 @@ for(const clip of ['elevator','lobby','stairs2','atrium','tos31']){
   await writeFile(path.join(out,'report.json'),JSON.stringify(results,null,2));
   await context.close();
  }finally{await browser.close();}
+}
+console.log(`Capture complete: ${Object.keys(results.clips).length} scenes; all browsers closed.`);
+// Bun can retain an idle runtime reference after repeated Playwright sessions. All
+// assertions, evidence writes and browser closes have completed before this point.
+// Give buffered console output time to drain; normal process exit wins this race.
+if (process.versions.bun) {
+ setTimeout(() => process.exit(process.exitCode ?? 0), 1000).unref();
 }

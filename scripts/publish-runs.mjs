@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Immutable, checksum-verified objects first; the shared pointer is updated LAST.
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -95,5 +95,5 @@ try{
  const report={snapshot,archive:archiveKey,assets:Object.keys(next.files).length,archiveFiles:Object.keys(next.archives).length,uploaded,uploadedBytes:bytes,excluded:exclusions};
  await writeFile(path.join(cacheDir,'last-publish.json'),JSON.stringify(report,null,2));
  console.log(JSON.stringify(report,null,2));
-}catch(e){console.error(`Publish failed (${e.name}): ${e.message}. ${advanced ? 'S3 snapshot was published; local reporting failed.' : 'Shared latest pointer was not advanced by this attempt; retry npm run runs:publish.'}`);process.exitCode=1;}
+}catch(e){console.error(`Publish failed (${e.name}): ${e.message}. ${advanced ? 'S3 snapshot was published; local reporting failed.' : 'Shared latest pointer was not advanced by this attempt; retry bun run runs:publish.'}`);process.exitCode=1;}
 finally{clearInterval(progress);await writeFile(cacheFile,JSON.stringify(cache));s3.destroy();}
