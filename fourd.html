@@ -110,6 +110,23 @@
     );
   "
 ></div>
+<script>
+  // Available even if a module import or top-level asset load fails before the viewer API exists.
+  window.__wanderStartupError = false;
+  const reportStartupFailure = () => {
+    window.__wanderStartupError = true;
+    if (!window.wander)
+      document.getElementById('st').textContent = 'Scene could not load. Reload to retry.';
+  };
+  window.addEventListener(
+    'error',
+    (event) => {
+      if (event.target === window || event.target?.tagName === 'SCRIPT') reportStartupFailure();
+    },
+    true,
+  );
+  window.addEventListener('unhandledrejection', reportStartupFailure);
+</script>
 <script type="module">
   import * as THREE from 'three';
   import { VideoProjectionLayer } from '/src/video-projection.ts';
@@ -4427,6 +4444,9 @@
     dur,
     people,
     objects,
+    get objectWarnings() {
+      return objectTrackWarnings.slice();
+    },
     primary,
     manifest,
     get ready() {
