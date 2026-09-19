@@ -195,3 +195,22 @@ they are not cold-network speed claims.
 See [the kitchen investigation](../kitchen-review.md) for verified export identity, cleaning/selection
 problems, unresolved native-renderer comparison and failed registration. Austin's fetched gym tip
 `405dcbc` remains separate and WIP; availability is not visual acceptance.
+
+## Subsequent accepted delivery
+
+The earlier gym WIP status above records the initial integration decision. Austin subsequently
+recorded user acceptance in `52b7759`. Main now includes the isolated collider capability from
+`2ba38d7`, retaining its original author and source attribution. The accepted gym uses its existing
+private assets and 213 original animation samples; the rejected larger-model experiment and
+unfinished reconstruction tools remain separate. See [gym delivery](../gym-delivery.md) for the
+exact package, retained visual limitations and verification scope.
+
+The Marble pipeline now defaults to video and preserves the exact input identity/submission
+request. Video requests carry the source description, pinned model and private permissions;
+upload credentials remain restricted to their intended origin. Offline request/selection/runner
+checks passed. No controlled generated-world comparison establishes fewer hallucinations yet;
+see [the video-first policy](../kitchen-review.md#video-first-policy).
+
+The [judges' walkthrough](../pipeline-walkthrough.md) is a separate implementation plan for showing
+real intermediate outputs in six steps and retaining them in private storage. It is not a delivered
+viewer feature or a reason to rerun paid inference to fill missing historical artifacts.
