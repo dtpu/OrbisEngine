@@ -21,7 +21,7 @@
     "capture:collision": "bun scripts/capture-walk-collide.ts",
     "capture:audio": "bun scripts/capture-audio-demo.ts",
     "test:audio-package": "uv run --locked scripts/test_package_audio.py",
-    "test:person-motion": "uv run --locked scripts/test_package_person_motion.py",
+    "test:person-motion": "uv run --locked scripts/test_package_person_motion.py && bun test ./scripts/test-person-motion.ts",
     "test:marble": "uv run --locked scripts/test_marble_world.py",
     "format": "bun run format:python && bun run format:web",
     "format:check": "uv run --locked --group dev ruff format --check scripts worker && bunx --bun prettier --check \"src/**/*.{ts,js}\" \"scripts/**/*.{ts,js}\" \"server/**/*.ts\" \"*.html\" vite.config.ts package.json tsconfig.json",
