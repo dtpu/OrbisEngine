@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse, json, math, os, re, shutil, subprocess, sys, threading, time
 from urllib.parse import quote
 from pathlib import Path
+from marble_world import submission_history
 
 ROOT = Path(__file__).resolve().parent.parent
 # A clean clone uses its own toolchain and ignored output directories.
@@ -494,9 +495,43 @@ class Pipeline:
             )
         say("   gate open (--gate-pass/--no-gate)")
 
+    def marble_saved_operation(self, suffix):
+        """Recover known IDs, including runs predating the client's exclusive receipt."""
+        kind, value = submission_history(MARBLE_DIR, f"{self.name}-{suffix}")
+        if kind == "world":
+            raise RuntimeError(
+                f"Existing world metadata {value}; refusing another generation. "
+                "Use --reuse-world WORLD_ID."
+            )
+        operations = {value} if kind == "operation" else set()
+        log = self.ctx / f"marble_{suffix}.log"
+        if operation := self.operation_id(log):
+            operations.add(operation)
+        state = getattr(self, "state", None)
+        if state and (operation := state.data["stages"].get("_marble", {}).get(suffix)):
+            operations.add(operation)
+        if len(operations) > 1:
+            raise RuntimeError(
+                "Conflicting saved Marble operations; recover an explicit ID, never resubmit"
+            )
+        if operations:
+            return operations.pop()
+        if kind == "completed":
+            # The client can fetch a world ID recorded by a legacy completed operation.
+            return None
+        if kind == "uncertain" or log.exists():
+            raise RuntimeError(
+                f"A prior Marble attempt for {self.name}-{suffix} has no recoverable operation ID; "
+                "charge status is unknown. Check the provider account and use poll/fetch or "
+                "--reuse-world. Do not delete its history or resubmit."
+            )
+        return None
+
     def marble_submit(self, input_type, target, suffix, extra=None) -> str:
-        """Submit ONCE. Never called from a retry loop; `run(..., attempts=1)` and the guard in
-        run() make a second submit -- a second 1600 credits -- impossible from this file."""
+        """Submit at most once per persisted name; retries recover IDs instead of generating."""
+        if operation := self.marble_saved_operation(suffix):
+            say(f"   recovering recorded operation {operation}; no new generation")
+            return operation
         log = self.ctx / f"marble_{suffix}.log"
         try:
             run(
@@ -522,11 +557,11 @@ class Pipeline:
             )
             return ""  # submit polled to completion itself
         except RuntimeError:
-            op = self.operation_id(log)
+            op = self.marble_saved_operation(suffix)
             if not op:
                 raise RuntimeError(
-                    "Marble submit failed before an operation existed, so no credits "
-                    f"were spent; safe to re-run with --force marble_{suffix}. See {log}"
+                    "Marble submission did not produce a recoverable operation ID; charge "
+                    f"status is unknown. Inspect {log} and the provider account; do not resubmit."
                 )
             say(
                 f"   submit died after operation {op} was created -- credits are already spent, "
@@ -537,7 +572,7 @@ class Pipeline:
     @staticmethod
     def operation_id(log: Path) -> str:
         for line in log.read_text().splitlines() if log.exists() else []:
-            if line.startswith("op ") and "submitted" in line:
+            if line.startswith("op ") and ("submitted" in line or "recovery:" in line):
                 return line.split()[1]
         return ""
 
@@ -621,18 +656,18 @@ class Pipeline:
     def marble_world(self, input_type, target, suffix, extra=None):
         if self.a.reuse_world:
             return self.marble_reuse(input_type, suffix)
+        if (MARBLE_DIR / f"{self.name}-{suffix}-world.json").exists():
+            raise RuntimeError(
+                f"{self.name}-{suffix} already has a world. Refusing another generation; "
+                "use --reuse-world WORLD_ID."
+            )
         if not self.key:
             raise RuntimeError(
                 f"no Marble key in ${self.a.marble_key}; export it, or pass "
                 f"--marble none / --reuse-world <id>"
             )
-        if (MARBLE_DIR / f"{self.name}-{suffix}-world.json").exists():
-            say(
-                f"   !! {self.name}-{suffix} already has a world. This buys a SECOND one for another "
-                f"1600 credits. --reuse-world <id> adopts the existing one for nothing."
-            )
         say(
-            f"   submitting ONE marble-1.1 world (1600 credits) from "
+            f"   Marble world: one submission or recovery of its recorded attempt, from "
             f"{Path(target).name if target else f'{suffix} inputs'}"
         )
         op = self.marble_submit(input_type, target, suffix, extra)
