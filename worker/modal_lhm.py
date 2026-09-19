@@ -41,7 +41,6 @@ image = (
         "roma",
         "accelerate",
         "smplx",
-        "chumpy",
         "decord==0.6.0",
         "diffusers==0.32.0",
         "gsplat==1.4.0",
@@ -76,6 +75,8 @@ image = (
         "tb-nightly",
         "yapf",
     )
+    .uv_pip_install("pip==24.3.1")
+    .uv_pip_install("chumpy==0.70", extra_options="--no-build-isolation --no-deps")
     .run_commands(
         "git clone https://github.com/XPixelGroup/BasicSR.git /opt/basicsr && git -C /opt/basicsr checkout 8d56e3a045f9fb3e1d8872f92ee4a4f07f886b0a",
     )
@@ -114,6 +115,44 @@ image = (
 )
 app = modal.App("wander-overnight-lhm")
 cache = modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=True)
+
+
+def link_model_caches(repo=Path("/opt/lhm"), cache_root=Path("/cache"), gfpgan_package=None):
+    """Expose only the staged public model trees; refuse conflicting runtime directories."""
+    repo, cache_root = Path(repo), Path(cache_root)
+    links = []
+    for relative, name in (
+        ("data/pretrained_models", "pretrained_models"),
+        ("data/gfpgan", "gfpgan"),
+    ):
+        source, target = cache_root / relative, repo / name
+        if not source.is_dir() or not source.resolve().is_relative_to(cache_root.resolve()):
+            raise RuntimeError(f"Stage the public model cache before inference: {relative}")
+        if target.exists() or target.is_symlink():
+            if target.resolve() != source.resolve():
+                raise RuntimeError(f"Runtime model path conflicts with the staged cache: {name}")
+        else:
+            target.symlink_to(source, target_is_directory=True)
+        links.append({"runtimePath": str(target), "cachePath": str(source)})
+    if gfpgan_package is None:
+        import importlib.util
+
+        package = importlib.util.find_spec("gfpgan")
+        if package is None or package.origin is None:
+            raise RuntimeError("GFPGAN must be installed in the native worker image")
+        gfpgan_package = Path(package.origin).parent
+    source = cache_root / "gfpgan/weights/GFPGANv1.3.pth"
+    target = Path(gfpgan_package) / "weights/GFPGANv1.3.pth"
+    if not source.is_file() or not source.resolve().is_relative_to(cache_root.resolve()):
+        raise RuntimeError("Stage the public GFPGANv1.3 checkpoint before inference")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        if target.resolve() != source.resolve():
+            raise RuntimeError("GFPGAN package weight conflicts with the staged cache")
+    else:
+        target.symlink_to(source)
+    links.append({"runtimePath": str(target), "cachePath": str(source)})
+    return links
 
 
 @app.function(
@@ -180,12 +219,8 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False):
         ):
             raise ValueError("Unexpected prepared input")
         (prepared / name).write_bytes(data)
-    prior = Path("/cache/data/pretrained_models")
-    link = Path("/opt/lhm/pretrained_models")
-    if not prior.exists():
-        raise RuntimeError("Stage public LHM prior assets before GPU inference")
-    if not link.exists():
-        link.symlink_to(prior, target_is_directory=True)
+    links = link_model_caches()
+    (out / "cache-links.json").write_text(json.dumps(links, indent=2))
     os.chdir("/opt/lhm")
     error = None
     try:
