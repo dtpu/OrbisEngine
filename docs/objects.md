@@ -151,3 +151,28 @@ Attached/worldDynamic requests currently omit the packager's required `--fit`; r
 objects overwrite the same manifest. Do not treat this as a general multi-object authoring flow.
 Likewise, `--from-rigid-object` conversion does not produce a baked track for converted entries;
 those entries need a completed track before the current viewer can display them.
+
+## Explicit static collision surfaces
+
+An optional `?colliders=/path/colliders.json` supplements the walker's splat occupancy grid.
+The bench or other furniture remains visually rendered by the room. Its collision geometry is
+an independently reviewed set of oriented boxes; loading it does not create a second visible mesh.
+Use `?colliderdebug=1` to inspect projected box outlines. They show through the room for review.
+
+The manifest has `schema: "wander.colliders/1"`, `coordinates: "viewer-world"`, a `world` filename,
+and a nonempty `bodies` array. Each body requires `id`, `role`, `shape: "box"`, `center`,
+positive `halfExtents`, unit `quaternionXYZW`, `walkable`, and descriptive `provenance`.
+Coordinates are final viewer coordinates: do not apply person registration or a CV axis flip.
+The world filename guard rejects accidental selection of a differently named world; it does not
+authenticate file contents or distinguish identically named worlds in different directories.
+Explicitly requested missing or invalid manifests fail loading instead of silently losing collision.
+
+A walkable box uses its finite local +Y face as support. Capsule collision and continuous movement
+checks also apply to nonwalkable boxes. An inferred conservative frame envelope can block empty
+space between real struts; declare that approximation in provenance. With no manifest, the existing
+occupancy-grid behavior is retained. Generated geometry and review evidence belong in private storage.
+
+These colliders constrain the viewer's walker. People and props still follow their baked animation;
+they are not rigid bodies and are not automatically pushed onto a seat. Correcting actor contact
+requires a separately validated placement using the same measured support surfaces. A walker
+collision pass does not establish that the person's pelvis, back, or feet are supported.
