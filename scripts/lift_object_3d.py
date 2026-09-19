@@ -18,15 +18,20 @@ in the image at the first and last observation) unless overridden.
   --track2d --flight f0:f1                            -> the same schema with one flight
 """
 
-import argparse, json, os
+import argparse
+import json
+import os
+
 import numpy as np
+import torch
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation, Slerp
-import torch
+from source_clock import camera_source_fps, resolve_source_fps
 
 
 def load_cameras(path):
-    c = json.load(open(path))
+    with open(path) as handle:
+        c = json.load(handle)
     cams = c["cameras"]
     idx = np.array([cm["sourceIndex"] for cm in cams], float)
     R = np.array([np.array(cm["camera_to_world"])[:3, :3] for cm in cams])
@@ -37,7 +42,8 @@ def load_cameras(path):
     K = np.array(cams[0]["source_intrinsics"])
     rots = Rotation.from_matrix(R)
     slerp = Slerp(idx, rots)
-    return dict(idx=idx, R=R, t=t, K=K, slerp=slerp)
+    source_fps = camera_source_fps(cams)
+    return dict(idx=idx, R=R, t=t, K=K, slerp=slerp, source_fps=source_fps)
 
 
 def cam_at(C, sf):
@@ -235,7 +241,7 @@ def main():
     )
     ap.add_argument("--catcher", type=int, default=None)
     ap.add_argument("--joint", type=int, default=21, help="SMPL joint index of the throwing hand")
-    ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--fps", type=float, default=None)
     ap.add_argument("--hand-sigma-m", type=float, default=0.12)
     ap.add_argument(
         "--min-obs",
@@ -264,8 +270,12 @@ def main():
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    C = load_cameras(args.cameras)
-    pj = json.load(open(args.people))
+    try:
+        C = load_cameras(args.cameras)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    with open(args.people) as handle:
+        pj = json.load(handle)
     mpu = pj["floorFit"]["metresPerWorldUnit"]
     g_units = 9.80665 / mpu
     drift = pj["floorFit"]["sharedCameraDrift"]
@@ -289,18 +299,27 @@ def main():
 
     # ---- assemble the list of flights to fit
     spans = []
+    flight_doc = None
     if args.flights:
-        fl = json.load(open(args.flights))
-        clip = fl.get("clip")
-        for r in fl["flights"]:
+        with open(args.flights) as handle:
+            flight_doc = json.load(handle)
+        clip = flight_doc.get("clip")
+        for r in flight_doc["flights"]:
             spans.append((r["frames"], r["px"]))
     else:
-        tj = json.load(open(args.track2d))
+        with open(args.track2d) as handle:
+            tj = json.load(handle)
         clip = tj["clip"]
         obs = {o["sourceIndex"]: [o["x"], o["y"]] for o in tj["observations"]}
         f0, f1 = [int(v) for v in args.flight.split(":")]
         fs = [f for f in sorted(obs) if f0 <= f <= f1]
         spans.append((fs, [obs[f] for f in fs]))
+
+    metadata_fps = flight_doc.get("fps") if flight_doc else None
+    try:
+        fps = resolve_source_fps(explicit=args.fps, flights=metadata_fps, camera=C["source_fps"])
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     j2d = joints2d(args.tracks, args.joint) if args.tracks else None
 
@@ -328,7 +347,7 @@ def main():
             cat,
             args.joint,
             args.hand_sigma_m,
-            args.fps,
+            fps,
         )
         b = r["fits"]["handAnchored"]
         print(
@@ -378,7 +397,7 @@ def main():
         clip=clip,
         metresPerWorldUnit=mpu,
         gravityUnitsPerS2=g_units,
-        fps=args.fps,
+        fps=fps,
         driftCorrected=True,
         constantY=float(np.mean([f["constantY"] for f in out_flights])) if out_flights else 0.0,
         constantYPerFlight=consts,
@@ -388,7 +407,8 @@ def main():
             minObs=args.min_obs, maxHandMetres=args.max_hand_metres, maxReprojPx=args.max_reproj_px
         ),
     )
-    json.dump(out, open(args.out, "w"), indent=1)
+    with open(args.out, "w") as handle:
+        json.dump(out, handle, indent=1)
     print("wrote", args.out, "-", len(out_flights), "flights")
 
 

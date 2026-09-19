@@ -22,17 +22,24 @@ proxy appearance, no orientation) and `wander-rigid-object/1` (worn only, camera
 `--from-rigid-object` converts metadata from the latter; converted entries still need baked tracks.
 """
 
-import argparse, hashlib, json, os
+import argparse
+import hashlib
+import json
+import os
+
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation, Slerp
+from source_clock import camera_source_fps, resolve_source_fps
 
 CV = np.diag([1.0, -1.0, -1.0])
 
 
 def load_cameras(path):
-    cams = json.load(open(path))["cameras"]
+    with open(path) as handle:
+        cams = json.load(handle)["cameras"]
     idx = np.array([c["sourceIndex"] for c in cams], float)
+    source_fps = camera_source_fps(cams)
     R = []
     for c in cams:
         m = np.array(c["camera_to_world"])[:3, :3]
@@ -42,6 +49,7 @@ def load_cameras(path):
     t = np.array([np.array(c["camera_to_world"])[:3, 3] for c in cams])
     return dict(
         idx=idx,
+        source_fps=source_fps,
         t=t,
         slerp=Slerp(idx, Rotation.from_matrix(R)),
         K=np.array(cams[0]["source_intrinsics"]),
@@ -53,6 +61,12 @@ def cam_at(C, sf):
     return C["slerp"]([sf]).as_matrix()[0], np.array(
         [np.interp(sf, C["idx"], C["t"][:, k]) for k in range(3)]
     )
+
+
+def ballistic_position(p0, v0, gravity, frame, start_frame, source_fps):
+    """Evaluate a fitted ballistic curve at a source-frame time."""
+    t = (float(frame) - float(start_frame)) / float(source_fps)
+    return np.asarray(p0) + np.asarray(v0) * t + 0.5 * np.asarray(gravity) * t * t
 
 
 def joint_world(track_dir, C, scale, joint):
@@ -324,8 +338,10 @@ def main():
     a = ap.parse_args()
 
     world = a.world
-    pj = json.load(open(os.path.join(world, "people.json")))
-    fit = json.load(open(a.fit))
+    with open(os.path.join(world, "people.json")) as handle:
+        pj = json.load(handle)
+    with open(a.fit) as handle:
+        fit = json.load(handle)
     ff = pj["floorFit"]
     mpu = ff["metresPerWorldUnit"]
     C = load_cameras(a.cameras)
@@ -369,6 +385,10 @@ def main():
                 "flight %s has no thrower/catcher; pass --thrower/--catcher" % fl["flight"]
             )
     g_units = fit.get("gravityUnitsPerS2") or 9.80665 / mpu
+    try:
+        source_fps = resolve_source_fps(fit=fit.get("fps"), camera=C["source_fps"])
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     g = np.array([0.0, -g_units, 0.0])
     nsrc = int(pj["sourceIndices"][-1]) + 1
 
@@ -392,8 +412,7 @@ def main():
         fr = fl["flight"][0]
 
         def arc(f):
-            t = (f - fr) / 30.0
-            return p0 + v0 * t + 0.5 * g * t * t
+            return ballistic_position(p0, v0, g, f, fr, source_fps)
 
         return arc
 
@@ -544,7 +563,7 @@ def main():
             v0WorldUnitsPerSec=v0.tolist(),
             gWorldUnitsPerSec2=g.tolist(),
             t0SourceFrame=int(fr),
-            fps=30.0,
+            fps=source_fps,
             space="driftCorrected",
             flightIndex=i,
             throwerTrack=int(fl["thrower"]),
@@ -655,12 +674,19 @@ def main():
 
     obj["bakedTrack"] = dict(
         space="raw SfM world, identical to the person PLYs before transform.translation",
-        fps=30.0,
+        fps=source_fps,
         sourceFrames=frames.tolist(),
         sampleIndex=(frames / (pj["sourceIndices"][-1] / (pj["samples"] - 1))).round(4).tolist(),
         positions=np.round(raw, 5).tolist(),
         quaternionsXYZW=np.round(
-            bake_orientation(frames, raw, orients[0] if flights else {}, obj["pose"]["segments"]), 5
+            bake_orientation(
+                frames,
+                raw,
+                orients[0] if flights else {},
+                obj["pose"]["segments"],
+                fps=source_fps,
+            ),
+            5,
         ).tolist(),
         visible=[True] * len(frames),
     )
@@ -684,7 +710,8 @@ def main():
     for extra in a.from_rigid_object.split(",") if a.from_rigid_object else []:
         out["objects"].append(from_rigid_object(extra.strip(), mpu, int(nsrc - 1)))
     path = a.out or os.path.join(world, "objects.json")
-    json.dump(out, open(path, "w"), indent=1)
+    with open(path, "w") as handle:
+        json.dump(out, handle, indent=1)
     print("wrote", path, os.path.getsize(path), "bytes")
     print(
         "%d free spans, %d segments, object constantY %.4f u"
