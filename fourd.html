@@ -133,7 +133,7 @@
   import { FourDAudio } from '/src/audio/fourd-audio.ts';
   import { normalizePlaybackTime } from '/src/playback-time.ts';
   import { validateBakedTrack } from '/src/object-track.ts';
-  import { decodeMotionFrame, motionTrackUsable } from '/src/person-motion.ts';
+  import { loadMotionOrPlys, verifySha256 } from '/src/person-motion.ts';
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import {
     SparkRenderer,
@@ -1668,10 +1668,12 @@
       Math.round((px * 0.5 + 0.5) * 255)
     );
   }
-  async function loadPly(url) {
+  async function loadPly(url, expectedHash) {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-    return parseGaussianPly(await r.arrayBuffer(), url);
+    const buf = await r.arrayBuffer();
+    if (expectedHash) await verifySha256(buf, expectedHash, url);
+    return { ...parseGaussianPly(buf, url), buffer: buf };
   }
 
   // One person: its own frames, its own interpolated mesh, its own feet/stance/lock/shadow. The world
@@ -1712,6 +1714,9 @@
       group: person,
       loaded: 0,
       frame: 0,
+      loadError: null,
+      settled: false,
+      motionFallback: null,
     };
     people.push(P);
     status();
@@ -1720,7 +1725,9 @@
       const w = Array.from({ length: n }, async () => {
         while (ids.length) await fn(ids.shift());
       });
-      await Promise.all(w);
+      const settled = await Promise.allSettled(w);
+      const failure = settled.find((result) => result.status === 'rejected');
+      if (failure) throw failure.reason;
     };
 
     // discrete mode: one SplatMesh per frame, only the current one visible
@@ -1749,12 +1756,12 @@
       await loadFrame(0);
       pbox = meshes[0].getBoundingBox();
       meshes[0].visible = true;
-      parallel(8, async (i) => {
+      allLoaded = parallel(8, async (i) => {
         if (!meshes[i]) await loadFrame(i);
       });
     } else {
       keys = new Array(nF);
-      const f0 = await loadPly(frames[0]);
+      const f0 = await loadPly(frames[0], seq.frame_sha256?.[0]);
       const PR = f0.props,
         np = PR.length,
         ix = PR.indexOf('x'),
@@ -1785,6 +1792,8 @@
       nS = sel ? sel.length : f0.n;
       const src = (i) => (sel ? sel[i] : i) * np;
       const extract = (f) => {
+        if (f.n !== f0.n || f.props.join() !== PR.join())
+          throw new Error('person PLY layout or splat count differs from appearance keyframe');
         const out = new Float32Array(nS * 7);
         for (let i = 0; i < nS; i++) {
           const s = src(i),
@@ -1852,32 +1861,49 @@
       const fromPlys = () =>
         parallel(8, async (i) => {
           if (!keys[i]) {
-            keys[i] = extract(await loadPly(frames[i]));
+            keys[i] = extract(await loadPly(frames[i], seq.frame_sha256?.[i]));
             P.loaded++;
             status();
           }
         });
-      // scripts/package_person_motion.py: the seven per-frame channels of every frame in one file,
-      // frame-major, in the PLYs' own order. One fetch replaces nF-1 PLY downloads; the PLYs are
-      // still there, so any mismatch or fetch failure falls back to reading them.
-      const mo = seq.motion;
-      const motionOk = motionTrackUsable(mo, nF, f0.n) && q.get('motiontrack') !== '0';
-      allLoaded = motionOk
-        ? (async () => {
-            try {
-              const buf = await (await fetch(base + mo.file)).arrayBuffer();
-              for (let i = 1; i < nF; i++) {
-                keys[i] = decodeMotionFrame(buf, mo, i, sel, nS);
+      allLoaded =
+        seq.motion && q.get('motiontrack') !== '0'
+          ? loadMotionOrPlys({
+              record: seq.motion,
+              frameFiles: seq.frames,
+              splats: f0.n,
+              basePly: f0.buffer,
+              selection: sel,
+              selectedSplats: nS,
+              allowQuantized: q.get('motionquantize') === '1',
+              fetchPayload: async (file) => {
+                const response = await fetch(base + file);
+                if (!response.ok) throw new Error(`${file}: HTTP ${response.status}`);
+                return response.arrayBuffer();
+              },
+              installFrame: (i, values) => {
+                keys[i] = values;
                 P.loaded++;
                 if ((i & 7) === 0 || i === nF - 1) status();
-              }
-            } catch (e) {
-              console.warn('motion track unusable, reading frame PLYs instead:', e);
-              await fromPlys();
-            }
-          })()
-        : fromPlys();
+              },
+              fallback: fromPlys,
+              onFallback: (error) => {
+                P.motionFallback = error.message;
+                console.warn('Motion track rejected; loading original PLYs:', error);
+              },
+            })
+          : fromPlys();
     }
+    // The wrapper shows loadError and offers a reload; failed required frames never become ready.
+    allLoaded = allLoaded
+      .catch((error) => {
+        P.loadError = error instanceof Error ? error.message : String(error);
+        console.error('Person frames could not load:', error);
+      })
+      .finally(() => {
+        P.settled = true;
+        status();
+      });
     const psize = pbox.getSize(new THREE.Vector3());
     let bodyH = psize.y; // native units, feet at pbox.min.y
     // ---- feet (QUALITY-RESEARCH item 2): per-keyframe lowest opaque splats (1st percentile) give a
@@ -2266,7 +2292,10 @@
       upm = (bodyH * scale0) / 1.7; // world units per metre (the person is 1.7 m by construction)
       nativePerM = upm / scale0;
       mPerNative = scale0 / upm;
-      if (lockOn) allLoaded.then(buildFootLock);
+      if (lockOn)
+        allLoaded.then(() => {
+          if (!P.loadError) buildFootLock();
+        });
       if (shadowOn) {
         const cv = document.createElement('canvas');
         cv.width = cv.height = 128;
