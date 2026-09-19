@@ -1,7 +1,7 @@
 // Measures what the real viewer downloads and how long it takes until every person keyframe is in
 // memory, for one demo URL. Evidence goes outside git; run it against a local-mode server so the
-// numbers are the packaged bytes and not S3 or cache behaviour. No GPU is needed for the part this
-// measures: keyframes are fetched and decoded before anything is drawn.
+// numbers are the packaged bytes and not S3 or cache behaviour. Chrome must support the viewer
+// renderer; these loading measurements alone do not establish rendered quality.
 //
 //   WANDER_ASSETS_MODE=local bunx --bun vite --port 5399 --host 127.0.0.1 &
 //   bun scripts/measure-person-load.ts "http://127.0.0.1:5399/demo.html?clip=stairs2&walk=1" out.json
@@ -34,17 +34,25 @@ try {
   });
   const t0 = performance.now();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  const people = () =>
+  const people = (): Promise<
+    { loaded: number; nF: number; loadError: string | null; motionFallback: string | null }[]
+  > =>
     page.evaluate(() => {
       const frame = document.querySelector('iframe') as HTMLIFrameElement | null;
       const w = (frame ? frame.contentWindow : window) as any;
-      return (w?.wander?.people ?? []).map((p: any) => ({ loaded: p.loaded, nF: p.nF }));
+      return (w?.wander?.people ?? []).map((p: any) => ({
+        loaded: p.loaded,
+        nF: p.nF,
+        loadError: p.loadError,
+        motionFallback: p.motionFallback,
+      }));
     });
   let firstKey: number | null = null,
     allKeys: number | null = null;
   const deadline = t0 + 600000;
   while (performance.now() < deadline) {
     const ps = await people();
+    if (ps.some((p) => p.loadError)) break;
     if (ps.length && firstKey === null && ps.every((p) => p.loaded >= 1))
       firstKey = performance.now() - t0;
     if (ps.length && ps.every((p) => p.loaded === p.nF)) {
