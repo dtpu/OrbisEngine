@@ -32,7 +32,9 @@ have stopped.
 Payload order is frame, splat, channel, with little-endian scalar values. Float32 stores the
 original values directly. The browser validates schema, dimensions, frame order and byte length,
 verifies both SHA-256 hashes, then decodes the complete track before installing any compact keys.
-It preserves the normal PLY playback timing and interpolation. Existing viewer flags for explicitly
+It preserves the normal PLY playback timing and interpolation. Stance stabilization derives complete
+predecessor chains, so seek order and frame arrival speed cannot permanently cache incomplete
+corrections. Existing viewer flags for explicitly
 selecting fewer splats continue to work; compact packaging itself never reduces splats or frames.
 
 Missing, corrupt, mismatched and older unbound motion records fall back to the original PLYs.
@@ -58,7 +60,7 @@ quantized packages do not establish sizes or performance for the new lossless de
 Run `bun run test:person-motion` for Python packaging checks and real Python-to-TypeScript
 round trips, including zero-error float32, static appearance rejection, preserved timing,
 SHA-256 failures, wrong keyframes, reordered frames, missing payloads, explicit quantization
-and failure propagation when original frames also fail. Tests need no media, network, GPU,
+failure propagation when original frames also fail, and stance invariance under seeks/delayed frames. Tests need no media, network, GPU,
 compression streams or provider credentials, and run on Bun 1.2.21.
 
 The packer, decoder, pipeline hooks, PLY parser and round-trip tests were selected from James's
