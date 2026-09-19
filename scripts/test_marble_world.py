@@ -252,6 +252,119 @@ class MarbleContracts(unittest.TestCase):
             self.assertEqual(call.call_count, 1)
         self.assertTrue((self.directory / "fixture-op.json").exists())
 
+    def test_uncertain_submission_survives_restart_and_never_resubmits(self):
+        def lose_response(method, path, body=None, **kwargs):
+            result = self.call(method, path, body, **kwargs)
+            if path.endswith("worlds:generate"):
+                raise OSError("response lost after server may have accepted generation")
+            return result
+
+        with patch.object(client, "call", side_effect=lose_response), self.assertRaises(SystemExit):
+            self.invoke("image", "submit", self.png)
+        receipt = json.loads((self.directory / "fixture-generation.json").read_text())
+        self.assertEqual(receipt["status"], "submitting")
+        self.assertNotIn("operation_id", receipt)
+        self.generated()
+        self.requests.clear()
+        self.png.unlink()  # Recovery must not need the original input or start new uploads.
+        with self.assertRaises(SystemExit):
+            self.invoke("image", "submit", self.png)
+        self.assertEqual(self.requests, [])
+
+    def test_operation_receipt_recovers_when_process_dies_before_logging_id(self):
+        original_log = client.log
+
+        def broken_log(args, line):
+            if line.startswith("op "):
+                raise OSError("process stopped before operation log was written")
+            return original_log(args, line)
+
+        with patch.object(client, "log", side_effect=broken_log), self.assertRaises(SystemExit):
+            self.invoke("image", "submit", self.png)
+        receipt = json.loads((self.directory / "fixture-generation.json").read_text())
+        self.assertEqual(receipt["operation_id"], "operation-1")
+        self.generated()
+        self.requests.clear()
+        self.png.unlink()
+        self.invoke("image", "submit", self.png)
+        self.assertEqual(self.requests[0][:2], ("GET", "/marble/v1/operations/operation-1"))
+        self.assertTrue(all(request[0] == "GET" for request in self.requests))
+
+    def test_exclusive_receipt_blocks_a_competing_process_before_upload(self):
+        original_upload = client.upload
+
+        def competing_upload(args, path):
+            with self.assertRaises(SystemExit):
+                self.invoke("video", "submit", self.mp4)
+            self.assertEqual(self.requests, [])
+            return original_upload(args, path)
+
+        with patch.object(client, "upload", side_effect=competing_upload):
+            self.invoke("image", "submit", self.png)
+        self.generated()
+        args = client.parser().parse_args(
+            [
+                "image",
+                "submit",
+                str(self.png),
+                "--name",
+                "fixture",
+                "--marble-dir",
+                str(self.directory),
+            ]
+        )
+        before = (self.directory / "fixture-generation.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "already reserved"):
+            client.claim_submission(args)
+        self.assertEqual((self.directory / "fixture-generation.json").read_bytes(), before)
+
+    def test_existing_world_and_corrupt_receipt_block_generation(self):
+        self.directory.mkdir()
+        world = self.directory / "fixture-world.json"
+        world.write_text(json.dumps({"world_id": "existing"}))
+        with self.assertRaises(SystemExit):
+            self.invoke("image", "submit", self.png)
+        world.unlink()
+        (self.directory / "fixture-generation.json").write_text("{interrupted")
+        with self.assertRaises(SystemExit):
+            self.invoke("image", "submit", self.png)
+        self.assertEqual(self.requests, [])
+
+    def test_legacy_operation_history_recovers_without_generation(self):
+        self.directory.mkdir()
+        (self.directory / "fixture-ops.txt").write_text(
+            "previous [fixture] op legacy-op submitted (asset old)\n"
+        )
+        self.invoke("image", "submit", self.root / "missing.png")
+        self.assertEqual(self.requests[0][:2], ("GET", "/marble/v1/operations/legacy-op"))
+        self.assertTrue(all(request[0] == "GET" for request in self.requests))
+
+    def test_pipeline_unknown_prior_attempt_and_existing_world_are_hard_stops(self):
+        pipeline = object.__new__(run_clip.Pipeline)
+        pipeline.ctx, pipeline.name = self.root, "fixture"
+        pipeline.key, pipeline.certs = "test-placeholder", "test-cert"
+        pipeline.a = SimpleNamespace(reuse_world=None, marble_key="WLT_API_KEY")
+
+        def fail_submit(command, log, *args, **kwargs):
+            log.write_text("submission failed with no response\n")
+            raise RuntimeError("command failed")
+
+        with patch.object(run_clip, "MARBLE_DIR", self.directory):
+            with patch.object(run_clip, "run", side_effect=fail_submit) as run:
+                with self.assertRaisesRegex(RuntimeError, "charge status is unknown"):
+                    pipeline.marble_submit("image", self.png, "image")
+                self.assertEqual(run.call_count, 1)
+                run.reset_mock()
+                with self.assertRaisesRegex(RuntimeError, "charge status is unknown"):
+                    pipeline.marble_submit("image", self.png, "image")
+                run.assert_not_called()
+            self.directory.mkdir()
+            (self.directory / "fixture-image-world.json").write_text("{}")
+            with patch.object(run_clip, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "use --reuse-world"):
+                    pipeline.marble_world("image", self.png, "image")
+                run.assert_not_called()
+
     def test_pipeline_commands_keep_suffixes_and_recover_without_resubmitting(self):
         pipeline = object.__new__(run_clip.Pipeline)
         pipeline.ctx = self.root
