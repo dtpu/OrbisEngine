@@ -61,14 +61,14 @@ paths only. The desktop viewer is the fallback when headset performance is inade
 
 ## Code map
 
-| Path | Responsibility |
-|---|---|
-| `demo.html` | Scene picker, loading state, source comparison, and demo controls |
-| `fourd.html` | Three.js/Spark scene, video-master playback, people, objects, and grounded walking |
-| `src/video-projection.ts`, `src/walk-map.js` | Recorded-image projection and the overhead position picker |
-| `src/xr/`, `src/audio/` | Headset locomotion and synchronized, position-aware audio |
-| `server/shared-assets.mjs` | Private S3 delivery with pinned snapshots, verified caching, and byte ranges |
-| `scripts/run_clip.py`, `worker/stages/` | Resumable reconstruction and its active worker implementations |
+| Path                                         | Responsibility                                                                     |
+| -------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `demo.html`                                  | Scene picker, loading state, source comparison, and demo controls                  |
+| `fourd.html`                                 | Three.js/Spark scene, video-master playback, people, objects, and grounded walking |
+| `src/video-projection.ts`, `src/walk-map.ts` | Recorded-image projection and the overhead position picker                         |
+| `src/xr/`, `src/audio/`                      | Headset locomotion and synchronized, position-aware audio                          |
+| `server/shared-assets.ts`                    | Private S3 delivery with pinned snapshots, verified caching, and byte ranges       |
+| `scripts/run_clip.py`, `worker/stages/`      | Resumable reconstruction and its active worker implementations                     |
 
 `window.wander` exposes transport and diagnostic state to the wrapper and capture scripts.
 The source video owns the timeline; the XR runtime owns head motion. Scene manifests and media
@@ -85,10 +85,20 @@ setup is explicit and separate from installing the viewer. `uv` manages the root
 `pyproject.toml` and `uv.lock`; `uv sync --locked` installs local tools, and the `inference` group
 adds local model libraries. Model weights are downloaded only when inference runs.
 
+### Author credentials
+
+For a teammate running reconstruction, follow [author credential setup](docs/shared-assets.md#author-credentials):
+join the shared Modal workspace, use profile `dtpu`, and configure `WLT_API_KEY`, `OPENAI_API_KEY`,
+and AWS publishing access. `.env.example` lists the variables. Keep author secrets in private
+`.env.author` and viewer read-only credentials in `.env.local`; Python needs the author file
+explicitly exported into its launching shell.
+
 ```sh
 uv sync --locked --group inference
-# Configure Modal credentials and the project's existing model caches before processing.
-export MODAL_PROFILE=dtpu
+# Complete the linked credential setup and confirm model-cache access first.
+set -a
+source .env.author
+set +a
 uv run --locked --group inference scripts/run_clip.py --clip /path/to/source.mp4 --name example \
   --marble image --all-people --fps 12 --skip-finetune
 ```
@@ -122,7 +132,9 @@ bun run test:audio-package
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
-Use `bun run format` to apply the pinned Ruff formatter to `scripts/` and `worker/`.
+Use `bun run format` to apply pinned Ruff and Prettier formatting; `format:python` and
+`format:web` select one toolchain. Builds type-check the migrated TypeScript modules.
+The formatted inline scripts in `demo.html` and `fourd.html` still use JavaScript.
 The audio browser check needs installed Chrome. With the live demo running, use `bun run smoke:xr`
 for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/directory` for
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
@@ -146,13 +158,13 @@ Tears of Steel credit: **(CC) Blender Foundation | [mango.blender.org](https://m
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The demo uses trimmed/transcoded excerpts.
 Phone clips are private supplied footage. Active presets use these source excerpts:
 
-| Preset | Source | Excerpt |
-|---|---|---|
-| `elevator` | `IMG_2876.MOV` | First 10 seconds |
-| `lobby` | `IMG_5410.MOV` | Full take, sampled at 30 fps |
-| `stairs2` | `IMG_2877.MOV` | Full 4.1-second take |
-| `atrium` | `IMG_2879.MOV` | 1.5–6.9 seconds |
-| `tos31` | Tears of Steel | Shot near 158.7 seconds, with its first 3.5 seconds removed |
+| Preset     | Source         | Excerpt                                                     |
+| ---------- | -------------- | ----------------------------------------------------------- |
+| `elevator` | `IMG_2876.MOV` | First 10 seconds                                            |
+| `lobby`    | `IMG_5410.MOV` | Full take, sampled at 30 fps                                |
+| `stairs2`  | `IMG_2877.MOV` | Full 4.1-second take                                        |
+| `atrium`   | `IMG_2879.MOV` | 1.5–6.9 seconds                                             |
+| `tos31`    | Tears of Steel | Shot near 158.7 seconds, with its first 3.5 seconds removed |
 
 Tears of Steel's official [download](https://mango.blender.org/download/) and
 [sharing](https://mango.blender.org/sharing/) pages provide its source and attribution terms.

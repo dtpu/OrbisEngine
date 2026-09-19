@@ -23,15 +23,80 @@ Do not give these keys a `VITE_` prefix: credentials belong in the local server,
 `.env.local` and the cache are gitignored. Keep the server on localhost (the default demo command).
 This is a local development viewer, not an authenticated public hosting service.
 
+## Author credentials
+
+Give a teammate access to the provider workspace/project where the work runs, then share any
+required project secrets through the team's chosen private channel, such as a private group chat
+or password-manager item. Prefer separate credentials per teammate when practical.
+For an existing shared automation credential, send only the required values;
+do not copy whole `~/.modal.toml`, `~/.aws`, shell profiles, or SSH directories.
+
+| Service             | What this repository reads                                                                                                   | Teammate setup                                                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Modal               | `MODAL_PROFILE=dtpu`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET`                                                             | Invite the teammate to the workspace owning the model volumes; create their own token there.                                               |
+| Marble / World Labs | `WLT_API_KEY`                                                                                                                | Supply a developer API key for the intended billed account; the code sends it as `WLT-Api-Key`.                                            |
+| OpenAI              | `OPENAI_API_KEY`                                                                                                             | Add the teammate to the intended API project and use their own project key, or a project service-account credential for shared automation. |
+| S3 publishing       | An AWS author profile or standard `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN` for temporary access) | Grant the author identity access to the configured bucket's viewer/archive publishing paths.                                               |
+| Viewer only         | `WANDER_ASSET_ACCESS_KEY_ID` + `WANDER_ASSET_SECRET_ACCESS_KEY`                                                              | Keep the existing read-only teammate credentials in `.env.local`; they cannot publish.                                                     |
+
+Modal membership and tokens are workspace-specific. After accepting the
+[workspace invite](https://modal.com/docs/guide/workspaces), create a token interactively,
+selecting the shared workspace in the browser:
+
+```sh
+uv run --locked modal token new --profile dtpu
+# Alternative: save an existing token using interactive prompts, without putting it in shell history.
+uv run --locked modal token set --profile dtpu
+```
+
+For saved-profile authentication, choose one of those setup commands. If the team supplies both
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in `.env.author`, skip token setup: the environment
+pair works without a stored profile. Keep `MODAL_PROFILE=dtpu` for the pipeline convention.
+`dtpu` is the local profile label used by this pipeline;
+it does not itself grant access to a workspace or its cached models. Exported `MODAL_TOKEN_ID`
+and `MODAL_TOKEN_SECRET` override the profile's token, so leave them unset when using the saved
+profile. See [Modal configuration precedence](https://modal.com/docs/sdk/py/latest/config).
+Confirm the teammate can access the existing model volumes before starting GPU work.
+
+Use the [World Labs developer API](https://docs.worldlabs.ai/api) key, and an OpenAI API-project
+key stored through environment variables or a secret manager, as described in
+[OpenAI's production guidance](https://developers.openai.com/api/docs/guides/production-best-practices).
+The AWS publisher uses the [SDK credential chain](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html),
+not the `WANDER_ASSET_*` pair. Choose either an author profile or standard AWS environment keys;
+avoid mixing credential sources. A temporary AWS session must last for the run and its final publish.
+
+Create `.env.author` privately from the author block in `.env.example`, uncomment the settings
+needed for your chosen authentication routes, and fill them locally. Keep only viewer credentials
+in `.env.local`. Python does not load either dotenv file automatically:
+
+```sh
+chmod 600 .env.author
+set -a
+source .env.author
+set +a
+uv run --locked --group inference scripts/run_clip.py --help
+```
+
+The help command checks the local CLI only; it does not authenticate or launch work. Source this
+file in the shell that will start the run. Both private files are gitignored; never use `VITE_`
+prefixes for secrets. Agree on the overnight task and spend limit, and preserve the cleaned-frame
+review gate and one-credit-per-new-clip Marble rule. The pipeline has no single cross-provider
+hard budget cap; credentials alone do not bound spending. Revoke temporary shared access afterward.
+
 ## Authors: publish runs
 
-Use your normal AWS author profile, separately from the teammate environment file:
+After the [author credential setup](#author-credentials), use your configured AWS author profile,
+separately from the teammate environment file:
 
 ```sh
 AWS_PROFILE=default bun run runs:publish
 # Also preserve an external evidence/screenshots directory:
 AWS_PROFILE=default bun run runs:publish --evidence-dir /path/to/share
 ```
+
+The commands above select the `default` profile; replace it with your author profile. If using
+standard AWS environment credentials instead, omit the `AWS_PROFILE=default` prefix and leave
+`AWS_PROFILE` unset.
 
 `scripts/run_clip.py` automatically publishes `public/` and `.context/run/` at the end, including
 failed/gated runs. `WANDER_EVIDENCE_DIR=/path/to/share` adds evidence to that automatic publish.
