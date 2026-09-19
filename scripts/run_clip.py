@@ -183,6 +183,14 @@ class GateStop(Exception):
     """The clean-review gate is closed: a human has to look before any credits are spent."""
 
 
+class QualityStop(Exception):
+    """Automated acceptance failed or lacks evidence; the human gate flag cannot bypass it."""
+
+    def __init__(self, status, reason):
+        super().__init__(reason)
+        self.status = status
+
+
 _print_lock = threading.Lock()
 
 
@@ -219,19 +227,32 @@ def _space_modal_launch():
 
 
 def run(cmd, log: Path, env_extra=None, cwd=ROOT, attempts=4, append=False):
-    """Run a command, logging to `log`. `attempts` retries only on a Modal rate limit.
+    """Run a command, logging to `log`. Paid Modal launches are submitted exactly once.
 
     A command that spends Marble credits can never be retried here, whatever the caller asks for:
     a `submit` that fails *after* the operation exists has already been paid for, and running it
     again buys a second 1600-credit world. Network retries belong around `poll` (see
     Pipeline.marble_poll), which takes an operation id and cannot create one.
+
+    This is a per-invocation guard, not a shared per-original-source paid-stage cap:
+    fresh candidate directories still require an external/shared attempt ledger.
     """
     if attempts > 1 and "submit" in cmd:
         raise RuntimeError(f"refusing to retry a Marble submit: {' '.join(cmd[:3])}")
+    is_modal = (
+        str(cmd[0]) == MODAL
+        or Path(str(cmd[0])).name == "modal"
+        or list(cmd[1:3]) == ["-m", "modal"]
+    )
+    if is_modal and "run" in cmd[1:]:
+        # Log text cannot establish whether a paid function has already run. In
+        # particular, a rate-limit message during output transfer is not permission
+        # to launch inference again. Recovery/poll commands are separate read-only calls.
+        attempts = 1
     env = dict(os.environ, **LOCAL_ENV, **(env_extra or {}))
     log.parent.mkdir(parents=True, exist_ok=True)
     for attempt in range(attempts):
-        if cmd[0] == MODAL:
+        if is_modal:
             _space_modal_launch()
         with log.open("a" if append else "w") as fh:
             fh.write(" ".join("<key>" if v.startswith("wlt") else v for v in cmd) + "\n\n")
@@ -1027,20 +1048,106 @@ class Pipeline:
             self.ctx / f"person_prep_{idx:02d}.log",
         )
 
+    def recover_lhm(self, dest, mode, log):
+        """An existing destination is recovery-only, including under --force."""
+        if not dest.exists() and not dest.is_symlink():
+            return False
+        receipt = dest / "recovery-receipt.json"
+        manifest = dest / "recovery-manifest.json"
+        recovery_log = log.with_name(log.stem + "-recovery.log")
+        evidence = {"receipt": str(receipt), "manifest": str(manifest), "log": str(recovery_log)}
+
+        def blocked(reason, status="blocked"):
+            self.state.record(
+                "_" + log.stem + "_recovery", status=status, reason=reason, **evidence
+            )
+            raise QualityStop(status, reason)
+
+        if dest.is_symlink() or not dest.is_dir():
+            blocked(f"Retained LHM output {dest} is not a regular directory; inspect it manually")
+        if receipt.is_symlink() or not receipt.is_file():
+            blocked(
+                f"Retained LHM output {dest} has no safe recovery receipt. Legacy outputs require "
+                "explicit inspection; --force cannot delete them or buy another inference run"
+            )
+        try:
+            saved = json.loads(receipt.read_text())
+            if not isinstance(saved, dict) or saved.get("mode") != mode:
+                raise ValueError("receipt mode does not match this stage")
+        except (OSError, ValueError) as error:
+            blocked(
+                f"Unreadable or incompatible LHM receipt {receipt}: {error}; no inference submitted"
+            )
+        try:
+            run(
+                [
+                    PY,
+                    str(ROOT / "worker/stages/lhm_recovery.py"),
+                    "--receipt",
+                    str(receipt),
+                    "--out",
+                    str(dest),
+                ],
+                recovery_log,
+                attempts=1,
+                append=True,
+            )
+        except Exception as error:
+            status = "blocked"
+            try:
+                if json.loads(manifest.read_text()).get("status") == "failed":
+                    status = "failed"
+            except (OSError, ValueError, AttributeError):
+                pass
+            blocked(
+                f"LHM recovery did not certify complete outputs: {error}. "
+                f"Retained receipt and artifacts at {dest}; no inference resubmitted",
+                status,
+            )
+        try:
+            saved = json.loads(receipt.read_text())
+            recovered = json.loads(manifest.read_text())
+            complete = (
+                saved.get("status") == "recovered"
+                and saved.get("resultStatus") == "complete"
+                and recovered.get("status") == "complete"
+                and recovered.get("finalized") is True
+                and recovered.get("mode") == mode
+                and recovered.get("recoveryId") == saved.get("recoveryId")
+            )
+        except (OSError, ValueError, AttributeError):
+            complete = False
+        if not complete:
+            blocked(f"LHM recovery returned without complete verified evidence; inspect {dest}")
+        self.state.record("_" + log.stem + "_recovery", status="complete", **evidence)
+        say(f"   recovered complete LHM outputs at {dest}; no new inference")
+        return True
+
     def lhm_frozen(self, idx=None):
         prepared = self.ctx / ("prepared-person" if idx is None else f"prepared-{idx:02d}")
         dest = self.ctx / ("lhm-frozen" if idx is None else f"lhm-frozen-{idx:02d}")
         if idx is not None:
             self.track_or_skip(idx)
-        shutil.rmtree(dest, ignore_errors=True)
+        log = self.ctx / (f"lhm_frozen_{idx:02d}.log" if idx is not None else "lhm_frozen.log")
+        if self.recover_lhm(dest, "frozen", log):
+            return
         run(
             [MODAL, "run", "worker/modal_lhm.py", "--prepared", str(prepared), "--out", str(dest)],
-            self.ctx / (f"lhm_frozen_{idx:02d}.log" if idx is not None else "lhm_frozen.log"),
+            log,
         )
 
     def lhm_motion(self, idx=None):
         if idx is None:
-            shutil.rmtree(self.ctx / "lhm-motion", ignore_errors=True)
+            dest = self.ctx / "lhm-motion"
+            if self.recover_lhm(dest, "motion", self.ctx / "lhm_motion.log"):
+                return
+            reference = self.ctx / "pi3x" / "frame_000.ply"
+            if not reference.is_file() or reference.stat().st_size == 0:
+                raise QualityStop(
+                    "blocked",
+                    f"LHM motion requires supported person depth at {reference}; "
+                    "camera-only success does not establish person registration",
+                )
             run(
                 [
                     MODAL,
@@ -1060,7 +1167,8 @@ class Pipeline:
             return
         track = self.track_or_skip(idx)
         dest = self.ctx / f"lhm-motion-{idx:02d}"
-        shutil.rmtree(dest, ignore_errors=True)
+        if self.recover_lhm(dest, "motion", self.ctx / f"lhm_motion_{idx:02d}.log"):
+            return
         # The depth reference PLY holds every masked person, so restrict the registration to this
         # track's own box in its first sample or both avatars inherit a blended scale.
         first = track["quality"]["firstSample"]
@@ -1072,6 +1180,11 @@ class Pipeline:
             if r["sample"] == first
         )
         roi = ",".join(f"{v:.0f}" for v in rec["maskBox"])
+        reference = self.ctx / "pi3x" / f"frame_{first:03d}.ply"
+        if not reference.is_file() or reference.stat().st_size == 0:
+            raise QualityStop(
+                "blocked", f"LHM track {idx} lacks its required person depth at {reference}"
+            )
         run(
             [
                 MODAL,
@@ -2162,6 +2275,12 @@ class Pipeline:
                         stage, status="gate", seconds=time.time() - start, error=str(e)
                     )
                     say(f"|| {stage} STOPPED AT THE GATE: {e}")
+                except QualityStop as e:
+                    (blocked if e.status == "blocked" else failed).add(stage)
+                    self.state.record(
+                        stage, status=e.status, seconds=time.time() - start, error=str(e)
+                    )
+                    say(f"!! {stage} recovery/accounting {e.status}: {e}")
                 except Exception as e:
                     self.state.record(
                         stage, status="failed", seconds=time.time() - start, error=str(e)
@@ -2520,7 +2639,9 @@ def main():
         help="objects: package a proxy instead of generating a shape on Modal",
     )
     ap.add_argument("--only", help="comma-separated subset of stages")
-    ap.add_argument("--force", help="comma-separated stages to redo even if state.json says ok")
+    ap.add_argument(
+        "--force", help="comma-separated stages to rerun; existing LHM outputs are recovery-only"
+    )
     ap.add_argument(
         "--gpu-box",
         default=os.environ.get("WANDER_GPU_BOX"),
