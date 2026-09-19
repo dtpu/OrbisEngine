@@ -508,6 +508,9 @@ class PaidRunIntegrationTests(unittest.TestCase):
             stage_ledger=str(self.root / "ledger.json"),
             stage_hypothesis=None,
         )
+        workspace = patch.dict(run_clip.LOCAL_ENV, {"MODAL_PROFILE": "test-workspace"})
+        workspace.start()
+        self.addCleanup(workspace.stop)
 
     def command(self, output):
         return [
@@ -541,6 +544,58 @@ class PaidRunIntegrationTests(unittest.TestCase):
         ):
             self.pipeline.paid_run("pi3x", command, self.root / "new.log")
         provider.assert_not_called()
+
+    def test_unset_workspace_blocks_before_claim_and_provider_call(self):
+        with (
+            patch.dict(run_clip.LOCAL_ENV, clear=True),
+            patch.object(run_clip, "run") as provider,
+            self.assertRaisesRegex(run_clip.QualityStop, "MODAL_PROFILE is unset"),
+        ):
+            self.pipeline.paid_run("pi3x", self.command(self.root / "out"), self.root / "new.log")
+        provider.assert_not_called()
+        self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
+
+    def test_claim_records_paying_workspace_and_it_changes_the_fingerprint(self):
+        fingerprints = []
+        for index, workspace in enumerate(("workspace-a", "workspace-b")):
+            self.pipeline.a.stage_ledger = str(self.root / f"ledger-{index}.json")
+            with (
+                patch.dict(run_clip.LOCAL_ENV, {"MODAL_PROFILE": workspace}),
+                patch.object(run_clip, "run"),
+            ):
+                self.pipeline.paid_run(
+                    "pi3x", self.command(self.root / f"out-{index}"), self.root / "new.log"
+                )
+            claim = json.loads(Path(self.pipeline.a.stage_ledger).read_text())["attempts"][0][
+                "claim"
+            ]
+            self.assertEqual(claim["parameters"]["workspace"], workspace)
+            fingerprints.append(claim["fingerprint"])
+        self.assertNotEqual(*fingerprints)
+
+    def test_stage_environment_is_claimed_and_malformed_values_block(self):
+        self.pipeline.a.stage_environment = ["lamaWeightsSha256=abc", "cacheVolume=v1"]
+        with patch.object(run_clip, "run"):
+            self.pipeline.paid_run("pi3x", self.command(self.root / "out"), self.root / "new.log")
+        ledger = json.loads(Path(self.pipeline.a.stage_ledger).read_text())
+        self.assertEqual(
+            ledger["attempts"][0]["claim"]["parameters"]["environment"],
+            {"lamaWeightsSha256": "abc", "cacheVolume": "v1"},
+        )
+        for bad in (["novalue"], ["=x"], ["k="], ["k=1", "k=2"]):
+            self.pipeline.a.stage_environment = bad
+            with (
+                self.subTest(bad=bad),
+                patch.object(run_clip, "run") as provider,
+                self.assertRaisesRegex(run_clip.QualityStop, "stage-environment"),
+            ):
+                self.pipeline.paid_run(
+                    "pi3x", self.command(self.root / "other"), self.root / "new.log"
+                )
+            provider.assert_not_called()
+        self.assertEqual(
+            len(json.loads(Path(self.pipeline.a.stage_ledger).read_text())["attempts"]), 1
+        )
 
     def test_existing_output_is_preserved_and_blocks_before_provider_call(self):
         output = self.root / "paid-output"

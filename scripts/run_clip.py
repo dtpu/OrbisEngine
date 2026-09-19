@@ -46,8 +46,11 @@ LOCAL_ENV = {
     "KMP_DUPLICATE_LIB_OK": "TRUE",
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
     "LAMA_MODEL": os.path.expanduser("~/.cache/lama/big-lama.pt"),
-    "MODAL_PROFILE": os.environ.get("MODAL_PROFILE", "dtpu"),
 }
+# No default workspace: a paid stage must name the Modal profile that pays for it (paid_run records
+# it in the claim), and an unset profile must not silently fall back to one chosen here.
+if os.environ.get("MODAL_PROFILE"):
+    LOCAL_ENV["MODAL_PROFILE"] = os.environ["MODAL_PROFILE"]
 
 MARBLE_MODES = ("video", "image", "multi", "both", "none")
 # scale_fit gates on each sampled frame's depth-ratio MEDIAN (0.95-1.05) and on its p10/p90: the median
@@ -387,6 +390,20 @@ class Pipeline:
                 getattr(self.a, "clip", self.clip)
             )
             parameters, code, outputs = command_identity(cmd, ROOT, selection)
+            workspace = LOCAL_ENV.get("MODAL_PROFILE")
+            if not workspace:
+                raise ValueError("MODAL_PROFILE is unset; name the workspace that pays")
+            parameters = {**parameters, "workspace": workspace}
+            environment = {}
+            for item in getattr(self.a, "stage_environment", None) or []:
+                key, separator, value = item.partition("=")
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", key) or not separator or not value:
+                    raise ValueError("--stage-environment takes KEY=VALUE")
+                if key in environment:
+                    raise ValueError(f"--stage-environment repeats {key}")
+                environment[key] = value
+            if environment:
+                parameters["environment"] = environment
             existing = [str(path) for path in outputs if path.exists() or path.is_symlink()]
             if existing:
                 raise ValueError(
@@ -835,7 +852,7 @@ class Pipeline:
         return self.ctx / "mode.json"
 
     def world_prompt(self):
-        """Describe the source clip for all modes; image modes additionally disable recaptioning.
+        """Describe the source clip for all world-generation modes.
 
         A generated description is an input aid, not proof of geometry or reduced hallucination.
         """
@@ -851,7 +868,7 @@ class Pipeline:
                 str(self.prompt_json),
             ],
             self.ctx / "world_prompt.log",
-            attempts=2,
+            attempts=1,
         )
         rec = json.loads(self.prompt_json.read_text())
         say(f"   prompt: {rec['text_prompt']}")
@@ -2801,6 +2818,16 @@ def main():
     ap.add_argument(
         "--stage-hypothesis",
         help="New rationale for a paid retry; relevant parameters or code must also change",
+    )
+    ap.add_argument(
+        "--stage-environment",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Provider-side state a paid stage depends on that the command line cannot show, such "
+        "as a staged weight file's SHA-256. Recorded in the claim, so correcting it after a failed "
+        "attempt is a changed parameter; the explicit hypothesis and the three-execution cap still "
+        "apply",
     )
     ap.add_argument(
         "--marble-key",
