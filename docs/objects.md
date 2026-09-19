@@ -60,9 +60,13 @@ positions linearly, and slerps baked quaternions. It reads visibility from the l
 Therefore tracks must be contiguous and uniformly sampled; arbitrary `sourceFrames` gaps
 are not honored. End poses remain visible unless the visibility table says otherwise.
 
-The current packager assumes **30 source frames per second** for ballistic timing and bakes
-at 30 fps. Its person sample grid can have a different rate. Verify source timing before packaging;
-changing only the output `fps` does not correct an incorrectly timed fit.
+The detector records source `fps`. The lift step uses that clock (or an explicit `--fps`), and
+packaging carries the fitted clock into ballistic positions, spin timing and the baked track.
+Both steps cross-check it against camera `time`/`sourceIndex` intervals. Conflicting clocks,
+partial timing and nonconstant intervals fail rather than silently packaging incorrectly timed motion.
+The 30 fps fallback applies only to legacy files with no source-clock metadata. The person sample
+grid can have a different rate. Changing only the packaged output `fps` cannot repair a fit made
+with the wrong clock. Variable-rate inputs need a documented constant-rate conversion first.
 
 Segments retain `fromSourceFrame`/`toSourceFrame` and explanatory fields:
 
