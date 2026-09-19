@@ -8,8 +8,11 @@ tracking swaps identity across it, and two places get fused into one world. Noth
 
 Two checks live here, one before the spend and one after the solve:
 
-  --video FILE   cut detection and shot choice. ffmpeg's own scene score plus a feature match
-                 across each candidate, so it costs one decode pass and no GPU. Multi-shot clips are then scored on the criteria this project
+  --video FILE   cut detection and shot choice. ffmpeg's scene score picks the frames worth
+                 looking at and decides none of them; each candidate is then settled on how much
+                 of the frame carries across it, whether the view comes back, whether it stands
+                 out from its neighbours, and a feature match. All of that rides on one decode
+                 pass and no GPU. Multi-shot clips are then scored on the criteria this project
                  already selects shots by -- camera translation (parallax_probe), one clear
                  person, full body, person pixel height, duration -- and the best one is named.
 
@@ -31,22 +34,75 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ffmpeg's scene score is how much of the frame changed against the one before it. Measured over 16
-# clips this project has reconstructed (6 phone clips, 10 film shots): inside a continuous shot it
-# never exceeds 0.123, and that worst case is 1960s film grain. A hard cut between two locations
-# reads 0.4-0.9 -- but a cut between two shots of the SAME place reads 0.15-0.32, which overlaps
-# grain, so the score alone cannot decide those. Hence two stages:
+# ffmpeg's scene score selects the frames worth looking at, and nothing more. It is
+# min(mafd, |mafd - previous mafd|)/100, where mafd is the mean absolute difference from the frame
+# before: a frame scores high only when it differs a lot from its predecessor AND differs by much
+# more than the frame before it did. That makes it a change-of-motion detector, not a cut detector,
+# and it fails in both directions:
 #
-#   score > SCENE_CERTAIN            a cut, no further work
-#   score > SCENE_CANDIDATE          a candidate; confirmed by matching the frames either side
+#   false high   a whip pan that snaps to speed in one frame, or a subject crossing close to the
+#                lens, steps mafd from 2 to 25 and scores like a cut. A one-frame exposure flash
+#                scores 0.43-0.70 -- above any "certain" line one could draw -- with nothing cut.
+#   false low    a cut INSIDE a fast pan is hidden, because mafd was already high: the same splice
+#                that scores 0.28 in a still shot scores 0.05 in a whip and is never even a
+#                candidate at the 0.10 gate.
 #
-# The confirmation is the separation that matters. ORB features across a real cut match almost
-# nothing (0.00-0.34 of the weaker frame's keypoints, measured on spliced clips and 58 candidates
-# in a Diagon Alley reel); across grain or a fast pan they still match 0.52-0.74. On that reel the
-# two stages find 42 of PySceneDetect's 51 boundaries with no false positive, where a bare 0.30
-# threshold finds 13.
+# So no score, however high, is called a cut here on its own; and a candidate is allowed to move to
+# the neighbouring frame that the evidence below actually points at.
 SCENE_CANDIDATE = 0.10
-SCENE_CERTAIN = 0.35
+
+# The evidence. All of it except the ORB match comes out of the single decode pass that scores the
+# clip, so a candidate is usually settled without decoding anything again.
+#
+#   carry        how much of the previous frame is still in this one: the best normalised
+#                correlation of a THUMB_WIDTH x THUMB_HEIGHT grey thumbnail against the previous
+#                one over +/- CARRY_SEARCH_X, CARRY_SEARCH_Y cells. Coarse on purpose. Blur and
+#                grain live in the detail it throws away, the shift search absorbs the pan, and
+#                normalised correlation subtracts the mean and divides by the norm, so an exposure
+#                jump moves it barely at all. Across a real cut there is nothing to correlate.
+#   returns      the best carry from the frame before the candidate to any of the next
+#                CARRY_RETURN_FRAMES frames. An occlusion is temporary -- the lorry, the player,
+#                the arm passes and the view comes back. A cut never comes back.
+#   isolation    the candidate's change (1 - carry) against the median change of its neighbours,
+#                floored by ISOLATION_FLOOR so a dead-still shot cannot divide by nothing. A cut is
+#                one frame of disagreement between two agreeing runs of frames; sustained motion is
+#                a plateau, and a plateau is not an edit however high it sits.
+#   match        the surviving ORB fraction, from the sharpest bracketing frames within
+#                BRACKET_FRAMES on each side as well as the immediate pair, taking the best. Blur
+#                is what breaks feature matching, so the bracket is allowed to step away from the
+#                blurred frames; and any one pair that matches is proof the content carried.
+#
+# A candidate is cleared by the first of these that will have it, and is a cut only if none will.
+# Measured over the rendered fixtures in scripts/test_shot_cuts.py, continuous | cut, for the
+# candidates that actually reached each test:
+#   carry       0.932-0.984 | 0.137-0.344      cleared at or above CARRY_CARRIES
+#   returns     0.916       | 0.321-0.530      cleared at or above CARRY_RETURNS
+#   isolation   1.04-2.80   | 32.8-43.1        cleared below ISOLATION_MIN
+#   match       (see below) | none, 0.016, 0.102
+# PROVISIONAL: every constant here except SCENE_CANDIDATE and CUT_MATCH_MAX was set on synthetic
+# clips only, at the midpoint of a measured gap rather than at the edge of a real distribution. Two
+# of them are weakly evidenced and want real footage most: ISOLATION_MIN, whose only continuous
+# examples come from one deliberately extreme fixture, and CUT_MATCH_MAX, which no continuous
+# fixture candidate even reached -- the three tests above it got there first -- so on this evidence
+# the ORB stage only ever confirmed cuts and never cleared one. The report carries carry, returns,
+# isolation and match on every candidate; re-measure where the two populations sit on a real
+# multi-shot clip before trusting any of these four numbers.
+THUMB_WIDTH, THUMB_HEIGHT = 128, 72
+CARRY_SEARCH_X, CARRY_SEARCH_Y = 28, 14
+CARRY_CARRIES = 0.62
+CARRY_RETURNS = 0.70
+CARRY_RETURN_FRAMES = 6
+ISOLATION_WINDOW = 12
+ISOLATION_FLOOR = 0.02
+ISOLATION_MIN = 6.0
+# A candidate may move this far to the frame the carry series says the change is really on. ffmpeg
+# scores the frame where mafd CHANGED most, which inside fast motion can be a frame or two after
+# the splice; the trimmer needs the splice itself.
+REFINE_FRAMES = 2
+BRACKET_FRAMES = 3
+# ORB features across a real cut match almost nothing (0.00-0.34 of the weaker frame's keypoints,
+# measured on spliced clips and 58 candidates in a Diagon Alley reel); across grain or a fast pan
+# they still match 0.52-0.74.
 CUT_MATCH_MAX = 0.45
 # Below this a segment is not worth reconstructing (the pipeline wants seconds of parallax), so it
 # is not offered as a choice -- but the cut that made it still counts as a cut.
@@ -105,127 +161,280 @@ def ffprobe(video: Path) -> dict:
 
 
 # ---------------------------------------------------------------- cut detection
-def scene_scores(video: Path, threshold: float, width: int = 320) -> list[tuple[float, float]]:
-    """(time, scene score) for every frame scoring above `threshold`.
+def scene_pass(video: Path, width: int = 320) -> tuple[list[float], list[float], list]:
+    """One decode: (pts_time, scene score, grey thumbnail) for every frame of the clip.
 
-    Decoded at `width`: the score is a mean absolute difference and is scale-stable, and a 320 px
-    pass is several times cheaper than a full-resolution one.
+    The score is read at `width` -- the same 320 px the detector has always scored at, so the
+    numbers in old reports still mean what they meant -- and the thumbnail falls out of the same
+    pass. ffmpeg prints its metadata with the frame number on it, so the two streams are joined on
+    that rather than on arrival order.
+
+    Memory is the clip's frame count times THUMB_WIDTH*THUMB_HEIGHT bytes: about 80 MB for five
+    minutes at 30 fps.
     """
-    p = subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-i",
-            str(video),
-            "-an",
-            "-sn",
-            "-vf",
-            f"scale={width}:-2,select='gt(scene,{threshold})',metadata=print:file=-",
-            "-f",
-            "null",
-            "-",
-        ],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    out, t = [], None
-    for line in p.stdout.splitlines():
-        m = re.search(r"pts_time:([0-9.]+)", line)
+    import numpy as np
+
+    with tempfile.TemporaryDirectory(prefix="shotcuts-scene-") as work:
+        meta = Path(work) / "scene.txt"
+        graph = (
+            f"scale={width}:-2,select='gte(scene,0)',metadata=print:file={meta},"
+            f"scale={THUMB_WIDTH}:{THUMB_HEIGHT}"
+        )
+        raw = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(video),
+                "-an",
+                "-sn",
+                "-vf",
+                graph,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "-",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ).stdout
+        text = meta.read_text() if meta.exists() else ""
+    thumbs = np.frombuffer(raw, np.uint8).reshape(-1, THUMB_HEIGHT, THUMB_WIDTH)
+    times = [0.0] * len(thumbs)
+    scores = [0.0] * len(thumbs)
+    index = None
+    for line in text.splitlines():
+        m = re.match(r"frame:(\d+)\s+pts:\S+\s+pts_time:([0-9.]+)", line)
         if m:
-            t = float(m.group(1))
+            index = int(m.group(1))
+            if index < len(times):
+                times[index] = float(m.group(2))
             continue
         m = re.search(r"lavfi\.scene_score=([0-9.]+)", line)
-        if m and t is not None:
-            # Frame 0 has no predecessor and ffmpeg scores it 0 or 1 depending on the decoder; it
-            # is the start of the clip, never a cut inside it.
-            if t > 0.05:
-                out.append((t, float(m.group(1))))
-            t = None
-    return out
+        if m and index is not None and index < len(scores):
+            scores[index] = float(m.group(1))
+    return times, scores, thumbs
 
 
-def _gray(video: Path, t: float, width: int = 320):
+def carry(previous, current) -> float:
+    """How much of `previous` is still visible in `current`, allowing for a shift.
+
+    The centre of `current` is slid over the whole of `previous` and the best normalised
+    correlation wins, so a pan of up to CARRY_SEARCH_X cells a frame costs nothing. Correlation is
+    taken after subtracting the mean and dividing by the norm, which is what makes it survive an
+    exposure change.
+    """
+    import cv2
+
+    patch = current[
+        CARRY_SEARCH_Y : THUMB_HEIGHT - CARRY_SEARCH_Y,
+        CARRY_SEARCH_X : THUMB_WIDTH - CARRY_SEARCH_X,
+    ]
+    return float(cv2.matchTemplate(previous, patch, cv2.TM_CCOEFF_NORMED).max())
+
+
+def carry_series(thumbs) -> list[float]:
+    return [1.0] + [carry(thumbs[i - 1], thumbs[i]) for i in range(1, len(thumbs))]
+
+
+def isolation(change: list[float], i: int, window: int = ISOLATION_WINDOW) -> float:
+    """How far frame `i` stands above the frames around it, on a series where a cut is a spike.
+
+    The immediate neighbours are left out: a cut disturbs them too, and a flash disturbs the frame
+    two away. The median of what is left is the level this stretch of clip normally runs at, so the
+    ratio asks "is this one frame unlike its own surroundings", which is what an edit is and what
+    sustained motion is not. Near the start or the end the window is simply shorter; with nothing
+    left to compare against, a candidate counts as isolated rather than being silently cleared.
+    """
+    import numpy as np
+
+    near = [
+        change[k]
+        for k in range(max(i - window, 0), min(i + window + 1, len(change)))
+        if abs(k - i) > 1
+    ]
+    if not near:
+        return float("inf")
+    return change[i] / max(float(np.median(near)), ISOLATION_FLOOR)
+
+
+def returns_after(thumbs, i: int, span: int = CARRY_RETURN_FRAMES) -> float:
+    """Best carry from the frame before `i` to any of the `span` frames after it.
+
+    An occlusion ends and the view comes back; a cut does not. Without this a lorry crossing the
+    lens is indistinguishable from an edit on the frame pair alone.
+    """
+    later = [carry(thumbs[i - 1], thumbs[i + j]) for j in range(2, span + 1) if i + j < len(thumbs)]
+    return max(later) if later else -1.0
+
+
+def bracket(video: Path, t: float, fps: float, k: int = BRACKET_FRAMES, width: int = 320) -> list:
+    """The `k` frames before `t` and the `k` from `t` on, in one decode of that stretch.
+
+    Half a frame of slack puts the seek on the frame before `t`, the same rounding the trimmer
+    relies on, so the returned list splits exactly at the candidate.
+    """
     import cv2, numpy as np
 
+    step = 1.0 / max(fps, 1e-3)
     raw = subprocess.run(
         [
             "ffmpeg",
             "-v",
             "error",
             "-ss",
-            f"{max(t, 0):.4f}",
+            f"{max(t - (k + 0.5) * step, 0):.4f}",
             "-i",
             str(video),
             "-frames:v",
-            "1",
+            str(2 * k),
             "-vf",
             f"scale={width}:-2",
             "-f",
             "image2pipe",
             "-vcodec",
-            "png",
+            "bmp",
             "-",
         ],
         check=True,
         stdout=subprocess.PIPE,
     ).stdout
-    return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_GRAYSCALE)
+    out, at = [], 0
+    while at + 6 <= len(raw):
+        size = int.from_bytes(raw[at + 2 : at + 6], "little")
+        if size <= 0 or at + size > len(raw):
+            break
+        out.append(cv2.imdecode(np.frombuffer(raw[at : at + size], np.uint8), cv2.IMREAD_GRAYSCALE))
+        at += size
+    return [f for f in out if f is not None]
 
 
-def match_across(video: Path, t: float, fps: float) -> float | None:
-    """Fraction of ORB keypoints that survive from the frame before `t` to the frame at `t`.
-
-    Content continues across a pan, a whip or a grainy print, so most features find their pair.
-    Across a cut there is nothing to pair with, whatever the two shots look like as a whole.
-    """
+def orb_fraction(a, b) -> float | None:
+    """Fraction of ORB keypoints that survive from `a` to `b`, or None if there are too few."""
     import cv2
 
-    a, b = _gray(video, t - 1.5 / max(fps, 1e-3)), _gray(video, t)
-    if a is None or b is None:
-        return None
     orb = cv2.ORB_create(1500)
     ka, da = orb.detectAndCompute(a, None)
     kb, db = orb.detectAndCompute(b, None)
     if da is None or db is None or len(ka) < 30 or len(kb) < 30:
-        return None  # too featureless to judge; falls back to the score
+        return None  # too featureless to judge
     m = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(da, db)
     return len([x for x in m if x.distance < 48]) / min(len(ka), len(kb))
 
 
-def detect_cuts(
-    video: Path,
-    threshold: float = SCENE_CANDIDATE,
-    fps: float | None = None,
-    certain: float = SCENE_CERTAIN,
-) -> list[dict]:
-    """Every candidate frame, each marked cut or not. See the threshold comment at the top.
+def match_across(video: Path, t: float, fps: float, k: int = BRACKET_FRAMES) -> float | None:
+    """Best ORB fraction across `t` over a few bracketing pairs, or None if all were featureless.
 
-    The rejected candidates are returned too: a frame that scored 0.30 and was cleared by the
-    feature match is worth printing, because it is where the operator should look if the run
-    later trips the teleport guard.
+    Motion blur removes the corners ORB keys on, so the pair straddling the candidate can be
+    unmatchable while the shot either side is perfectly sharp. The sharpest frame on each side is
+    tried as well as the immediate pair, and the best result stands: one pair that matches is
+    proof the content carried across, while a cut leaves every pair in the window with nothing to
+    pair against.
+    """
+    import cv2
+
+    frames = bracket(video, t, fps, k)
+    if len(frames) < 2:
+        return None
+    before, after = frames[: len(frames) // 2], frames[len(frames) // 2 :]
+    if not before or not after:
+        return None
+    sharp = [float(cv2.Laplacian(f, cv2.CV_32F).var()) for f in frames]
+    sb = max(range(len(before)), key=lambda i: sharp[i])
+    sa = max(range(len(after)), key=lambda i: sharp[len(before) + i])
+    pairs = {(len(before) - 1, 0), (sb, sa), (sb, 0), (len(before) - 1, sa)}
+    got = [orb_fraction(before[i], after[j]) for i, j in sorted(pairs)]
+    got = [v for v in got if v is not None]
+    return max(got) if got else None
+
+
+def detect_cuts(
+    video: Path, threshold: float = SCENE_CANDIDATE, fps: float | None = None
+) -> list[dict]:
+    """Every candidate frame, each marked cut or not, with the evidence that decided it.
+
+    The cleared candidates are returned too, each with a concrete reason: a frame that scored 0.30
+    and was cleared is where the operator should look if the run later trips the teleport guard.
+
+    Order is deliberate. Everything except the ORB match comes free out of the scoring pass, so the
+    candidates that fast motion produced -- the overwhelming majority on an action clip -- are
+    settled without decoding a single frame again.
     """
     fps = fps or ffprobe(video)["fps"]
+    times, scores, thumbs = scene_pass(video)
+    if len(thumbs) < 2:
+        return []
+    carried = carry_series(thumbs)
+    change = [1.0 - c for c in carried]
+    seen, candidates = set(), []
+    for i, score in enumerate(scores):
+        if score <= threshold or times[i] <= 0.05:
+            continue
+        # Move to the frame the carry series says the change is really on; see REFINE_FRAMES.
+        # `time` and `frame` then name that frame, while `score` stays the highest scene score that
+        # made this a candidate -- the two can sit a frame apart, which is the point of moving.
+        lo, hi = max(i - REFINE_FRAMES, 1), min(i + REFINE_FRAMES + 1, len(carried))
+        at = min(range(lo, hi), key=lambda k: carried[k]) if lo < hi else i
+        if at not in seen:
+            seen.add(at)
+            candidates.append((at, max(score, scores[at])))
     out = []
-    for t, score in scene_scores(video, threshold):
-        rec = dict(time=round(t, 3), score=round(score, 4), match=None, cut=True, why="scene score")
-        if score <= certain:
-            try:
-                rec["match"] = match_across(video, t, fps)
-            except Exception:
-                rec["match"] = None
-            m = rec["match"]
-            rec["match"] = None if m is None else round(m, 3)
-            rec["cut"] = m is not None and m < CUT_MATCH_MAX
+    for at, score in sorted(candidates):
+        rec = dict(
+            time=round(times[at], 3),
+            frame=at,
+            score=round(score, 4),
+            carry=round(carried[at], 3),
+            returns=None,
+            isolation=None,
+            match=None,
+            cut=False,
+            why="",
+        )
+        if carried[at] >= CARRY_CARRIES:
+            rec["why"] = f"content carries across it ({rec['carry']} of the frame correlates)"
+            out.append(rec)
+            continue
+        rec["returns"] = round(returns_after(thumbs, at), 3)
+        if rec["returns"] >= CARRY_RETURNS:
             rec["why"] = (
-                "scene score confirmed by feature match"
-                if rec["cut"]
-                else f"content carries across it ({rec['match']} of features match)"
-                if m is not None
-                else "too featureless to confirm; not called a cut"
+                f"the view comes back {rec['returns']} within {CARRY_RETURN_FRAMES} frames, so "
+                f"something crossed the lens; a cut does not come back"
             )
+            out.append(rec)
+            continue
+        rec["isolation"] = round(isolation(change, at), 2)
+        if rec["isolation"] < ISOLATION_MIN:
+            rec["why"] = (
+                f"the frames around it disagree as much as it does ({rec['isolation']}x the "
+                f"local median, under {ISOLATION_MIN}): sustained motion, not one edit"
+            )
+            out.append(rec)
+            continue
+        try:
+            rec["match"] = match_across(video, times[at], fps)
+        except Exception:
+            rec["match"] = None
+        if rec["match"] is not None:
+            rec["match"] = round(rec["match"], 3)
+            if rec["match"] >= CUT_MATCH_MAX:
+                rec["why"] = f"blurred, but {rec['match']} of its features still match across it"
+                out.append(rec)
+                continue
+        rec["cut"] = True
+        rec["why"] = (
+            f"a cut: {rec['carry']} of the frame correlates with the one before, the view does not "
+            f"come back ({rec['returns']}), the disagreement is {rec['isolation']}x its "
+            f"neighbourhood, and "
+            + (
+                f"only {rec['match']} of the features match"
+                if rec["match"] is not None
+                else "both sides are too blurred for features to judge"
+            )
+        )
         out.append(rec)
     return out
 
