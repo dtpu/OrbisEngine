@@ -114,6 +114,7 @@
   import * as THREE from 'three';
   import { VideoProjectionLayer } from '/src/video-projection.ts';
   import { FourDAudio } from '/src/audio/fourd-audio.ts';
+  import { validateBakedTrack } from '/src/object-track.ts';
   import {
     SparkRenderer,
     SplatMesh,
@@ -1538,6 +1539,7 @@
 
   const people = [];
   const objects = []; // see '?objects=' below; hoisted so status() can list them
+  const objectTrackWarnings = [];
   let primary = null,
     placed = false;
   const spreadU = manifest?.sharedScale?.floorCheck?.floorSpreadUnits;
@@ -1560,10 +1562,14 @@
     : null;
   const status = () => {
     const mode = interp ? ' (interpolated, 1 mesh)' : ' (132 meshes)';
+    const objectWarningText = objectTrackWarnings.length
+      ? `\nObjects skipped: ${objectTrackWarnings.join(', ')}`
+      : '';
     const head = `world ${world.numSplats.toLocaleString()} splats ${wsize.x.toFixed(1)}×${wsize.y.toFixed(1)}×${wsize.z.toFixed(1)} floor y≈${floorY.toFixed(2)}`;
     if (!manifest) {
       const p = people[0];
-      st.textContent = `${head}\nperson frames ${p ? p.loaded : 0}/${p ? p.nF : 0}${mode}`;
+      st.textContent =
+        `${head}\nperson frames ${p ? p.loaded : 0}/${p ? p.nF : 0}${mode}` + objectWarningText;
       return;
     }
     // the 10 cm the two independently fitted depth registrations disagree by is printed, not hidden
@@ -1601,7 +1607,8 @@
             (o.ev.spanMetres ? ` · ${o.ev.spanMetres.toFixed(2)} m arc` : '') +
             (o.ev.reprojectionPxRms ? ` · reproj ${o.ev.reprojectionPxRms.toFixed(1)} px` : ''),
         )
-        .join('');
+        .join('') +
+      objectWarningText;
   };
 
   function encodeQuat(x, y, z, w) {
@@ -2518,7 +2525,17 @@
       scene.add(key);
       for (const od of om.objects) {
         const bt = od.bakedTrack;
-        if (!bt?.positions?.length) continue;
+        if (!bt) continue;
+        const drift = od.appliesSharedCameraDrift === false ? null : camDrift;
+        const trackCheck = validateBakedTrack(bt, drift?.length);
+        if (!trackCheck.ok) {
+          objectTrackWarnings.push(`${od.id || '(unnamed)'} (${trackCheck.reason})`);
+          console.warn(
+            `Skipping object ${od.id || '(unnamed)'}: invalid bakedTrack (${trackCheck.reason})`,
+          );
+          continue;
+        }
+        const track = trackCheck.track;
         const a = od.appearance || {},
           sz = a.sizeWorldUnits || [0.03, 0.03, 0.06];
         const col = new THREE.Color().setRGB(
@@ -2608,10 +2625,9 @@
         g.scale.setScalar(scale0 * (od.transform?.scale ?? 1));
         g.add(mesh);
         scene.add(g);
-        const bfps = bt.fps || 30,
-          f0 = bt.sourceFrames?.[0] ?? 0,
-          n = bt.positions.length;
-        const drift = od.appliesSharedCameraDrift === false ? null : camDrift;
+        const bfps = track.fps,
+          f0 = track.sourceFrames[0],
+          n = track.positions.length;
         // objects/2 moved orientation under `pose`; read both or every objects/2 manifest silently
         // loses its orientation, which is what happened to the elevator bottle.
         const ori = od.pose?.orientation || od.orientation || {};
@@ -2619,7 +2635,7 @@
         // the baked per-frame quaternions beat re-deriving a spin: they already carry the handoff
         // blends, and the manifest is explicit that release PHASE is unresolved, so a synthetic
         // axis-angle would be inventing an absolute angle the footage never fixed.
-        const oq = bt.quaternionsXYZW?.length === n ? bt.quaternionsXYZW : null;
+        const oq = track.quaternionsXYZW || null;
         const spinAxis =
           !oq && ori.mode === 'measuredRate' && ori.spinAxisWorld
             ? new THREE.Vector3(...ori.spinAxisWorld).normalize()
@@ -2641,11 +2657,11 @@
               i = Math.floor(x),
               j = Math.min(n - 1, i + 1),
               u = x - i;
-            const on = bt.visible ? bt.visible[i] !== false : true;
+            const on = track.visible ? track.visible[i] : true;
             if (g.visible !== on) g.visible = on;
             if (!on) return;
-            const A = bt.positions[i],
-              B = bt.positions[j];
+            const A = track.positions[i],
+              B = track.positions[j];
             mesh.position.set(
               A[0] + (B[0] - A[0]) * u,
               A[1] + (B[1] - A[1]) * u,
@@ -2653,8 +2669,8 @@
             );
             // the drift table is per 12 fps sample, so index it with the track's own float sample index
             let dy = 0;
-            if (drift && bt.sampleIndex) {
-              const s = bt.sampleIndex[i] + (bt.sampleIndex[j] - bt.sampleIndex[i]) * u;
+            if (drift && track.sampleIndex) {
+              const s = track.sampleIndex[i] + (track.sampleIndex[j] - track.sampleIndex[i]) * u;
               const s0 = Math.floor(s),
                 s1 = Math.min(drift.length - 1, s0 + 1),
                 f = s - s0;
@@ -2675,9 +2691,9 @@
               const k = Math.min(n - 1, i + 1),
                 p = Math.max(0, i - 1);
               vel.set(
-                bt.positions[k][0] - bt.positions[p][0],
-                bt.positions[k][1] - bt.positions[p][1],
-                bt.positions[k][2] - bt.positions[p][2],
+                track.positions[k][0] - track.positions[p][0],
+                track.positions[k][1] - track.positions[p][1],
+                track.positions[k][2] - track.positions[p][2],
               );
               if (vel.lengthSq() > 1e-12) {
                 vel.normalize();

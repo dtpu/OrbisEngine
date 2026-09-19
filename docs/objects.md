@@ -60,6 +60,16 @@ positions linearly, and slerps baked quaternions. It reads visibility from the l
 Therefore tracks must be contiguous and uniformly sampled; arbitrary `sourceFrames` gaps
 are not honored. End poses remain visible unless the visibility table says otherwise.
 
+At ingestion, the viewer validates that `fps` is finite and positive, `sourceFrames` is a
+contiguous nonnegative integer sequence, positions and optional `sampleIndex`, quaternions, and
+visibility arrays have matching lengths, and all vectors/scalars are finite. Quaternions must have
+a nonzero norm within 0.1% of unit length; visibility entries must be booleans. When camera drift is
+enabled, sample indices must stay within its table. An invalid track is skipped with console and
+HUD diagnostics while other objects and the scene continue loading. This rejects malformed data
+before it can place a mesh at a nonfinite position; it does not inspect timestamps, infer missing
+frames, or repair a variable-rate track. Legacy manifests without optional quaternions, visibility,
+or sample indices remain supported.
+
 The detector records source `fps`. The lift step uses that clock (or an explicit `--fps`), and
 packaging carries the fitted clock into ballistic positions, spin timing and the baked track.
 Both steps cross-check it against camera `time`/`sourceIndex` intervals. Conflicting clocks,
