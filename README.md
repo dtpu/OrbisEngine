@@ -105,6 +105,7 @@ uv run --locked --group inference scripts/run_clip.py --clip /path/to/source.mp4
 
 The run stops at the cleaned-frame review gate before generating its Marble world. Inspect the
 reported frames, then repeat the command with `--gate-pass` only after approving that input.
+Unattended runs pass `--no-gate` to skip this stop.
 `--marble none` avoids Marble generation but can still run paid GPU/API stages. `--no-publish`
 keeps results local. Repeating a command resumes its saved stages; `--only` and `--force` select
 stages explicitly. Run `uv run --locked --group inference scripts/run_clip.py --help` for all options.
