@@ -1,23 +1,36 @@
 # Working on Wander
 
-Read `README.md` first. Audio and asset contracts are in
-`docs/audio.md` and `docs/shared-assets.md`.
+This file is durable: rules that stay true across sessions. Do not edit it or record progress here.
+Task list: `TONIGHT.md`. Progress: `docs/overnight/LOG.md`. Context and commands: `README.md`.
+Read the matching `docs/*.md` before changing audio, objects, or shared assets.
 
-- Measure before claiming success. Check the real viewer at `http://127.0.0.1:5399`;
-  keep screenshots and measurements outside Git. Simulated XR is not headset evidence.
-- Use Bun for viewer commands and `uv run --locked` for local Python tools. Keep `bun.lock` and
-  `uv.lock` current. Run `bun run format:check` after Python edits; use ordinary readable blocks.
-- At most two subagents may work at once. Give them independent tasks; do not poll them.
-- Start Vite only with `bunx --bun vite --port 5399 --host 127.0.0.1`. Do not kill someone else's
-  server, pipeline, or Modal job. `RECORD=1` disables reload during captures.
-- Use `MODAL_PROFILE=dtpu` for GPU launches. Existing model volumes may belong to the primary
-  profile; check availability before launching. Launch paid jobs only within the user-authorized task and budget.
-- Marble: one generation credit per new clip after every no-spend gate passes; tell the user
-  before spending. The pipeline's cleaned-frame review gate remains required.
-- Never commit footage, generated scenes, model weights, run outputs, screenshots, credentials,
-  or keys. Keep media in private shared storage. Do not paste secrets into chat or logs.
-- Never use bare `git stash`; worktrees share it. Preserve other agents' changes.
-- No per-clip constants in runtime code. Use measured manifests and general flags.
-- Quote body-heights; metre estimates assume a subject height. Label unobserved geometry and
-  invented appearance. Preserve recorded audio words and timing; do not invent speaker stems.
-- Check results adversarially against source footage before calling them settled.
+## Unattended
+
+- No human is available. Never stop to ask: log the question, state your assumption, continue.
+- Read the log before starting; append to it after every experiment.
+- Blocked: log why and move to the next item. All done or blocked: retry the first unverified item from a new angle.
+- The one exception: if `TONIGHT.md` still holds only its template, log that and stop. Never invent a backlog.
+- Run `scripts/run_clip.py` with `--no-gate`. No spend cap; `MODAL_PROFILE=dtpu`. Stop Modal jobs you started once idle.
+
+## Never
+
+- Commit media, generated scenes, weights, run outputs, screenshots, or keys; paste secrets anywhere.
+- Use bare `git stash`, rewrite pushed history, or discard other agents' changes.
+- Kill a Vite server, pipeline run, or Modal job you did not start.
+- Skip, weaken, or delete a test to get to green.
+- Add per-clip constants to runtime code.
+
+Use Bun and `uv run --locked` as the README shows; keep both lockfiles current and run `bun run format:check` after Python edits.
+
+## Evidence
+
+- Exit codes and passing tests do not prove visual quality. Check the real viewer at `http://127.0.0.1:5399` against the source footage, adversarially.
+- Keep screenshots and measurements under `.context/evidence/`, never in Git. Simulated XR is not headset evidence.
+- Quote body-heights, not metres (metres assume a 1.70 m subject). Label invented geometry and appearance; never invent audio.
+
+## Dead ends (measured; do not retry without a new idea)
+
+- Refining body pose against footage makes it worse.
+- Faces under ~64 px are unreadable; head refits do not help.
+- Smoke, fire, water, and low-parallax or dark clips do not reconstruct.
+- GEN3C static fill lost to FLUX panorama fill.
