@@ -2,6 +2,7 @@
 """Synthetic gaussian PLY sequences only; no real media, GPU, or services required."""
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,11 +54,15 @@ class MotionTrack(unittest.TestCase):
         if record["dtype"] == "float32":
             return np.frombuffer(raw, "<f4").reshape(shape).astype(np.float64)
         codes = np.frombuffer(raw, "<u2").reshape(shape).astype(np.float64)
-        return codes * np.array(record["scale"]) + np.array(record["min"])
+        return (
+            (codes * np.array(record["scale"]) + np.array(record["min"]))
+            .astype(np.float32)
+            .astype(np.float64)
+        )
 
     def test_uint16_track_matches_plys_within_recorded_error(self):
         sequence(self.person)
-        record = package(self.person)
+        record = package(self.person, lossless=False)
         truth = load_frames(self.person, json.loads((self.person / "sequence.json").read_text()))
         back = self.read_back(record)
         err = np.abs(back - truth).max(axis=(0, 1))
@@ -71,11 +76,59 @@ class MotionTrack(unittest.TestCase):
 
     def test_lossless_track_is_bit_identical(self):
         sequence(self.person, frames=3, splats=16)
-        record = package(self.person, lossless=True)
+        record = package(self.person)
         truth = load_frames(self.person, json.loads((self.person / "sequence.json").read_text()))
         self.assertTrue(np.array_equal(self.read_back(record).astype(np.float32), truth))
         self.assertEqual(record["maxAbsError"], [0.0] * 7)
         self.assertEqual(record["file"], "motion.f32")
+
+    def test_integrity_and_timing_metadata(self):
+        names = sequence(self.person, frames=3, splats=8)
+        path = self.person / "sequence.json"
+        seq = json.loads(path.read_text())
+        seq.update(timestamps=[0, 0.09, 0.24], duration=0.31, sourceFrameIndices=[3, 8, 17])
+        path.write_text(json.dumps(seq))
+        before = [(self.person / name).read_bytes() for name in names]
+        record = package(self.person)
+        after = json.loads(path.read_text())
+        for key, value in seq.items():
+            self.assertEqual(after[key], value)
+        self.assertEqual(record["schema"], "wander.person-motion/1")
+        self.assertEqual(record["frameFiles"], names)
+        self.assertEqual(
+            record["sha256"],
+            hashlib.sha256((self.person / record["file"]).read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            record["base"],
+            dict(file=names[0], bytes=len(before[0]), sha256=hashlib.sha256(before[0]).hexdigest()),
+        )
+        self.assertEqual(after["frame_sha256"], [hashlib.sha256(raw).hexdigest() for raw in before])
+        self.assertEqual([(self.person / name).read_bytes() for name in names], before)
+
+    def test_repack_refusal_removes_stale_motion(self):
+        sequence(self.person, frames=2, splats=8)
+        package(self.person)
+        path = self.person / "frame_001.ply"
+        v = PlyData.read(path)["vertex"].data.copy()
+        v["opacity"] += 0.5
+        PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(path)
+        with self.assertRaisesRegex(ValueError, "appearance"):
+            package(self.person)
+        self.assertNotIn("motion", json.loads((self.person / "sequence.json").read_text()))
+
+    def test_nonfinite_and_non_float32_channels_are_refused(self):
+        sequence(self.person, frames=2, splats=8)
+        path = self.person / "frame_001.ply"
+        v = PlyData.read(path)["vertex"].data.copy()
+        v["x"][0] = np.nan
+        PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(path)
+        with self.assertRaisesRegex(ValueError, "nonfinite"):
+            package(self.person)
+        wide = v.astype([(field, "f8") for field in FIELDS])
+        PlyData([PlyElement.describe(wide, "vertex")], text=False, byte_order="<").write(path)
+        with self.assertRaisesRegex(ValueError, "float32"):
+            package(self.person)
 
     def test_static_attribute_drift_is_refused(self):
         sequence(self.person, drift_field="opacity")
@@ -99,7 +152,7 @@ class MotionTrack(unittest.TestCase):
             PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(
                 self.person / name
             )
-        record = package(self.person)
+        record = package(self.person, lossless=False)
         back = self.read_back(record)
         self.assertTrue(np.all(back[:, :, 2] == 2.5))
         self.assertEqual(record["maxAbsError"][2], 0.0)
@@ -119,9 +172,9 @@ class PackagerIntegration(unittest.TestCase):
 
         sequence(self.person, frames=3, splats=8)
         report = add_motion_track(self.person)
-        self.assertEqual(report["file"], "motion.u16")
-        self.assertEqual(report["bytes"], 3 * 8 * 7 * 2)
-        self.assertTrue((self.person / "motion.u16").exists())
+        self.assertEqual(report["file"], "motion.f32")
+        self.assertEqual(report["bytes"], 3 * 8 * 7 * 4)
+        self.assertTrue((self.person / "motion.f32").exists())
         self.assertIn("motion", json.loads((self.person / "sequence.json").read_text()))
 
     def test_refused_sequence_ships_without_a_track(self):
