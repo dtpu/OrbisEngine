@@ -6,11 +6,11 @@ The shared migration is complete; the active demo loads published scenes from a 
 ## Teammates
 
 1. Clone `main` with `git clone --no-tags --single-branch --branch main https://github.com/StockerMC/wander.git`,
-   enter the checkout, and run `npm ci` (Node 22.12+ or Node 24).
+   enter the checkout, and run `bun install --frozen-lockfile` (Bun 1.2.21+).
 2. Ask Aayan privately for the teammate environment file. Save it as `.env.local` at the repo root.
    It contains `WANDER_ASSET_ACCESS_KEY_ID` and `WANDER_ASSET_SECRET_ACCESS_KEY`. These credentials
    only read `viewer/*` in the shared bucket; they cannot upload, delete, or read intermediate archives.
-3. Run `npm run demo` and open <http://127.0.0.1:5399/demo.html>.
+3. Run `bun run demo` and open <http://127.0.0.1:5399/demo.html>.
    Enter starts/pauses playback. Use the clip picker for the demo presets.
 
 The first visit downloads that scene's files into `.context/shared-assets/blobs/`; later visits use
@@ -19,7 +19,7 @@ Restart the local server to pick up a newly published snapshot. A running server
 so a publish cannot mix an old scene manifest with new frames. `/api/shared-assets` shows the active
 snapshot, timestamp, and file count without exposing credentials.
 
-Do not give these keys a `VITE_` prefix: credentials belong in the Node server, never the browser.
+Do not give these keys a `VITE_` prefix: credentials belong in the local server, never the browser.
 `.env.local` and the cache are gitignored. Keep the server on localhost (the default demo command).
 This is a local development viewer, not an authenticated public hosting service.
 
@@ -28,19 +28,19 @@ This is a local development viewer, not an authenticated public hosting service.
 Use your normal AWS author profile, separately from the teammate environment file:
 
 ```sh
-AWS_PROFILE=default npm run runs:publish
+AWS_PROFILE=default bun run runs:publish
 # Also preserve an external evidence/screenshots directory:
-AWS_PROFILE=default npm run runs:publish -- --evidence-dir /path/to/share
+AWS_PROFILE=default bun run runs:publish --evidence-dir /path/to/share
 ```
 
 `scripts/run_clip.py` automatically publishes `public/` and `.context/run/` at the end, including
 failed/gated runs. `WANDER_EVIDENCE_DIR=/path/to/share` adds evidence to that automatic publish.
 A publish failure returns an error and leaves local results intact; retry the command above.
 `--no-publish` is the explicit offline opt-out. Standalone experimental scripts outside `run_clip.py`
-need `npm run runs:publish` after finishing. Hard-killed processes cannot run a completion hook;
+need `bun run runs:publish` after finishing. Hard-killed processes cannot run a completion hook;
 resume them or publish their partial outputs manually.
 
-To inspect unpublished local work, start Vite with `WANDER_ASSETS_MODE=local npm run demo`.
+To inspect unpublished local work, start Vite with `WANDER_ASSETS_MODE=local bun run demo`.
 Remote mode never silently falls back to files on disk. The standard install downloads no local model assets.
 If someone else already runs Vite, coordinate with them instead of killing their process.
 

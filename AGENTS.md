@@ -1,12 +1,14 @@
 # Working on Wander
 
-Read `README.md` and `docs/architecture.md` first. Audio and asset contracts are in
+Read `README.md` first. Audio and asset contracts are in
 `docs/audio.md` and `docs/shared-assets.md`.
 
 - Measure before claiming success. Check the real viewer at `http://127.0.0.1:5399`;
   keep screenshots and measurements outside Git. Simulated XR is not headset evidence.
+- Use Bun for viewer commands and `uv run --locked` for local Python tools. Keep `bun.lock` and
+  `uv.lock` current. Run `bun run format:check` after Python edits; use ordinary readable blocks.
 - At most two subagents may work at once. Give them independent tasks; do not poll them.
-- Start Vite only with `npx vite --port 5399 --host 127.0.0.1`. Do not kill someone else's
+- Start Vite only with `bunx --bun vite --port 5399 --host 127.0.0.1`. Do not kill someone else's
   server, pipeline, or Modal job. `RECORD=1` disables reload during captures.
 - Use `MODAL_PROFILE=dtpu` for GPU launches. Existing model volumes may belong to the primary
   profile; check availability before launching. Launch paid jobs only within the user-authorized task and budget.
