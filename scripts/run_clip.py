@@ -78,8 +78,8 @@ def world_half(marble: str):
         deps["clean_multi"] = []
     if marble == "none":
         return stages, deps, None
-    # Write a source-grounded description before generation. All input modes receive it;
-    # image modes also request disable_recaption. Captioning does not prove pixels are ignored.
+    # Write a source-grounded description before generation. Image modes and prompted video request
+    # disable_recaption; this records intent, not proof that the provider retained the supplied text.
     stages.append("world_prompt")
     deps["world_prompt"] = []
     stages.append("review")
