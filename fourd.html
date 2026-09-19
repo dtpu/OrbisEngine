@@ -133,6 +133,7 @@
   import { FourDAudio } from '/src/audio/fourd-audio.ts';
   import { normalizePlaybackTime } from '/src/playback-time.ts';
   import { validateBakedTrack } from '/src/object-track.ts';
+  import { decodeMotionFrame, motionTrackUsable } from '/src/person-motion.ts';
   import {
     SparkRenderer,
     SplatMesh,
@@ -1868,34 +1869,13 @@
       // frame-major, in the PLYs' own order. One fetch replaces nF-1 PLY downloads; the PLYs are
       // still there, so any mismatch or fetch failure falls back to reading them.
       const mo = seq.motion;
-      const motionOk =
-        mo &&
-        (mo.dtype === 'uint16' || mo.dtype === 'float32') &&
-        mo.frames === nF &&
-        mo.splats === f0.n &&
-        Array.isArray(mo.channels) &&
-        mo.channels.join() === 'x,y,z,rot_0,rot_1,rot_2,rot_3' &&
-        q.get('motiontrack') !== '0';
+      const motionOk = motionTrackUsable(mo, nF, f0.n) && q.get('motiontrack') !== '0';
       allLoaded = motionOk
         ? (async () => {
             try {
               const buf = await (await fetch(base + mo.file)).arrayBuffer();
-              const stride = f0.n * 7;
-              if (buf.byteLength !== stride * nF * (mo.dtype === 'uint16' ? 2 : 4))
-                throw new Error(`motion track is ${buf.byteLength} bytes`);
-              const raw = mo.dtype === 'uint16' ? new Uint16Array(buf) : new Float32Array(buf);
-              const lo = mo.dtype === 'uint16' ? mo.min : null,
-                sc = mo.dtype === 'uint16' ? mo.scale : null;
               for (let i = 1; i < nF; i++) {
-                const out = new Float32Array(nS * 7),
-                  off = i * stride;
-                for (let s = 0; s < nS; s++) {
-                  const src7 = off + (sel ? sel[s] : s) * 7,
-                    d = s * 7;
-                  for (let c = 0; c < 7; c++)
-                    out[d + c] = lo ? raw[src7 + c] * sc[c] + lo[c] : raw[src7 + c];
-                }
-                keys[i] = out;
+                keys[i] = decodeMotionFrame(buf, mo, i, sel, nS);
                 P.loaded++;
                 if ((i & 7) === 0 || i === nF - 1) status();
               }
