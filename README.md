@@ -100,8 +100,14 @@ set -a
 source .env.author
 set +a
 uv run --locked --group inference scripts/run_clip.py --clip /path/to/source.mp4 --name example \
-  --marble image --all-people --fps 12 --skip-finetune
+  --marble video --all-people --fps 12 --skip-finetune
 ```
+
+Video is the default Marble input. It submits the cleaned clip at the configured processing frame
+rate with the source description, a pinned model and private permissions. `--marble image` and
+`--marble multi` are explicit still-image alternatives; camera spread alone does not select them.
+This policy preserves more temporal input, but reduced hallucination has not been established by a
+controlled comparison. See [the kitchen review](docs/kitchen-review.md#video-first-policy).
 
 The run stops at the cleaned-frame review gate before generating its Marble world. Inspect the
 reported frames, then repeat the command with `--gate-pass` only after approving that input.
