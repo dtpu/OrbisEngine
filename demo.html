@@ -167,7 +167,7 @@ kbd{font:600 10.5px/1 var(--mono);color:#dfe4ea;background:#1c2027;border:1px so
   </nav>
 
   <main id="stage">
-    <iframe id="frame" allow="autoplay; fullscreen" title="Wander viewer"></iframe>
+    <iframe id="frame" allow="autoplay; fullscreen; xr-spatial-tracking" title="Wander viewer"></iframe>
 
     <div class="ov" id="srccap">
       <div class="lab">Input · the whole of it</div>
@@ -221,7 +221,7 @@ kbd{font:600 10.5px/1 var(--mono);color:#dfe4ea;background:#1c2027;border:1px so
 // reads the same-origin `window.wander` API the viewer already exports, or injects one
 // stylesheet into the iframe document at runtime.
 // Walk mode (fourd.html ?walk=1) is the demo camera: a person at eye height on the floor. Default
-// on since  21:55 (Aayan's call); ?walk=0 gives the free camera back for authoring.
+// on by default; ?walk=0 gives the free camera back for authoring.
 const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
 /* ---------------- clip data ----------------
@@ -399,8 +399,14 @@ function select(id) {
   $('loading').classList.remove('gone'); $('loadmsg').textContent = 'building the world…';
   $('loadtitle').textContent = c.title; $('loadbar').className = 'indet'; $('loadbar').firstChild.style.width = '0';
   const lv = $('loadvid'); if (lv.getAttribute('src') !== c.src) { lv.src = c.src; } lv.currentTime = 0; lv.play().catch(() => {});
-  frame.src = `/fourd.html?demo=${encodeURIComponent(c.id)}${WALK ? '&walk=1' : ''}`;
-  history.replaceState(null, '', `?clip=${encodeURIComponent(c.id)}${WALK ? '&walk=1' : ''}`);
+  const options = new URLSearchParams({ demo: c.id });
+  if (WALK) options.set('walk', '1');
+  const outer = new URLSearchParams(location.search);
+  for (const [key, value] of outer) if (key === 'audio' || key.startsWith('xr')) options.set(key, value);
+  api()?.play(false);
+  frame.src = `/fourd.html?${options}`;
+  outer.set('clip', c.id); if (WALK) outer.set('walk', '1');
+  history.replaceState(null, '', `?${outer}`);
 }
 
 frame.addEventListener('load', () => {
@@ -452,6 +458,7 @@ function dress(win) {
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#0c0e11ee;
       border:1px solid #262b33;border-radius:10px;padding:11px 13px;font-size:11px}
     #hint{display:none!important}
+    #audio-credit{bottom:100px!important}
     #pip{left:24px!important;right:auto!important;bottom:86px!important;width:300px!important;
       border:0!important;border-radius:9px;outline:1px solid #ffffff22;
       box-shadow:0 16px 46px #000c;background:#000}
@@ -472,6 +479,7 @@ function api() { try { return frame.contentWindow.wander; } catch { return null;
 
 $('play').addEventListener('click', () => {
   const w = api(); if (!w) return;
+  void w.unlockAudio?.();
   w.showreel(!w.reel);
   try { frame.contentWindow.focus(); } catch {}
 });
@@ -582,6 +590,7 @@ if (WALK) for (const k of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
 function forward(e) {
   try {
     const win = frame.contentWindow;
+    if (e.isTrusted && e.type === 'keydown' && !e.repeat && ['Enter', 'NumpadEnter', 'Space'].includes(e.code)) void win.wander?.unlockAudio?.();
     win.dispatchEvent(new win.KeyboardEvent(e.type, { code: e.code, key: e.key, shiftKey: e.shiftKey, repeat: e.repeat, bubbles: true }));
     if (e.type === 'keydown') win.focus();
   } catch {}
@@ -627,6 +636,7 @@ fetch(REEL, { method: 'HEAD' }).then(r => {
   if (r.ok && !(r.headers.get('content-type') || '').startsWith('text/html')) $('reelbtn').hidden = false;
 }).catch(() => {});
 $('reelbtn').addEventListener('click', () => {
+  api()?.play(false);
   $('reelvid').src = REEL; $('reelwrap').classList.add('on'); $('reelvid').play().catch(() => {});
 });
 function closeReel() {

@@ -18,6 +18,7 @@ person: I/K ±z  J/L ±x  U/O ±y  [ ] yaw  - = scale · Enter / Space play/paus
 <script type="module">
 import * as THREE from 'three';
 import { VideoProjectionLayer } from '/src/inspection/video-projection.ts';
+import { FourDAudio } from '/src/audio/fourd-audio.ts';
 import { SparkRenderer, SplatMesh, SplatEdit, SplatEditSdf, SplatEditSdfType, SplatEditRgbaBlendMode, PackedSplats, setPackedSplat, toHalf, dyno } from '@sparkjsdev/spark';
 const st = document.getElementById('st');
 const q = new URLSearchParams(location.search);
@@ -344,7 +345,7 @@ const DEMOS = {
   // height give 1.0238 and 1.0221 independently, so scale 1.0221 renders him 1.19 m against the old
   // preset's 1.21 m. ?demo=atrium-4d is the old avatar, unchanged, for comparison.
   atrium: { world: '/marble-atrium-clean.spz', worldfallback: '/marble-atrium-finetuned.spz',
-    person: '/worlds/atrium-4dpp/person/sequence.json', video: '/clips/atrium.mp4',
+    person: '/worlds/atrium-4dpp/person/sequence.json', video: '/clips/atrium.mp4', audio: '/worlds/atrium-4d/audio.json',
     floor: '-0.9015', scale: '1.0221', feetmode: 'sfm', fovsrc: '62.2',
     // measured box (247/343): 3.51 x 1.12 x 5.26 m at 1 u = 1.403 m. It grew a unit of -x and three
     // quarters of a unit of +z, i.e. behind where the phone stood, which is where the shot opens.
@@ -1365,9 +1366,8 @@ if (objectsArg && objectsArg !== '0') {
       const a = od.appearance || {}, sz = a.sizeWorldUnits || [0.03, 0.03, 0.06];
       const col = new THREE.Color().setRGB(...(a.colorSRGB || [0.8, 0.8, 0.8]), THREE.SRGBColorSpace);
       // A gaussian object is a real .ply, so it goes through Spark and sorts against the world
-      // splats for free. Anything else falls back to the lit proxy below. Until  this
-      // branch did not exist: a manifest saying kind "gaussians" still drew the proxy, silently,
-      // because the fallback keys off `shape` and a gaussian entry has no `shape`.
+      // splats for free. Other shapes fall back to the lit proxy below. A Gaussian manifest
+      // has no `shape`, so check its kind before choosing the proxy fallback.
       let mesh;
       if (a.kind === 'gaussians' && a.model) {
         const sm = new SplatMesh({ url: new URL(a.model, new URL(objectsArg, location.href)).href, lod: false });
@@ -1596,8 +1596,20 @@ if (projOn || personProjOn) {
 // ---- playback clock: the source <video> is the master clock when it can play ----
 const video = document.getElementById('pip');
 const videoUrl = q.get('video') ?? '/clips/corridor-walk-elder.mp4';
-let videoOk = false;
-if (videoUrl && videoUrl !== '0') { video.src = videoUrl; video.addEventListener('canplay', () => { videoOk = true; if (playing) video.play().catch(() => {}); }); video.addEventListener('error', () => { videoOk = false; video.classList.add('hidden'); }); }
+let videoOk = false, playGeneration = 0;
+const startVideo = () => { const generation = ++playGeneration; video.play().catch(error => { if (generation === playGeneration && error.name !== 'AbortError') playing = false; }); };
+video.crossOrigin = 'anonymous';
+video.autoplay = !q.has('pause');
+const sceneAudio = new FourDAudio(video, dur, people, () => (primary.bodyH || bodyH) * primary.group.scale.x);
+const audioPackage = q.get('audio') || new URL(manifestUrl ? 'audio.json' : '../audio.json', new URL(manifestUrl || primary.frames[0], location.href)).href;
+if (q.get('audio') !== '0') void sceneAudio.load(audioPackage);
+const unlockAudio = () => sceneAudio.unlock();
+// Trusted document gestures unlock Web Audio; synthetic forwarded keys do not.
+addEventListener('pointerdown', e => { if (e.isTrusted && !e.target.closest?.('#audio-controls')) void unlockAudio(); }, { capture: true });
+addEventListener('keydown', e => { if (e.isTrusted && !e.repeat && ['Enter', 'NumpadEnter', 'Space'].includes(e.code) && !e.target.closest?.('button,input,textarea,select,a') && !e.target.isContentEditable) void unlockAudio(); }, { capture: true });
+addEventListener('pagehide', () => sceneAudio.dispose(), { once: true });
+document.addEventListener('visibilitychange', () => { if (document.hidden) play(false); });
+if (videoUrl && videoUrl !== '0') { video.src = videoUrl; video.addEventListener('canplay', () => { videoOk = true; if (playing) startVideo(); else video.pause(); }); video.addEventListener('error', () => { videoOk = false; video.classList.add('hidden'); }); }
 else video.classList.add('hidden');
 if (q.get('pip') === '0') video.classList.add('hidden');
 let t = 0, playing = q.get('pause') == null, snap = false, frame = 0, interpMs = 0;
@@ -1608,9 +1620,10 @@ function applyTime() {
   for (const o of objects) o.step(t);
   frame = primary.frame; interpMs = ms;
 }
-function setTime(sec) { t = ((sec % dur) + dur) % dur; if (videoOk && Math.abs(video.currentTime - t) > 0.02) video.currentTime = t; applyTime(); }
+function setTime(sec) { sceneAudio.invalidate(); t = ((sec % dur) + dur) % dur; if (videoOk && Math.abs(video.currentTime - t) > 0.02) video.currentTime = t; applyTime(); }
 function setFrame(i) { setTime(ts[((i % nF) + nF) % nF]); return frame; }
-function play(p = true) { playing = p; if (videoOk) { if (p) video.play().catch(() => {}); else video.pause(); } }
+function play(p = true) { playing = p; if (!p) { ++playGeneration; sceneAudio.invalidate(); video.pause(); } else if (videoOk) startVideo(); }
+function setPlaybackRate(rate) { if (!Number.isFinite(rate) || rate < 0.25 || rate > 4) throw new Error('Playback rate must be between 0.25 and 4'); video.playbackRate = rate; sceneAudio.invalidate(); }
 applyTime();
 
 // ---- camera ----
@@ -2175,7 +2188,12 @@ renderer.setAnimationLoop(() => {
   if (proj) proj.update(t);
   if (bg2) { const u = THREE.MathUtils.smoothstep(camera.position.z, Math.min(...bg2fade), Math.max(...bg2fade)); const f = bg2fade[0] > bg2fade[1] ? 1 - u : u; if (Math.abs(bg2.opacity - f) > 0.005) { bg2.opacity = f; world.opacity = 1 - f; } }
   if (playing) {
-    if (videoOk && !video.paused) t = video.currentTime % dur; else t = (t + dt) % dur;
+    if (videoOk) {
+      if (!video.paused && !video.seeking) {
+        if (video.currentTime >= dur) { video.currentTime %= dur; sceneAudio.invalidate(); }
+        t = video.currentTime % dur;
+      }
+    } else if (!videoUrl || videoUrl === '0' || video.error) t = (t + dt) % dur;
     applyTime();
   }
   if (possess) possessApply(dt);
@@ -2192,7 +2210,8 @@ window.wander = {
   setFrame, setTime, showreel, reelSet, get reel() { return reel; }, set reelFrozen(v) { if (reel) reel.frozen = v; }, clampBox, clampOn, demo: q.get('demo'),
   softMargin, overshoot, edgeFade, hardBox: new THREE.Box3(hardMin, hardMax), hardR, get edge() { return edge; }, edgeAt,
   get frame() { return frame; }, get t() { return t; }, get loaded() { return primary.loaded; },
-  play, get playing() { return playing; },
+  play, setPlaybackRate, unlockAudio, setMuted: value => sceneAudio.setMuted(value), setAudioMode: value => sceneAudio.setMode(value),
+  get audioState() { return sceneAudio.state; }, get playing() { return playing; },
   get snap() { return snap; }, set snap(v) { snap = v; applyTime(); },
   lookAt, place, params: Object.fromEntries(q),
   walk: walkOn ? { eye: walkEye, stature: walkStature, heights: walkHeights, heightSource: walkHeights.length ? 'mean character stature' : 'primary fallback', collisionStature, speed: WALK_SPEED_M * upm, run: WALK_RUN_M * upm, stepUp: WALK_STEP_UP, get floor() { return walkFloor; },
@@ -2214,6 +2233,26 @@ window.wander = {
   getTransform() { return { pos: person.position.toArray(), rot: [person.rotation.x, person.rotation.y, person.rotation.z].map(THREE.MathUtils.radToDeg), scale: person.scale.x }; },
   url() { const t = this.getTransform(); const u = new URL(location.href); u.searchParams.set('pos', t.pos.map(v => v.toFixed(3)).join(',')); u.searchParams.set('rot', t.rot.map(v => v.toFixed(1)).join(',')); u.searchParams.set('scale', t.scale.toFixed(4)); return u.href; },
 };
+
+// The XR wrapper installed below runs rig movement before this hook. Capture the raw
+// center head pose here, before Three shifts its XR camera for stereo frustum culling.
+const audioRender = renderer.render.bind(renderer);
+const audioPos = new THREE.Vector3(), audioQ = new THREE.Quaternion();
+renderer.render = function(sc, cam) {
+  if (sc === scene && cam === camera) {
+    if (renderer.xr.isPresenting) {
+      const head = renderer.xr.getCamera();
+      if (head.cameras.length && camera.parent) {
+        camera.parent.updateWorldMatrix(true, false);
+        audioPos.copy(head.position).applyMatrix4(camera.parent.matrixWorld);
+        camera.parent.getWorldQuaternion(audioQ).multiply(head.quaternion);
+      }
+    } else { camera.updateWorldMatrix(true, false); camera.getWorldPosition(audioPos); camera.getWorldQuaternion(audioQ); }
+    sceneAudio.tick(t, playing, audioPos, audioQ);
+  }
+  return audioRender(sc, cam);
+};
+renderer.xr.addEventListener('sessionend', () => play(false));
 
 // ?xr=1: WebXR mode (src/xr/fourd-xr.ts) - enter-VR button, rig locomotion, the soft boundary as a
 // vignette, and the splat budget. Without the flag the module is never fetched and nothing above
