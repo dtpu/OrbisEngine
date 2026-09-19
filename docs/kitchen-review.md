@@ -39,16 +39,26 @@ This provenance repair is follow-up work, outside the selected integration.
 
 ## Video-first policy
 
-The pipeline CLI defaults to video. Its explicit multi-image selector, `select_world_mode.py`,
-however, excludes video unless allowed and claims it is caption-only, based on an earlier clip's
-outcome. The selector runs for explicit multi mode; it does not silently override the CLI default.
-Its angular-spread and gradient-energy criteria do not establish cleaned structural coverage,
-translational parallax, or consistent moving fixtures.
+The pipeline CLI and standalone `select_world_mode.py` now both default to video. The selector's
+former automatic image/multi-image choice and caption-only claim have been removed. Its camera-angle
+heuristic is available through explicit `--still-images`; the pipeline uses that only for an explicit
+`--marble multi` run. Image and multi-image modes remain reviewable alternatives, not automatic
+fallbacks. Angular spread and gradient energy do not establish cleaned structural coverage,
+translational parallax or consistent moving fixtures.
 
 The provider documents [video input](https://docs.worldlabs.ai/api) and automatic caption generation
-when a prompt is omitted; this does not establish that video pixels are discarded. Its
-[model description](https://www.worldlabs.ai/blog/marble-world-model) also describes video as input.
-Treat the selector's caption-only premise as unverified, not a general provider limitation.
+when a prompt is omitted. That does not establish that video pixels are discarded. Video requests now
+retain the pipeline's source-grounded description, pin `marble-1.1`, and request private permissions.
+The entire cleaned clip at the configured processing frame rate is uploaded; this does not mean every
+original source frame or unmodified source pixel is retained. Input bytes/SHA-256 and the exact request
+are saved in the existing submission receipts. Existing operation recovery still prevents resubmission.
+
+Offline tests verify video-first decisions, explicit still overrides, full input-byte transfer to the
+mock transport, prompt/model/private request fields, input mutation rejection, credential handling,
+and recovery. They do **not** establish fewer hallucinations or improved kitchen geometry. No new
+video-versus-stills generation was run for this change. Such a comparison must bind the same source
+and cleaned inputs, record model/settings, and judge matching held-out and displaced views; a prompt
+or a successful API request is not a visual acceptance result.
 
 For moving-camera recordings, review the temporally coherent video first. Require recorded coverage,
 cleaning and fixture-consistency evidence before substituting sparse stills. More blurry, occluded or
