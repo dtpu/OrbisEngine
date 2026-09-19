@@ -1,7 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Immutable, checksum-verified objects first; the shared pointer is updated LAST.
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
@@ -9,6 +8,15 @@ import { PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { ROOT, config, client, getJSON, hashFile, filesUnder, mime } from './lib/shared-storage.ts';
 import type { PutObjectCommandInput } from '@aws-sdk/client-s3';
 import type { AssetEntry, CatalogPointer, ScannedFile } from './lib/shared-storage.ts';
+import { uploadBlob } from './lib/publish-transport.ts';
+import { publishInventory, publishMetadata, writePublishMetadata } from './lib/publish-policy.ts';
+
+// Bun 1.3.9 drops Content-Length on larger Node-compatible streaming requests,
+// invalidating the S3 signature. Keep uploads streamed through Node's transport.
+if (process.versions.bun) {
+  throw new Error('Publishing requires Node.js. Run bun run runs:publish.');
+}
+
 interface UploadCacheEntry {
   size: number;
   mtimeMs: number;
@@ -31,9 +39,16 @@ const { values: args } = parseArgs({
   options: {
     'evidence-dir': { type: 'string' },
     'assets-only': { type: 'boolean' },
+    'archive-only': { type: 'boolean' },
     concurrency: { type: 'string', default: '10' },
   },
 });
+const archiveOnly = !!args['archive-only'];
+const inventory = publishInventory(
+  ROOT,
+  { archiveOnly, assetsOnly: args['assets-only'] },
+  args['evidence-dir'],
+);
 const concurrency = Number(args.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32)
   throw new Error('concurrency must be 1–32');
@@ -59,13 +74,14 @@ try {
     throw e;
 }
 let base: PublishBase = { files: {}, archives: {} };
-if (previous.value.snapshot) base = (await getJSON<PublishBase>(s3, previous.value.snapshot)).value;
+if (!archiveOnly && previous.value.snapshot)
+  base = (await getJSON<PublishBase>(s3, previous.value.snapshot)).value;
 if (previous.value.archive)
   base.archives = (
     await getJSON<{ files: Record<string, AssetEntry> }>(s3, previous.value.archive)
   ).value.files;
 const known = new Set<string | undefined>();
-for (const prefix of ['viewer/blobs/', 'archive/blobs/']) {
+for (const prefix of archiveOnly ? ['archive/blobs/'] : ['viewer/blobs/', 'archive/blobs/']) {
   let token: string | undefined;
   do {
     const r = await s3.send(
@@ -75,26 +91,26 @@ for (const prefix of ['viewer/blobs/', 'archive/blobs/']) {
     token = r.NextContinuationToken;
   } while (token);
 }
-const publicScan = await filesUnder(path.join(ROOT, 'public'), '/');
-const tasks: PublishTask[] = publicScan.files.map((x) => ({
-  ...x,
-  kind: 'files',
-  prefix: 'viewer',
-}));
-const exclusions: Record<string, string[]> = { public: publicScan.excluded };
-if (!args['assets-only']) {
-  const runScan = await filesUnder(path.join(ROOT, '.context/run'), 'runs/');
-  tasks.push(
-    ...runScan.files.map((x) => ({ ...x, kind: 'archives' as const, prefix: 'archive' as const })),
+const tasks: PublishTask[] = [];
+const exclusions: Record<string, string[]> = {};
+for (const source of inventory) {
+  // Preserve the public scanner's existing symlink policy in both publishing modes.
+  const scan = await filesUnder(
+    source.directory,
+    source.exclusionKey === 'public' ? '/' : source.logicalPrefix,
   );
-  exclusions.runs = runScan.excluded;
-  if (args['evidence-dir']) {
-    const scan = await filesUnder(path.resolve(args['evidence-dir']), 'evidence/');
-    tasks.push(
-      ...scan.files.map((x) => ({ ...x, kind: 'archives' as const, prefix: 'archive' as const })),
-    );
-    exclusions.evidence = scan.excluded;
-  }
+  tasks.push(
+    ...scan.files.map((x) => ({
+      ...x,
+      path:
+        source.exclusionKey === 'public' && archiveOnly
+          ? `${source.logicalPrefix}${x.path.slice(1)}`
+          : x.path,
+      kind: source.kind,
+      prefix: source.prefix,
+    })),
+  );
+  exclusions[source.exclusionKey] = scan.excluded;
 }
 console.log(
   `Inventory: ${tasks.length} files, ${(tasks.reduce((s, t) => s + t.size, 0) / 1e9).toFixed(2)} GB; ${known.size} existing blobs. Exclusions: ${Object.values(exclusions).flat().length}.`,
@@ -137,18 +153,14 @@ async function worker() {
                 throw new Error(`File exceeds single-object uploader limit: ${t.path}`);
               for (let attempt = 0; ; attempt++) {
                 try {
-                  await s3.send(
-                    new PutObjectCommand({
-                      Bucket: config.bucket,
-                      Key: key,
-                      Body: createReadStream(t.file),
-                      ContentLength: t.size,
-                      ContentType: mime(t.path),
-                      ChecksumSHA256: Buffer.from(sha, 'hex').toString('base64'),
-                      Metadata: { sha256: sha },
-                      IfNoneMatch: '*',
-                    }),
-                  );
+                  await uploadBlob(s3, {
+                    bucket: config.bucket,
+                    key,
+                    file: t.file,
+                    size: t.size,
+                    contentType: mime(t.path),
+                    sha256: sha,
+                  });
                   break;
                 } catch (e) {
                   if ((e as StorageFailure).$metadata?.httpStatusCode === 412) break;
@@ -207,22 +219,25 @@ try {
         ...condition,
       }),
     );
-  await putJSON(
+  const metadata = publishMetadata({
+    archiveOnly,
+    previous: previous.value,
+    etag: previous.etag,
     archiveKey,
-    { schema: next.schema, createdAt: next.createdAt, files: next.archives, exclusions },
-    { IfNoneMatch: '*' },
-  );
-  // Archive metadata is private to authors; teammate keys can only see viewer/*.
-  const view = { schema: next.schema, createdAt: next.createdAt, files: next.files };
-  await putJSON(snapshot, view, { IfNoneMatch: '*' });
-  await putJSON(
-    config.catalogKey,
-    { schema: next.schema, snapshot, archive: archiveKey, createdAt: next.createdAt },
-    previous.etag ? { IfMatch: previous.etag } : { IfNoneMatch: '*' },
-  );
-  advanced = true;
-  const report = {
     snapshot,
+    catalogKey: config.catalogKey,
+    schema: next.schema,
+    createdAt: next.createdAt,
+    files: next.files,
+    archives: next.archives,
+    exclusions,
+  });
+  await writePublishMetadata(metadata, (write) => putJSON(write.key, write.value, write.condition));
+  advanced = metadata.some((write) => write.key === config.catalogKey);
+  const report = {
+    mode: archiveOnly ? 'archive-only' : 'publish',
+    snapshot: archiveOnly ? previous.value.snapshot : snapshot,
+    catalogUpdated: advanced,
     archive: archiveKey,
     assets: Object.keys(next.files).length,
     archiveFiles: Object.keys(next.archives).length,
@@ -234,7 +249,7 @@ try {
   console.log(JSON.stringify(report, null, 2));
 } catch (e) {
   console.error(
-    `Publish failed (${(e as StorageFailure).name}): ${(e as StorageFailure).message}. ${advanced ? 'S3 snapshot was published; local reporting failed.' : 'Shared latest pointer was not advanced by this attempt; retry bun run runs:publish.'}`,
+    `Publish failed (${(e as StorageFailure).name}): ${(e as StorageFailure).message}. ${advanced ? 'S3 metadata was published; local reporting failed.' : `Shared latest pointer was not advanced by this attempt; retry bun run runs:publish${archiveOnly ? ' --archive-only' : ''}.`}`,
   );
   process.exitCode = 1;
 } finally {
