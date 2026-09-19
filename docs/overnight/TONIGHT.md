@@ -62,9 +62,40 @@ Work in this order; use the measured baseline to choose specific implementation 
 
 ## New clips for this run
 
-None specified yet. Add each new clip's source path or shared-storage key, a unique name,
-its exact trim if applicable, and any intended processing options here. A viewer preset alone
-is not a source clip. Do not invent inputs or treat another preset of the same input as a new clip.
+### Kitchen cooking (`kitchen-cooking`)
+
+- Source: Aayan's `IMG_5581.MOV`, preserved byte-for-byte as
+  `/clips/overnight/kitchen-cooking.mov` in the private S3 viewer catalog.
+- Full input: **50.73 seconds**, 1920×1080, approximately 60 fps, HEVC 10-bit HLG/BT.2020,
+  with original audio retained. Size: **143,639,523 bytes**.
+- SHA-256: `15084804fb92ee6bcf37aa9433452aa534c4ae7f8d43dac3b6dbaf29389d8598`.
+- Coverage requested: the complete recording, **0–50.73 seconds**, with no trim selected yet.
+  Watch the full source and run admission checks before choosing processing settings. Any
+  segmentation or budget-limited excerpt must retain exact source offsets and explicitly account
+  for the remaining footage; do not present a short excerpt as a completed full-clip result.
+- Sampled frames show a moving camera around a person cooking, handling kitchen objects, and
+  opening a refrigerator. Investigate person/object occlusion, hands and handled objects, camera
+  motion, and temporal consistency as measured; these observations are not an admission verdict.
+- This is a new input with **no prior reconstruction baseline**. Include source-versus-candidate
+  evidence and a result row in the final comparison package. Preserve the original MOV; if a
+  browser/inference MP4 is needed, document general HDR/color, frame-rate, and audio/timing
+  conversion settings and keep its basename aligned with its candidate run name.
+- Existing overnight budgets apply, including at most **one new Marble generation total for
+  this input**, shared by any derived segments/candidates. No reconstruction has been launched
+  as part of registering the clip.
+
+Retrieve it using the pinned snapshot recorded below. The original media stays outside Git;
+teammates do not need access to Aayan's local Downloads folder.
+
+```sh
+bun run assets:pull --out .context/overnight-kitchen-inputs \
+  --snapshot viewer/snapshots/db3be2e3-a4b2-4251-b273-37818b4c5fbc.json \
+  --path /clips/overnight/kitchen-cooking.mov
+```
+
+Recovered file: `.context/overnight-kitchen-inputs/clips/overnight/kitchen-cooking.mov`.
+Upload verification checked the stored full-object SHA-256 and size, plus a byte-range read-back
+using the teammate read-only credentials. The snapshot preserves all previously published assets.
 
 ## Investigate notable clip failures (required)
 
