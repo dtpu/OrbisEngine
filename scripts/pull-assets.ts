@@ -48,8 +48,10 @@ function logicalPath(value: string, archive: boolean, prefix = false): string {
       'Logical paths must be plain paths, without encoding or control characters.',
     );
   }
-  if (archive ? !/^(runs|evidence)\//.test(value) : !value.startsWith('/')) {
-    throw new PullError('Use /paths for viewer files, or runs/... and evidence/... for archives.');
+  if (archive ? !/^(runs|evidence|public)\//.test(value) : !value.startsWith('/')) {
+    throw new PullError(
+      'Use /paths for viewer files, or runs/..., evidence/... and public/... for archives.',
+    );
   }
   const relative = archive ? value : value.slice(1);
   const parts = (prefix ? relative.replace(/\/$/, '') : relative).split('/');
