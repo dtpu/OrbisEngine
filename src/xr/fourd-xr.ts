@@ -50,8 +50,8 @@ type Wander = {
   overshoot: number;
   edgeAt: (p: THREE.Vector3) => number;
   params: Record<string, string>;
-  walk?: { eye: number } | null;   // fourd.html ?walk=1: eye height in world units, from the cast's mean stature
-  possess?: { head: THREE.Vector3; yaw: number } | null;   // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
+  walk?: { eye: number } | null; // fourd.html ?walk=1: eye height in world units, from the cast's mean stature
+  possess?: { head: THREE.Vector3; yaw: number } | null; // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
 };
 
 export type XrInit = {
@@ -64,25 +64,33 @@ export type XrInit = {
 
 const DEG = Math.PI / 180;
 const MIN_BUDGET = 150_000;
-const ADAPT_WINDOW = 90;   // frames between budget decisions: ~1.25 s at 72 Hz
+const ADAPT_WINDOW = 90; // frames between budget decisions: ~1.25 s at 72 Hz
 
 export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Promise<void> {
-  const num = (k: string, d: number) => { const v = q.get(k); return v == null || v === '' || isNaN(+v) ? d : +v; };
+  const num = (k: string, d: number) => {
+    const v = q.get(k);
+    return v == null || v === '' || isNaN(+v) ? d : +v;
+  };
 
   // ---- the two bits of DOM -----------------------------------------------------------------------
   const btn = document.createElement('button');
   btn.id = 'xrBtn';
   btn.textContent = 'Enter VR';
-  btn.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:20;'
-    + 'padding:10px 18px;border:1px solid #567;border-radius:6px;background:#000c;color:#dff;'
-    + 'font:14px system-ui;cursor:pointer;display:none';
+  btn.style.cssText =
+    'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:20;' +
+    'padding:10px 18px;border:1px solid #567;border-radius:6px;background:#000c;color:#dff;' +
+    'font:14px system-ui;cursor:pointer;display:none';
   document.body.appendChild(btn);
   const hud = document.createElement('div');
   hud.id = 'xrHud';
-  hud.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:20;background:#000a;padding:6px 9px;'
-    + 'border-radius:6px;font:11px ui-monospace,monospace;color:#9cf;white-space:pre;display:none';
+  hud.style.cssText =
+    'position:fixed;left:12px;bottom:12px;z-index:20;background:#000a;padding:6px 9px;' +
+    'border-radius:6px;font:11px ui-monospace,monospace;color:#9cf;white-space:pre;display:none';
   document.body.appendChild(hud);
-  const note = (msg: string) => { hud.style.display = ''; hud.textContent = msg; };
+  const note = (msg: string) => {
+    hud.style.display = '';
+    hud.textContent = msg;
+  };
 
   if (q.get('xrpolyfill') === '1') {
     // How this gets TESTED without a headset: the polyfill grants a real immersive-vr session on a
@@ -90,21 +98,35 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     // real. It declines to install where a navigator.xr already exists - desktop Chrome has one and
     // it has no device - so that one has to be removed first (same trick as src/main.ts). There are
     // no controllers in a Cardboard session, so it proves the session, not the locomotion.
-    try { delete (Navigator.prototype as unknown as Record<string, unknown>).xr; } catch { /* non-configurable */ }
+    try {
+      delete (Navigator.prototype as unknown as Record<string, unknown>).xr;
+    } catch {
+      /* non-configurable */
+    }
     for (const k of Object.getOwnPropertyNames(window)) {
-      if (/^XR[A-Z]/.test(k)) { try { delete (window as unknown as Record<string, unknown>)[k]; } catch { /* keep */ } }
+      if (/^XR[A-Z]/.test(k)) {
+        try {
+          delete (window as unknown as Record<string, unknown>)[k];
+        } catch {
+          /* keep */
+        }
+      }
     }
     const { default: WebXRPolyfill } = await import('webxr-polyfill');
     new WebXRPolyfill({ cardboard: true, allowCardboardOnDesktop: true });
   }
   const xr = navigator.xr;
-  if (!xr) { note('xr=1: this browser has no navigator.xr'); return; }
+  if (!xr) {
+    note('xr=1: this browser has no navigator.xr');
+    return;
+  }
 
   // ---- budget ------------------------------------------------------------------------------------
   // Spark only has a budget to spend if the LoD slice is running at all; the baked-colour and
   // observation-confidence paths need the plain packed array and turn it off (fourd.html: lodOn).
   const p = wander.params;
-  const lodOn = p.lod === '1' || (p.lod !== '0' && !p.bakedweights && !(p.obs && +(p.obsfade ?? 0) > 0));
+  const lodOn =
+    p.lod === '1' || (p.lod !== '0' && !p.bakedweights && !(p.obs && +(p.obsfade ?? 0) > 0));
   const deskLod = wander.spark.lodSplatCount;
   const xrLod = Math.max(MIN_BUDGET, num('xrlod', 500_000));
   const adapt = q.get('xradapt') !== '0' && lodOn;
@@ -116,8 +138,16 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // fourd.html had it. Scale converts the headset's metres into this world's units.
   const upm = Math.max(1e-4, num('xrscale', wander.upm || 1));
   const mode = q.get('xrmove') === 'smooth' ? 'smooth' : 'teleport';
-  const report: Record<string, unknown> = { mode, upm: +upm.toFixed(4), askedBudget: xrLod, adapt, targetMs: +targetMs.toFixed(2) };
-  const publish = () => { (window as unknown as { __xr: unknown }).__xr = report; };
+  const report: Record<string, unknown> = {
+    mode,
+    upm: +upm.toFixed(4),
+    askedBudget: xrLod,
+    adapt,
+    targetMs: +targetMs.toFixed(2),
+  };
+  const publish = () => {
+    (window as unknown as { __xr: unknown }).__xr = report;
+  };
   publish();
 
   const rig = new THREE.Group();
@@ -127,12 +157,15 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
 
   const vignette = buildVignette();
   const marker = buildMarker(upm);
-  scene.add(marker.group);           // world space: the rig is scaled and turns under it
+  scene.add(marker.group); // world space: the rig is scaled and turns under it
 
   // ---- the boundary, in the two forms a headset needs ---------------------------------------------
   const box = wander.clampBox;
   const boxC = box.getCenter(new THREE.Vector3());
-  const boxH = box.getSize(new THREE.Vector3()).multiplyScalar(0.5).max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
+  const boxH = box
+    .getSize(new THREE.Vector3())
+    .multiplyScalar(0.5)
+    .max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
   const softLo = 1 - THREE.MathUtils.clamp(wander.softMargin ?? 0.25, 0, 0.95);
   const softHi = 1 + Math.max(0, wander.overshoot ?? 0.35);
   const softGain = (a: number) => {
@@ -140,26 +173,41 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     const u = THREE.MathUtils.clamp((a - softLo) / Math.max(1e-6, softHi - softLo), 0, 1);
     return 1 - u * u * (3 - 2 * u);
   };
-  const seg = new THREE.Vector3(), segBest = new THREE.Vector3(), segTmp = new THREE.Vector3();
+  const seg = new THREE.Vector3(),
+    segBest = new THREE.Vector3(),
+    segTmp = new THREE.Vector3();
   function nearestOnPath(v: THREE.Vector3) {
     let best = Infinity;
     for (let i = 0; i + 1 < wander.pathPts.length; i++) {
-      const a = wander.pathPts[i], b = wander.pathPts[i + 1];
+      const a = wander.pathPts[i],
+        b = wander.pathPts[i + 1];
       const ab = seg.copy(b).sub(a);
-      const t = THREE.MathUtils.clamp(segTmp.copy(v).sub(a).dot(ab) / Math.max(1e-9, ab.lengthSq()), 0, 1);
-      const c = ab.multiplyScalar(t).add(a), d = c.distanceTo(v);
-      if (d < best) { best = d; segBest.copy(c); }
+      const t = THREE.MathUtils.clamp(
+        segTmp.copy(v).sub(a).dot(ab) / Math.max(1e-9, ab.lengthSq()),
+        0,
+        1,
+      );
+      const c = ab.multiplyScalar(t).add(a),
+        d = c.distanceTo(v);
+      if (d < best) {
+        best = d;
+        segBest.copy(c);
+      }
     }
     return best;
   }
   const onLeash = wander.pathPts.length >= 2 && wander.pathR > 0;
   /** Inside the measured region? Used to refuse a teleport, never to stop a head. */
-  const reachable = (v: THREE.Vector3) => !wander.clampOn
-    || (box.containsPoint(v) && (!onLeash || nearestOnPath(v) <= wander.pathR));
+  const reachable = (v: THREE.Vector3) =>
+    !wander.clampOn || (box.containsPoint(v) && (!onLeash || nearestOnPath(v) <= wander.pathR));
 
   // ---- session -------------------------------------------------------------------------------------
-  void xr.isSessionSupported('immersive-vr')
-    .then(ok => { if (ok) btn.style.display = ''; else note('xr=1: WebXR is here but no immersive-vr device is'); })
+  void xr
+    .isSessionSupported('immersive-vr')
+    .then((ok) => {
+      if (ok) btn.style.display = '';
+      else note('xr=1: WebXR is here but no immersive-vr device is');
+    })
     .catch(() => note('xr=1: immersive-vr unsupported'));
 
   renderer.xr.enabled = true;
@@ -173,21 +221,30 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   report.fbScale = fbScale;
 
   let floorRef = false;
-  btn.addEventListener('click', () => void (async () => {
-    const live = renderer.xr.getSession();
-    if (live) { await live.end(); return; }
-    try {
-      // local-floor is not granted by default; ask, then believe the answer. With it the world's
-      // own floor meets the real one and standing up means something. Without it the session is
-      // seated and the head starts ?xreye= above the floor, which is the honest fallback.
-      const session = await xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
-      floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
-      renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
-      await renderer.xr.setSession(session);
-    } catch (err) {
-      note('VR unavailable: ' + (err instanceof Error ? err.message : String(err)));
-    }
-  })());
+  btn.addEventListener(
+    'click',
+    () =>
+      void (async () => {
+        const live = renderer.xr.getSession();
+        if (live) {
+          await live.end();
+          return;
+        }
+        try {
+          // local-floor is not granted by default; ask, then believe the answer. With it the world's
+          // own floor meets the real one and standing up means something. Without it the session is
+          // seated and the head starts ?xreye= above the floor, which is the honest fallback.
+          const session = await xr.requestSession('immersive-vr', {
+            optionalFeatures: ['local-floor'],
+          });
+          floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
+          renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
+          await renderer.xr.setSession(session);
+        } catch (err) {
+          note('VR unavailable: ' + (err instanceof Error ? err.message : String(err)));
+        }
+      })(),
+  );
 
   // Where the rig sits so the head lands on the desktop camera's pose. Sampled ONCE per session
   // (BRAIN section 6 rules out a continuous recentre; 0.2 Hz is the worst frequency there is).
@@ -216,10 +273,13 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     // The one number nobody can look up: what this device actually asked for, per eye. It is not
     // there on the first frame, so read it once the first viewer pose has landed.
     window.setTimeout(() => {
-      const vp = (renderer.xr.getCamera().cameras[0] as { viewport?: THREE.Vector4 } | undefined)?.viewport;
+      const vp = (renderer.xr.getCamera().cameras[0] as { viewport?: THREE.Vector4 } | undefined)
+        ?.viewport;
       const layer = renderer.xr.getSession()?.renderState.baseLayer;
       report.perEye = vp ? `${vp.z}x${vp.w}` : 'unknown';
-      report.framebuffer = layer ? `${layer.framebufferWidth}x${layer.framebufferHeight}` : 'unknown';
+      report.framebuffer = layer
+        ? `${layer.framebufferWidth}x${layer.framebufferHeight}`
+        : 'unknown';
       report.floorRef = floorRef;
       publish();
       note(summary());
@@ -230,7 +290,11 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     btn.textContent = 'Enter VR';
     rig.remove(camera);
     camera.remove(vignette.mesh);
-    for (const c of controllers) { rig.remove(c.grip); c.aiming = false; c.ray.visible = false; }
+    for (const c of controllers) {
+      rig.remove(c.grip);
+      c.aiming = false;
+      c.ray.visible = false;
+    }
     marker.set(null, false);
     vignette.set(0);
     // Hand the pose back exactly where the desktop code left it.
@@ -247,30 +311,43 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   });
 
   // ---- controllers -----------------------------------------------------------------------------------
-  const controllers = [0, 1].map(i => {
+  const controllers = [0, 1].map((i) => {
     const grip = renderer.xr.getController(i);
     const ray = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
-      new THREE.LineBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.6, depthTest: false }),
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, -1),
+      ]),
+      new THREE.LineBasicMaterial({
+        color: 0x66ccff,
+        transparent: true,
+        opacity: 0.6,
+        depthTest: false,
+      }),
     );
     ray.renderOrder = 999;
     ray.frustumCulled = false;
     ray.visible = false;
-    grip.add(ray);          // grip is in metres inside the scaled rig, so the line is in metres too
+    grip.add(ray); // grip is in metres inside the scaled rig, so the line is in metres too
     const c = { grip, ray, aiming: false };
-    grip.addEventListener('selectstart', () => { c.aiming = mode === 'teleport'; });
-    grip.addEventListener('selectend', () => { c.aiming = false; });
+    grip.addEventListener('selectstart', () => {
+      c.aiming = mode === 'teleport';
+    });
+    grip.addEventListener('selectend', () => {
+      c.aiming = false;
+    });
     return c;
   });
 
   // ---- locomotion --------------------------------------------------------------------------------------
   const SNAP = num('xrturn', 30) * DEG;
-  const SPEED = num('xrspeed', 1.4) * upm;      // m/s -> world units/s
-  const EYE = (q.get('walk') === '1' && wander.walk?.eye) || num('xreye', 1.6) * upm;   // walk mode: the desktop's own eye-height rule
+  const SPEED = num('xrspeed', 1.4) * upm; // m/s -> world units/s
+  const EYE = (q.get('walk') === '1' && wander.walk?.eye) || num('xreye', 1.6) * upm; // walk mode: the desktop's own eye-height rule
   const ACCEL = 9;
   const DEAD = 0.2;
-  const BLINK = 0.12;                           // seconds of black over a teleport or a snap turn
-  const axis = (v: number | undefined) => (v === undefined || Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1 - DEAD));
+  const BLINK = 0.12; // seconds of black over a teleport or a snap turn
+  const axis = (v: number | undefined) =>
+    v === undefined || Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1 - DEAD);
 
   const sticks = { moveX: 0, moveY: 0, turnX: 0, liftY: 0 };
   function readSticks() {
@@ -283,16 +360,27 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       // xr-standard puts the thumbstick on 2/3 and a touchpad on 0/1; not every runtime fills both.
       const x = Math.abs(a[2] ?? 0) > Math.abs(a[0] ?? 0) ? a[2] : a[0];
       const y = Math.abs(a[3] ?? 0) > Math.abs(a[1] ?? 0) ? a[3] : a[1];
-      if (src.handedness === 'right') { sticks.turnX = axis(x); sticks.liftY = -axis(y); }
-      else { sticks.moveX = axis(x); sticks.moveY = axis(y); }
+      if (src.handedness === 'right') {
+        sticks.turnX = axis(x);
+        sticks.liftY = -axis(y);
+      } else {
+        sticks.moveX = axis(x);
+        sticks.moveY = axis(y);
+      }
     }
   }
 
-  const head = new THREE.Vector3();        // head, world space
-  const headLocal = new THREE.Vector3();   // head, rig space, metres
-  const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3();
-  const vel = new THREE.Vector3(), step = new THREE.Vector3(), nrm = new THREE.Vector3();
-  const target = new THREE.Vector3(), tmpV = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
+  const head = new THREE.Vector3(); // head, world space
+  const headLocal = new THREE.Vector3(); // head, rig space, metres
+  const fwd = new THREE.Vector3(),
+    right = new THREE.Vector3(),
+    want = new THREE.Vector3();
+  const vel = new THREE.Vector3(),
+    step = new THREE.Vector3(),
+    nrm = new THREE.Vector3();
+  const target = new THREE.Vector3(),
+    tmpV = new THREE.Vector3(),
+    tmpQ = new THREE.Quaternion();
   let targetOk = false;
   let aimingPrev = false;
   let snapLatch = false;
@@ -300,7 +388,8 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   let headYaw = 0;
 
   /** The head's offset from the rig origin, in world units and in the rig's current orientation. */
-  const headOffset = (out: THREE.Vector3) => out.copy(headLocal).multiplyScalar(upm).applyQuaternion(rig.quaternion);
+  const headOffset = (out: THREE.Vector3) =>
+    out.copy(headLocal).multiplyScalar(upm).applyQuaternion(rig.quaternion);
 
   /** The aim ray meets the floor plane. The ring is only offered where the recording still holds. */
   function aim(from: THREE.Object3D): boolean {
@@ -392,7 +481,10 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     if (!anchored) {
       anchored = true;
       // Face the way the preset framed the shot, then put the head exactly where its camera was.
-      rig.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), homeYaw - Math.atan2(-hf.x, -hf.z));
+      rig.quaternion.setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        homeYaw - Math.atan2(-hf.x, -hf.z),
+      );
       const off = headOffset(tmpV);
       rig.position.set(home.x - off.x, floorRef ? wander.floorY : home.y - off.y, home.z - off.z);
     }
@@ -405,40 +497,54 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       // reaches the rig only as snap turns through the blink (header point 2: never a smooth turn
       // of someone's head, never his pitch or roll); ?possessyaw=smooth opts into a continuous yaw.
       // The headset does every other rotation. No locomotion.
-      const want = wander.possess.yaw, diff = Math.atan2(Math.sin(want - yawOf(rig.quaternion)), Math.cos(want - yawOf(rig.quaternion)));
-      if (q.get('possessyaw') === 'smooth') rig.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), want);
+      const want = wander.possess.yaw,
+        diff = Math.atan2(
+          Math.sin(want - yawOf(rig.quaternion)),
+          Math.cos(want - yawOf(rig.quaternion)),
+        );
+      if (q.get('possessyaw') === 'smooth')
+        rig.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), want);
       else if (SNAP && Math.abs(diff) >= SNAP) snapTurn(-Math.sign(diff));
       const off = headOffset(tmpV);
-      rig.position.set(wander.possess.head.x - off.x, wander.possess.head.y - off.y, wander.possess.head.z - off.z);
+      rig.position.set(
+        wander.possess.head.x - off.x,
+        wander.possess.head.y - off.y,
+        wander.possess.head.z - off.z,
+      );
       rig.updateMatrixWorld(true);
       head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     } else {
-    readSticks();
-    if (SNAP) {
-      if (Math.abs(sticks.turnX) > 0.7) { if (!snapLatch) { snapTurn(Math.sign(sticks.turnX)); snapLatch = true; } }
-      else if (Math.abs(sticks.turnX) < 0.4) snapLatch = false;
-    }
-
-    if (mode === 'smooth') {
-      travel(dt);
-    } else {
-      // Aim with the left stick pushed forward, or with either trigger held. Release to go.
-      const held = controllers.find(c => c.aiming);
-      const aiming = !!held || sticks.moveY < -0.5;
-      const src = (held ?? controllers[0]).grip;
-      if (aiming && aim(src)) {
-        marker.set(target, targetOk);
-        for (const c of controllers) {
-          c.ray.visible = c.grip === src;
-          if (c.grip === src) c.ray.scale.setScalar(src.getWorldPosition(tmpV).distanceTo(target) / upm);
-        }
-      } else {
-        marker.set(null, false);
-        for (const c of controllers) c.ray.visible = false;
+      readSticks();
+      if (SNAP) {
+        if (Math.abs(sticks.turnX) > 0.7) {
+          if (!snapLatch) {
+            snapTurn(Math.sign(sticks.turnX));
+            snapLatch = true;
+          }
+        } else if (Math.abs(sticks.turnX) < 0.4) snapLatch = false;
       }
-      if (aimingPrev && !aiming) commit();
-      aimingPrev = aiming;
-    }
+
+      if (mode === 'smooth') {
+        travel(dt);
+      } else {
+        // Aim with the left stick pushed forward, or with either trigger held. Release to go.
+        const held = controllers.find((c) => c.aiming);
+        const aiming = !!held || sticks.moveY < -0.5;
+        const src = (held ?? controllers[0]).grip;
+        if (aiming && aim(src)) {
+          marker.set(target, targetOk);
+          for (const c of controllers) {
+            c.ray.visible = c.grip === src;
+            if (c.grip === src)
+              c.ray.scale.setScalar(src.getWorldPosition(tmpV).distanceTo(target) / upm);
+          }
+        } else {
+          marker.set(null, false);
+          for (const c of controllers) c.ray.visible = false;
+        }
+        if (aimingPrev && !aiming) commit();
+        aimingPrev = aiming;
+      }
     }
 
     // Grading. edgeAt is fourd.html's own measure - 0 inside the box, 1 at the hard limit - read off
@@ -479,13 +585,16 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     report.medianMs = +at(0.5).toFixed(2);
     report.p95Ms = +at(0.95).toFixed(2);
     report.p99Ms = +at(0.99).toFixed(2);
-    report.overBudget = +(s.filter(v => v > targetMs).length / s.length).toFixed(3);
+    report.overBudget = +(s.filter((v) => v > targetMs).length / s.length).toFixed(3);
     report.budget = Math.round(budget);
     publish();
     console.log('[xr]', report);
   }
 
-  const summary = () => Object.entries(report).map(([k, v]) => `${k} ${v}`).join('\n');
+  const summary = () =>
+    Object.entries(report)
+      .map(([k, v]) => `${k} ${v}`)
+      .join('\n');
 }
 
 function yawOf(qt: THREE.Quaternion) {
@@ -504,9 +613,13 @@ function buildVignette() {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.25, 20, 14),
     new THREE.ShaderMaterial({
-      side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false,
+      side: THREE.BackSide,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
       uniforms,
-      vertexShader: 'varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      vertexShader:
+        'varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
       fragmentShader: `
         varying vec3 vPos;
         uniform float uAmount, uWash;
@@ -525,7 +638,7 @@ function buildVignette() {
     mesh,
     set(amount: number) {
       uniforms.uAmount.value = amount;
-      mesh.visible = amount > 0.002;   // inside the region there is no intervention at all
+      mesh.visible = amount > 0.002; // inside the region there is no intervention at all
     },
   };
 }
@@ -535,7 +648,13 @@ function buildMarker(upm: number) {
   const group = new THREE.Group();
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.22 * upm, 0.3 * upm, 32),
-    new THREE.MeshBasicMaterial({ color: 0x66ffaa, transparent: true, opacity: 0.85, depthTest: false, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({
+      color: 0x66ffaa,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+      side: THREE.DoubleSide,
+    }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.renderOrder = 999;

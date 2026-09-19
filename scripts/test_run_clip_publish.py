@@ -35,7 +35,7 @@ class PublishCompletionTests(unittest.TestCase):
         status, calls = self.run_main()
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[0][:2], ["bun", "scripts/publish-runs.mjs"])
+        self.assertEqual(calls[0].args[0][:2], ["bun", "scripts/publish-runs.ts"])
 
     def test_failed_and_gated_runs_are_saved(self):
         for code in (1, 2):

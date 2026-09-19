@@ -1,458 +1,1092 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wander — walk into a video</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23101114'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='none' stroke='%23e8c07a' stroke-width='1.4'/%3E%3Ccircle cx='8' cy='8' r='1.4' fill='%23e8c07a'/%3E%3C/svg%3E">
-<style>
-:root{
-  --bg:#0a0b0d; --panel:#101216; --panel2:#15181d; --line:#23272e;
-  --ink:#eceef1; --mute:#8d949e; --dim:#626973;
-  --accent:#e8c07a;
-  --good:#7fd1a8; --warn:#e29f84;
-  --rail:300px;
-  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",system-ui,sans-serif;
-  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-}
-*{box-sizing:border-box}
-html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
-button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Wander — walk into a video</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23101114'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='none' stroke='%23e8c07a' stroke-width='1.4'/%3E%3Ccircle cx='8' cy='8' r='1.4' fill='%23e8c07a'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --bg: #0a0b0d;
+        --panel: #101216;
+        --panel2: #15181d;
+        --line: #23272e;
+        --ink: #eceef1;
+        --mute: #8d949e;
+        --dim: #626973;
+        --accent: #e8c07a;
+        --good: #7fd1a8;
+        --warn: #e29f84;
+        --rail: 300px;
+        --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      button {
+        font-family: inherit;
+        color: inherit;
+        border: 0;
+        background: none;
+        cursor: pointer;
+      }
 
-/* ---------- shell ---------- */
-#shell{display:grid;grid-template-columns:var(--rail) 1fr;grid-template-rows:56px 1fr;height:100%}
+      /* ---------- shell ---------- */
+      #shell {
+        display: grid;
+        grid-template-columns: var(--rail) 1fr;
+        grid-template-rows: 56px 1fr;
+        height: 100%;
+      }
 
-header{grid-column:1/-1;display:flex;align-items:center;gap:18px;padding:0 20px;
-  border-bottom:1px solid var(--line);background:linear-gradient(180deg,#121419,#0d0f12)}
-.brand{display:flex;align-items:baseline;gap:10px;flex:0 0 auto}
-.mark{width:20px;height:20px;border:1.6px solid var(--accent);border-radius:50%;position:relative;align-self:center}
-.mark::after{content:'';position:absolute;inset:6px;background:var(--accent);border-radius:50%}
-.wordmark{font-size:17px;font-weight:620;letter-spacing:-.015em}
-.tagline{font-size:13px;color:var(--mute);letter-spacing:.005em}
-.tagline b{color:var(--ink);font-weight:520}
-header .spacer{flex:1}
-.hbtn{font-size:12px;color:var(--mute);padding:6px 11px;border:1px solid var(--line);border-radius:7px;
-  transition:.15s;white-space:nowrap}
-.hbtn:hover{color:var(--ink);border-color:#39404a;background:#171a1f}
-.hbtn kbd{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-left:6px}
+      header {
+        grid-column: 1/-1;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #121419, #0d0f12);
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex: 0 0 auto;
+      }
+      .mark {
+        width: 20px;
+        height: 20px;
+        border: 1.6px solid var(--accent);
+        border-radius: 50%;
+        position: relative;
+        align-self: center;
+      }
+      .mark::after {
+        content: '';
+        position: absolute;
+        inset: 6px;
+        background: var(--accent);
+        border-radius: 50%;
+      }
+      .wordmark {
+        font-size: 17px;
+        font-weight: 620;
+        letter-spacing: -0.015em;
+      }
+      .tagline {
+        font-size: 13px;
+        color: var(--mute);
+        letter-spacing: 0.005em;
+      }
+      .tagline b {
+        color: var(--ink);
+        font-weight: 520;
+      }
+      header .spacer {
+        flex: 1;
+      }
+      .hbtn {
+        font-size: 12px;
+        color: var(--mute);
+        padding: 6px 11px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        transition: 0.15s;
+        white-space: nowrap;
+      }
+      .hbtn:hover {
+        color: var(--ink);
+        border-color: #39404a;
+        background: #171a1f;
+      }
+      .hbtn kbd {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+        margin-left: 6px;
+      }
 
-/* ---------- rail ---------- */
-#rail{border-right:1px solid var(--line);background:var(--panel);overflow-y:auto;overscroll-behavior:contain}
-#rail::-webkit-scrollbar{width:9px}
-#rail::-webkit-scrollbar-thumb{background:#242830;border-radius:5px;border:3px solid var(--panel)}
-.railhead{padding:16px 18px 9px;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);
-  display:flex;justify-content:space-between;align-items:baseline}
-.railhead span{color:#454c55;letter-spacing:0}
+      /* ---------- rail ---------- */
+      #rail {
+        border-right: 1px solid var(--line);
+        background: var(--panel);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      #rail::-webkit-scrollbar {
+        width: 9px;
+      }
+      #rail::-webkit-scrollbar-thumb {
+        background: #242830;
+        border-radius: 5px;
+        border: 3px solid var(--panel);
+      }
+      .railhead {
+        padding: 16px 18px 9px;
+        font-size: 10.5px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: var(--dim);
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      .railhead span {
+        color: #454c55;
+        letter-spacing: 0;
+      }
 
-.card{display:block;width:100%;text-align:left;padding:9px 12px;margin:0 8px 3px;border-radius:9px;
-  display:grid;grid-template-columns:82px 1fr;gap:11px;align-items:center;transition:background .13s}
-.card:hover{background:#171a1f}
-.card.on{background:#1c2128;box-shadow:inset 2px 0 0 var(--accent)}
-.thumb{width:82px;aspect-ratio:16/9;border-radius:5px;background:#000 center/cover no-repeat;
-  outline:1px solid #2a2f37;position:relative;overflow:hidden;flex:0 0 auto}
-.thumb canvas,.thumb video{width:100%;height:100%;object-fit:cover;display:block}
-.thumb .n{position:absolute;left:3px;top:2px;font:600 9.5px/1 var(--mono);color:#cfd4db;
-  background:#000b;padding:2.5px 4px;border-radius:3px}
-.cmeta{min-width:0}
-.ctitle{font-size:13px;font-weight:560;letter-spacing:-.005em;line-height:1.25}
-.card.on .ctitle{color:var(--accent)}
-.csub{font-size:11px;color:var(--mute);margin-top:2px;line-height:1.3;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.cfree{font:500 10px/1 var(--mono);color:var(--dim);margin-top:4px}
-.cfree b{color:#9aa2ac;font-weight:500}
+      .card {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 9px 12px;
+        margin: 0 8px 3px;
+        border-radius: 9px;
+        display: grid;
+        grid-template-columns: 82px 1fr;
+        gap: 11px;
+        align-items: center;
+        transition: background 0.13s;
+      }
+      .card:hover {
+        background: #171a1f;
+      }
+      .card.on {
+        background: #1c2128;
+        box-shadow: inset 2px 0 0 var(--accent);
+      }
+      .thumb {
+        width: 82px;
+        aspect-ratio: 16/9;
+        border-radius: 5px;
+        background: #000 center/cover no-repeat;
+        outline: 1px solid #2a2f37;
+        position: relative;
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+      .thumb canvas,
+      .thumb video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .thumb .n {
+        position: absolute;
+        left: 3px;
+        top: 2px;
+        font: 600 9.5px/1 var(--mono);
+        color: #cfd4db;
+        background: #000b;
+        padding: 2.5px 4px;
+        border-radius: 3px;
+      }
+      .cmeta {
+        min-width: 0;
+      }
+      .ctitle {
+        font-size: 13px;
+        font-weight: 560;
+        letter-spacing: -0.005em;
+        line-height: 1.25;
+      }
+      .card.on .ctitle {
+        color: var(--accent);
+      }
+      .csub {
+        font-size: 11px;
+        color: var(--mute);
+        margin-top: 2px;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+      .cfree {
+        font: 500 10px/1 var(--mono);
+        color: var(--dim);
+        margin-top: 4px;
+      }
+      .cfree b {
+        color: #9aa2ac;
+        font-weight: 500;
+      }
 
-.moretoggle{display:block;width:calc(100% - 16px);margin:6px 8px 14px;padding:8px;border-radius:8px;
-  font-size:11.5px;color:var(--dim);border:1px dashed #262b33;transition:.15s}
-.moretoggle:hover{color:var(--mute);border-color:#333a44}
-#spares[hidden]{display:none}
+      .moretoggle {
+        display: block;
+        width: calc(100% - 16px);
+        margin: 6px 8px 14px;
+        padding: 8px;
+        border-radius: 8px;
+        font-size: 11.5px;
+        color: var(--dim);
+        border: 1px dashed #262b33;
+        transition: 0.15s;
+      }
+      .moretoggle:hover {
+        color: var(--mute);
+        border-color: #333a44;
+      }
+      #spares[hidden] {
+        display: none;
+      }
 
-/* ---------- stage ---------- */
-#stage{position:relative;background:#000;overflow:hidden}
-#frame{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+      /* ---------- stage ---------- */
+      #stage {
+        position: relative;
+        background: #000;
+        overflow: hidden;
+      }
+      #frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+      }
 
-.ov{position:absolute;z-index:5}
+      .ov {
+        position: absolute;
+        z-index: 5;
+      }
 
-/* loading */
-#loading{inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
-  background:#0a0b0d;transition:opacity .35s;z-index:20}
-#loading.gone{opacity:0;pointer-events:none}
-.spin{width:26px;height:26px;border:2px solid #23272e;border-top-color:var(--accent);border-radius:50%;
-  animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-#loadmsg{font:11.5px/1.5 var(--mono);color:var(--dim);max-width:60ch;text-align:center;white-space:pre-wrap}
-#loadvid{width:min(46%,560px);aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:#000;outline:1px solid #ffffff18;box-shadow:0 20px 60px #000}
-#loadlab{font:10.5px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--accent)}
-#loadtitle{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-top:-4px}
-#loadbar{width:min(46%,560px);height:3px;border-radius:2px;background:#1c2027;overflow:hidden}
-#loadbar i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
-#loadbar.indet i{width:30%;animation:indet 1.2s ease-in-out infinite}
-@keyframes indet{0%{margin-left:-30%}100%{margin-left:100%}}
+      /* loading */
+      #loading {
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #0a0b0d;
+        transition: opacity 0.35s;
+        z-index: 20;
+      }
+      #loading.gone {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .spin {
+        width: 26px;
+        height: 26px;
+        border: 2px solid #23272e;
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      #loadmsg {
+        font: 11.5px/1.5 var(--mono);
+        color: var(--dim);
+        max-width: 60ch;
+        text-align: center;
+        white-space: pre-wrap;
+      }
+      #loadvid {
+        width: min(46%, 560px);
+        aspect-ratio: 16/9;
+        object-fit: cover;
+        border-radius: 10px;
+        background: #000;
+        outline: 1px solid #ffffff18;
+        box-shadow: 0 20px 60px #000;
+      }
+      #loadlab {
+        font: 10.5px/1 var(--mono);
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      #loadtitle {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+        margin-top: -4px;
+      }
+      #loadbar {
+        width: min(46%, 560px);
+        height: 3px;
+        border-radius: 2px;
+        background: #1c2027;
+        overflow: hidden;
+      }
+      #loadbar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.25s;
+      }
+      #loadbar.indet i {
+        width: 30%;
+        animation: indet 1.2s ease-in-out infinite;
+      }
+      @keyframes indet {
+        0% {
+          margin-left: -30%;
+        }
+        100% {
+          margin-left: 100%;
+        }
+      }
 
-/* source video, captioned. The <video> itself lives inside the viewer iframe
+      /* source video, captioned. The <video> itself lives inside the viewer iframe
    (position:fixed there = anchored to this stage), so nothing is decoded twice. */
-#srccap{left:24px;bottom:270px;width:300px;z-index:6;pointer-events:none;transition:bottom .12s}
-#srccap .lab{font:10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
-  margin-bottom:5px;text-shadow:0 1px 6px #000}
-#srccap .txt{font-size:11.5px;color:#aeb5be;line-height:1.35;text-shadow:0 1px 6px #000,0 0 14px #000}
+      #srccap {
+        left: 24px;
+        bottom: 270px;
+        width: 300px;
+        z-index: 6;
+        pointer-events: none;
+        transition: bottom 0.12s;
+      }
+      #srccap .lab {
+        font: 10px/1 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 5px;
+        text-shadow: 0 1px 6px #000;
+      }
+      #srccap .txt {
+        font-size: 11.5px;
+        color: #aeb5be;
+        line-height: 1.35;
+        text-shadow:
+          0 1px 6px #000,
+          0 0 14px #000;
+      }
 
-/* control bar */
-#bar{left:50%;transform:translateX(-50%);bottom:18px;display:flex;align-items:center;gap:10px;
-  padding:8px 8px 8px 9px;border-radius:13px;background:#0c0e11e8;backdrop-filter:blur(14px);
-  border:1px solid #262b33;box-shadow:0 14px 44px #000a}
-#play{display:flex;align-items:center;gap:9px;padding:10px 17px 10px 15px;border-radius:9px;
-  background:var(--accent);color:#17130a;font-size:13.5px;font-weight:600;letter-spacing:-.005em;transition:.15s;white-space:nowrap}
-#play:hover{background:#f2cd8c}
-#play:disabled{opacity:.4;cursor:default}
-#play .tri{font-size:11px}
-#play.running{background:#1c2128;color:var(--accent);box-shadow:inset 0 0 0 1px #33393f}
-.sep{width:1px;height:26px;background:#262b33}
-.keys{display:flex;align-items:center;gap:14px;padding:0 6px 0 2px;font-size:11.5px;color:var(--mute);white-space:nowrap}
-.keys b{font-weight:500;color:#c6ccd4}
-kbd{font:600 10.5px/1 var(--mono);color:#dfe4ea;background:#1c2027;border:1px solid #2e343d;
-  border-bottom-width:2px;border-radius:4px;padding:3px 5px;display:inline-block}
-.minibtn{padding:9px 12px;border-radius:8px;font-size:12px;color:var(--mute);transition:.15s;white-space:nowrap}
-.minibtn:hover{background:#1a1e24;color:var(--ink)}
+      /* control bar */
+      #bar {
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 8px 8px 9px;
+        border-radius: 13px;
+        background: #0c0e11e8;
+        backdrop-filter: blur(14px);
+        border: 1px solid #262b33;
+        box-shadow: 0 14px 44px #000a;
+      }
+      #play {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 17px 10px 15px;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #17130a;
+        font-size: 13.5px;
+        font-weight: 600;
+        letter-spacing: -0.005em;
+        transition: 0.15s;
+        white-space: nowrap;
+      }
+      #play:hover {
+        background: #f2cd8c;
+      }
+      #play:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #play .tri {
+        font-size: 11px;
+      }
+      #play.running {
+        background: #1c2128;
+        color: var(--accent);
+        box-shadow: inset 0 0 0 1px #33393f;
+      }
+      .sep {
+        width: 1px;
+        height: 26px;
+        background: #262b33;
+      }
+      .keys {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 6px 0 2px;
+        font-size: 11.5px;
+        color: var(--mute);
+        white-space: nowrap;
+      }
+      .keys b {
+        font-weight: 500;
+        color: #c6ccd4;
+      }
+      kbd {
+        font: 600 10.5px/1 var(--mono);
+        color: #dfe4ea;
+        background: #1c2027;
+        border: 1px solid #2e343d;
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 3px 5px;
+        display: inline-block;
+      }
+      .minibtn {
+        padding: 9px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: var(--mute);
+        transition: 0.15s;
+        white-space: nowrap;
+      }
+      .minibtn:hover {
+        background: #1a1e24;
+        color: var(--ink);
+      }
 
-/* fact card */
-#fact{right:20px;top:20px;width:315px;padding:15px 16px 14px;border-radius:12px;
-  background:#0c0e11e8;backdrop-filter:blur(14px);border:1px solid #262b33;box-shadow:0 14px 44px #0009}
-#fact.hid{display:none}
-#fact{pointer-events:none}   /* a drag that starts on the card still turns the camera */
-#fact h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
-#fact .place{font:10.5px/1 var(--mono);color:var(--dim);margin-top:5px;letter-spacing:.02em}
-#fact p{margin:11px 0 0;font-size:12.5px;line-height:1.5;color:#c3c9d1}
-#fact ul{margin:11px 0 0;padding:0;list-style:none}
-#fact li{font:11px/1.45 var(--mono);color:var(--mute);padding-left:13px;position:relative;margin-top:4px}
-#fact li::before{content:'';position:absolute;left:2px;top:6px;width:4px;height:4px;border-radius:50%;background:var(--good)}
-.freebar{margin-top:12px;padding-top:11px;border-top:1px solid #1e232a;display:flex;gap:9px;align-items:baseline}
-.freebar .k{font:10px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--dim);flex:0 0 auto}
-.freebar .v{font-size:12.5px;color:var(--accent);font-weight:560}
-.caveat{margin-top:11px;padding:9px 10px;border-radius:8px;background:#17130e;border:1px solid #2c241a}
-.caveat .k{font:9.5px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--warn)}
-.caveat p{margin:5px 0 0;font-size:11.5px;line-height:1.45;color:#b4a596}
+      /* fact card */
+      #fact {
+        right: 20px;
+        top: 20px;
+        width: 315px;
+        padding: 15px 16px 14px;
+        border-radius: 12px;
+        background: #0c0e11e8;
+        backdrop-filter: blur(14px);
+        border: 1px solid #262b33;
+        box-shadow: 0 14px 44px #0009;
+      }
+      #fact.hid {
+        display: none;
+      }
+      #fact {
+        pointer-events: none;
+      } /* a drag that starts on the card still turns the camera */
+      #fact h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      #fact .place {
+        font: 10.5px/1 var(--mono);
+        color: var(--dim);
+        margin-top: 5px;
+        letter-spacing: 0.02em;
+      }
+      #fact p {
+        margin: 11px 0 0;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: #c3c9d1;
+      }
+      #fact ul {
+        margin: 11px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      #fact li {
+        font: 11px/1.45 var(--mono);
+        color: var(--mute);
+        padding-left: 13px;
+        position: relative;
+        margin-top: 4px;
+      }
+      #fact li::before {
+        content: '';
+        position: absolute;
+        left: 2px;
+        top: 6px;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: var(--good);
+      }
+      .freebar {
+        margin-top: 12px;
+        padding-top: 11px;
+        border-top: 1px solid #1e232a;
+        display: flex;
+        gap: 9px;
+        align-items: baseline;
+      }
+      .freebar .k {
+        font: 10px/1 var(--mono);
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--dim);
+        flex: 0 0 auto;
+      }
+      .freebar .v {
+        font-size: 12.5px;
+        color: var(--accent);
+        font-weight: 560;
+      }
+      .caveat {
+        margin-top: 11px;
+        padding: 9px 10px;
+        border-radius: 8px;
+        background: #17130e;
+        border: 1px solid #2c241a;
+      }
+      .caveat .k {
+        font: 9.5px/1 var(--mono);
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--warn);
+      }
+      .caveat p {
+        margin: 5px 0 0;
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: #b4a596;
+      }
 
-/* edge of the filmed world */
-#edgelab{left:50%;top:22px;transform:translateX(-50%);padding:8px 14px;border-radius:9px;background:#0c0e11e8;
-  border:1px solid #3a3020;font-size:12.5px;color:#e8d9b8;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none}
-#edgelab b{color:var(--accent);font-weight:600}
-#edgelab kbd{margin:0 2px}
+      /* edge of the filmed world */
+      #edgelab {
+        left: 50%;
+        top: 22px;
+        transform: translateX(-50%);
+        padding: 8px 14px;
+        border-radius: 9px;
+        background: #0c0e11e8;
+        border: 1px solid #3a3020;
+        font-size: 12.5px;
+        color: #e8d9b8;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+      }
+      #edgelab b {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      #edgelab kbd {
+        margin: 0 2px;
+      }
 
-/* reel overlay */
-#reelwrap{inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:30;backdrop-filter:blur(6px)}
-#reelwrap.on{display:flex}
-#reelwrap video{max-width:92%;max-height:86%;border-radius:10px;box-shadow:0 30px 80px #000}
-#reelclose{position:absolute;top:18px;right:22px;font-size:12px;color:var(--mute);padding:8px 13px;
-  border:1px solid #2b313a;border-radius:8px;background:#0c0e11d0}
-#reelclose:hover{color:var(--ink)}
+      /* reel overlay */
+      #reelwrap {
+        inset: 0;
+        background: #000d;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 30;
+        backdrop-filter: blur(6px);
+      }
+      #reelwrap.on {
+        display: flex;
+      }
+      #reelwrap video {
+        max-width: 92%;
+        max-height: 86%;
+        border-radius: 10px;
+        box-shadow: 0 30px 80px #000;
+      }
+      #reelclose {
+        position: absolute;
+        top: 18px;
+        right: 22px;
+        font-size: 12px;
+        color: var(--mute);
+        padding: 8px 13px;
+        border: 1px solid #2b313a;
+        border-radius: 8px;
+        background: #0c0e11d0;
+      }
+      #reelclose:hover {
+        color: var(--ink);
+      }
 
-@media (max-width:1180px){:root{--rail:248px} #fact{width:270px}}
-</style>
-</head>
-<body>
-<div id="shell">
-  <header>
-    <div class="brand"><div class="mark"></div><div class="wordmark">Wander</div></div>
-    <div class="tagline">One ordinary video clip in. <b>A place you can walk around in, with the people still moving.</b></div>
-    <div class="spacer"></div>
-    <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
-    <button class="hbtn" id="facttoggle">Notes <kbd>?</kbd></button>
-    <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
-  </header>
+      @media (max-width: 1180px) {
+        :root {
+          --rail: 248px;
+        }
+        #fact {
+          width: 270px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="shell">
+      <header>
+        <div class="brand">
+          <div class="mark"></div>
+          <div class="wordmark">Wander</div>
+        </div>
+        <div class="tagline">
+          One ordinary video clip in.
+          <b>A place you can walk around in, with the people still moving.</b>
+        </div>
+        <div class="spacer"></div>
+        <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
+        <button class="hbtn" id="facttoggle">Notes <kbd>?</kbd></button>
+        <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
+      </header>
 
-  <nav id="rail">
-    <div class="railhead">The reel<span id="railcount"></span></div>
-    <div id="primary"></div>
-    <button class="moretoggle" id="moretoggle">Spares and experiments ▾</button>
-    <div id="spares" hidden></div>
-  </nav>
+      <nav id="rail">
+        <div class="railhead">The reel<span id="railcount"></span></div>
+        <div id="primary"></div>
+        <button class="moretoggle" id="moretoggle">Spares and experiments ▾</button>
+        <div id="spares" hidden></div>
+      </nav>
 
-  <main id="stage">
-    <iframe id="frame" allow="autoplay; fullscreen; xr-spatial-tracking" title="Wander viewer"></iframe>
+      <main id="stage">
+        <iframe
+          id="frame"
+          allow="autoplay; fullscreen; xr-spatial-tracking"
+          title="Wander viewer"
+        ></iframe>
 
-    <div class="ov" id="srccap">
-      <div class="lab">Input · the whole of it</div>
-      <div class="txt" id="srctxt"></div>
+        <div class="ov" id="srccap">
+          <div class="lab">Input · the whole of it</div>
+          <div class="txt" id="srctxt"></div>
+        </div>
+
+        <div class="ov" id="fact">
+          <h2 id="ftitle"></h2>
+          <div class="place" id="fplace"></div>
+          <p id="flead"></p>
+          <ul id="fproof"></ul>
+          <div class="freebar">
+            <div class="k">Camera freedom</div>
+            <div class="v" id="ffree"></div>
+          </div>
+          <div class="caveat">
+            <div class="k">Say it before they see it</div>
+            <p id="fcaveat"></p>
+          </div>
+        </div>
+
+        <div class="ov" id="edgelab">
+          <b>Edge of what was filmed.</b> Let go and it eases you back &nbsp;·&nbsp;
+          <kbd>R</kbd> resets the view
+        </div>
+
+        <div class="ov" id="bar">
+          <button id="play" disabled>
+            <span class="tri">▶</span><span id="playlabel">Play camera move</span>
+          </button>
+          <div class="sep"></div>
+          <div class="keys">
+            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <b>walk</b></span>
+            <span><b>drag</b> to look</span>
+            <span><b>scroll</b> in/out</span>
+            <span><kbd>Shift</kbd> <b>faster</b></span>
+            <span><kbd>Enter</kbd> <b>play/pause</b></span>
+          </div>
+          <div class="sep"></div>
+          <button class="minibtn" id="srcbtn">Source clip <kbd>V</kbd></button>
+          <button class="minibtn" id="resetbtn">Reset <kbd>R</kbd></button>
+        </div>
+
+        <div class="ov" id="loading">
+          <div id="loadlab">Input · one ordinary clip</div>
+          <video id="loadvid" muted loop playsinline autoplay></video>
+          <div id="loadtitle"></div>
+          <div id="loadbar" class="indet"><i></i></div>
+          <div id="loadmsg">loading…</div>
+        </div>
+
+        <div class="ov" id="reelwrap">
+          <video id="reelvid" controls playsinline></video>
+          <button id="reelclose">Close ✕</button>
+        </div>
+      </main>
     </div>
 
-    <div class="ov" id="fact">
-      <h2 id="ftitle"></h2>
-      <div class="place" id="fplace"></div>
-      <p id="flead"></p>
-      <ul id="fproof"></ul>
-      <div class="freebar"><div class="k">Camera freedom</div><div class="v" id="ffree"></div></div>
-      <div class="caveat"><div class="k">Say it before they see it</div><p id="fcaveat"></p></div>
-    </div>
+    <script type="module">
+      // demo.html — presentation shell around fourd.html. It embeds the viewer in an iframe and
+      // dresses it from the outside: fourd.html itself is never modified. Everything below either
+      // reads the same-origin `window.wander` API the viewer already exports, or injects one
+      // stylesheet into the iframe document at runtime.
+      // Walk mode (fourd.html ?walk=1) is the demo camera: a person at eye height on the floor. Default
+      // on by default; ?walk=0 gives the free camera back for authoring.
+      const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
-    <div class="ov" id="edgelab"><b>Edge of what was filmed.</b> Let go and it eases you back &nbsp;·&nbsp; <kbd>R</kbd> resets the view</div>
-
-    <div class="ov" id="bar">
-      <button id="play" disabled><span class="tri">▶</span><span id="playlabel">Play camera move</span></button>
-      <div class="sep"></div>
-      <div class="keys">
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <b>walk</b></span>
-        <span><b>drag</b> to look</span>
-        <span><b>scroll</b> in/out</span>
-        <span><kbd>Shift</kbd> <b>faster</b></span>
-        <span><kbd>Enter</kbd> <b>play/pause</b></span>
-      </div>
-      <div class="sep"></div>
-      <button class="minibtn" id="srcbtn">Source clip <kbd>V</kbd></button>
-      <button class="minibtn" id="resetbtn">Reset <kbd>R</kbd></button>
-    </div>
-
-    <div class="ov" id="loading">
-      <div id="loadlab">Input · one ordinary clip</div>
-      <video id="loadvid" muted loop playsinline autoplay></video>
-      <div id="loadtitle"></div>
-      <div id="loadbar" class="indet"><i></i></div>
-      <div id="loadmsg">loading…</div>
-    </div>
-
-    <div class="ov" id="reelwrap">
-      <video id="reelvid" controls playsinline></video>
-      <button id="reelclose">Close ✕</button>
-    </div>
-  </main>
-</div>
-
-<script type="module">
-// demo.html — presentation shell around fourd.html. It embeds the viewer in an iframe and
-// dresses it from the outside: fourd.html itself is never modified. Everything below either
-// reads the same-origin `window.wander` API the viewer already exports, or injects one
-// stylesheet into the iframe document at runtime.
-// Walk mode (fourd.html ?walk=1) is the demo camera: a person at eye height on the floor. Default
-// on by default; ?walk=0 gives the free camera back for authoring.
-const WALK = new URLSearchParams(location.search).get('walk') !== '0';
-
-/* ---------------- clip data ----------------
+      /* ---------------- clip data ----------------
    Numbers are the measured ones from share/JUDGE-CHECKLIST.md, MULTIPERSON-STATUS.md,
    OBJECTS-STATUS.md, MOVIE-CLIP-2-STATUS.md and PIPELINE-PERF.md. Don't invent any. */
-const CLIPS = [
-  {
-    id: 'elevator', title: 'Two people, one clip', place: 'Fourth-floor lift lobby · phone · 10.0 s',
-    src: '/clips/elevator.mp4', poster: 1.4,
-    sub: 'Both men and the bottle between them, out of one handheld take',
-    free: '≈2 m off the recorded path',
-    lead: 'Two men reconstructed from a single phone clip, standing in the real lobby they were filmed in — and the water bottle one throws to the other flies between them on an arc fitted to its own pixels.',
-    proof: ['2 tracks, 120/120 frames, no identity swap', 'feet on the floor to 2.8 cm rms', 'bottle: 14 straight frames, zero interpolation', 'arc reprojects at 3.56 px rms; 0.53 s of flight'],
-    caveat: 'The band of floor they walk on is a grey smear — their own occlusion shadow, which no world fixes. Past about 2 m the escalator balustrade takes the right of the frame.',
-    srctxt: 'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
-  },
-  {
-    id: 'lobby', title: 'The room that holds up furthest', place: 'Office lobby · phone · 9.6 s',
-    src: '/clips/lobby.mp4', poster: 1.0,
-    sub: 'Biggest room in the set, 3 m in any direction',
-    free: '3.0 m in any direction — never failed in the sweep',
-    lead: 'The safest one to hand to a judge and let them drive. Three metres off the recorded path in any direction and it is still the real lobby: the clock, the notices, the exit sign, the doors.',
-    proof: ['3.0 m of freedom, measured, in every direction', 'his face is real — the clip shows it frontally twice'],
-    caveat: 'The armchairs render as a crumpled metallic mass. It is the one thing in that room that does not read; everything else holds to 3 m.',
-    srctxt: 'One 9.6-second phone clip: a man walks toward the camera and waves.',
-  },
-  {
-    id: 'stairs2', title: 'The cleanest world match', place: 'Red stairwell · phone · 4.1 s',
-    src: '/clips/stairs2.mp4', poster: 1.6,
-    sub: 'Distinct treads, the real chrome handrail, 4 seconds of input',
-    free: '2.5 m to the left · about 1.0 m to the right',
-    lead: 'Four seconds of phone video. The only clip in the project whose world passes the strict depth gate end to end — the treads, the chrome handrail and the mezzanine offices are all where the clip says they are.',
-    proof: ['depth ratio 0.986–1.015 across the whole clip', 'both feet on a step in every single frame', 'four seconds of input is enough — short is fine, wrong-shaped is fatal'],
-    caveat: 'Rainbow-streaked geometry outside the right balustrade. Drive left, not right; the scripted move deliberately runs right to left.',
-    srctxt: 'One 4.1-second phone clip, tracking alongside a man climbing stairs.',
-  },
-  {
-    id: 'atrium', title: 'Night, handheld, four storeys', place: 'Atrium · phone · 5.4 s · night',
-    src: '/clips/atrium.mp4', poster: 2.0,
-    sub: 'The hardest input that still works, and the tightest world',
-    free: '1.5 m — the tightest of the five',
-    lead: 'A soft handheld night clip, and the world that comes out is a real four-storey atrium: the glass wall, the red benches, the balconies. The camera move ends face on to him.',
-    proof: ['the subject is only 482 px tall in the source', 'avatar rebuilt from 8 views, 162 frames, 60k splats'],
-    caveat: 'His face is invented from eight views of the back of his head — a plausible young man with his haircut and build, not a likeness. His backpack is missing entirely: the body model silently drops anything worn or carried. Past about 2 m the camera is inside a wall and the frame goes black.',
-    srctxt: 'One 5.4-second handheld phone clip, shot at night, of a man walking away.',
-  },
-  {
-    id: 'tos31', title: 'A real film clip, and 6 m of freedom', place: 'Tears of Steel, shot 31 · CC BY 3.0 · 9.9 s',
-    src: '/clips/tos31d.mp4', poster: 4.0,
-    sub: 'The freest camera in the project — walk around, not just along',
-    free: '≈6 m either side · full detail to 3 m',
-    lead: 'Not a phone clip: ten seconds of a real live-action film, CC BY. Every other stop here holds one to three metres off the recorded path. This one holds about six, and it is the only world you can walk <em>around</em> in rather than along.',
-    proof: ['119/119 camera frames solved, no seam jumps', 'anchor frame spans a 10× depth range — that is the whole difference', 'trimming the clip by half a second is what made it run at all'],
-    caveat: 'He is filmed only from behind for the entire shot, so his face and the front of his coat are invented. The scripted move stays behind and beside him for exactly that reason.',
-    srctxt: 'Ten seconds of Tears of Steel (Blender Foundation, CC BY 3.0) — a released film, treated like any other clip.',
-  },
-];
+      const CLIPS = [
+        {
+          id: 'elevator',
+          title: 'Two people, one clip',
+          place: 'Fourth-floor lift lobby · phone · 10.0 s',
+          src: '/clips/elevator.mp4',
+          poster: 1.4,
+          sub: 'Both men and the bottle between them, out of one handheld take',
+          free: '≈2 m off the recorded path',
+          lead: 'Two men reconstructed from a single phone clip, standing in the real lobby they were filmed in — and the water bottle one throws to the other flies between them on an arc fitted to its own pixels.',
+          proof: [
+            '2 tracks, 120/120 frames, no identity swap',
+            'feet on the floor to 2.8 cm rms',
+            'bottle: 14 straight frames, zero interpolation',
+            'arc reprojects at 3.56 px rms; 0.53 s of flight',
+          ],
+          caveat:
+            'The band of floor they walk on is a grey smear — their own occlusion shadow, which no world fixes. Past about 2 m the escalator balustrade takes the right of the frame.',
+          srctxt:
+            'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
+        },
+        {
+          id: 'lobby',
+          title: 'The room that holds up furthest',
+          place: 'Office lobby · phone · 9.6 s',
+          src: '/clips/lobby.mp4',
+          poster: 1.0,
+          sub: 'Biggest room in the set, 3 m in any direction',
+          free: '3.0 m in any direction — never failed in the sweep',
+          lead: 'The safest one to hand to a judge and let them drive. Three metres off the recorded path in any direction and it is still the real lobby: the clock, the notices, the exit sign, the doors.',
+          proof: [
+            '3.0 m of freedom, measured, in every direction',
+            'his face is real — the clip shows it frontally twice',
+          ],
+          caveat:
+            'The armchairs render as a crumpled metallic mass. It is the one thing in that room that does not read; everything else holds to 3 m.',
+          srctxt: 'One 9.6-second phone clip: a man walks toward the camera and waves.',
+        },
+        {
+          id: 'stairs2',
+          title: 'The cleanest world match',
+          place: 'Red stairwell · phone · 4.1 s',
+          src: '/clips/stairs2.mp4',
+          poster: 1.6,
+          sub: 'Distinct treads, the real chrome handrail, 4 seconds of input',
+          free: '2.5 m to the left · about 1.0 m to the right',
+          lead: 'Four seconds of phone video. The only clip in the project whose world passes the strict depth gate end to end — the treads, the chrome handrail and the mezzanine offices are all where the clip says they are.',
+          proof: [
+            'depth ratio 0.986–1.015 across the whole clip',
+            'both feet on a step in every single frame',
+            'four seconds of input is enough — short is fine, wrong-shaped is fatal',
+          ],
+          caveat:
+            'Rainbow-streaked geometry outside the right balustrade. Drive left, not right; the scripted move deliberately runs right to left.',
+          srctxt: 'One 4.1-second phone clip, tracking alongside a man climbing stairs.',
+        },
+        {
+          id: 'atrium',
+          title: 'Night, handheld, four storeys',
+          place: 'Atrium · phone · 5.4 s · night',
+          src: '/clips/atrium.mp4',
+          poster: 2.0,
+          sub: 'The hardest input that still works, and the tightest world',
+          free: '1.5 m — the tightest of the five',
+          lead: 'A soft handheld night clip, and the world that comes out is a real four-storey atrium: the glass wall, the red benches, the balconies. The camera move ends face on to him.',
+          proof: [
+            'the subject is only 482 px tall in the source',
+            'avatar rebuilt from 8 views, 162 frames, 60k splats',
+          ],
+          caveat:
+            'His face is invented from eight views of the back of his head — a plausible young man with his haircut and build, not a likeness. His backpack is missing entirely: the body model silently drops anything worn or carried. Past about 2 m the camera is inside a wall and the frame goes black.',
+          srctxt: 'One 5.4-second handheld phone clip, shot at night, of a man walking away.',
+        },
+        {
+          id: 'tos31',
+          title: 'A real film clip, and 6 m of freedom',
+          place: 'Tears of Steel, shot 31 · CC BY 3.0 · 9.9 s',
+          src: '/clips/tos31d.mp4',
+          poster: 4.0,
+          sub: 'The freest camera in the project — walk around, not just along',
+          free: '≈6 m either side · full detail to 3 m',
+          lead: 'Not a phone clip: ten seconds of a real live-action film, CC BY. Every other stop here holds one to three metres off the recorded path. This one holds about six, and it is the only world you can walk <em>around</em> in rather than along.',
+          proof: [
+            '119/119 camera frames solved, no seam jumps',
+            'anchor frame spans a 10× depth range — that is the whole difference',
+            'trimming the clip by half a second is what made it run at all',
+          ],
+          caveat:
+            'He is filmed only from behind for the entire shot, so his face and the front of his coat are invented. The scripted move stays behind and beside him for exactly that reason.',
+          srctxt:
+            'Ten seconds of Tears of Steel (Blender Foundation, CC BY 3.0) — a released film, treated like any other clip.',
+        },
+      ];
 
-const SPARES = [
-  { id: 'gym', title: 'Gym — the hardest pose', place: 'Gym · phone · 18 s', src: '/clips/gym.mp4', poster: 8,
-    sub: 'Cut from the reel; the bench was rebuilt afterwards',
-    free: '2.5 m to −x · about 0.8 m to +x',
-    lead: 'A man lying on an incline bench — the hardest pose the pipeline was given — in the real gym. Cut from the 65-second reel on quality, then fixed: Marble never built the bench he is lying on, so a bench was reconstructed from his own back.',
-    proof: ['his back is the instrument: 8 slices, planar to 2.9 cm, in all 215 frames', 'underside-to-surface gap +50.4 cm → −8.0 cm'],
-    caveat: 'The reel was cut before the bench landed and has not been re-cut. His forearms and the dumbbells still dissolve into a pale column of smear — his own occlusion shadow. The +x side is a wall 0.8 m out.',
-    srctxt: 'One 18-second phone clip, camera arcing around a man on a bench.' },
-  { id: 'hp-walk', title: 'Person and place, separated', place: 'Lobby man · generated street', src: '/clips/lobby.mp4', poster: 1.0,
-    sub: 'The man from the lobby clip, walking down a different world',
-    free: 'experiment — not measured',
-    lead: 'Proof that the person and the place really are separable: the man from the lobby clip, dropped into a street generated from an entirely different video. Offer it as an experiment, never lead with it.',
-    proof: ['the picture-in-picture here is where the *person* came from, not the place'],
-    caveat: 'His light is wrong. He is lit by his lobby\'s overhead fluorescents in a street lit by warm lanterns, and he casts no shadow into the scene.',
-    srctxt: 'The person came from this lobby clip. The street came from a different video entirely.' },
-  { id: 'tos', title: 'Tears of Steel — the older shot', place: 'Tears of Steel · CC BY 3.0', src: '/clips/tos-hall-walk.mp4', poster: 3,
-    sub: 'Superseded by tos31; keep for the A/B',
-    free: 'tighter than tos31',
-    lead: 'The first Tears of Steel shot that worked. Superseded by shot 31, which is both a better shot and a far freer camera. Useful only as a before.',
-    proof: ['the actor is seen only from behind in all 189 frames'],
-    caveat: 'Tighter camera and a softer world than tos31. There is no reason to show this one unless someone asks what changed.',
-    srctxt: 'Tears of Steel (Blender Foundation, CC BY 3.0), the earlier hall shot.' },
-  { id: 'living', title: 'Living room', place: 'Living room · phone', src: '/clips/living.mp4', poster: 2,
-    sub: 'Out of the reel — stays on its fine-tuned world',
-    free: 'not in the reel',
-    lead: 'The most metrically consistent clip in the project — its body height agrees with the world\'s own metric scale to 3 %. It is out of the reel for a rendering reason, not a measurement one.',
-    proof: ['body height 1.7 m, within 3 % of the world\'s own metric scale'],
-    caveat: 'It stays on its fine-tuned world. The raw world for that room is sharper but reinstates a desk, a monitor and two office chairs that do not exist in it.',
-    srctxt: 'One phone clip of a man waving, then walking between a sofa and a table.' },
-];
+      const SPARES = [
+        {
+          id: 'gym',
+          title: 'Gym — the hardest pose',
+          place: 'Gym · phone · 18 s',
+          src: '/clips/gym.mp4',
+          poster: 8,
+          sub: 'Cut from the reel; the bench was rebuilt afterwards',
+          free: '2.5 m to −x · about 0.8 m to +x',
+          lead: 'A man lying on an incline bench — the hardest pose the pipeline was given — in the real gym. Cut from the 65-second reel on quality, then fixed: Marble never built the bench he is lying on, so a bench was reconstructed from his own back.',
+          proof: [
+            'his back is the instrument: 8 slices, planar to 2.9 cm, in all 215 frames',
+            'underside-to-surface gap +50.4 cm → −8.0 cm',
+          ],
+          caveat:
+            'The reel was cut before the bench landed and has not been re-cut. His forearms and the dumbbells still dissolve into a pale column of smear — his own occlusion shadow. The +x side is a wall 0.8 m out.',
+          srctxt: 'One 18-second phone clip, camera arcing around a man on a bench.',
+        },
+        {
+          id: 'hp-walk',
+          title: 'Person and place, separated',
+          place: 'Lobby man · generated street',
+          src: '/clips/lobby.mp4',
+          poster: 1.0,
+          sub: 'The man from the lobby clip, walking down a different world',
+          free: 'experiment — not measured',
+          lead: 'Proof that the person and the place really are separable: the man from the lobby clip, dropped into a street generated from an entirely different video. Offer it as an experiment, never lead with it.',
+          proof: ['the picture-in-picture here is where the *person* came from, not the place'],
+          caveat:
+            "His light is wrong. He is lit by his lobby's overhead fluorescents in a street lit by warm lanterns, and he casts no shadow into the scene.",
+          srctxt:
+            'The person came from this lobby clip. The street came from a different video entirely.',
+        },
+        {
+          id: 'tos',
+          title: 'Tears of Steel — the older shot',
+          place: 'Tears of Steel · CC BY 3.0',
+          src: '/clips/tos-hall-walk.mp4',
+          poster: 3,
+          sub: 'Superseded by tos31; keep for the A/B',
+          free: 'tighter than tos31',
+          lead: 'The first Tears of Steel shot that worked. Superseded by shot 31, which is both a better shot and a far freer camera. Useful only as a before.',
+          proof: ['the actor is seen only from behind in all 189 frames'],
+          caveat:
+            'Tighter camera and a softer world than tos31. There is no reason to show this one unless someone asks what changed.',
+          srctxt: 'Tears of Steel (Blender Foundation, CC BY 3.0), the earlier hall shot.',
+        },
+        {
+          id: 'living',
+          title: 'Living room',
+          place: 'Living room · phone',
+          src: '/clips/living.mp4',
+          poster: 2,
+          sub: 'Out of the reel — stays on its fine-tuned world',
+          free: 'not in the reel',
+          lead: "The most metrically consistent clip in the project — its body height agrees with the world's own metric scale to 3 %. It is out of the reel for a rendering reason, not a measurement one.",
+          proof: ["body height 1.7 m, within 3 % of the world's own metric scale"],
+          caveat:
+            'It stays on its fine-tuned world. The raw world for that room is sharper but reinstates a desk, a monitor and two office chairs that do not exist in it.',
+          srctxt: 'One phone clip of a man waving, then walking between a sofa and a table.',
+        },
+      ];
 
-const ALL = [...CLIPS, ...SPARES];
+      const ALL = [...CLIPS, ...SPARES];
 
-/* ---------------- rail ---------------- */
-const $ = id => document.getElementById(id);
-let current = null;
+      /* ---------------- rail ---------------- */
+      const $ = (id) => document.getElementById(id);
+      let current = null;
 
-function makeCard(c, n) {
-  const b = document.createElement('button');
-  b.className = 'card'; b.dataset.id = c.id;
-  b.innerHTML = `<div class="thumb"><canvas width="164" height="92"></canvas>${n ? `<div class="n">${n}</div>` : ''}</div>
+      function makeCard(c, n) {
+        const b = document.createElement('button');
+        b.className = 'card';
+        b.dataset.id = c.id;
+        b.innerHTML = `<div class="thumb"><canvas width="164" height="92"></canvas>${n ? `<div class="n">${n}</div>` : ''}</div>
     <div class="cmeta"><div class="ctitle"></div><div class="csub"></div><div class="cfree"><b></b></div></div>`;
-  b.querySelector('.ctitle').textContent = c.title;
-  b.querySelector('.csub').textContent = c.sub;
-  b.querySelector('.cfree b').textContent = c.free;
-  b.addEventListener('click', () => select(c.id));
-  poster(c, b.querySelector('canvas'));
-  hoverPlay(c, b.querySelector('.thumb'));
-  return b;
-}
+        b.querySelector('.ctitle').textContent = c.title;
+        b.querySelector('.csub').textContent = c.sub;
+        b.querySelector('.cfree b').textContent = c.free;
+        b.addEventListener('click', () => select(c.id));
+        poster(c, b.querySelector('canvas'));
+        hoverPlay(c, b.querySelector('.thumb'));
+        return b;
+      }
 
-// One poster frame per clip, drawn into a canvas and then the decoder is thrown away.
-// No image files are written to disk and nothing keeps decoding in the background.
-function poster(c, cv) {
-  const v = document.createElement('video');
-  v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = c.src;
-  const draw = () => {
-    try {
-      const ctx = cv.getContext('2d');
-      const s = Math.max(cv.width / v.videoWidth, cv.height / v.videoHeight);
-      const w = v.videoWidth * s, h = v.videoHeight * s;
-      ctx.drawImage(v, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
-    } catch {}
-    v.removeAttribute('src'); v.load();
-  };
-  v.addEventListener('loadedmetadata', () => { v.currentTime = Math.min(c.poster, (v.duration || 1) - 0.1); }, { once: true });
-  v.addEventListener('seeked', draw, { once: true });
-  v.addEventListener('error', () => {}, { once: true });
-}
+      // One poster frame per clip, drawn into a canvas and then the decoder is thrown away.
+      // No image files are written to disk and nothing keeps decoding in the background.
+      function poster(c, cv) {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = 'metadata';
+        v.src = c.src;
+        const draw = () => {
+          try {
+            const ctx = cv.getContext('2d');
+            const s = Math.max(cv.width / v.videoWidth, cv.height / v.videoHeight);
+            const w = v.videoWidth * s,
+              h = v.videoHeight * s;
+            ctx.drawImage(v, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
+          } catch {}
+          v.removeAttribute('src');
+          v.load();
+        };
+        v.addEventListener(
+          'loadedmetadata',
+          () => {
+            v.currentTime = Math.min(c.poster, (v.duration || 1) - 0.1);
+          },
+          { once: true },
+        );
+        v.addEventListener('seeked', draw, { once: true });
+        v.addEventListener('error', () => {}, { once: true });
+      }
 
-// Hover a card and the clip itself plays, small and muted. Only ever one at a time.
-let hoverVid = null;
-function hoverPlay(c, thumb) {
-  thumb.addEventListener('pointerenter', () => {
-    stopHover();
-    const v = document.createElement('video');
-    v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true; v.src = c.src;
-    v.style.position = 'absolute'; v.style.inset = '0';
-    thumb.appendChild(v); hoverVid = v;
-    v.play().catch(() => {});
-  });
-  thumb.addEventListener('pointerleave', stopHover);
-}
-function stopHover() {
-  if (!hoverVid) return;
-  hoverVid.pause(); hoverVid.removeAttribute('src'); hoverVid.load(); hoverVid.remove(); hoverVid = null;
-}
+      // Hover a card and the clip itself plays, small and muted. Only ever one at a time.
+      let hoverVid = null;
+      function hoverPlay(c, thumb) {
+        thumb.addEventListener('pointerenter', () => {
+          stopHover();
+          const v = document.createElement('video');
+          v.muted = true;
+          v.loop = true;
+          v.playsInline = true;
+          v.autoplay = true;
+          v.src = c.src;
+          v.style.position = 'absolute';
+          v.style.inset = '0';
+          thumb.appendChild(v);
+          hoverVid = v;
+          v.play().catch(() => {});
+        });
+        thumb.addEventListener('pointerleave', stopHover);
+      }
+      function stopHover() {
+        if (!hoverVid) return;
+        hoverVid.pause();
+        hoverVid.removeAttribute('src');
+        hoverVid.load();
+        hoverVid.remove();
+        hoverVid = null;
+      }
 
-CLIPS.forEach((c, i) => $('primary').appendChild(makeCard(c, i + 1)));
-SPARES.forEach(c => $('spares').appendChild(makeCard(c, '')));
-$('railcount').textContent = `${CLIPS.length} stops`;
-$('moretoggle').addEventListener('click', () => {
-  const s = $('spares'); s.hidden = !s.hidden;
-  $('moretoggle').textContent = s.hidden ? 'Spares and experiments ▾' : 'Spares and experiments ▴';
-});
+      CLIPS.forEach((c, i) => $('primary').appendChild(makeCard(c, i + 1)));
+      SPARES.forEach((c) => $('spares').appendChild(makeCard(c, '')));
+      $('railcount').textContent = `${CLIPS.length} stops`;
+      $('moretoggle').addEventListener('click', () => {
+        const s = $('spares');
+        s.hidden = !s.hidden;
+        $('moretoggle').textContent = s.hidden
+          ? 'Spares and experiments ▾'
+          : 'Spares and experiments ▴';
+      });
 
-/* ---------------- stage ---------------- */
-const frame = $('frame');
-let ready = false, pollTimer = 0;
+      /* ---------------- stage ---------------- */
+      const frame = $('frame');
+      let ready = false,
+        pollTimer = 0;
 
-function select(id) {
-  const c = ALL.find(x => x.id === id); if (!c || c.id === current) return;
-  current = c.id; ready = false;
-  for (const el of document.querySelectorAll('.card')) el.classList.toggle('on', el.dataset.id === id);
+      function select(id) {
+        const c = ALL.find((x) => x.id === id);
+        if (!c || c.id === current) return;
+        current = c.id;
+        ready = false;
+        for (const el of document.querySelectorAll('.card'))
+          el.classList.toggle('on', el.dataset.id === id);
 
-  $('ftitle').textContent = c.title;
-  $('fplace').textContent = c.place;
-  $('flead').innerHTML = c.lead;
-  $('fproof').innerHTML = c.proof.map(p => `<li></li>`).join('');
-  [...$('fproof').children].forEach((li, i) => li.textContent = c.proof[i]);
-  $('ffree').textContent = c.free;
-  $('fcaveat').textContent = c.caveat;
-  $('srctxt').textContent = c.srctxt;
+        $('ftitle').textContent = c.title;
+        $('fplace').textContent = c.place;
+        $('flead').innerHTML = c.lead;
+        $('fproof').innerHTML = c.proof.map((p) => `<li></li>`).join('');
+        [...$('fproof').children].forEach((li, i) => (li.textContent = c.proof[i]));
+        $('ffree').textContent = c.free;
+        $('fcaveat').textContent = c.caveat;
+        $('srctxt').textContent = c.srctxt;
 
-  $('play').disabled = true; setPlayLabel(false);
-  driving.clear();
-  $('loading').classList.remove('gone'); $('loadmsg').textContent = 'building the world…';
-  $('loadtitle').textContent = c.title; $('loadbar').className = 'indet'; $('loadbar').firstChild.style.width = '0';
-  const lv = $('loadvid'); if (lv.getAttribute('src') !== c.src) { lv.src = c.src; } lv.currentTime = 0; lv.play().catch(() => {});
-  const options = new URLSearchParams({ demo: c.id });
-  if (WALK) options.set('walk', '1');
-  const outer = new URLSearchParams(location.search);
-  for (const [key, value] of outer) if (key === 'audio' || key.startsWith('xr')) options.set(key, value);
-  api()?.play(false);
-  frame.src = `/fourd.html?${options}`;
-  outer.set('clip', c.id); if (WALK) outer.set('walk', '1');
-  history.replaceState(null, '', `?${outer}`);
-}
+        $('play').disabled = true;
+        setPlayLabel(false);
+        driving.clear();
+        $('loading').classList.remove('gone');
+        $('loadmsg').textContent = 'building the world…';
+        $('loadtitle').textContent = c.title;
+        $('loadbar').className = 'indet';
+        $('loadbar').firstChild.style.width = '0';
+        const lv = $('loadvid');
+        if (lv.getAttribute('src') !== c.src) {
+          lv.src = c.src;
+        }
+        lv.currentTime = 0;
+        lv.play().catch(() => {});
+        const options = new URLSearchParams({ demo: c.id });
+        if (WALK) options.set('walk', '1');
+        const outer = new URLSearchParams(location.search);
+        for (const [key, value] of outer)
+          if (key === 'audio' || key.startsWith('xr')) options.set(key, value);
+        api()?.play(false);
+        frame.src = `/fourd.html?${options}`;
+        outer.set('clip', c.id);
+        if (WALK) outer.set('walk', '1');
+        history.replaceState(null, '', `?${outer}`);
+      }
 
-frame.addEventListener('load', () => {
-  let win; try { win = frame.contentWindow; } catch { return; }
-  dress(win);
-  installKeys(win.document);
-  installWheel(win.document);
-  clearInterval(pollTimer);
-  pollTimer = setInterval(() => {
-    const w = win.wander;
-    const st = win.document.getElementById('st');
-    if (!ready) loadProgress(w, st);
-    if (w && w.ready) {
-      ready = true; clearInterval(pollTimer);
-      $('play').disabled = false;
-      $('loading').classList.add('gone');
-      const lv = $('loadvid'); lv.pause(); lv.removeAttribute('src'); lv.load();
-      try { win.focus(); } catch {}
-    }
-  }, 180);
-});
+      frame.addEventListener('load', () => {
+        let win;
+        try {
+          win = frame.contentWindow;
+        } catch {
+          return;
+        }
+        dress(win);
+        installKeys(win.document);
+        installWheel(win.document);
+        clearInterval(pollTimer);
+        pollTimer = setInterval(() => {
+          const w = win.wander;
+          const st = win.document.getElementById('st');
+          if (!ready) loadProgress(w, st);
+          if (w && w.ready) {
+            ready = true;
+            clearInterval(pollTimer);
+            $('play').disabled = false;
+            $('loading').classList.add('gone');
+            const lv = $('loadvid');
+            lv.pause();
+            lv.removeAttribute('src');
+            lv.load();
+            try {
+              win.focus();
+            } catch {}
+          }
+        }, 180);
+      });
 
-// The wait is 15-25 s warm and up to a minute cold (measured), so it has to say what it is doing.
-// Before the viewer API exists the world is loading; after it, the per-frame person files stream in
-// and `loaded/nF` on each person is the honest progress.
-function loadProgress(w, st) {
-  const bar = $('loadbar');
-  if (!w || !w.people) {
-    const line = ((st && st.textContent) || '').split('\n').filter(Boolean)[0] || '';
-    $('loadmsg').textContent = /world/.test(line) ? 'reconstructing the room…' : 'loading…';
-    bar.className = 'indet'; return;
-  }
-  const got = w.people.reduce((a, p) => a + p.loaded, 0), all = w.people.reduce((a, p) => a + p.nF, 0) || 1;
-  bar.className = ''; bar.firstChild.style.width = Math.round(100 * got / all) + '%';
-  $('loadmsg').textContent = `room ready · ${w.people.length > 1 ? 'people' : 'the person'} ${got} / ${all} frames`;
-}
+      // The wait is 15-25 s warm and up to a minute cold (measured), so it has to say what it is doing.
+      // Before the viewer API exists the world is loading; after it, the per-frame person files stream in
+      // and `loaded/nF` on each person is the honest progress.
+      function loadProgress(w, st) {
+        const bar = $('loadbar');
+        if (!w || !w.people) {
+          const line = ((st && st.textContent) || '').split('\n').filter(Boolean)[0] || '';
+          $('loadmsg').textContent = /world/.test(line) ? 'reconstructing the room…' : 'loading…';
+          bar.className = 'indet';
+          return;
+        }
+        const got = w.people.reduce((a, p) => a + p.loaded, 0),
+          all = w.people.reduce((a, p) => a + p.nF, 0) || 1;
+        bar.className = '';
+        bar.firstChild.style.width = Math.round((100 * got) / all) + '%';
+        $('loadmsg').textContent =
+          `room ready · ${w.people.length > 1 ? 'people' : 'the person'} ${got} / ${all} frames`;
+      }
 
-// One stylesheet injected into the viewer document. fourd.html is not edited: its debug HUD
-// is hidden behind a body class, and its picture-in-picture is repositioned into this shell's
-// layout so the source clip sits under a caption instead of floating in a corner.
-function dress(win) {
-  const doc = win.document;
-  if (doc.getElementById('wander-demo-chrome')) return;
-  const s = doc.createElement('style');
-  s.id = 'wander-demo-chrome';
-  s.textContent = `
+      // One stylesheet injected into the viewer document. fourd.html is not edited: its debug HUD
+      // is hidden behind a body class, and its picture-in-picture is repositioned into this shell's
+      // layout so the source clip sits under a caption instead of floating in a corner.
+      function dress(win) {
+        const doc = win.document;
+        if (doc.getElementById('wander-demo-chrome')) return;
+        const s = doc.createElement('style');
+        s.id = 'wander-demo-chrome';
+        s.textContent = `
     #hud{display:none!important}
     #walk-map{left:20px!important;right:auto!important;top:20px!important}
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#0c0e11ee;
@@ -465,63 +1099,96 @@ function dress(win) {
     #pip.hidden{display:none}
     body.wd-hud #pip{bottom:86px!important}
   `;
-  doc.head.appendChild(s);
-  if (hudOn) doc.body.classList.add('wd-hud');
-}
+        doc.head.appendChild(s);
+        if (hudOn) doc.body.classList.add('wd-hud');
+      }
 
-/* ---------------- controls ---------------- */
-function setPlayLabel(running) {
-  $('play').classList.toggle('running', running);
-  $('playlabel').textContent = running ? 'Playing — click or press a key to take over' : 'Play camera move';
-  $('play').querySelector('.tri').textContent = running ? '◼' : '▶';
-}
-function api() { try { return frame.contentWindow.wander; } catch { return null; } }
+      /* ---------------- controls ---------------- */
+      function setPlayLabel(running) {
+        $('play').classList.toggle('running', running);
+        $('playlabel').textContent = running
+          ? 'Playing — click or press a key to take over'
+          : 'Play camera move';
+        $('play').querySelector('.tri').textContent = running ? '◼' : '▶';
+      }
+      function api() {
+        try {
+          return frame.contentWindow.wander;
+        } catch {
+          return null;
+        }
+      }
 
-$('play').addEventListener('click', () => {
-  const w = api(); if (!w) return;
-  void w.unlockAudio?.();
-  w.showreel(!w.reel);
-  try { frame.contentWindow.focus(); } catch {}
-});
-$('srcbtn').addEventListener('click', () => {
-  send('KeyV');
-  try { frame.contentWindow.focus(); } catch {}
-});
-$('resetbtn').addEventListener('click', () => {
-  const w = api(); if (!w) return;
-  send('KeyR');
-  try { frame.contentWindow.focus(); } catch {}
-});
-// The viewer owns R (camera home + avatar home), so ask it rather than reimplementing.
-function send(code) {
-  try {
-    frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent('keydown', { code, bubbles: true }));
-    frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent('keyup', { code, bubbles: true }));
-  } catch {}
-}
+      $('play').addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        void w.unlockAudio?.();
+        w.showreel(!w.reel);
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
+      $('srcbtn').addEventListener('click', () => {
+        send('KeyV');
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
+      $('resetbtn').addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        send('KeyR');
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
+      // The viewer owns R (camera home + avatar home), so ask it rather than reimplementing.
+      function send(code) {
+        try {
+          frame.contentWindow.dispatchEvent(
+            new frame.contentWindow.KeyboardEvent('keydown', { code, bubbles: true }),
+          );
+          frame.contentWindow.dispatchEvent(
+            new frame.contentWindow.KeyboardEvent('keyup', { code, bubbles: true }),
+          );
+        } catch {}
+      }
 
-// Reflect the viewer's own reel state, so driving it with WASD (which cancels the reel)
-// puts the button back by itself.
-let wasRunning = false;
-setInterval(() => {
-  const w = api(); const r = !!(w && w.reel);
-  if (r !== wasRunning) { wasRunning = r; setPlayLabel(r); }
-}, 120);
+      // Reflect the viewer's own reel state, so driving it with WASD (which cancels the reel)
+      // puts the button back by itself.
+      let wasRunning = false;
+      setInterval(() => {
+        const w = api();
+        const r = !!(w && w.reel);
+        if (r !== wasRunning) {
+          wasRunning = r;
+          setPlayLabel(r);
+        }
+      }, 120);
 
-// The viewer's inset keeps its own aspect ratio (tos31 is 1920x800, the phone clips are 16:9),
-// so the caption is measured against it rather than given a fixed offset.
-function placeCaption() {
-  let pip; try { pip = frame.contentWindow.document.getElementById('pip'); } catch { return; }
-  const cap = $('srccap');
-  if (!pip || pip.classList.contains('hidden') || !pip.getBoundingClientRect().height) { cap.style.opacity = '0'; return; }
-  cap.style.opacity = '1';
-  const st = $('stage').getBoundingClientRect(), pr = pip.getBoundingClientRect();
-  cap.style.bottom = Math.round(st.bottom - pr.top + 8) + 'px';
-}
-setInterval(placeCaption, 400);
-addEventListener('resize', placeCaption);
+      // The viewer's inset keeps its own aspect ratio (tos31 is 1920x800, the phone clips are 16:9),
+      // so the caption is measured against it rather than given a fixed offset.
+      function placeCaption() {
+        let pip;
+        try {
+          pip = frame.contentWindow.document.getElementById('pip');
+        } catch {
+          return;
+        }
+        const cap = $('srccap');
+        if (!pip || pip.classList.contains('hidden') || !pip.getBoundingClientRect().height) {
+          cap.style.opacity = '0';
+          return;
+        }
+        cap.style.opacity = '1';
+        const st = $('stage').getBoundingClientRect(),
+          pr = pip.getBoundingClientRect();
+        cap.style.bottom = Math.round(st.bottom - pr.top + 8) + 'px';
+      }
+      setInterval(placeCaption, 400);
+      addEventListener('resize', placeCaption);
 
-/* ---------------- edge of the filmed world ----------------
+      /* ---------------- edge of the filmed world ----------------
    The viewer's soft boundary lets driven motion coast to a stop at a hard limit where its fade has
    taken the frame to black. Measured on all five stops: any held Shift+key is there within 5-10 s,
    and a black frame with no words on it reads as a crash. Two things from out here: a label that
@@ -532,124 +1199,268 @@ addEventListener('resize', placeCaption);
    camera settles just under half way into the overshoot band: a clear dim, the label, and it
    stops. Released, it eases home at EASE_RATE. Reel playback and R land the camera exactly and
    are left alone. Inward motion is never damped by the viewer, so this is one position write per frame. */
-const EDGE_HOLD = 0.45, EASE_RATE = 3;   // 0.45: fade k 0.43, the picture visibly dims but never reads as black (0.3 left the smear at the face plainly visible)
-const DRIVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
-const driving = new Set(); let wheelAt = 0;
-let edgeLast = performance.now();
-const edgeTmp = { v: null, w: null };
-function edgeLoop(now) {
-  requestAnimationFrame(edgeLoop);
-  const dt = Math.min(0.05, (now - edgeLast) / 1000); edgeLast = now;
-  const w = api();
-  if (!w || !ready || !w.clampOn) { $('edgelab').style.opacity = '0'; return; }
-  if (edgeTmp.w !== w) { edgeTmp.w = w; edgeTmp.v = new w.THREE.Vector3(); edgeTmp.s = new w.THREE.Vector3(); }
-  const p = w.camera.position, b = w.clampBox, e = w.edge;
-  // inside the box the label ramps up over the last fifth of the way to a face, where the viewer
-  // already slows the camera and the invented part of the world begins
-  const c = b.getCenter(edgeTmp.s), h = b.getSize(edgeTmp.v).multiplyScalar(0.5);
-  let near = 0; for (const k of 'xyz') near = Math.max(near, Math.abs(p[k] - c[k]) / Math.max(1e-4, h[k]));
-  const vis = e > 0.02 ? 1 : Math.max(0, (near - 0.8) / 0.2);
-  $('edgelab').style.opacity = vis.toFixed(2);
-  if (e <= 0 || w.reel) return;
-  edgeTmp.v.copy(p).clamp(b.min, b.max);
-  const isDriving = driving.size > 0 || now - wheelAt < 150;
-  if (isDriving) {
-    const wsz = w.wbox.getSize(edgeTmp.s).length();
-    const vmax = 3 * Math.max(0.4, wsz * 0.06);          // the viewer's Shift speed, world units/s
-    const dist = edgeTmp.v.distanceTo(p); if (dist < 1e-6) return;
-    const step = Math.min(dist, vmax * (e / EDGE_HOLD) * dt);
-    p.lerp(edgeTmp.v, step / dist);
-  } else p.lerp(edgeTmp.v, 1 - Math.exp(-EASE_RATE * dt));
-}
-requestAnimationFrame(edgeLoop);
+      const EDGE_HOLD = 0.45,
+        EASE_RATE = 3; // 0.45: fade k 0.43, the picture visibly dims but never reads as black (0.3 left the smear at the face plainly visible)
+      const DRIVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
+      const driving = new Set();
+      let wheelAt = 0;
+      let edgeLast = performance.now();
+      const edgeTmp = { v: null, w: null };
+      function edgeLoop(now) {
+        requestAnimationFrame(edgeLoop);
+        const dt = Math.min(0.05, (now - edgeLast) / 1000);
+        edgeLast = now;
+        const w = api();
+        if (!w || !ready || !w.clampOn) {
+          $('edgelab').style.opacity = '0';
+          return;
+        }
+        if (edgeTmp.w !== w) {
+          edgeTmp.w = w;
+          edgeTmp.v = new w.THREE.Vector3();
+          edgeTmp.s = new w.THREE.Vector3();
+        }
+        const p = w.camera.position,
+          b = w.clampBox,
+          e = w.edge;
+        // inside the box the label ramps up over the last fifth of the way to a face, where the viewer
+        // already slows the camera and the invented part of the world begins
+        const c = b.getCenter(edgeTmp.s),
+          h = b.getSize(edgeTmp.v).multiplyScalar(0.5);
+        let near = 0;
+        for (const k of 'xyz') near = Math.max(near, Math.abs(p[k] - c[k]) / Math.max(1e-4, h[k]));
+        const vis = e > 0.02 ? 1 : Math.max(0, (near - 0.8) / 0.2);
+        $('edgelab').style.opacity = vis.toFixed(2);
+        if (e <= 0 || w.reel) return;
+        edgeTmp.v.copy(p).clamp(b.min, b.max);
+        const isDriving = driving.size > 0 || now - wheelAt < 150;
+        if (isDriving) {
+          const wsz = w.wbox.getSize(edgeTmp.s).length();
+          const vmax = 3 * Math.max(0.4, wsz * 0.06); // the viewer's Shift speed, world units/s
+          const dist = edgeTmp.v.distanceTo(p);
+          if (dist < 1e-6) return;
+          const step = Math.min(dist, vmax * (e / EDGE_HOLD) * dt);
+          p.lerp(edgeTmp.v, step / dist);
+        } else p.lerp(edgeTmp.v, 1 - Math.exp(-EASE_RATE * dt));
+      }
+      requestAnimationFrame(edgeLoop);
 
-/* ---------------- HUD + notes ---------------- */
-let hudOn = false, factOn = true;
-function toggleHud(v) {
-  hudOn = v === undefined ? !hudOn : v;
-  try { frame.contentWindow.document.body.classList.toggle('wd-hud', hudOn); } catch {}
-  $('hudbtn').style.color = hudOn ? 'var(--accent)' : '';
-}
-function toggleFact(v) {
-  factOn = v === undefined ? !factOn : v;
-  $('fact').classList.toggle('hid', !factOn);
-  $('facttoggle').style.color = factOn ? '' : 'var(--dim)';
-}
-$('hudbtn').addEventListener('click', () => { toggleHud(); try { frame.contentWindow.focus(); } catch {} });
-$('facttoggle').addEventListener('click', () => { toggleFact(); try { frame.contentWindow.focus(); } catch {} });
+      /* ---------------- HUD + notes ---------------- */
+      let hudOn = false,
+        factOn = true;
+      function toggleHud(v) {
+        hudOn = v === undefined ? !hudOn : v;
+        try {
+          frame.contentWindow.document.body.classList.toggle('wd-hud', hudOn);
+        } catch {}
+        $('hudbtn').style.color = hudOn ? 'var(--accent)' : '';
+      }
+      function toggleFact(v) {
+        factOn = v === undefined ? !factOn : v;
+        $('fact').classList.toggle('hid', !factOn);
+        $('facttoggle').style.color = factOn ? '' : 'var(--dim)';
+      }
+      $('hudbtn').addEventListener('click', () => {
+        toggleHud();
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
+      $('facttoggle').addEventListener('click', () => {
+        toggleFact();
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
 
-// Shortcuts have to be installed in both documents: once the judge clicks into the scene,
-// key events go to the iframe and never reach this page.
-// The viewer's own authoring keys move, turn and scale the avatar with no undo. A judge who
-// rests a hand on the keyboard must not be able to reach them.
-const SWALLOW = new Set(['KeyI', 'KeyK', 'KeyJ', 'KeyL', 'KeyU', 'KeyO', 'BracketLeft', 'BracketRight', 'Minus', 'Equal', 'Comma', 'Period', 'KeyN']);
-// Driving keys pressed while focus is on this page (after clicking a card or a header button) are
-// handed to the viewer, so W always walks no matter what was clicked last.
-const FORWARD = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight', 'KeyR', 'KeyV', 'KeyP', 'Space', 'Enter', 'NumpadEnter']);
-if (WALK) for (const k of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) { DRIVE_KEYS.add(k); FORWARD.add(k); }
-function forward(e) {
-  try {
-    const win = frame.contentWindow;
-    if (e.isTrusted && e.type === 'keydown' && !e.repeat && ['Enter', 'NumpadEnter', 'Space'].includes(e.code)) void win.wander?.unlockAudio?.();
-    win.dispatchEvent(new win.KeyboardEvent(e.type, { code: e.code, key: e.key, shiftKey: e.shiftKey, repeat: e.repeat, bubbles: true }));
-    if (e.type === 'keydown') win.focus();
-  } catch {}
-}
-function installKeys(doc) {
-  doc.addEventListener('keydown', e => { if (DRIVE_KEYS.has(e.code)) driving.add(e.code); }, true);
-  doc.addEventListener('keyup', e => driving.delete(e.code), true);
-  doc.defaultView.addEventListener('blur', () => driving.clear());
-  if (doc === document) doc.addEventListener('keyup', e => { if (FORWARD.has(e.code)) forward(e); }, true);
-  doc.addEventListener('keydown', e => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if ((e.code === 'Enter' || e.code === 'NumpadEnter') && (e.target.isContentEditable || e.target.closest?.('button, input, textarea, select, a'))) return;
-    if (SWALLOW.has(e.code)) { e.stopImmediatePropagation(); e.preventDefault(); return; }
-    if (doc === document && FORWARD.has(e.code) && ready && !$('reelwrap').classList.contains('on')) { e.preventDefault(); forward(e); return; }
-    if (e.code === 'KeyH') { e.stopImmediatePropagation(); e.preventDefault(); toggleHud(); return; }
-    if (e.key === '?' || e.code === 'Slash') { e.preventDefault(); toggleFact(); return; }
-    if (e.code === 'Escape') { closeReel(); return; }
-    const n = /^Digit([1-9])$/.exec(e.code);
-    if (n && +n[1] <= CLIPS.length) { e.preventDefault(); select(CLIPS[+n[1] - 1].id); }
-  }, true);
-}
-installKeys(document);
+      // Shortcuts have to be installed in both documents: once the judge clicks into the scene,
+      // key events go to the iframe and never reach this page.
+      // The viewer's own authoring keys move, turn and scale the avatar with no undo. A judge who
+      // rests a hand on the keyboard must not be able to reach them.
+      const SWALLOW = new Set([
+        'KeyI',
+        'KeyK',
+        'KeyJ',
+        'KeyL',
+        'KeyU',
+        'KeyO',
+        'BracketLeft',
+        'BracketRight',
+        'Minus',
+        'Equal',
+        'Comma',
+        'Period',
+        'KeyN',
+      ]);
+      // Driving keys pressed while focus is on this page (after clicking a card or a header button) are
+      // handed to the viewer, so W always walks no matter what was clicked last.
+      const FORWARD = new Set([
+        'KeyW',
+        'KeyA',
+        'KeyS',
+        'KeyD',
+        'KeyQ',
+        'KeyE',
+        'ShiftLeft',
+        'ShiftRight',
+        'KeyR',
+        'KeyV',
+        'KeyP',
+        'Space',
+        'Enter',
+        'NumpadEnter',
+      ]);
+      if (WALK)
+        for (const k of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+          DRIVE_KEYS.add(k);
+          FORWARD.add(k);
+        }
+      function forward(e) {
+        try {
+          const win = frame.contentWindow;
+          if (
+            e.isTrusted &&
+            e.type === 'keydown' &&
+            !e.repeat &&
+            ['Enter', 'NumpadEnter', 'Space'].includes(e.code)
+          )
+            void win.wander?.unlockAudio?.();
+          win.dispatchEvent(
+            new win.KeyboardEvent(e.type, {
+              code: e.code,
+              key: e.key,
+              shiftKey: e.shiftKey,
+              repeat: e.repeat,
+              bubbles: true,
+            }),
+          );
+          if (e.type === 'keydown') win.focus();
+        } catch {}
+      }
+      function installKeys(doc) {
+        doc.addEventListener(
+          'keydown',
+          (e) => {
+            if (DRIVE_KEYS.has(e.code)) driving.add(e.code);
+          },
+          true,
+        );
+        doc.addEventListener('keyup', (e) => driving.delete(e.code), true);
+        doc.defaultView.addEventListener('blur', () => driving.clear());
+        if (doc === document)
+          doc.addEventListener(
+            'keyup',
+            (e) => {
+              if (FORWARD.has(e.code)) forward(e);
+            },
+            true,
+          );
+        doc.addEventListener(
+          'keydown',
+          (e) => {
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            if (
+              (e.code === 'Enter' || e.code === 'NumpadEnter') &&
+              (e.target.isContentEditable ||
+                e.target.closest?.('button, input, textarea, select, a'))
+            )
+              return;
+            if (SWALLOW.has(e.code)) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              return;
+            }
+            if (
+              doc === document &&
+              FORWARD.has(e.code) &&
+              ready &&
+              !$('reelwrap').classList.contains('on')
+            ) {
+              e.preventDefault();
+              forward(e);
+              return;
+            }
+            if (e.code === 'KeyH') {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              toggleHud();
+              return;
+            }
+            if (e.key === '?' || e.code === 'Slash') {
+              e.preventDefault();
+              toggleFact();
+              return;
+            }
+            if (e.code === 'Escape') {
+              closeReel();
+              return;
+            }
+            const n = /^Digit([1-9])$/.exec(e.code);
+            if (n && +n[1] <= CLIPS.length) {
+              e.preventDefault();
+              select(CLIPS[+n[1] - 1].id);
+            }
+          },
+          true,
+        );
+      }
+      installKeys(document);
 
-// Trackpads have no comfortable held-key-plus-drag, so two-finger scroll walks the camera along its
-// look direction. Small steps only: the viewer treats a jump over 2 units as a teleport and skips
-// its soft boundary for it. `upm` is the viewer's world units per metre.
-function installWheel(doc) {
-  doc.addEventListener('wheel', e => {
-    const w = api(); if (!w || !ready) return;
-    e.preventDefault();
-    if (w.reel) w.showreel(false);
-    wheelAt = performance.now();
-    // 0.0006 m per scroll pixel: a full trackpad flick (~1500 px) is about 0.9 m, a mouse notch (100 px) 6 cm.
-    // Set from synthetic wheel events only; try it on the booth laptop and halve or double it by feel.
-    const step = Math.max(-0.12, Math.min(0.12, -e.deltaY * 0.0006 * w.upm));
-    w.camera.position.addScaledVector(w.camera.getWorldDirection(new w.THREE.Vector3()), step);
-  }, { passive: false });
-}
+      // Trackpads have no comfortable held-key-plus-drag, so two-finger scroll walks the camera along its
+      // look direction. Small steps only: the viewer treats a jump over 2 units as a teleport and skips
+      // its soft boundary for it. `upm` is the viewer's world units per metre.
+      function installWheel(doc) {
+        doc.addEventListener(
+          'wheel',
+          (e) => {
+            const w = api();
+            if (!w || !ready) return;
+            e.preventDefault();
+            if (w.reel) w.showreel(false);
+            wheelAt = performance.now();
+            // 0.0006 m per scroll pixel: a full trackpad flick (~1500 px) is about 0.9 m, a mouse notch (100 px) 6 cm.
+            // Set from synthetic wheel events only; try it on the booth laptop and halve or double it by feel.
+            const step = Math.max(-0.12, Math.min(0.12, -e.deltaY * 0.0006 * w.upm));
+            w.camera.position.addScaledVector(
+              w.camera.getWorldDirection(new w.THREE.Vector3()),
+              step,
+            );
+          },
+          { passive: false },
+        );
+      }
 
-/* ---------------- recorded reel fallback ---------------- */
-const REEL = '/reel-65s.mp4';
-fetch(REEL, { method: 'HEAD' }).then(r => {
-  if (r.ok && !(r.headers.get('content-type') || '').startsWith('text/html')) $('reelbtn').hidden = false;
-}).catch(() => {});
-$('reelbtn').addEventListener('click', () => {
-  api()?.play(false);
-  $('reelvid').src = REEL; $('reelwrap').classList.add('on'); $('reelvid').play().catch(() => {});
-});
-function closeReel() {
-  if (!$('reelwrap').classList.contains('on')) return;
-  $('reelvid').pause(); $('reelvid').removeAttribute('src'); $('reelvid').load();
-  $('reelwrap').classList.remove('on');
-}
-$('reelclose').addEventListener('click', closeReel);
-$('reelwrap').addEventListener('click', e => { if (e.target === $('reelwrap')) closeReel(); });
+      /* ---------------- recorded reel fallback ---------------- */
+      const REEL = '/reel-65s.mp4';
+      fetch(REEL, { method: 'HEAD' })
+        .then((r) => {
+          if (r.ok && !(r.headers.get('content-type') || '').startsWith('text/html'))
+            $('reelbtn').hidden = false;
+        })
+        .catch(() => {});
+      $('reelbtn').addEventListener('click', () => {
+        api()?.play(false);
+        $('reelvid').src = REEL;
+        $('reelwrap').classList.add('on');
+        $('reelvid')
+          .play()
+          .catch(() => {});
+      });
+      function closeReel() {
+        if (!$('reelwrap').classList.contains('on')) return;
+        $('reelvid').pause();
+        $('reelvid').removeAttribute('src');
+        $('reelvid').load();
+        $('reelwrap').classList.remove('on');
+      }
+      $('reelclose').addEventListener('click', closeReel);
+      $('reelwrap').addEventListener('click', (e) => {
+        if (e.target === $('reelwrap')) closeReel();
+      });
 
-/* ---------------- boot ---------------- */
-const want = new URLSearchParams(location.search).get('clip');
-select(ALL.some(c => c.id === want) ? want : CLIPS[0].id);
-</script>
-</body>
+      /* ---------------- boot ---------------- */
+      const want = new URLSearchParams(location.search).get('clip');
+      select(ALL.some((c) => c.id === want) ? want : CLIPS[0].id);
+    </script>
+  </body>
 </html>
