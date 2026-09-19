@@ -17,6 +17,7 @@ await build({
   build: {
     outDir: '.context/audio-browser',
     emptyOutDir: true,
+    copyPublicDir: false,
     lib: {
       entry: 'src/audio/fourd-audio.ts',
       formats: ['iife'],
