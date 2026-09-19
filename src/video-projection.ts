@@ -1,5 +1,30 @@
 import * as THREE from 'three';
-import type { Experiment, VideoProjection } from './manifest';
+interface ProjectionSource {
+  url: string; sha256: string; width: number; height: number; fps: number; duration: number;
+}
+
+export interface VideoProjection {
+  url: string;
+  sha256: string;
+  // Alignment of the projection cameras relative to the output root, like a composite component.
+  transform?: { position: [number, number, number]; quaternion: [number, number, number, number]; scale: number };
+  // World-unit distance and degrees of turn from the recorded pose at which the video weight is zero.
+  falloff: { distance: number; angle: number };
+  // Fraction of the frame over which the video fades at the frustum edge.
+  feather: number;
+  // 'depth' (default): scene content nearer than the surface draws over the frame (a 3D person in
+  // front of a doorframe). 'video': nothing draws over the frame; for worlds whose only splats
+  // are the environment, where anything in front of the recorded surface is by definition wrong.
+  priority?: 'depth' | 'video';
+  // 'time' (default): the layer shows the frame at the source time. 'pose': while the source is
+  // paused, the layer steers it to the recorded frame whose camera best faces the viewer within
+  // selectRadius (world units, default falloff.distance), so turning at a station follows the gaze.
+  select?: 'time' | 'pose';
+  selectRadius?: number;
+  // Linear-light gain applied to the splat pass in the composite so it matches the footage's
+  // exposure; measured offline as mean(video)/mean(splats) where both are valid. 1 = none.
+  exposure?: number;
+}
 
 /**
  * Opt-in video-projection layer. The recorded frame is projected from its own camera onto a
@@ -42,7 +67,7 @@ async function gunzip(bytes: ArrayBuffer): Promise<Uint8Array> {
 }
 
 /** Fail closed: the container must describe exactly the experiment's source and be complete. */
-export async function parseProjectionContainer(bytes: ArrayBuffer, source: Experiment['source']): Promise<{ header: ProjectionHeader; data: Uint8Array }> {
+export async function parseProjectionContainer(bytes: ArrayBuffer, source: ProjectionSource): Promise<{ header: ProjectionHeader; data: Uint8Array }> {
   const raw = await gunzip(bytes);
   check(raw.byteLength > 8 && String.fromCharCode(...raw.subarray(0, 4)) === 'WVP1', 'not a WVP1 container');
   const headerLength = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(4, true);
@@ -386,7 +411,7 @@ export class VideoProjectionLayer {
   }
 }
 
-export async function loadVideoProjection(bytes: ArrayBuffer, experiment: Experiment, options: VideoProjection): Promise<VideoProjectionLayer> {
+export async function loadVideoProjection(bytes: ArrayBuffer, experiment: { source: ProjectionSource }, options: VideoProjection): Promise<VideoProjectionLayer> {
   const { header, data } = await parseProjectionContainer(bytes, experiment.source);
   return new VideoProjectionLayer(header, data, options);
 }
