@@ -1,5 +1,9 @@
 # Accepted gym delivery
 
+The subsequent [live raw-video evaluation](video-input-evaluation.md) generated a separate gym
+candidate. It was not promoted; this accepted environment, people/props and viewer snapshot remain
+unchanged. Generation success did not establish improved geometry or fewer hallucinations.
+
 Austin's current gym reconstruction was accepted for this delivery. His source record is
 `52b7759d89c216be76d347567122d7c4ea1b6d2c`; the accepted private viewer snapshot is
 `viewer/snapshots/0cbba181-b115-473f-b67d-1e88d1a1889e.json`.
