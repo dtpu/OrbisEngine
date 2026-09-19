@@ -16,6 +16,7 @@ SegFormer downloaded into the HF cache on the first run), so a run never re-down
 from __future__ import annotations
 
 from pathlib import Path
+
 import modal
 
 HERE = Path(__file__).resolve().parent
@@ -87,10 +88,18 @@ def clean(
     trainer sees, and a cast shadow, a carried object or a passer-by is as wrong in it as the
     person is. Off by default: every existing caller keeps the person mask it has always had.
     """
-    import io, json, os, subprocess, tarfile, tempfile, time, traceback
+    import hashlib
+    import io
+    import subprocess
+    import tarfile
+    import tempfile
+    import time
+    import traceback
+
     import cv2
     import numpy as np
     from PIL import Image
+    from wander_worker.source_timing import resample_source, select_provenance
 
     t0 = time.time()
     root = Path(tempfile.mkdtemp(prefix="cleanvid-"))
@@ -103,59 +112,15 @@ def clean(
     out_mp4 = out_png = masks_out = b""
     frames_tar = b""
     try:
-        probe = json.loads(
-            subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=avg_frame_rate,nb_frames,width,height,duration",
-                    "-of",
-                    "json",
-                    str(src),
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-            ).stdout
-        )["streams"][0]
-        num, den = (probe.get("avg_frame_rate") or "0/1").split("/")
-        src_fps = float(num) / float(den or 1) if float(den or 1) else 0.0
-
         t = time.time()
-        raw = subprocess.run(
-            [
-                "ffmpeg",
-                "-loglevel",
-                "error",
-                "-i",
-                str(src),
-                "-vf",
-                f"fps={fps},scale={W}:{H}",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-",
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-        ).stdout
+        raw, provenance = resample_source(src, fps, width=W, height=H)
         imgs = np.frombuffer(raw, np.uint8).reshape(-1, H, W, 3)
         del raw
         timings["decode"] = time.time() - t
         n = len(imgs)
-        # ffmpeg's fps filter keeps the source frame nearest each output timestamp
-        indices = (
-            [
-                min(int(round(i * src_fps / fps)), int(probe.get("nb_frames") or 10**9) - 1)
-                for i in range(n)
-            ]
-            if src_fps
-            else list(range(n))
-        )
+        indices = [frame["sourceIndex"] for frame in provenance["frames"]]
+        num, den = provenance["sourceAverageFrameRate"].split("/")
+        src_fps = float(num) / float(den) if float(den) else 0.0
         print(
             f"{n} frames decoded from {src_fps:.3f} fps source ({timings['decode']:.0f}s)",
             flush=True,
@@ -165,6 +130,7 @@ def clean(
         from wander_worker.masks import moved_content_masks, people_masks
 
         sel = list(range(n)) if not only else [int(x) for x in only.split(",")]
+        kept_provenance = select_provenance(provenance, sel)
         # a partial run (the orchestrator's single first frame, or a quality gate) only needs its own masks
         need = np.array(sel) if only else np.arange(n)
         masks = np.zeros((n, H, W), bool)
@@ -232,6 +198,9 @@ def clean(
                     )
                     im = (im * (1 - alpha) + fill * alpha).astype(np.uint8)
             Image.fromarray(im).save(work / f"f_{i:04d}.png")
+            kept_provenance[len(kept)]["cleanedImageSha256"] = hashlib.sha256(
+                (work / f"f_{i:04d}.png").read_bytes()
+            ).hexdigest()
             kept.append(i)
             if len(kept) % 20 == 0:
                 print(f"  {len(kept)}/{len(sel)} ({time.time() - t:.0f}s)", flush=True)
@@ -244,6 +213,9 @@ def clean(
             masks=np.packbits(masks, axis=-1),
             shape=np.array([n, H, W]),
             indices=np.array(indices),
+            source_pts=np.array([frame["sourcePts"] for frame in provenance["frames"]]),
+            source_time_base=np.array(provenance["sourceTimeBase"]),
+            source_sha256=np.array(provenance["sourceSha256"]),
         )
         masks_out = buf.getvalue()
 
@@ -286,6 +258,11 @@ def clean(
             inpainted=len(kept),
             indices=indices,
             sourceFps=src_fps,
+            sourceSha256=provenance["sourceSha256"],
+            sourceProvenance=provenance,
+            keptIndices=kept,
+            keptFrameProvenance=kept_provenance,
+            outputVideoSha256=hashlib.sha256(out_mp4).hexdigest() if out_mp4 else None,
             moved=moved,
             movedStats=moved_stats,
             fps=fps,
@@ -321,6 +298,7 @@ def clean(
 def stage_weights() -> dict:
     """Pull SegFormer into the volume's HF cache and check big-lama.pt is staged."""
     import os
+
     from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
     from wander_worker.masks import MODEL_ID
 
@@ -355,7 +333,9 @@ def main(
     moved_mask: bool = False,
     max_added_frac: float = 0.05,
 ):
-    import io, json, tarfile
+    import io
+    import json
+    import tarfile
 
     r = clean.remote(
         Path(clip).read_bytes(),
@@ -393,7 +373,14 @@ def main(
         Path(report).parent.mkdir(parents=True, exist_ok=True)
         Path(report).write_text(json.dumps(rep, indent=2))
     print(
-        json.dumps({k: v for k, v in rep.items() if k not in ("indices", "movedStats")}, indent=2)
+        json.dumps(
+            {
+                k: v
+                for k, v in rep.items()
+                if k not in ("indices", "movedStats", "sourceProvenance", "keptFrameProvenance")
+            },
+            indent=2,
+        )
     )
     if rep["error"]:
         raise SystemExit("GPU clean pass failed")
