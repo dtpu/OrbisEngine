@@ -1,13 +1,14 @@
 """Offline contracts for Marble requests and recovery. Never uses credentials or the network."""
 
 import contextlib
-import io
 import hashlib
+import io
 import json
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+import urllib.error
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import marble_world as client
@@ -46,11 +47,11 @@ class MarbleContracts(unittest.TestCase):
         patch.object(client.time, "sleep").start()
         self.download = patch.object(client, "download", side_effect=self.save).start()
 
-    def save(self, url, destination):
+    def save(self, url, destination, require_gzip=False):
         p = Path(destination)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(b"asset")
-        return 5
+        p.write_bytes(b"\x1f\x8basset")
+        return 7, hashlib.sha256(p.read_bytes()).hexdigest()
 
     def call(self, method, path, body=None, **kwargs):
         self.requests.append((method, path, body, kwargs))
@@ -284,7 +285,9 @@ class MarbleContracts(unittest.TestCase):
                     self.assertTrue(all(r[0] == "GET" for r in self.requests))
                     self.assertEqual(self.download.call_count, 2)
                     self.assertTrue((self.directory / "fixture-world.json").exists())
-                    self.assertEqual((self.directory / "fixture.spz").read_bytes(), b"asset")
+                    self.assertEqual(
+                        (self.directory / "fixture.spz").read_bytes(), b"\x1f\x8basset"
+                    )
                     if mode == "poll":
                         self.assertTrue((self.directory / "fixture-op.json").exists())
                     self.download.reset_mock()
@@ -326,6 +329,32 @@ class MarbleContracts(unittest.TestCase):
             )
             self.assertEqual(call.call_count, 1)
         self.assertTrue((self.directory / "fixture-op.json").exists())
+
+    def test_wrapped_world_is_saved_as_world_and_malformed_response_keeps_metadata(self):
+        self.world = {"world": self.world}
+        self.invoke("video", "fetch", "existing-id")
+        saved = json.loads((self.directory / "fixture-world.json").read_text())
+        self.assertEqual(
+            saved["assets"]["splats"]["spz_urls"]["full_res"], "https://example.invalid/full.spz"
+        )
+        before = (self.directory / "fixture-world.json").read_bytes()
+        self.world = {"world": {"assets": {"splats": {}}}}
+        with self.assertRaises(SystemExit):
+            self.invoke("video", "fetch", "existing-id")
+        self.assertEqual((self.directory / "fixture-world.json").read_bytes(), before)
+
+    def test_existing_spz_is_retained_but_not_silently_reported_as_downloaded(self):
+        self.directory.mkdir()
+        spz = self.directory / "partial.spz"
+        spz.write_bytes(b"truncated")
+        with self.assertRaises(SystemExit):
+            self.invoke("video", "fetch", "existing-id", "--spz", spz)
+        self.download.assert_not_called()
+        self.assertIn(
+            "retained; not verified or replaced",
+            (self.directory / "fixture-ops.txt").read_text(),
+        )
+        self.assertEqual(spz.read_bytes(), b"truncated")
 
     def test_uncertain_submission_survives_restart_and_never_resubmits(self):
         def lose_response(method, path, body=None, **kwargs):
@@ -523,6 +552,72 @@ class MarbleTransport(unittest.TestCase):
                 )
                 self.assertNotIn("wlt-api-key", headers)
                 self.assertEqual(headers["content-type"], "image/png")
+
+    def test_http_and_url_errors_never_expose_query_credentials_or_provider_body(self):
+        secret = "signed-secret-should-never-appear"
+        http = urllib.error.HTTPError(
+            f"https://storage.example.invalid/path/file?X-Goog-Signature={secret}",
+            403,
+            "forbidden",
+            {},
+            io.BytesIO(f"provider body {secret}".encode()),
+        )
+        with (
+            patch.object(client.urllib.request, "urlopen", side_effect=http),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            client.call("GET", "https://storage.example.invalid/path/file?token=" + secret)
+        text = str(raised.exception)
+        self.assertIn("HTTP 403", text)
+        self.assertIn("storage.example.invalid/path/file", text)
+        self.assertNotIn(secret, text)
+        with (
+            patch.object(
+                client.urllib.request,
+                "urlopen",
+                side_effect=urllib.error.URLError("credential=" + secret),
+            ),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            client.call("GET", "https://storage.example.invalid/path/file?token=" + secret)
+        self.assertIn("network error", str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
+
+    def test_download_is_atomic_and_enforces_length_and_spz_header(self):
+        destination = Path(tempfile.mkdtemp()) / "world.spz"
+        bad = io.BytesIO(b"not-gzip")
+        bad.headers = {"Content-Length": "8"}
+        with (
+            patch.object(client.urllib.request, "urlopen", return_value=bad),
+            self.assertRaisesRegex(ValueError, "gzip header"),
+        ):
+            client.download("https://storage.example.invalid/object?secret=no", destination, True)
+        self.assertFalse(destination.exists())
+        short = io.BytesIO(b"\x1f\x8bshort")
+        short.headers = {"Content-Length": "999"}
+        with (
+            patch.object(client.urllib.request, "urlopen", return_value=short),
+            self.assertRaisesRegex(ValueError, "length mismatch"),
+        ):
+            client.download("https://storage.example.invalid/object", destination, True)
+        self.assertFalse(destination.exists())
+
+    def test_download_urlerror_is_secret_safe(self):
+        secret = "download-signed-secret"
+        destination = Path(tempfile.mkdtemp()) / "world.spz"
+        with (
+            patch.object(
+                client.urllib.request,
+                "urlopen",
+                side_effect=urllib.error.URLError("signature=" + secret),
+            ),
+            self.assertRaisesRegex(ValueError, "network error") as raised,
+        ):
+            client.download(
+                "https://storage.example.invalid/object?signature=" + secret, destination
+            )
+        self.assertNotIn(secret, str(raised.exception))
+        self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":
