@@ -19,18 +19,29 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
-import shutil
 import sys
 import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 BASE = "https://api.worldlabs.ai"
 UPLOAD_LIMIT = 104857600
+DOWNLOAD_TIMEOUT = 600
+
+
+def safe_endpoint(url):
+    """Return the non-secret portion of an HTTP destination for diagnostics."""
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname or "unknown-host"
+    # Do not turn an unexpected URL (which may contain encoded credentials) into a log entry.
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host):
+        host = "unknown-host"
+    path = parsed.path if re.fullmatch(r"/[A-Za-z0-9._~/-]{0,512}", parsed.path) else "/"
+    return f"{host}{path}"
 
 
 def write_json(path, value):
@@ -181,7 +192,11 @@ def call(method, path, body=None, raw=None, headers=None, timeout=120):
                 else data
             )
     except urllib.error.HTTPError as error:
-        sys.exit(f"{method} {path} -> {error.code}: {error.read().decode(errors='replace')[:2000]}")
+        # Provider responses and presigned URLs can contain credentials.  Keep failure receipts
+        # useful without copying either into stdout, logs, or an outer pipeline log.
+        sys.exit(f"{method} {safe_endpoint(url)} -> HTTP {error.code}")
+    except urllib.error.URLError:
+        sys.exit(f"{method} {safe_endpoint(url)} -> network error")
 
 
 def log(a, line):
@@ -196,20 +211,118 @@ def log(a, line):
     print(line, flush=True)
 
 
-def download(url, dest):
+def download(url, dest, require_gzip=False):
+    """Atomically download an asset, rejecting a short response before it becomes visible."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url, timeout=600) as response, dest.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-    return dest.stat().st_size
+    fd, temporary = tempfile.mkstemp(prefix=f".{dest.name}-", suffix=".part", dir=dest.parent)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with (
+            os.fdopen(fd, "wb") as handle,
+            urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as response,
+        ):
+            length = response.headers.get("Content-Length")
+            expected = int(length) if length is not None else None
+            if expected is not None and expected < 0:
+                raise ValueError("download supplied an invalid Content-Length")
+            while chunk := response.read(1024 * 1024):
+                handle.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if expected is not None and size != expected:
+            raise ValueError(f"download length mismatch (expected {expected}, received {size})")
+        if not size:
+            raise ValueError("download was empty")
+        if require_gzip:
+            with open(temporary, "rb") as handle:
+                if handle.read(2) != b"\x1f\x8b":
+                    raise ValueError("SPZ download does not have a gzip header")
+        os.replace(temporary, dest)
+        sync_directory(dest.parent)
+        return size, digest.hexdigest()
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"download {safe_endpoint(url)} -> HTTP {error.code}") from None
+    except urllib.error.URLError:
+        raise ValueError(f"download {safe_endpoint(url)} -> network error") from None
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def checked_world(response):
+    """Accept current wrapped and legacy flat responses before replacing local metadata."""
+    world = (
+        response.get("world") if isinstance(response, dict) and "world" in response else response
+    )
+    if not isinstance(world, dict):
+        raise ValueError("world response is not an object")  # noqa: TRY004 - CLI validation error
+    assets = world.get("assets")
+    splats = assets.get("splats") if isinstance(assets, dict) else None
+    urls = splats.get("spz_urls") if isinstance(splats, dict) else None
+    full_res = urls.get("full_res") if isinstance(urls, dict) else None
+    if not isinstance(full_res, str) or not full_res:
+        raise ValueError("world response has no full-resolution SPZ URL")
+    thumbnail = assets.get("thumbnail_url")
+    if thumbnail is not None and not isinstance(thumbnail, str):
+        raise ValueError("world response has an invalid thumbnail URL")
+    return world
+
+
+def write_spz_receipt(directory, name, path, size, sha256):
+    write_json(
+        Path(directory) / f"{name}-spz-receipt.json",
+        {
+            "schema": "wander.marble-spz/1",
+            "path": str(Path(path).resolve()),
+            "bytes": size,
+            "sha256": sha256,
+        },
+    )
+
+
+def matching_spz_receipt(directory, name, path):
+    """A receipt verifies only the exact bytes downloaded by this client, never legacy files."""
+    path = Path(path)
+    receipt_path = Path(directory) / f"{name}-spz-receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text())
+        if (
+            receipt.get("path") != str(path.resolve())
+            or receipt.get("bytes") != path.stat().st_size
+        ):
+            return False
+        with path.open("rb") as handle:
+            return receipt.get("sha256") == hashlib.file_digest(handle, "sha256").hexdigest()
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def atomic_copy(source, dest):
+    """Make the convenience copy without exposing a partial file to recovery."""
+    source, dest = Path(source), Path(dest)
+    fd, temporary = tempfile.mkstemp(prefix=f".{dest.name}-", suffix=".part", dir=dest.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle, source.open("rb") as input_handle:
+            while chunk := input_handle.read(1024 * 1024):
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, dest)
+        sync_directory(dest.parent)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def fetch(a, world_id, prefix=""):
     """Read existing metadata/assets only. Existing asset files are retained on recovery."""
     directory = Path(a.marble_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    _, world = call("GET", f"/marble/v1/worlds/{world_id}")
-    (directory / f"{a.name}-world.json").write_text(json.dumps(world, indent=1))
+    _, response = call("GET", f"/marble/v1/worlds/{world_id}")
+    world = checked_world(response)
+    write_json(directory / f"{a.name}-world.json", world)
     assets = world["assets"]
     semantics = assets["splats"].get("semantics_metadata") or {}
     world_url = f" {world.get('world_marble_url')}" if a.input_type == "video" else ""
@@ -218,16 +331,29 @@ def fetch(a, world_id, prefix=""):
         f"{prefix}world {world_id}{world_url} metric_scale_factor {semantics.get('metric_scale_factor')} ground_plane_offset {semantics.get('ground_plane_offset')}",
     )
     if a.spz and not Path(a.spz).exists():
-        size = download(assets["splats"]["spz_urls"]["full_res"], a.spz)
+        size, sha256 = download(assets["splats"]["spz_urls"]["full_res"], a.spz, require_gzip=True)
+        write_spz_receipt(directory, a.name, a.spz, size, sha256)
         log(a, f"spz full_res {size} bytes -> {a.spz}")
         copy = directory / f"{a.name}.spz"
-        if Path(a.spz).resolve() != copy.resolve():
-            shutil.copy(a.spz, copy)
-        log(a, f"copy -> {copy}")
+        if Path(a.spz).resolve() != copy.resolve() and not copy.exists():
+            atomic_copy(a.spz, copy)
+            log(a, f"copy -> {copy}")
+        elif Path(a.spz).resolve() != copy.resolve():
+            log(a, f"existing SPZ retained without replacement -> {copy}")
     elif a.spz:
-        log(a, f"spz already on disk -> {a.spz}")
+        state = (
+            "verified by its download receipt"
+            if matching_spz_receipt(directory, a.name, a.spz)
+            else "not verified or replaced"
+        )
+        log(a, f"existing SPZ retained; {state} -> {a.spz}")
+        if state == "not verified or replaced":
+            raise ValueError(
+                "Existing SPZ lacks a matching integrity receipt; preserve and inspect it, "
+                "or fetch the same world to a fresh destination. No generation is needed."
+            )
     if a.thumb and assets.get("thumbnail_url") and not Path(a.thumb).exists():
-        size = download(assets["thumbnail_url"], a.thumb)
+        size, _ = download(assets["thumbnail_url"], a.thumb)
         log(a, f"thumbnail {size} bytes -> {a.thumb}")
 
 
