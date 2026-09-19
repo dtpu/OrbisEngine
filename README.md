@@ -109,6 +109,8 @@ Unattended runs pass `--no-gate` to skip this stop.
 `--marble none` avoids Marble generation but can still run paid GPU/API stages. `--no-publish`
 keeps results local. Repeating a command resumes its saved stages; `--only` and `--force` select
 stages explicitly. Run `uv run --locked --group inference scripts/run_clip.py --help` for all options.
+Paid Modal stages retain their outputs and share a local execution ledger. See
+[paid stage accounting and recovery](docs/paid-recovery.md) before retrying an interrupted run.
 
 Optional fine-tuning requires an explicitly configured GPU host (`--gpu-box` or `WANDER_GPU_BOX`)
 and an optional SSH identity (`--gpu-key` or `WANDER_GPU_KEY`); the remote host must already have

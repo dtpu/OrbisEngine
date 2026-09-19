@@ -21,14 +21,17 @@ trimmed (--shot N picks another, --all-shots runs them all). See scripts/shot_cu
 Stages write into .context/run/<name>/ and record themselves in state.json, so a crashed or
 killed run picks up where it stopped: re-run the same command. --force <stage>[,<stage>] redoes
 one, --only <stage>[,...] runs a subset (with its finished dependencies read from state).
+Existing paid outputs are retained, including under --force. LHM receipts allow read-only recovery;
+failed or uncertain Modal invocations are never automatically resubmitted.
 """
 
 from __future__ import annotations
 
-import argparse, json, math, os, re, shutil, subprocess, sys, threading, time
+import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, threading, time
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
+from stage_attempts import StageAttempts, command_identity
 
 ROOT = Path(__file__).resolve().parent.parent
 # A clean clone uses its own toolchain and ignored output directories.
@@ -68,7 +71,8 @@ def world_half(marble: str):
         deps["clean_first"] = []
     if marble in ("video", "both", "none"):
         stages.append("clean")
-        deps["clean"] = []
+        # Both inpainting operations share one paid allowance, so claim them in sequence.
+        deps["clean"] = ["clean_first"] if marble == "both" else []
     if marble == "multi":
         stages.append("clean_multi")
         deps["clean_multi"] = []
@@ -184,11 +188,16 @@ class GateStop(Exception):
 
 
 class QualityStop(Exception):
-    """Automated acceptance failed or lacks evidence; the human gate flag cannot bypass it."""
+    """Paid-stage accounting or recovery lacks sufficient evidence to continue."""
 
     def __init__(self, status, reason):
         super().__init__(reason)
         self.status = status
+
+
+def file_sha256(path):
+    with Path(path).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 _print_lock = threading.Lock()
@@ -234,8 +243,8 @@ def run(cmd, log: Path, env_extra=None, cwd=ROOT, attempts=4, append=False):
     again buys a second 1600-credit world. Network retries belong around `poll` (see
     Pipeline.marble_poll), which takes an operation id and cannot create one.
 
-    This is a per-invocation guard, not a shared per-original-source paid-stage cap:
-    fresh candidate directories still require an external/shared attempt ledger.
+    Pipeline.paid_run also guards these commands with a shared source/stage allowance.
+    Direct experiments outside Pipeline are not covered by that ledger.
     """
     if attempts > 1 and "submit" in cmd:
         raise RuntimeError(f"refusing to retry a Marble submit: {' '.join(cmd[:3])}")
@@ -361,6 +370,109 @@ class Pipeline:
             started=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
+    def paid_run(self, operation, cmd, log):
+        """Persist a source-keyed claim before any direct paid Modal subprocess."""
+        ledger = StageAttempts(
+            getattr(self.a, "stage_ledger", None) or ROOT / ".context/pipeline-attempts.json"
+        )
+        shot = getattr(self, "shot", None)
+        selection = None
+        if shot:
+            mapping = shot.get("sourceMapping", {})
+            selection = {
+                "start": mapping.get("sourceStartSeconds", shot.get("start")),
+                "end": mapping.get("sourceEndSeconds", shot.get("end")),
+            }
+        try:
+            source = getattr(self.a, "source_sha256", None) or file_sha256(
+                getattr(self.a, "clip", self.clip)
+            )
+            parameters, code, outputs = command_identity(cmd, ROOT, selection)
+            existing = [str(path) for path in outputs if path.exists() or path.is_symlink()]
+            if existing:
+                raise ValueError(
+                    "Paid result paths are retained; use a fresh candidate for a justified retry: "
+                    + ", ".join(existing)
+                )
+            attempt = ledger.begin(
+                source,
+                operation,
+                parameters=parameters,
+                code_version=code,
+                hypothesis=getattr(self.a, "stage_hypothesis", None),
+                candidate=getattr(self, "name", self.ctx.name),
+                log=log,
+                results=outputs,
+            )
+        except (OSError, ValueError, KeyError) as error:
+            raise QualityStop("blocked", f"Paid {operation} was not submitted: {error}") from error
+        self.state.record(
+            "_paid_" + operation,
+            status="pending",
+            attempt=attempt["id"],
+            number=attempt["claim"]["number"],
+            ledger=str(ledger.path),
+            log=str(log),
+            results=[str(path) for path in outputs],
+        )
+
+        def evidence():
+            paths, costs, failed = [log], {}, False
+            for output in outputs:
+                candidates = (
+                    [output]
+                    if output.suffix == ".json"
+                    else [
+                        output / "modal-run.json",
+                        output / "meta.json",
+                        output / "recovery-receipt.json",
+                    ]
+                )
+                for path in candidates:
+                    if (
+                        not path.is_file()
+                        or path.stat().st_mtime < attempt["claim"]["startedAtEpoch"]
+                    ):
+                        continue
+                    paths.append(path)
+                    try:
+                        report = json.loads(path.read_text())
+                        if not isinstance(report, dict):
+                            continue
+                        failed = failed or bool(report.get("error"))
+                        value = report.get("estimatedComputeUSD")
+                        if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                            costs["estimatedComputeUSD"] = value
+                        seconds = report.get("seconds")
+                        if (
+                            type(seconds) in (int, float)
+                            and math.isfinite(seconds)
+                            and seconds >= 0
+                        ):
+                            costs["reportedWorkerSeconds"] = seconds
+                    except (OSError, ValueError):
+                        continue
+            return paths, costs, failed
+
+        try:
+            run(cmd, log, attempts=1, append=True)
+        except BaseException as error:
+            paths, costs, reported_failure = evidence()
+            status = "failed" if reported_failure else "unknown"
+            ledger.finish(
+                attempt["id"], status=status, evidence=paths, costs=costs, reason=str(error)
+            )
+            self.state.record("_paid_" + operation, status=status)
+            raise
+        paths, costs, reported_failure = evidence()
+        status = "failed" if reported_failure else "completed"
+        ledger.finish(attempt["id"], status=status, evidence=paths, costs=costs)
+        self.state.record("_paid_" + operation, status=status)
+        if reported_failure:
+            raise QualityStop(
+                "failed", f"Paid {operation} reported failure; retained evidence at {log}"
+            )
+
     def stage_fn(self, stage):
         """`lhm_motion_01` -> self.lhm_motion(1); everything else is a plain method."""
         base, _, tail = stage.rpartition("_")
@@ -400,8 +512,8 @@ class Pipeline:
     # ---- stages -------------------------------------------------------------
     def clean_first(self):
         """One inpainted frame, so Marble's image world can start before the full pass finishes."""
-        shutil.rmtree(self.first_png.parent, ignore_errors=True)
-        run(
+        self.paid_run(
+            "clean_first",
             [
                 MODAL,
                 "run",
@@ -420,7 +532,8 @@ class Pipeline:
         )
 
     def clean(self):
-        run(
+        self.paid_run(
+            "clean",
             [
                 MODAL,
                 "run",
@@ -785,8 +898,8 @@ class Pipeline:
             step = self.info["fps"] / self.a.fps
             only = ",".join(str(int(round(f / step))) for f in rec["frames"])
         out = self.ctx / "clean-multi"
-        shutil.rmtree(out, ignore_errors=True)
-        run(
+        self.paid_run(
+            "clean_multi",
             [
                 MODAL,
                 "run",
@@ -867,8 +980,8 @@ class Pipeline:
             say(f"   {rep['correction']['why']}")
 
     def pi3x(self):
-        shutil.rmtree(self.ctx / "pi3x", ignore_errors=True)
-        run(
+        self.paid_run(
+            "pi3x",
             [
                 MODAL,
                 "run",
@@ -928,8 +1041,8 @@ class Pipeline:
 
     def tracks(self):
         """Every person in the clip, linked into identity-stable tracks (one MultiHMR pass)."""
-        shutil.rmtree(self.ctx / "tracks", ignore_errors=True)
-        run(
+        self.paid_run(
+            "tracks",
             [
                 MODAL,
                 "run",
@@ -1131,7 +1244,8 @@ class Pipeline:
         log = self.ctx / (f"lhm_frozen_{idx:02d}.log" if idx is not None else "lhm_frozen.log")
         if self.recover_lhm(dest, "frozen", log):
             return
-        run(
+        self.paid_run(
+            "lhm_frozen" if idx is None else f"lhm_frozen_{idx:02d}",
             [MODAL, "run", "worker/modal_lhm.py", "--prepared", str(prepared), "--out", str(dest)],
             log,
         )
@@ -1148,7 +1262,8 @@ class Pipeline:
                     f"LHM motion requires supported person depth at {reference}; "
                     "camera-only success does not establish person registration",
                 )
-            run(
+            self.paid_run(
+                "lhm_motion",
                 [
                     MODAL,
                     "run",
@@ -1185,7 +1300,8 @@ class Pipeline:
             raise QualityStop(
                 "blocked", f"LHM track {idx} lacks its required person depth at {reference}"
             )
-        run(
+        self.paid_run(
+            f"lhm_motion_{idx:02d}",
             [
                 MODAL,
                 "run",
@@ -1529,7 +1645,8 @@ class Pipeline:
         if not model.exists() and not self.a.no_shape and os.path.exists(MODAL):
             shape = odir / "shape"
             try:
-                run(
+                self.paid_run(
+                    "objects_shape",
                     [
                         MODAL,
                         "run",
@@ -1565,6 +1682,8 @@ class Pipeline:
                     ],
                     odir / "appearance.log",
                 )
+            except QualityStop:
+                raise
             except Exception as e:  # a proxy is the documented floor, not a failure
                 shape_note = f"shape generation failed: {e}"
                 say("   " + shape_note + "; packaging a proxy")
@@ -2487,6 +2606,19 @@ def main():
     ap.add_argument("--clip", required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--fps", type=float, default=12)
+    ap.add_argument(
+        "--source-sha256",
+        help="Canonical original source SHA-256 shared by reviewed aliases and trims",
+    )
+    ap.add_argument(
+        "--stage-ledger",
+        default=str(ROOT / ".context/pipeline-attempts.json"),
+        help="Paid Modal ledger on this filesystem; keep the same path across aliases and candidates",
+    )
+    ap.add_argument(
+        "--stage-hypothesis",
+        help="New rationale for a paid retry; relevant parameters or code must also change",
+    )
     ap.add_argument(
         "--marble-key",
         default="WLT_API_KEY",
