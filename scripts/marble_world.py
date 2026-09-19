@@ -10,7 +10,7 @@
 
 Only submit uploads inputs and generates a world. Poll/fetch recover existing results without
 spending generation credits. The input type preserves each mode's payload and ops-log format;
-video intentionally does not send image-only display_name/seed/prompt fields.
+Video accepts an optional source description and does not send image-only recaptioning fields.
 All submissions pin their model and request private world permissions.
 """
 
@@ -166,7 +166,12 @@ def call(method, path, body=None, raw=None, headers=None, timeout=120):
     if not is_api:
         # Presigned media uploads authenticate through their URL, not the API key.
         h = {k: v for k, v in h.items() if k.lower() != "wlt-api-key"}
+    # urllib omits unredirected headers when following redirects, including other origins.
+    credential = next((v for k, v in h.items() if k.lower() == "wlt-api-key"), None)
+    h = {k: v for k, v in h.items() if k.lower() != "wlt-api-key"}
     request = urllib.request.Request(url, data=raw, method=method, headers=h)
+    if credential is not None:
+        request.add_unredirected_header("WLT-Api-Key", credential)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read()
@@ -261,14 +266,14 @@ def inputs(a):
             if angle is not None and not math.isfinite(angle):
                 raise ValueError("azimuth must be finite")
             items.append((Path(path), angle))
-        if a.prompt_file:
-            prompt = json.loads(Path(a.prompt_file).read_text())["text_prompt"]
-            if not isinstance(prompt, str):
-                raise ValueError("prompt-file text_prompt must be a string")
     else:
         if not a.target:
             raise ValueError(f"{a.input_type} submit needs an input file")
         items = [(Path(a.target), None)]
+    if getattr(a, "prompt_file", None):
+        prompt = json.loads(Path(a.prompt_file).read_text())["text_prompt"]
+    if prompt is not None and not isinstance(prompt, str):
+        raise ValueError("text_prompt must be a string")
     for path, _ in items:
         if not path.is_file() or not path.stat().st_size:
             raise ValueError(f"input is missing or empty: {path}")
@@ -282,7 +287,10 @@ def inputs(a):
     return items, prompt
 
 
-def upload(a, path):
+def upload(a, path, identity):
+    data = path.read_bytes()
+    if len(data) != identity["bytes"] or hashlib.sha256(data).hexdigest() != identity["sha256"]:
+        raise ValueError("Input changed after its submission receipt; inspect before retrying")
     kind = "video" if a.input_type == "video" else "image"
     extension = (
         path.suffix.lstrip(".").lower()
@@ -294,13 +302,22 @@ def upload(a, path):
         "/marble/v1/media-assets:prepare_upload",
         {"file_name": path.name, "kind": kind, "extension": extension},
     )
-    asset_id = prepared["media_asset"]["media_asset_id"]
+    asset = prepared["media_asset"]
+    asset_id = asset.get("id") or asset.get("media_asset_id")
+    if not isinstance(asset_id, str) or not asset_id:
+        raise ValueError("Upload preparation returned no media asset ID")
+    upload_info = prepared["upload_info"]
     content_type = f"{kind}/{'jpeg' if extension in ('jpg', 'jpeg') else extension}"
+    required = upload_info.get("required_headers")
+    headers = {
+        "Content-Type": content_type,
+        **(required if required is not None else {"x-goog-content-length-range": "0,104857600"}),
+    }
     status, _ = call(
-        "PUT",
-        prepared["upload_info"]["upload_url"],
-        raw=path.read_bytes(),
-        headers={"x-goog-content-length-range": "0,104857600", "Content-Type": content_type},
+        upload_info.get("upload_method", "PUT"),
+        upload_info["upload_url"],
+        raw=data,
+        headers=headers,
         timeout=600,
     )
     if a.input_type == "multi":
@@ -325,9 +342,22 @@ def submit(a):
         )
     items, prompt = inputs(a)
     receipt_path, receipt = claim_submission(a)
-    entries = []
+    receipt["inputs"] = []
     for path, angle in items:
-        asset_id = upload(a, path)
+        with path.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        receipt["inputs"].append(
+            {
+                "path": str(path.resolve()),
+                "bytes": path.stat().st_size,
+                "sha256": digest,
+                "azimuth": angle,
+            }
+        )
+    write_json(receipt_path, receipt)
+    entries = []
+    for (path, angle), identity in zip(items, receipt["inputs"]):
+        asset_id = upload(a, path, identity)
         entry = {"content": {"source": "media_asset", "media_asset_id": asset_id}}
         if angle is not None:
             entry["azimuth"] = angle
@@ -337,6 +367,8 @@ def submit(a):
             "model": a.model,
             "world_prompt": {"type": "video", "video_prompt": entries[0]["content"]},
         }
+        if prompt is not None:
+            body["world_prompt"]["text_prompt"] = prompt
     else:
         world_prompt = (
             {
@@ -359,8 +391,7 @@ def submit(a):
         if a.seed is not None:
             body["seed"] = a.seed
     body["permission"] = {"public": False}
-    if a.input_type == "multi":
-        (Path(a.marble_dir) / f"{a.name}-request.json").write_text(json.dumps(body, indent=1))
+    write_json(Path(a.marble_dir) / f"{a.name}-request.json", body)
     receipt.update(
         status="submitting",
         request_sha256=hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest(),
@@ -407,14 +438,14 @@ def parser():
         ap.add_argument("--thumb")
         ap.add_argument("--interval", type=int, default=60)
         ap.add_argument("--model", default="marble-1.1")
+        ap.add_argument("--prompt", default="" if input_type == "image" else None)
+        ap.add_argument("--prompt-file", help="JSON from scripts/world_prompt.py")
         if input_type != "video":
             ap.add_argument("--ops", help="ops log stem (default name)")
-            ap.add_argument("--prompt", default="" if input_type == "image" else None)
             ap.add_argument("--seed", type=int)
             ap.add_argument("--note", default="")
         if input_type == "multi":
             ap.add_argument("--images", nargs="+", default=[], help="path[:azimuth_deg] per view")
-            ap.add_argument("--prompt-file", help="JSON from scripts/world_prompt.py")
     return root
 
 
