@@ -4,6 +4,10 @@ Read the root `AGENTS.md`, [TONIGHT.md](TONIGHT.md), and [RULES.md](RULES.md) fi
 ceilings come from `TONIGHT.md`; this document explains how to execute them. Do not launch
 inference merely to test access. Fill the task placeholder before handing off an unattended run.
 
+The [integration review](REVIEW.md) records version-specific verified improvements and known
+regressions from the parallel branches. Treat it as evidence for selecting changes, not proof
+that an experimental harness or automatic key selector is already present in `main`.
+
 ## Seven-hour clock
 
 Start the seven-hour clock when unattended execution actually begins, not when the plan or prompt
@@ -108,6 +112,12 @@ those supplied accounts. Do not stop an entire run because the first key has no 
 another authorized account has capacity. Keys for the same account share its limits; changing a
 key may not resolve throttling. Keep secret values only in ignored private environment/config
 files. Logs and commands shown in reports use aliases, never key values or fragments.
+
+Main currently reads one active `WLT_API_KEY` and `OPENAI_API_KEY`; it does not automatically
+discover or rotate a key pool. Select the supplied alias in the orchestrator and export its value
+into the standard variable for that process without logging it. Do not assume a teammate branch's
+`--marble-key` option exists in the checked-out runner; verify its CLI first. Preserve the mapping
+from every job to its original alias before changing the active environment.
 
 Before launching, inventory the authorized pool with provider, key alias, account/workspace alias,
 verified balance/quota, any account-specific cap, and model/cache access. Record unavailable checks

@@ -39,6 +39,9 @@ To start a run, the human fills in [TONIGHT.md](TONIGHT.md) and launches the age
 
 - Git: work on the branch named in `TONIGHT.md`, created from `main` if it does not exist. Never commit or push to `main`.
 - Commit each verified change on its own with a message that says what changed and why; commit the log with it. Push the branch after each commit.
+- Preserve original author identities and existing co-author credits when porting teammates'
+  commits. Prefer original commits; adapted/combined work must retain contributor credit and
+  source-commit references. Codex credit is additional, not a replacement for human authorship.
 - Run `scripts/run_clip.py` with `--no-gate`; the human cleaned-frame stop is not in use. This
   does not waive visual review or any automated quality gates implemented during the run.
 - Apply the rubric, critical-failure vetoes, and retry ceilings in `TONIGHT.md`. Never loosen a
