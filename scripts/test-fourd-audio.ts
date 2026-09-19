@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
@@ -9,6 +9,19 @@ import {
   type AudioManifest,
   type Track,
 } from '../src/audio/fourd-audio.ts';
+// Restore browser mocks even when an assertion fails, so other suites use the real fetch.
+const browserGlobals = ['document', 'location', 'AudioContext', 'fetch'] as const;
+const originalGlobals = new Map(
+  browserGlobals.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+);
+afterEach(() => {
+  for (const name of browserGlobals) {
+    const descriptor = originalGlobals.get(name);
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+    else Reflect.deleteProperty(globalThis, name);
+  }
+});
+
 const manifest = (): AudioManifest & { tracks: Track[] } => ({
   schema: 'wander.audio/1',
   source: { hasAudio: false },
