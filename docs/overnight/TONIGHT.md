@@ -1,16 +1,35 @@
 # Tonight
 
 The human rewrites this file before each overnight run.
-The agent works through the backlog in order, then completes the final pipeline rerun below,
+The agent uses the priorities and time boxes below, then completes the final validation and report
 under [RULES.md](RULES.md). The unattended agent does not edit this file unless the human asks.
 Progress goes in [LOG.md](LOG.md).
 
-Branch: `overnight-main-1`
+Branch: `daniel/overnight`
 
-Objective: improve the general pipeline for supplied inputs while preserving or improving
-previously processed clips. Review the actual videos, not only filenames, manifests, or test output.
-No wall-clock deadline is specified: finish with the report below when the work is complete or
-further progress is blocked by the authorized resources. Reserve time and budget for comparisons.
+Objective: make verified progress on **as many of the pipeline and frontend goals below as
+possible within seven hours**, while preserving or improving previously processed clips. Review
+the actual videos, not only filenames, manifests, or test output. Favor severe shared failures
+and useful completed improvements over polishing one clip or claiming the entire backlog is done.
+
+## Seven-hour execution window
+
+The clock starts when the unattended run begins, not when this brief is edited. Record the UTC
+start and deadline in `LOG.md`; resumes and context compaction retain that same deadline.
+
+- **0:00–1:00:** preflight, inventory, source/baseline visual review, flaw list, and pipeline trace.
+- **1:00–4:30:** bounded implementation and comparisons, prioritizing pipeline quality and the
+  judge. Independent frontend work may proceed in parallel under `AGENTS.md`.
+- **4:30–6:30:** freeze feature work; run final validation and real-viewer comparisons. Begin
+  long reruns earlier when needed. A late fix requires fresh evidence for affected stages.
+- **6:30–7:00:** preserve/publish results, finish the report, push the working branch, and stop
+  jobs started by this run. Do not start work that cannot finish within the remaining allowance.
+
+These are planning checkpoints, not a reason to wait. Reallocate implementation time based on
+measured costs, while reserving validation and handoff time. At seven hours stop; report unfinished
+goals and clips as blocked by time, with partial evidence and next steps. Finish earlier only if
+all useful authorized work is complete or blocked. The deadline and spending ceilings override
+the full-inventory rerun requirement; missing coverage must remain explicit.
 
 ## Resources for this run
 
@@ -28,7 +47,7 @@ further progress is blocked by the authorized resources. Reserve time and budget
   unless the agent host is explicitly billed to the same API project.
 
 These are ceilings, not spending targets. Apply the smaller of the cap remaining and the
-provider balance remaining, accounting for other users and jobs still running. Budget limits
+provider balance remaining, accounting for other users and jobs still running. Budget and time limits
 take priority over completing the full clip inventory: report unfunded rows as blocked.
 No additional spending or automatic top-ups are authorized.
 
@@ -38,27 +57,71 @@ out of this file and all tracked logs.
 
 ## Backlog
 
-Work in this order; use the measured baseline to choose specific implementation work.
+Use this priority order and the measured baseline to select work. Keep every goal visible in the
+final report, including deferred ones. Do not wait for an impossible or blocked item before doing
+useful independent work; validation and reporting have reserved time regardless of backlog size.
 
 1. **Inventory and review every input and its baseline.** Read the new videos supplied for this
    run and all existing source clips discoverable through S3 viewer snapshots, archive run records,
    and the export manifest, including clips outside the demo picker. Download and watch the actual
-   inputs. Inspect existing reconstructions before changing code, record failure timestamps and
-   matched source/baseline captures, and deduplicate identical source/trim aliases. Generated reels
+   inputs from beginning to end. Manually inspect existing reconstructions in the real viewer
+   before changing code; automated scores alone are insufficient. Record every observed flaw with
+   the clip name, exact timestamp/range, view or walk path, severity, expected versus observed
+   behavior, suspected stage, and matched source/baseline evidence. Use these concrete records as
+   worker handoffs. Deduplicate identical source/trim aliases. Generated reels
    and alternative outputs are not new inputs. Recover unavailable records where possible.
    Done when every input has a baseline row or an explicit missing-input/baseline reason, and
    notable problems are ranked by severity, impact across clips, and likely cost to investigate.
-2. **Investigate and improve the highest-impact failures with general fixes.** Follow the required
-   investigation policy below. Prioritize regressions and severe shared problems; use the strong
-   orchestrator to select hypotheses and bounded worker tasks. Preserve baseline assets and compare
-   each fix on affected and unaffected inputs. Do not spend the entire allowance optimizing one clip.
-   Done when each selected problem has a tested improvement or a documented investigation/blocker,
-   with measured evidence and appropriate regression checks; disclose remaining known problems.
-3. **Validate the final implementation across the complete inventory.** Complete the final pipeline
-   rerun and review package below, including old S3 inputs and any new supplied ones. An old clip
-   that still works must be checked for regressions; an old failure is also an opportunity to improve.
-   Done when every row has a final result, source/before/after comparison where available, and
-   a reproducible viewer/download path. Budget-blocked rows remain visible, never silently skipped.
+2. **Trace the pipeline step by step and improve quality.** Map the actual execution path from
+   admission/cuts through camera/depth, detection/tracking, masks/inpainting, image-to-3D assets,
+   video-to-pose, world generation/fill, placement, packaging, and viewer ingestion. Record each
+   applicable step's inputs/outputs, quality checks, failures, timing, cost, and downstream effects;
+   mark absent or separate stages honestly. Follow the investigation policy below and prioritize:
+   - Filling negative space and improving scene coverage without misrepresenting invented geometry.
+   - Stairs, floor support, railings, and object boundaries: reproduce clipping, falling through
+     floors, and walking through solid barriers; test walking up and down stairs. Inspect `stairs2`
+     and every other applicable input, without assuming a defect from the filename alone.
+   - Image-to-3D quality: silhouettes, shape, proportions, materials, and placement against source.
+   - Video-to-pose quality: missing people, identity continuity, jitter, occlusion, foot contact,
+     timing, and motion. Respect the measured failed approaches in `docs/known-limits.md`.
+   - Object detection and tracking: missing/spurious objects, masks, identities, paths, and timing.
+   - Inpainting: remove people/ghosts while preserving stairs, ceilings, railings, and surroundings.
+
+   Preserve baselines and measure selected general fixes on affected and unaffected inputs. Each
+   selected problem needs a tested improvement or a documented investigation/blocker.
+
+3. **Implement bounded LLM quality judging and stage decisions.** Use the rubric and retry contract
+   below. Evaluate whether the existing OpenAI vision integration can support it; inspect and reuse
+   current judge/verification code before adding another service. Compare judge verdicts with manual
+   review, including clear failures. Aim for structured stage pass/fail, evidence, and controlled
+   retries with different justified parameters. Integrate and test a useful bounded subset if full
+   coverage cannot fit; clearly distinguish implemented gates from proposals and uncovered stages.
+4. **Improve efficiency and the frontend.** Build on the existing viewer and asset pipeline:
+   - Measure output sizes and test compression/packaging improvements, retaining source fidelity,
+     original audio words/timing, and acceptable viewer quality.
+   - Profile generation time by stage; improve caching, redundant work, or bounded concurrency
+     where measurements justify it. Report speed/cost/quality tradeoffs on fixed inputs.
+   - Verify pipeline artifacts ingest into a rendered 3D scene end to end, with useful loading,
+     progress, empty, and failure states. Improve the HUD and playback/walk/source/audio controls.
+   - Measure large-scene load time, bytes transferred, first usable frame, and playback performance;
+     improve bottlenecks and rerun the same measurements.
+   - Heavily QA small/mobile, ordinary desktop, large/wide, and projector-sized layouts; record
+     viewport dimensions, resize behavior, readable HUD, controls, keyboard/pointer behavior, and
+     loading/error states. Include a Fergus theatre presentation scenario; actual projector or
+     headset performance requires hardware evidence, not a large browser viewport.
+   - Build or improve a landing page with a clear path into the demo and accurate capability copy.
+     Keep private media private and avoid unsupported quality claims.
+5. **Advance lower-priority delivery and admission work if time remains.** Prepare domain-name
+   options and a concrete hosting/deployment plan, including private asset access, expected cost,
+   and launch steps. No domain or hosting target has been specified: do not purchase a domain or
+   provision paid hosting; prepare reviewable configuration and document the remaining decisions.
+   Public media publication is not authorized. Investigate seamless cut handling as an optional
+   optimization: prefer explicit shot detection/segmentation and preserve source time/audio mappings;
+   do not silently delete footage or invent continuous action across a cut.
+6. **Validate the final implementation across the complete inventory.** Complete the final rerun
+   and review package below within the reserved window, including old S3 inputs and every new
+   clip below. Each row needs a final result, source/before/after comparison where available, and a
+   reproducible viewer/download path. Time- or budget-blocked rows remain visible, never skipped.
 
 ## New clips for this run
 
@@ -97,6 +160,66 @@ Recovered file: `.context/overnight-kitchen-inputs/clips/overnight/kitchen-cooki
 Upload verification checked the stored full-object SHA-256 and size, plus a byte-range read-back
 using the teammate read-only credentials. The snapshot preserves all previously published assets.
 
+### Local test clips (`test1`, `test2`)
+
+| Name    | Source             | Requested trim                                    |
+| ------- | ------------------ | ------------------------------------------------- |
+| `test1` | `assets/test1.mov` | Full clip, subject to continuity/admission checks |
+| `test2` | `assets/test2.mov` | Full clip, subject to continuity/admission checks |
+
+Paths are relative to the repository root. The supplied originals live locally in gitignored
+`assets/`; do not commit them or copy them into shared-storage publication trees.
+Use these supplied files, not substitute footage. Record hashes, metadata, audio streams, and
+continuity before choosing measured processing options. Preserve the originals. Any required
+transcode or shot selection needs a recorded mapping to source times; a cut/admission failure is
+not permission to silently trim. Use isolated candidate names with matching input basenames as
+described in the runbook. Label comparisons **no prior baseline** unless a verified prior output
+is recovered. A viewer preset alone is not a source clip.
+
+## Quality rubric and bounded judge
+
+"Perfect output" means a useful, recognizable replay meeting the checks below, not exact recovery
+of unobserved geometry. Small localized voids or distortion can be acceptable when they do not
+damage the main view or walking route. Label invented appearance and unobserved geometry.
+
+| Criterion          | Pass target                                                                                            | Failure examples                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Room layout        | Major stairs, rooms, and objects occupy the right relative places.                                     | Different layout, misplaced stairs, or major objects displaced.                            |
+| Scene coverage     | Looking and walking around works without large holes or stretched surfaces dominating important views. | Extensive voids or distortion obscure the main view or route.                              |
+| Inpainting         | People are removed while surroundings remain intact.                                                   | Ghosts remain; stairs, ceilings, railings, or other surroundings disappear.                |
+| People and objects | The right people/objects appear at the right approximate positions and times with coherent paths.      | Missing person/object, identity swap, or wrong path/timing.                                |
+| Walkability        | Floor support and stair ascent/descent work; solid boundaries constrain walking.                       | Falling below floors, clipping into stairs, or walking through substantial solid barriers. |
+| Appearance         | Materials and lighting resemble the source enough for scene recognition.                               | Unrecognizable scene or extensive invented appearance in observed regions.                 |
+
+- Define stage-specific measurable tolerances and critical checkpoints before testing a candidate.
+  Record the rationale and units (body-heights for spatial comparisons), then hold thresholds fixed
+  for its baseline/candidate comparison. Do not invent observed scores or silently relax criteria.
+- Render batches from the video's own camera positions at matched timestamps and compare side by
+  side with real frames; include beginning/middle/end, challenging motion/occlusion, and known
+  failures. Add off-axis views and actual walking/collision checks. If camera correspondence is
+  unavailable, mark that comparison blocked rather than claiming a matched render.
+- Start by evaluating the suggested **75% passing samples per applicable criterion**, with **every
+  critical checkpoint passing** and a **critical-failure veto**. Missing people, identity swaps,
+  materially wrong layout, destroyed structural surroundings, unsupported floors, or major holes
+  on the intended route cannot be averaged away. Calibrate the proposal against manual judgments
+  before enabling automated advancement; report false passes/fails and the chosen thresholds.
+- Store a structured result with stage/clip, sample times/views, criterion verdicts, measurements,
+  reasons, evidence references, model/prompt/version, parameters, attempt count, elapsed time, and
+  available usage/cost. Applicable criteria require evidence; record any not-applicable rationale.
+  Missing evidence, invalid judge output, or uncalibrated judgments block acceptance.
+- **Pass: advance. Fail: diagnose and retry only within the cap.** Allow at most **two quality
+  retries after the first execution per clip/stage** (three executions total), with changed,
+  justified parameters or a new code hypothesis. Persist attempts across resume and candidate
+  renaming; never reset counters to bypass the limit. Invalidate/rerun affected downstream stages.
+- Set explicit finite request/backoff limits for transport failures, accounting for SDK retries
+  and all possible charges. The overall time/spend ceilings can stop attempts sooner. Marble
+  remains one generation per new source clip and zero replacements for existing worlds; quality
+  failure does not authorize regeneration. Recover known operations instead of resubmitting.
+- An exhausted quality failure remains failed; missing resources/evidence are blocked. Preserve
+  the best candidate for inspection without promoting it as passed. Add focused checks for
+  pass/advance, fail/retry, exhausted retries, malformed/missing evidence, critical vetoes, and
+  resume/cost limits. `--no-gate` skips the human cleaned-frame stop, not quality checks.
+
 ## Investigate notable clip failures (required)
 
 For both existing and newly supplied clips, a notable failure is an engineering task, not just
@@ -128,9 +251,11 @@ that breaks apart. The example is not a claim that each phenomenon is recoverabl
 
 ## Final pipeline rerun (required)
 
-After the code backlog is verified or explicitly blocked, run the updated pipeline for **every
-existing source clip**, plus every new clip listed above. This is a final validation phase,
-not an optional extra after unit tests.
+At the validation checkpoint, run the updated pipeline for **every existing source clip**, plus
+every new clip listed above, to the extent the remaining time and resources permit. Start earlier
+when necessary; defer unfinished feature work to protect this phase. This is required validation,
+not an optional extra after unit tests. Report each unrun clip as blocked with the specific ceiling
+or missing prerequisite; do not exceed seven hours to finish the inventory.
 
 - Use the complete inventory established above from S3 and supplied/local sources, including
   clips outside the five-scene picker. Deduplicate aliases for the same source and exact trim.
@@ -173,14 +298,19 @@ those explicitly in the handoff, alongside any improvements and remaining regres
   and candidate references, final commit/options, stages actually rerun, outcome and change label,
   key measurements, viewer/comparison links, and reasons for any failure or block. Include totals,
   spend with estimates distinguished from confirmed usage, changes made, and remaining priorities.
+- Include a goal-by-goal table for every backlog subgoal: completed, partially completed, or
+  blocked/deferred, with evidence, implementation limits, and next action. Include the specific
+  per-clip flaw inventory, pipeline trace, judge calibration/retry outcomes, compression/speed
+  measurements, frontend viewport QA, and landing-page/hosting progress. Separate observed results
+  from proposed designs. Record actual elapsed time and why work stopped.
 - Create an easy-to-open comparison index with labeled source/before/after screenshots and short
   recorded playback/walk clips. Include every input, even when its row has only baseline evidence
   and a blocked reason. Use matched times/views, include visible failure cases, and preserve audio
   timing where sound exists. Do not present selected stills as proof of temporal quality.
 - Keep the generated index and its media outside Git under
-  `public/reviews/overnight-main-1/`, with relative asset links. Publish to private S3 when writers
+  `public/reviews/daniel-overnight/`, with relative asset links. Publish to private S3 when writers
   are idle and record the exact snapshot. After adopting that snapshot, teammates should be able
-  to open `http://127.0.0.1:5399/reviews/overnight-main-1/index.html` in their local viewer. Validate
+  to open `http://127.0.0.1:5399/reviews/daniel-overnight/index.html` in their local viewer. Validate
   that path and its assets; provide pinned `assets:pull` recovery instructions in the results too.
 - Commit/push code and the text report on the working branch; publish media, run intermediates,
   and detailed evidence to S3. Finish with direct instructions to open the comparisons and test
