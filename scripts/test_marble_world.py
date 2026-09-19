@@ -408,5 +408,33 @@ class MarbleContracts(unittest.TestCase):
             )
 
 
+class MarbleTransport(unittest.TestCase):
+    def request_headers(self, path, **kwargs):
+        response = io.BytesIO(b"{}")
+        response.status = 200
+        response.headers = {"Content-Type": "application/json"}
+        with (
+            patch.dict(client.os.environ, {"WLT_API_KEY": "test-only-credential"}),
+            patch.object(client.urllib.request, "urlopen", return_value=response) as opened,
+        ):
+            client.call("PUT", path, raw=b"media", **kwargs)
+        request = opened.call_args.args[0]
+        return {k.lower(): v for k, v in request.header_items()}
+
+    def test_api_request_authenticates(self):
+        headers = self.request_headers("/marble/v1/credits")
+        self.assertEqual(headers["wlt-api-key"], "test-only-credential")
+
+    def test_presigned_upload_never_receives_api_credential(self):
+        for host in ("storage.googleapis.com", "api.worldlabs.ai.example.invalid"):
+            with self.subTest(host=host):
+                headers = self.request_headers(
+                    f"https://{host}/upload?signature=test",
+                    headers={"Content-Type": "image/png", "wlt-api-key": "also-remove-this"},
+                )
+                self.assertNotIn("wlt-api-key", headers)
+                self.assertEqual(headers["content-type"], "image/png")
+
+
 if __name__ == "__main__":
     unittest.main()
