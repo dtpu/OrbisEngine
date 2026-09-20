@@ -557,12 +557,13 @@ def decoded_timeline(frames, pts_seconds=None, pos_msec_seconds=None, average_fp
     return [index / average_fps for index in range(frames)], TIMES_AVERAGE_FPS
 
 
-def constant_rate(times, average_fps, tolerance=0.02):
-    """True when every decoded timestamp sits on the container's average-rate grid.
+def constant_rate(times, average_fps, tolerance=0.5):
+    """True when every decoded frame is still the nearest one to its average-rate grid point.
 
-    `tolerance` is a fraction of one frame interval: timestamp quantisation in a constant-rate
-    file is far below it, while a variable-rate phone clip misses its average grid by whole
-    frames within seconds.
+    `tolerance` is a fraction of one frame interval. Inside half a frame, `round(time * rate)`
+    addresses the same frame the timestamps do, so the index rule is exact and a clip that solved
+    before keeps its frames: a phone clip at a nominal 60000/1001 jitters by under a tenth of a
+    frame. A source that really varies its rate leaves the grid by whole frames within seconds.
     """
     average_fps = float(average_fps or 0)
     if not math.isfinite(average_fps) or average_fps <= 0 or len(times) < 2:
