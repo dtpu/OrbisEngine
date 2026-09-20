@@ -1,20 +1,20 @@
 # Landing page — progress
 
 Branch: `devin/landing` (integration PR into `main`: https://github.com/dtpu/htn2026/pull/2). Section work
-landed as stacked PRs (#4–#8, #11, #12) and was merged together with the demo-shell redesign (#9) for
-the integration pass. See `SPEC.md` and `PLAN.md` in this directory.
+landed as stacked PRs (#4–#8, #11, #12) into `devin/landing`; the demo-shell redesign (#9) merged to `main`
+separately. See `SPEC.md` and `PLAN.md` in this directory.
 
-| Unit                         | Owns                                                             | Status                         | PR                                             |
-| ---------------------------- | ---------------------------------------------------------------- | ------------------------------ | ---------------------------------------------- |
-| Phase 0 — Foundation         | `site/` scaffold, tokens, shared components, content, smoke test | merged into integration branch | [#2](https://github.com/dtpu/htn2026/pull/2)   |
-| A. Hero                      | `site/src/sections/Hero.tsx`                                     | merged into integration branch | [#8](https://github.com/dtpu/htn2026/pull/8)   |
-| B. Gallery                   | `site/src/sections/Gallery.tsx`                                  | merged into integration branch | [#5](https://github.com/dtpu/htn2026/pull/5)   |
-| C. Compare                   | `site/src/sections/Compare.tsx`                                  | merged into integration branch | [#4](https://github.com/dtpu/htn2026/pull/4)   |
-| D. How it works              | `site/src/sections/HowItWorks.tsx`                               | merged into integration branch | [#7](https://github.com/dtpu/htn2026/pull/7)   |
-| E. Viewer features           | `site/src/sections/Viewer.tsx`                                   | merged into integration branch | [#6](https://github.com/dtpu/htn2026/pull/6)   |
-| F. Limits + Team + Final CTA | `site/src/sections/{Limits,Team,FinalCta}.tsx`                   | merged into integration branch | [#12](https://github.com/dtpu/htn2026/pull/12) |
-| Fonts                        | `site/index.html`, `tokens.css`, `base.css`                      | merged; now self-hosted        | [#11](https://github.com/dtpu/htn2026/pull/11) |
-| Phase 2 — Integration        | `App.tsx` wiring, full-page visual pass                          | done except media and deploy   |                                                |
+| Unit                         | Owns                                                             | Status                       | PR                                             |
+| ---------------------------- | ---------------------------------------------------------------- | ---------------------------- | ---------------------------------------------- |
+| Phase 0 — Foundation         | `site/` scaffold, tokens, shared components, content, smoke test | merged                       | [#2](https://github.com/dtpu/htn2026/pull/2)   |
+| A. Hero                      | `site/src/sections/Hero.tsx`                                     | merged                       | [#8](https://github.com/dtpu/htn2026/pull/8)   |
+| B. Gallery                   | `site/src/sections/Gallery.tsx`                                  | merged                       | [#5](https://github.com/dtpu/htn2026/pull/5)   |
+| C. Compare                   | `site/src/sections/Compare.tsx`                                  | merged                       | [#4](https://github.com/dtpu/htn2026/pull/4)   |
+| D. How it works              | `site/src/sections/HowItWorks.tsx`                               | merged                       | [#7](https://github.com/dtpu/htn2026/pull/7)   |
+| E. Viewer features           | `site/src/sections/Viewer.tsx`                                   | merged                       | [#6](https://github.com/dtpu/htn2026/pull/6)   |
+| F. Limits + Team + Final CTA | `site/src/sections/{Limits,Team,FinalCta}.tsx`                   | merged                       | [#12](https://github.com/dtpu/htn2026/pull/12) |
+| Fonts                        | `site/index.html`, `tokens.css`, `base.css`                      | merged                       | [#11](https://github.com/dtpu/htn2026/pull/11) |
+| Phase 2 — Integration        | `App.tsx` wiring, full-page visual pass                          | done except media and deploy |                                                |
 
 Statuses: pending → in progress → PR open → merged → blocked.
 
