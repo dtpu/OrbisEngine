@@ -478,6 +478,24 @@ class PipelineRepository:
             run_id, EventType.NODE, node_id, {"status": status, "blockedReason": blocked_reason}
         )
 
+    def reopen_run(self, run_id: str) -> bool:
+        """Mark a finished run running again, for a scheduler that has just taken it over.
+
+        A run resumed after it ended -- because a stage produced the wrong thing, or because a
+        person sent one back -- kept the status it finished with, so the dashboard read
+        "succeeded" while the pipeline was working. Returns whether anything changed.
+        """
+        with self.sessions.begin() as session:
+            run = session.get(RunRecord, run_id, with_for_update=True)
+            if run is None:
+                raise KeyError(f"unknown run: {run_id}")
+            if run.status not in TERMINAL_RUN_STATUSES:
+                return False
+            run.status = "running"
+            run.updated_at = datetime.now(timezone.utc)
+        self.append_event(run_id, EventType.RUN, run_id, {"status": "running"})
+        return True
+
     def finish_run(self, run_id: str, status: str) -> None:
         if status not in TERMINAL_RUN_STATUSES:
             raise ValueError(f"finish_run needs a terminal status, got {status!r}")
