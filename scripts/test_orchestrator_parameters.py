@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from orchestrator.activities.adapters import (
     LegacyPipelineAdapter,
     default_adapters,
+    legacy_stage_name,
     flags,
     legacy_parameter_flags,
     legacy_people_flags,
@@ -201,6 +202,48 @@ class GraphShapeTests(unittest.TestCase):
                 command = self.command(executor, node_id)
                 self.assertEqual(command[command.index("--only") + 1], legacy)
                 self.assertEqual("--people" in command, multiperson)
+
+    def test_every_legacy_dependency_is_marked_done_before_the_command_runs(self):
+        """run_clip.py refuses a stage whose dependencies its state file does not vouch for.
+
+        The orchestrator writes that file from the inputs a stage declares, so a dependency the
+        legacy graph has and the stage does not ask for stops the run -- and `scale_fit` did
+        not ask for the frame alignment its own diagnostics read. Extra keys are harmless;
+        a missing one is fatal, and only discovered at the end of a queue.
+        """
+        source = (ROOT / "scripts/run_clip.py").read_text()
+
+        def body(name: str, until: str) -> str:
+            start = source.index(f"def {name}(")
+            return source[start : source.index(until, start)]
+
+        # Run run_clip.py's own graph builders rather than restating the graph here, so a
+        # dependency added there fails this test and not a run at the end of a queue.
+        namespace: dict = {}
+        exec(body("world_half", "def single_graph"), namespace)  # noqa: S102
+        exec(body("single_graph", "def multiperson_graph"), namespace)  # noqa: S102
+        _, deps = namespace["single_graph"]("video")
+
+        registry = stage_registry()
+        adapters = default_adapters()
+        for stage_id, stage in registry.items():
+            adapter = adapters.get(stage.executor)
+            if not isinstance(adapter, LegacyPipelineAdapter):
+                continue
+            legacy = legacy_stage_name(stage_id)
+            if legacy not in deps:
+                continue  # a stage this graph shape does not contain
+            declared = {
+                legacy_stage_name(binding.stage_id)
+                for binding in stage.inputs.values()
+                if binding.source == "stage_output"
+            }
+            with self.subTest(stage=stage_id, legacy=legacy):
+                self.assertEqual(
+                    set(deps[legacy]) - declared,
+                    set(),
+                    f"{legacy} depends on these in run_clip.py and {stage_id} never asks for them",
+                )
 
     def test_a_per_person_stage_satisfies_the_legacy_graph_by_its_own_names(self):
         """run_clip.py checks its dependencies before it runs anything.

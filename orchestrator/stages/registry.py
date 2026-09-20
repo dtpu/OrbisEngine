@@ -827,6 +827,9 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "point_clouds": stage_output("pi3x", "point_clouds"),
                 "pi3x_aux": stage_output("pi3x", "pi3x_aux"),
                 "viewer_world": stage_output("package_people", "viewer_world"),
+                # sfm_frame.py reads framealign.json beside cameras.json; without it
+                # this stage measures against the phone's pitch at frame 0.
+                "alignment": stage_output("frame_align", "frame_alignment"),
             },
             outputs={"scale_fit": output("scale_fit", "application/json")},
             parameter_schema=SCALE_PARAMETERS,
@@ -844,6 +847,9 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "world": stage_output("marble_video", "world_splat"),
                 "world_receipt": stage_output("marble_video", "world_receipt"),
                 "viewer_world": stage_output("package_people", "viewer_world"),
+                # sfm_frame.py reads framealign.json beside cameras.json; without it
+                # this stage measures against the phone's pitch at frame 0.
+                "alignment": stage_output("frame_align", "frame_alignment"),
             },
             outputs={"placement": output("placement", "application/json")},
             resources=local_resources(1800),
@@ -861,6 +867,9 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "world_receipt": stage_output("marble_video", "world_receipt"),
                 "scale": stage_output("scale_fit", "scale_fit"),
                 "viewer_world": stage_output("package_people", "viewer_world"),
+                # sfm_frame.py reads framealign.json beside cameras.json; without it
+                # this stage measures against the phone's pitch at frame 0.
+                "alignment": stage_output("frame_align", "frame_alignment"),
                 "cameras": stage_output("pi3x", "cameras"),
                 "point_clouds": stage_output("pi3x", "point_clouds"),
                 "pi3x_aux": stage_output("pi3x", "pi3x_aux"),
@@ -883,6 +892,9 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "scale": stage_output("scale_fit", "scale_fit"),
                 "placement": stage_output("place_fit", "placement"),
                 "viewer_world": stage_output("package_people", "viewer_world"),
+                # sfm_frame.py reads framealign.json beside cameras.json; without it
+                # this stage measures against the phone's pitch at frame 0.
+                "alignment": stage_output("frame_align", "frame_alignment"),
                 "cameras": stage_output("pi3x", "cameras"),
                 "point_clouds": stage_output("pi3x", "point_clouds"),
                 "pi3x_aux": stage_output("pi3x", "pi3x_aux"),
