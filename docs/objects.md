@@ -32,19 +32,19 @@ The writer emits `schema: "wander.objects/2"`, plus `clip`, `fps`, `samples`, `s
 `timestamps`, `metresPerWorldUnit`, `coordinates`, `people: "people.json"`, and `objects`.
 The top-level sample grid comes from `people.json`; it differs from the baked object's frame grid.
 
-| Object field | Meaning and current behavior |
-|---|---|
-| `id`, `label`, `prompt` | Stable object identifier, display name, and segmentation prompt. |
-| `motion` | `attached`, `free`, `handoff`, or `worldDynamic`; descriptive, not a viewer physics switch. |
-| `objectClass` | Descriptive category such as `thrown`. |
-| `appearance` | Model or proxy, dimensions, color, and provenance; see below. |
-| `pose.segments` | Explanation of held spans, ballistic spans, and seam blends. |
-| `pose.orientation` | Rotation method and evidence. Baked quaternions take precedence. |
-| `bakedTrack` | Positions, orientations, visibility, and timing actually played by the viewer. |
-| `transform.translation` | Added to the shared placement origin in viewer coordinates. |
-| `transform.scale` | Multiplies the shared scene scale; defaults to 1. |
-| `appliesSharedCameraDrift` | Shared vertical drift is applied unless explicitly false. |
-| `evidence` | Fit errors, flight counts, seam gaps, detection rules, and assumptions. |
+| Object field               | Meaning and current behavior                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `id`, `label`, `prompt`    | Stable object identifier, display name, and segmentation prompt.                            |
+| `motion`                   | `attached`, `free`, `handoff`, or `worldDynamic`; descriptive, not a viewer physics switch. |
+| `objectClass`              | Descriptive category such as `thrown`.                                                      |
+| `appearance`               | Model or proxy, dimensions, color, and provenance; see below.                               |
+| `pose.segments`            | Explanation of held spans, ballistic spans, and seam blends.                                |
+| `pose.orientation`         | Rotation method and evidence. Baked quaternions take precedence.                            |
+| `bakedTrack`               | Positions, orientations, visibility, and timing actually played by the viewer.              |
+| `transform.translation`    | Added to the shared placement origin in viewer coordinates.                                 |
+| `transform.scale`          | Multiplies the shared scene scale; defaults to 1.                                           |
+| `appliesSharedCameraDrift` | Shared vertical drift is applied unless explicitly false.                                   |
+| `evidence`                 | Fit errors, flight counts, seam gaps, detection rules, and assumptions.                     |
 
 Positions use the raw SfM/OpenGL world frame shared with the person PLYs. The viewer applies
 shared scale and rotation, then the shared placement origin plus the object's translation;
@@ -175,6 +175,12 @@ A walkable box uses its finite local +Y face as support. Capsule collision and c
 checks also apply to nonwalkable boxes. An inferred conservative frame envelope can block empty
 space between real struts; declare that approximation in provenance. With no manifest, the existing
 occupancy-grid behavior is retained. Generated geometry and review evidence belong in private storage.
+
+Finite explicit support also establishes walkable floor outside the splat-derived floor hull.
+This permits reviewed support across missing floor samples. It does not clear occupied cells,
+disable swept collision, or remove step-height checks. Outside the finite support footprint,
+the original floor-boundary checks still apply. The occupancy footprint is circular, matching
+the walker capsule, so diagonal furniture corners do not acquire square padding.
 
 These colliders constrain the viewer's walker. People and props still follow their baked animation;
 they are not rigid bodies and are not automatically pushed onto a seat. Correcting actor contact

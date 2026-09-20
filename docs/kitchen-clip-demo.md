@@ -13,8 +13,8 @@ Obtain the team's read-only `.env.local` privately using the
 does not require Modal credentials or a new reconstruction run.
 
 - [Clip picker: kitchen selected](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
-- [Kitchen with inferred surroundings](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/index.html)
-- [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/preview.mp4)
+- [Kitchen with repaired wall and aisle](http://127.0.0.1:5399/reviews/kitchen-continuation/room-access/index.html)
+- [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/room-access/preview.mp4)
 - [Earlier kitchen repair notes](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
 - [Previous kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
 - [Accepted gym scene](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail)
@@ -38,8 +38,12 @@ much of the doorway, ceiling and adjacent room while preserving the observed coo
 animation and object files. These surrounding surfaces and their appearance are inferred;
 they do not establish a source-accurate complete room. The previous version remains in
 **Spares and experiments** as **Kitchen · previous partial room** (`clip=kitchen-observed`).
-Walking retains the original observed floor and collision grid; the generated background does
-not add validated walking surfaces. See the [coverage repair](kitchen-continuation.md#inferred-surroundings-repair).
+The blue paint is present in the source footage. A fitted planar continuation now closes its
+ragged gaps, with extrapolated surface explicitly labelled as inferred. Three bounded supports
+on the measured tile plane connect the starting area to the aisle beside James. Step back slightly,
+go right around the counter, then walk into the kitchen. Counter collision remains active;
+this does not make every generated surface walkable. See the
+[wall and aisle repair](kitchen-continuation.md#wall-and-aisle-repair).
 
 James's final 50 samples reuse his early saved appearance; the 559 early samples
 are unchanged. The scene includes the inferred held pan, its handoff to the observed resting
