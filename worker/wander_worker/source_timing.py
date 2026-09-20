@@ -1,9 +1,17 @@
 """Observe actual FFmpeg fps selections without model/GPU dependencies.
 
-The fps filter reports the source timestamp it writes, in its rounded output
-timebase. Several inputs can share that timestamp; its last input at that time
-is retained. We observe those events and verify the unchanged frame checksums
-on both sides of the filter. Missing/changed diagnostics fail closed.
+For each output timestamp the fps filter retains the last decoded frame whose
+rounded timestamp still lies at or before it. We replay that rule over the
+decoded source timestamps and prove every retained frame against the per-frame
+CRC32 that FFmpeg writes for both sides of the filter, so no diagnostic is read
+back out of its interleaved debug log. Missing/changed diagnostics fail closed.
+
+FFmpeg composes one `showinfo` line from several unterminated `av_log` calls,
+so a decoder worker thread logging at `-loglevel debug` splices its own message
+into the middle of that line and the frame's `checksum:` field moves to a line
+of its own. That race scales with frame count and CPU load, which is why long
+clips failed while short ones passed. Machine-readable muxer output has no such
+shared line state; keep it that way.
 """
 
 from __future__ import annotations
@@ -13,9 +21,16 @@ import json
 import math
 import re
 import subprocess
+import tempfile
 from fractions import Fraction
 from itertools import pairwise
 from pathlib import Path
+
+# "0,      150000,      150000,      150000,   608016, 0xa112184c"
+_FRAME_ROW = re.compile(
+    r"^0,\s*(-?\d+|N/A),\s*(-?\d+|N/A),\s*(-?\d+|N/A),\s*(\d+),\s*(0x[0-9a-f]+)$"
+)
+_TIME_BASE_ROW = re.compile(r"^#tb 0: (\d+/\d+)$")
 
 
 def _sha256(path: Path) -> str:
@@ -27,25 +42,42 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(command, check=True, capture_output=True)
 
 
-def _observed_frames(log: str, name: str) -> tuple[Fraction, list[dict]]:
-    prefix = rf"\[showinfo@{name} @ [^\]]+\] "
-    bases = re.findall(prefix + r"config in time_base: (\d+/\d+)", log)
+def _observed_frames(report: Path, name: str) -> tuple[Fraction, list[dict]]:
+    """Read one framecrc report: its stream timebase and every muxed frame."""
+    bases = []
+    frames = []
+    for line in report.read_text(encoding="utf-8", errors="replace").splitlines():
+        base = _TIME_BASE_ROW.match(line)
+        if base:
+            bases.append(Fraction(base.group(1)))
+        elif not line.startswith("#"):
+            row = _FRAME_ROW.match(line)
+            if not row or row.group(2) == "N/A":
+                raise ValueError(f"Incomplete {name} frame diagnostics")
+            frames.append(
+                {
+                    "index": len(frames),
+                    "pts": int(row.group(2)),
+                    "size": int(row.group(4)),
+                    "checksum": row.group(5),
+                }
+            )
     if len(bases) != 1:
         raise ValueError(f"Missing or changing {name} filter timebase")
-    frames = [
-        {"index": int(index), "pts": int(pts), "checksum": checksum}
-        for index, pts, checksum in re.findall(
-            prefix + r"n:\s*(\d+) pts:\s*(-?\d+) .*? checksum:([0-9A-F]+) ", log
-        )
-    ]
-    if [f["index"] for f in frames] != list(range(len(frames))):
-        raise ValueError(f"Incomplete {name} frame diagnostics")
-    return Fraction(bases[0]), frames
+    return bases[0], frames
 
 
-def _parse_selection(log: str, source_pts: list[int], time_base: Fraction) -> dict:
-    input_base, inputs = _observed_frames(log, "source")
-    output_base, outputs = _observed_frames(log, "sampled")
+def _rescale_near_inf(pts: int, ratio: Fraction) -> int:
+    """Reproduce av_rescale_q's default rounding: nearest, halves away from zero."""
+    numerator, denominator = ratio.numerator, ratio.denominator
+    if pts < 0:
+        return -((-pts * numerator + denominator // 2) // denominator)
+    return (pts * numerator + denominator // 2) // denominator
+
+
+def _parse_selection(reports: dict[str, Path], source_pts: list[int], time_base: Fraction) -> dict:
+    input_base, inputs = _observed_frames(reports["source"], "source")
+    output_base, outputs = _observed_frames(reports["sampled"], "sampled")
     if len(inputs) != len(source_pts) or not outputs:
         raise ValueError("Decoded source/output counts do not match provenance")
     offsets = {
@@ -54,31 +86,31 @@ def _parse_selection(log: str, source_pts: list[int], time_base: Fraction) -> di
     }
     if len(offsets) != 1:
         raise ValueError("FFmpeg and FFprobe decoded source timestamps disagree")
-    reads = []
-    writes = []
-    latest = {}
-    for line in log.splitlines():
-        if not re.match(r"\[fps@sample @ [^\]]+\] ", line):
-            continue
-        read = re.search(r"Read frame with in pts (-?\d+), out pts (-?\d+)$", line)
-        write = re.search(r"Writing frame with pts (-?\d+) to pts (-?\d+)$", line)
-        if read:
-            pts, rounded = map(int, read.groups())
-            ordinal = len(reads)
-            if ordinal >= len(inputs) or inputs[ordinal]["pts"] != pts:
-                raise ValueError("FPS filter input does not match decoded source")
-            reads.append(pts)
-            latest[rounded] = ordinal
-        elif write:
-            rounded, output_pts = map(int, write.groups())
-            if rounded not in latest:
-                raise ValueError("FPS filter wrote an unidentified source frame")
-            writes.append((latest[rounded], output_pts))
-    if len(reads) != len(inputs) or len(writes) != len(outputs):
+    ratio = input_base / output_base
+    rounded = [_rescale_near_inf(frame["pts"], ratio) for frame in inputs]
+    # The fps filter numbers its output timestamps consecutively, so a report
+    # that skips one lost a frame. How many it writes past the last decoded
+    # frame depends on that frame's duration, so the count is not predictable.
+    if any(b < a for a, b in pairwise(rounded)) or [f["pts"] for f in outputs] != list(
+        range(outputs[0]["pts"], outputs[0]["pts"] + len(outputs))
+    ):
         raise ValueError("Incomplete FPS selection diagnostics")
     frames = []
-    for output, (source_index, output_pts) in zip(outputs, writes, strict=True):
-        if output["pts"] != output_pts or output["checksum"] != inputs[source_index]["checksum"]:
+    source_index = 0
+    for output in outputs:
+        # Take the last decoded frame that still rounds to at or before this
+        # output timestamp, then hold that choice to the emitted bytes. Where
+        # neighbouring source frames are pixel-identical their checksums cannot
+        # separate them, so scripts/test_source_timing.py also holds this rule
+        # to the filter's own account of what it wrote.
+        while source_index + 1 < len(rounded) and rounded[source_index + 1] <= output["pts"]:
+            source_index += 1
+        retained = inputs[source_index]
+        if (
+            rounded[source_index] > output["pts"]
+            or retained["checksum"] != output["checksum"]
+            or retained["size"] != output["size"]
+        ):
             raise ValueError("FPS selection does not match the emitted frame")
         frames.append(
             {
@@ -89,7 +121,7 @@ def _parse_selection(log: str, source_pts: list[int], time_base: Fraction) -> di
                 "sourceRelativeTimeSeconds": float(
                     (source_pts[source_index] - source_pts[0]) * time_base
                 ),
-                "resampledPts": output_pts,
+                "resampledPts": output["pts"],
             }
         )
     return {
@@ -108,7 +140,7 @@ def resample_source(
 ) -> tuple[bytes, dict]:
     """Return RGB24 bytes and exact provenance; omit dimensions for mapping only.
 
-    Mapping-only mode decodes to a null sink, without inference or retaining
+    Mapping-only mode decodes to CRC reports, without inference or retaining
     images. Reconstruction of an old run is observational evidence for this
     FFmpeg version, not independent proof of that run's historical inputs.
     Absolute source PTS are integers in sourceTimeBase; relative seconds use
@@ -143,30 +175,64 @@ def resample_source(
         raise ValueError("Source has missing decoded PTS") from error
     if not source_pts or any(b <= a for a, b in pairwise(source_pts)):
         raise ValueError("Source PTS must be present and strictly increasing")
-    filters = f"showinfo@source,fps@sample={fps},showinfo@sampled"
-    output = ["-f", "null", "-"]
+    # One decode feeds every branch, so the CRCs compare the same decoded frames
+    # and the sampled branch shares a single fps instance with the RGB output.
+    filters = f"[0:v:0]split=2[source][input];[input]fps@sample={fps}[sampled]"
+    pixels = []
     if width is not None:
-        filters += f",scale={width}:{height}"
-        output = ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-nostats",
-        "-loglevel",
-        "debug",
-        "-i",
-        str(source),
-        "-map",
-        "0:v:0",
-        "-vf",
-        filters,
-        "-fps_mode",
-        "passthrough",
-        *output,
-    ]
-    decoded = _run(command)
-    log = decoded.stderr.decode("utf-8", errors="replace")
-    provenance = _parse_selection(log, source_pts, time_base)
+        filters += f";[sampled]split=2[crc][raw];[raw]scale={width}:{height}[pixels]"
+        pixels = ["-map", "[pixels]", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+    # Two scratch files, not a scratch directory: this runs inside a caller's own
+    # temporary tree (the worker decodes from one), and removing a directory we
+    # merely named would take the caller's inputs with it.
+    with (
+        tempfile.NamedTemporaryFile(suffix="-source.framecrc") as source_report,
+        tempfile.NamedTemporaryFile(suffix="-sampled.framecrc") as sampled_report,
+    ):
+        reports = {"source": Path(source_report.name), "sampled": Path(sampled_report.name)}
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-nostdin",
+            "-loglevel",
+            "repeat+error",
+            "-i",
+            str(source),
+            "-filter_complex",
+            filters,
+            # Without -enc_time_base the muxer stamps this branch in 1/framerate
+            # (measured: 1/60 for a 1/9000000 source) and rescales every pts, so
+            # a variable-rate source would lose the very timestamps the fps
+            # filter read. -1 keeps the demuxer timebase; it needs FFmpeg 5.1.
+            "-map",
+            "[source]",
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "-1",
+            "-f",
+            "framecrc",
+            "-y",
+            str(reports["source"]),
+            "-map",
+            "[crc]" if width is not None else "[sampled]",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "framecrc",
+            "-y",
+            str(reports["sampled"]),
+            *pixels,
+        ]
+        try:
+            decoded = _run(command)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or b"").decode("utf-8", errors="replace")
+            if "enc_time_base" in detail:
+                raise ValueError("FFmpeg is too old for -enc_time_base; 5.1 or newer") from error
+            raise
+        provenance = _parse_selection(reports, source_pts, time_base)
     if width is not None and len(decoded.stdout) != len(provenance["frames"]) * width * height * 3:
         raise ValueError("RGB frame count does not match provenance")
     if _sha256(source) != source_sha:
