@@ -47,6 +47,7 @@ import { createAvatarBody } from './avatar-body';
 import { createAvatarHands } from './avatar-hands';
 import { PhysicalWalk, parseWalkGain } from './physical-walk';
 import { raycastWalkFloor } from './teleport';
+import type { BottleScene, InteractionHand } from '../interaction/bottle-scene';
 import { createQuestView } from './quest-view';
 
 type Wander = {
@@ -74,6 +75,7 @@ type Wander = {
     advance: (from: THREE.Vector3, delta: THREE.Vector3, dt: number) => THREE.Vector3;
   } | null;
   possess?: { head: THREE.Vector3; yaw: number } | null; // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
+  interaction?: BottleScene;
 };
 
 export type XrInit = {
@@ -383,6 +385,8 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // ---- controllers -----------------------------------------------------------------------------------
   const controllers = [0, 1].map((i) => {
     const grip = renderer.xr.getController(i);
+    const handGrip = renderer.xr.getControllerGrip(i);
+    if (!handGrip.parent) rig.add(handGrip);
     const ray = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
@@ -399,8 +403,34 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     ray.frustumCulled = false;
     ray.visible = false;
     grip.add(ray); // grip is in metres inside the scaled rig, so the line is in metres too
-    const c = { grip, ray, aiming: false };
+    const c = {
+      grip,
+      handGrip,
+      ray,
+      aiming: false,
+      source: null as XRInputSource | null,
+      index: i,
+    };
+    grip.addEventListener('connected', (event) => {
+      c.source = event.data;
+    });
+    grip.addEventListener('disconnected', () => {
+      c.source = null;
+      c.aiming = false;
+    });
     grip.addEventListener('selectstart', () => {
+      grip.updateWorldMatrix(true, false);
+      const origin = grip.getWorldPosition(new THREE.Vector3());
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        grip.getWorldQuaternion(new THREE.Quaternion()),
+      );
+      if (wander.interaction?.select(origin, direction)) {
+        c.aiming = false;
+        aimingPrev = false;
+        targetOk = false;
+        marker.set(null, false);
+        return;
+      }
       c.aiming = mode === 'teleport';
     });
     grip.addEventListener('selectend', () => {
@@ -694,7 +724,18 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         const held = controllers.find((c) => c.aiming);
         const aiming = !!held || sticks.moveY < -0.5;
         const src = (held ?? controllers[0]).grip;
-        if (aiming && aim(src)) {
+        const overMenu =
+          wander.interaction?.hover(
+            src.getWorldPosition(new THREE.Vector3()),
+            new THREE.Vector3(0, 0, -1).applyQuaternion(
+              src.getWorldQuaternion(new THREE.Quaternion()),
+            ),
+          ) ?? false;
+        if (overMenu) {
+          targetOk = false;
+          marker.set(null, false);
+        }
+        if (aiming && !overMenu && aim(src)) {
           marker.set(target, targetOk);
           for (const c of controllers) {
             c.ray.visible = c.grip === src;
@@ -708,10 +749,82 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         if (aimingPrev && !aiming) commit();
         aimingPrev = aiming;
       }
+      if (wander.interaction) {
+        // Menu pointing also works in smooth locomotion, without holding a teleport trigger.
+        const pointed = controllers.find((controller) => {
+          if (!controller.source || !controller.grip.visible) return false;
+          return wander.interaction!.controls.hit(
+            controller.grip.getWorldPosition(new THREE.Vector3()),
+            new THREE.Vector3(0, 0, -1).applyQuaternion(
+              controller.grip.getWorldQuaternion(new THREE.Quaternion()),
+            ),
+          );
+        });
+        const pointer = pointed ?? controllers[0];
+        wander.interaction.hover(
+          pointer.grip.getWorldPosition(new THREE.Vector3()),
+          new THREE.Vector3(0, 0, -1).applyQuaternion(
+            pointer.grip.getWorldQuaternion(new THREE.Quaternion()),
+          ),
+        );
+        for (const controller of controllers) {
+          if (mode === 'smooth') controller.ray.visible = false;
+          if (controller === pointed) {
+            controller.ray.visible = true;
+            controller.ray.scale.setScalar(
+              controller.grip
+                .getWorldPosition(tmpV)
+                .distanceTo(wander.interaction.controls.group.position) / upm,
+            );
+          }
+        }
+      }
     }
 
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
+
+    if (!wander.possess && wander.interaction) {
+      const inputs: InteractionHand[] = [];
+      for (const controller of controllers) {
+        const source = controller.source;
+        if (!source) continue;
+        let position: THREE.Vector3 | null = null;
+        let rotation: THREE.Quaternion | null = null;
+        let squeeze = (source.gamepad?.buttons[1]?.value ?? 0) > 0.55;
+        if (source.hand) {
+          const hand = renderer.xr.getHand(controller.index);
+          const index = hand.joints['index-finger-tip'],
+            thumb = hand.joints['thumb-tip'];
+          const palm = hand.joints['middle-finger-metacarpal'];
+          if (hand.visible && index?.visible && thumb?.visible && palm?.visible) {
+            position = palm.getWorldPosition(new THREE.Vector3());
+            rotation = palm.getWorldQuaternion(new THREE.Quaternion());
+            squeeze =
+              index
+                .getWorldPosition(new THREE.Vector3())
+                .distanceTo(thumb.getWorldPosition(new THREE.Vector3())) <
+              0.025 * upm;
+          }
+        } else if (controller.handGrip.visible) {
+          position = controller.handGrip.getWorldPosition(new THREE.Vector3());
+          rotation = controller.handGrip.getWorldQuaternion(new THREE.Quaternion());
+        }
+        if (position && rotation)
+          inputs.push({
+            id: source.handedness === 'none' ? String(controller.index) : source.handedness,
+            position,
+            rotation,
+            squeeze,
+          });
+      }
+      wander.interaction.frame(
+        head,
+        tmpQ.copy(rig.quaternion).multiply(headQuaternion),
+        inputs,
+        dt,
+      );
+    }
 
     // The body consumes reference-space metres. Account for artificial travel so a planted foot
     // stays in world space while the rig walks; head tracking is already included in headLocal.

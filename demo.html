@@ -660,7 +660,7 @@
       <main id="stage">
         <iframe
           id="frame"
-          allow="autoplay; fullscreen; xr-spatial-tracking"
+          allow="autoplay; fullscreen; xr-spatial-tracking; microphone"
           title="Wander viewer"
         ></iframe>
 
@@ -1027,7 +1027,12 @@
         if (WALK) options.set('walk', '1');
         const outer = new URLSearchParams(location.search);
         for (const [key, value] of outer)
-          if (key === 'audio' || key === 'personsize' || key.startsWith('xr'))
+          if (
+            key === 'audio' ||
+            key === 'personsize' ||
+            key.startsWith('xr') ||
+            key.startsWith('interact')
+          )
             options.set(key, value);
         api()?.play(false);
         frame.src = `/fourd.html?${options}`;
