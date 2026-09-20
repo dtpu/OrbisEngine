@@ -8,6 +8,7 @@
     "dev": "bunx --bun vite --port 5399 --host 127.0.0.1",
     "demo": "bunx --bun vite --port 5399 --host 127.0.0.1",
     "build": "bunx --bun tsc --noEmit && bunx --bun vite build",
+    "prepare:worlds": "bun scripts/prepare-worlds.ts",
     "runs:publish": "node scripts/publish-runs.ts",
     "assets:pull": "bun scripts/pull-assets.ts",
     "test:pull-assets": "bun test ./scripts/test-pull-assets.ts",
