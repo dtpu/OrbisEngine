@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Quaternion, Vector3 } from 'three';
 import { BottleAgentClient } from '../src/interaction/bottle-agent-client';
+import { sceneCharacterInstructions } from '../src/interaction/character-prompt';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -389,6 +390,7 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
       interrupt_response: false,
     });
     expect(config.max_output_tokens).toBe(256);
+    expect(config.instructions).toBe(sceneCharacterInstructions());
     expect(config.tools.map((t: any) => t.name)).toEqual([
       'face_player',
       'show_return_target',
@@ -402,17 +404,30 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     expect('sendText' in client).toBe(false);
   });
 
-  test('selecting a character after microphone setup updates identity before the first answer', async () => {
+  test('selecting a character after microphone setup forwards its conversational data before the first answer', async () => {
     const { client, channel, identity, actions } = await connected();
     expect(channel.responses()).toHaveLength(0);
     identity.personId = 'selected-person';
     identity.personLabel = 'Selected character';
-    react(client, channel);
+    client.setPlayback(false);
+    client.notify({
+      event: 'bottle caught',
+      character: {
+        id: 'selected-person',
+        label: 'Selected character',
+        style: 'dry and friendly',
+        role: 'teammate',
+        activity: 'watching the bottle',
+      },
+    });
+    channel.created();
     const messages = channel.sent.filter((event) => event.item?.type === 'message');
     const state = messages.at(-1);
     expect(state.item.role).toBe('system');
     expect(state.item.content[0].text).toContain('"personId":"selected-person"');
     expect(state.item.content[0].text).toContain('Selected character');
+    expect(state.item.content[0].text).toContain('dry and friendly');
+    expect(state.item.content[0].text).toContain('watching the bottle');
     expect(channel.sent.indexOf(state)).toBeLessThan(channel.sent.indexOf(channel.responses()[0]));
     channel.tool('old-character');
     identity.personId = 'another-person';
