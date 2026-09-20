@@ -44,10 +44,13 @@ Media (20 Sep):
   repair preview from their review folders, and run intermediates from the author archive for the
   pipeline strip. `scripts/pull-media.ts` reads the bucket with the same credential rules as
   `bun run assets:pull` and derives posters, compare frames and trimmed loops with ffmpeg.
-- `scripts/capture-media.ts` renders the rest from the real viewer (`fourd.html` driven through
-  `window.wander`): the hero loop, the three compare renders, the walk/rewind/audio loops and the
-  last three pipeline stills. It prints the viewpoint offsets in body-heights that the compare
-  captions quote.
+- `scripts/capture-media.ts` renders the hero loop and the three compare renders from the real
+  viewer (`fourd.html` driven through `window.wander`) and prints the viewpoint offsets in
+  body-heights that the compare captions quote. The viewer-feature loops and the last three
+  pipeline stills are cut from reviewed footage already in the bucket instead: rendering them
+  without a GPU took about half an hour per loop, which is not worth it for a landing page.
+- The Orbis Engine logo and header photo live in `site/src/brand/`; the black logo sits in a
+  sticky top bar and the colour header is the hero masthead.
 - The gallery has seven cards: the scenes with a clean reviewed loop. Review captures with the
   debug HUD burned in (`authored/*.mp4`, `walk/*.mp4`) and copyrighted film clips other than
   Tears of Steel were left out. Cards link to the demo only for ids the picker has

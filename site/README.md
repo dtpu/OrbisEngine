@@ -21,7 +21,8 @@ Media files are pulled at build time, never committed (`public/` is gitignored).
 entry is either a file in the private shared bucket (`asset`, the pinned viewer snapshot that
 `bun run demo` serves, or `archive`, the author archive), a public `url`, a still or trimmed loop
 derived with ffmpeg from an earlier entry (`frame`, `clip`, `ffmpeg`), or a `capture` that
-`scripts/capture-media.ts` renders from the running viewer.
+`scripts/capture-media.ts` renders from the running viewer (the hero loop and the three compare
+renders; everything else comes from footage already in the bucket).
 
 1. From the repository root, `bun install --frozen-lockfile` and save the teammate credentials as
    `.env.local` (see `docs/shared-assets.md`); the pull uses the same credential rules as
@@ -32,8 +33,9 @@ derived with ffmpeg from an earlier entry (`frame`, `clip`, `ffmpeg`), or a `cap
 4. Start the viewer at the root (`bun run demo`) and run `bun run scripts/capture-media.ts`. It
    drives `fourd.html` through `window.wander`, reads frames straight from the WebGL canvas, and
    prints the viewpoint offsets in body-heights that the compare captions quote. It needs Chrome
-   (`CHROME_PATH`, the usual install paths, or Playwright's own download) and takes a while
-   without a GPU. Set `VIEWER_URL` for another viewer port.
+   (`CHROME_PATH`, the usual install paths, or Playwright's own download). On a machine with a
+   GPU it takes a few minutes; without one, set `LOD_COUNT=150000` and expect about an hour for
+   the hero loop. Set `VIEWER_URL` for another viewer port.
 5. Run `bun run scripts/pull-media.ts` again for the posters taken from the captured loops.
 
 Existing files are kept; delete a file to rebuild it, or pass `--force` to the capture script.

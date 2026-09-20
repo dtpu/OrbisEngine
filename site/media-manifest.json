@@ -10,44 +10,89 @@
       "asset": "/reviews/austin-overnight/playback-final/elevator-baseline.mp4",
       "note": "Viewer playback along the recovered camera path, reviewed 19 Sep"
     },
-    { "path": "elevator/poster.jpg", "frame": { "from": "elevator/wander.mp4", "at": 1.4 } },
+    {
+      "path": "elevator/poster.jpg",
+      "frame": {
+        "from": "elevator/wander.mp4",
+        "at": 1.4
+      }
+    },
     {
       "path": "elevator/frame.jpg",
-      "frame": { "from": "elevator/source.mp4", "at": 6.0, "scale": "1280:-2" }
+      "frame": {
+        "from": "elevator/source.mp4",
+        "at": 6.0,
+        "scale": "1280:-2"
+      }
     },
-    { "path": "elevator/render.jpg", "capture": true },
-
-    { "path": "lobby/source.mp4", "asset": "/clips/lobby.mp4" },
+    {
+      "path": "elevator/render.jpg",
+      "capture": true
+    },
+    {
+      "path": "lobby/source.mp4",
+      "asset": "/clips/lobby.mp4"
+    },
     {
       "path": "lobby/wander.mp4",
       "asset": "/reviews/austin-overnight/playback-final/lobby-baseline.mp4"
     },
-    { "path": "lobby/poster.jpg", "frame": { "from": "lobby/wander.mp4", "at": 4.7 } },
+    {
+      "path": "lobby/poster.jpg",
+      "frame": {
+        "from": "lobby/wander.mp4",
+        "at": 4.7
+      }
+    },
     {
       "path": "lobby/frame.jpg",
-      "frame": { "from": "lobby/source.mp4", "at": 4.733, "scale": "1280:-2" }
+      "frame": {
+        "from": "lobby/source.mp4",
+        "at": 4.733,
+        "scale": "1280:-2"
+      }
     },
-    { "path": "lobby/render.jpg", "capture": true },
-
+    {
+      "path": "lobby/render.jpg",
+      "capture": true
+    },
     {
       "path": "stairs2/wander.mp4",
       "asset": "/reviews/austin-overnight/playback-final/stairs2-baseline.mp4"
     },
-    { "path": "stairs2/poster.jpg", "frame": { "from": "stairs2/wander.mp4", "at": 1.0 } },
-
+    {
+      "path": "stairs2/poster.jpg",
+      "frame": {
+        "from": "stairs2/wander.mp4",
+        "at": 1.0
+      }
+    },
     {
       "path": "atrium/wander.mp4",
       "asset": "/reviews/austin-overnight/playback-final/atrium-baseline.mp4"
     },
-    { "path": "atrium/poster.jpg", "frame": { "from": "atrium/wander.mp4", "at": 1.0 } },
-
+    {
+      "path": "atrium/poster.jpg",
+      "frame": {
+        "from": "atrium/wander.mp4",
+        "at": 1.0
+      }
+    },
     {
       "path": "tos31/wander.mp4",
       "asset": "/reviews/austin-overnight/playback-final/tos31-baseline.mp4"
     },
-    { "path": "tos31/poster.jpg", "frame": { "from": "tos31/wander.mp4", "at": 3.0 } },
-
-    { "path": "gym/source.mp4", "asset": "/clips/gym.mp4" },
+    {
+      "path": "tos31/poster.jpg",
+      "frame": {
+        "from": "tos31/wander.mp4",
+        "at": 3.0
+      }
+    },
+    {
+      "path": "gym/source.mp4",
+      "asset": "/clips/gym.mp4"
+    },
     {
       "path": "gym/review.mp4",
       "asset": "/reviews/gym-repair/gym-contact-wip.mp4",
@@ -55,15 +100,32 @@
     },
     {
       "path": "gym/wander.mp4",
-      "clip": { "from": "gym/review.mp4", "start": 3, "duration": 10, "scale": "960:-2" }
+      "clip": {
+        "from": "gym/review.mp4",
+        "start": 3,
+        "duration": 10,
+        "scale": "960:-2"
+      }
     },
-    { "path": "gym/poster.jpg", "frame": { "from": "gym/wander.mp4", "at": 2.0 } },
+    {
+      "path": "gym/poster.jpg",
+      "frame": {
+        "from": "gym/wander.mp4",
+        "at": 2.0
+      }
+    },
     {
       "path": "gym/frame.jpg",
-      "frame": { "from": "gym/source.mp4", "at": 8.0, "scale": "1280:-2" }
+      "frame": {
+        "from": "gym/source.mp4",
+        "at": 8.0,
+        "scale": "1280:-2"
+      }
     },
-    { "path": "gym/render.jpg", "capture": true },
-
+    {
+      "path": "gym/render.jpg",
+      "capture": true
+    },
     {
       "path": "kitchen/review.mp4",
       "asset": "/reviews/kitchen-continuation/fixture-repair/preview.mp4",
@@ -79,26 +141,108 @@
         "scale": "960:-2"
       }
     },
-    { "path": "kitchen/poster.jpg", "frame": { "from": "kitchen/wander.mp4", "at": 1.0 } },
-
+    {
+      "path": "kitchen/poster.jpg",
+      "frame": {
+        "from": "kitchen/wander.mp4",
+        "at": 1.0
+      }
+    },
     {
       "path": "hero/source.mp4",
-      "clip": { "from": "elevator/source.mp4", "start": 0, "duration": 10, "scale": "960:-2" }
+      "clip": {
+        "from": "elevator/source.mp4",
+        "start": 0,
+        "duration": 10,
+        "scale": "960:-2"
+      }
     },
-    { "path": "hero/source-poster.jpg", "frame": { "from": "hero/source.mp4", "at": 0 } },
-    { "path": "hero/wander.mp4", "capture": true },
-    { "path": "hero/wander-poster.jpg", "frame": { "from": "hero/wander.mp4", "at": 0 } },
-
-    { "path": "viewer/walk.mp4", "capture": true },
-    { "path": "viewer/walk.jpg", "frame": { "from": "viewer/walk.mp4", "at": 0 } },
-    { "path": "viewer/rewind.mp4", "capture": true },
-    { "path": "viewer/rewind.jpg", "frame": { "from": "viewer/rewind.mp4", "at": 0 } },
-    { "path": "viewer/audio.mp4", "capture": true },
-    { "path": "viewer/audio.jpg", "frame": { "from": "viewer/audio.mp4", "at": 0 } },
-
+    {
+      "path": "hero/source-poster.jpg",
+      "frame": {
+        "from": "hero/source.mp4",
+        "at": 0
+      }
+    },
+    {
+      "path": "hero/wander.mp4",
+      "capture": true
+    },
+    {
+      "path": "hero/wander-poster.jpg",
+      "frame": {
+        "from": "hero/wander.mp4",
+        "at": 0
+      }
+    },
+    {
+      "path": "viewer/walk.mp4",
+      "clip": {
+        "from": "stairs2/wander.mp4",
+        "start": 0,
+        "duration": 4.1,
+        "scale": "960:-2"
+      },
+      "note": "Reviewed stairs playback; the climb shows what the floor supports"
+    },
+    {
+      "path": "viewer/rewind.mp4",
+      "ffmpeg": {
+        "inputs": ["elevator/wander.mp4"],
+        "args": [
+          "-vf",
+          "trim=2:7,reverse,setpts=PTS-STARTPTS,scale=960:-2",
+          "-an",
+          "-c:v",
+          "libx264",
+          "-pix_fmt",
+          "yuv420p",
+          "-crf",
+          "23",
+          "-movflags",
+          "+faststart"
+        ]
+      },
+      "note": "The elevator playback run backwards from 7 s to 2 s"
+    },
+    {
+      "path": "viewer/audio.mp4",
+      "clip": {
+        "from": "lobby/wander.mp4",
+        "start": 3,
+        "duration": 5,
+        "scale": "960:-2"
+      },
+      "note": "The lobby wave; the original mix plays in the viewer, not on this page"
+    },
+    {
+      "path": "viewer/walk.jpg",
+      "frame": {
+        "from": "viewer/walk.mp4",
+        "at": 0
+      }
+    },
+    {
+      "path": "viewer/rewind.jpg",
+      "frame": {
+        "from": "viewer/rewind.mp4",
+        "at": 0
+      }
+    },
+    {
+      "path": "viewer/audio.jpg",
+      "frame": {
+        "from": "viewer/audio.mp4",
+        "at": 0
+      }
+    },
     {
       "path": "steps/1.jpg",
-      "frame": { "from": "elevator/source.mp4", "at": 0, "scale": "1280:-2" },
+      "frame": {
+        "from": "elevator/source.mp4",
+        "at": 0,
+        "scale": "1280:-2"
+      },
       "note": "The first frame of the interval the run used"
     },
     {
@@ -109,7 +253,11 @@
     },
     {
       "path": "steps/2.jpg",
-      "frame": { "from": "steps/src/track-overlay.jpg", "at": 0, "scale": "1280:-2" },
+      "frame": {
+        "from": "steps/src/track-overlay.jpg",
+        "at": 0,
+        "scale": "1280:-2"
+      },
       "optional": true
     },
     {
@@ -138,8 +286,34 @@
       "optional": true,
       "note": "The run's person mask lifted out of the frame it was cut from"
     },
-    { "path": "steps/4.jpg", "capture": true },
-    { "path": "steps/5.jpg", "capture": true },
-    { "path": "steps/6.jpg", "capture": true }
+    {
+      "path": "steps/4.jpg",
+      "frame": {
+        "from": "hero/wander.mp4",
+        "at": 0.2
+      },
+      "note": "The built room with both people placed, from the hero capture"
+    },
+    {
+      "path": "steps/5.jpg",
+      "frame": {
+        "from": "hero/wander.mp4",
+        "at": 6.0
+      },
+      "note": "The fit at a throw instant, off the recorded path"
+    },
+    {
+      "path": "steps/src/demo-desktop.png",
+      "asset": "/reviews/daniel-overnight/evidence/frontend/final-ready/desktop-playing.png",
+      "note": "Reviewed screenshot of the packaged demo shell"
+    },
+    {
+      "path": "steps/6.jpg",
+      "frame": {
+        "from": "steps/src/demo-desktop.png",
+        "at": 0,
+        "scale": "1280:-2"
+      }
+    }
   ]
 }
