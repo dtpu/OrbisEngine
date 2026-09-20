@@ -10,6 +10,8 @@ export type BottlePhysicsOptions = {
    * for conservative floor clearance without making its wall collision artificially wide.
    */
   floorRadius?: number;
+  /** Optional gameplay height above measured floor for loose props; pickup uses the real floor. */
+  floorLift?: number;
   gravity: number;
   maxSpeed: number;
   floorAt: (x: number, z: number) => number | null;
@@ -70,6 +72,8 @@ export class BottlePhysics {
       options.radius <= 0 ||
       (options.floorRadius !== undefined &&
         (!Number.isFinite(options.floorRadius) || options.floorRadius <= 0)) ||
+      (options.floorLift !== undefined &&
+        (!Number.isFinite(options.floorLift) || options.floorLift < 0)) ||
       !Number.isFinite(options.gravity) ||
       options.gravity < 0 ||
       !Number.isFinite(options.maxSpeed) ||
@@ -322,7 +326,8 @@ export class BottlePhysics {
       const start: Vec3 = [...this.position];
       const next = start.map((v, axis) => v + this.velocity[axis] * dt) as Vec3;
       if (!finite(next)) return [];
-      const floor = floorAt(next[0], next[2]);
+      const measuredFloor = floorAt(next[0], next[2]);
+      const floor = measuredFloor === null ? null : measuredFloor + (this.options.floorLift ?? 0);
       const grounded =
         floor !== null && Number.isFinite(floor) && next[1] <= floor + this.floorRadius;
       // Occupancy bins can begin up to a small sphere diameter above their measured floor. Let a
