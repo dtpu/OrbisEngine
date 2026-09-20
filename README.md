@@ -22,10 +22,14 @@ scene assets from private S3 and caches them on demand; credentials never enter 
 The shared migration is complete. Restart Vite to adopt a newly published snapshot. See
 [shared assets](docs/shared-assets.md) for credentials, publishing, and recovery.
 
-The picker contains five scenes: the two-person lift lobby, Tears of Steel shot 31, the waving
-lobby subject, Austin's accepted gym, and the latest kitchen fixture repair. Desktop and headset
-menus share this selection. Gym and kitchen load their reviewed asset manifests, including
-animated people, moving objects and walking colliders; their recorded limitations still apply.
+The picker contains six scenes: the two-person lift lobby, Tears of Steel shot 31, the waving
+lobby subject, Austin's accepted gym, the latest kitchen fixture repair, and two friends outside
+the venue. Desktop and headset menus share this selection. Gym and kitchen load their reviewed
+asset manifests, including animated people, moving objects and walking colliders; their recorded
+limitations still apply.
+The [plaza scene](docs/img5594-delivery.md) uses both lossless person tracks, the saved ground
+placement and the original soundtrack. Missing backpack geometry, soft feet and generated sign
+text remain visible limitations.
 
 For an offline asset bundle shared by the author, extract its existing `public/` structure from
 the repository root and explicitly select local mode:
@@ -330,7 +334,7 @@ Phone clips are private supplied footage. Active presets use these source excerp
 Tears of Steel's official [download](https://mango.blender.org/download/) and
 [sharing](https://mango.blender.org/sharing/) pages provide its source and attribution terms.
 Audio manifests record exact source hashes and sample offsets. Other direct presets, including
-Harry Potter excerpts, are supplied assets outside the five-scene picker; private storage access
+Harry Potter excerpts, are supplied assets outside the curated picker; private storage access
 does not grant redistribution rights.
 
 Contributors: **Aayan Karmali (StockerMC), Austin Jian, and Daniel Pu**. The archive preserves the
