@@ -436,6 +436,52 @@ def _concrete_stage(
     return stage.model_copy(update={"id": node_id or stage_type, "inputs": inputs})
 
 
+def rebuild_expanded_node(
+    node_id: str,
+    stage_type: str,
+    stored: dict[str, Any],
+    *,
+    dependencies: tuple[str, ...],
+    parent_node_id: str | None = None,
+    branch_key: str | None = None,
+) -> GraphNode:
+    """Rebuild a node the run created by expanding a stage, on today's stage definitions.
+
+    Which node produces each input is the run's own history and comes from the stored copy:
+    `lhm_frozen:00` reads the person `person_prep:00` prepared, and no registry knows that.
+    Everything else -- the outputs, parameters, resources and quality policy -- comes from the
+    registry, so correcting a stage definition reaches a run already in flight instead of
+    being frozen into it at the moment it expanded. The run inputs come from the registry too,
+    which is how a stage that was always missing the clip gets it by redeploying rather than
+    by starting the clip again.
+    """
+    registry = stage_registry()
+    if stage_type not in registry:
+        return GraphNode(
+            id=node_id,
+            stage_type=stage_type,
+            definition=StageDefinition.model_validate(stored),
+            dependencies=dependencies,
+            parent_node_id=parent_node_id,
+            branch_key=branch_key,
+        )
+    stage = registry[stage_type]
+    inputs = {
+        name: binding for name, binding in stage.inputs.items() if binding.source == "run_input"
+    }
+    for name, binding in (stored.get("inputs") or {}).items():
+        if binding.get("source") == "stage_output":
+            inputs[name] = ArtifactBinding.model_validate(binding)
+    return GraphNode(
+        id=node_id,
+        stage_type=stage_type,
+        definition=stage.model_copy(update={"id": node_id, "inputs": inputs}),
+        dependencies=dependencies,
+        parent_node_id=parent_node_id,
+        branch_key=branch_key,
+    )
+
+
 def _unique_branch_keys(items: tuple[BranchArtifact, ...]) -> None:
     keys = [item.key for item in items]
     if len(keys) != len(set(keys)):
