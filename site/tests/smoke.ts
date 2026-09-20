@@ -150,28 +150,30 @@ const checks: Check[] = [
         const labels = await page.$$eval('section#hero figcaption', (els) =>
           els.map((e) => e.textContent?.trim()),
         );
-        if (labels.join(',') !== 'Recorded,Wander') throw new Error(`hero labels: ${labels}`);
+        if (labels.join(',') !== 'Recorded,Orbis Engine') throw new Error(`hero labels: ${labels}`);
+        if (!(await page.$('header img[alt="Orbis Engine"]')))
+          throw new Error('top bar logo missing');
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
   {
-    name: 'gallery renders 9 scene cards with viewer links',
+    name: 'gallery renders 7 scene cards, 5 with viewer links',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const count = await page.$$eval('section#gallery article', (els) => els.length);
-        if (count !== 9) throw new Error(`expected 9 gallery cards, got ${count}`);
+        if (count !== 7) throw new Error(`expected 7 gallery cards, got ${count}`);
         const links = await page.$$eval('section#gallery a[href^="/demo.html?clip="]', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
-        if (links.length < 9) throw new Error(`expected viewer links, got ${links.length}`);
+        if (links.length < 5) throw new Error(`expected viewer links, got ${links.length}`);
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
   {
-    name: 'compare: 3 sliders with Recorded/Wander labels and body-height captions',
+    name: 'compare: 3 sliders with Recorded/Orbis Engine labels and body-height captions',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -186,7 +188,7 @@ const checks: Check[] = [
             sliders: sliders.length,
             imgs: imgs.length,
             recorded: section.textContent?.includes('Recorded') ?? false,
-            wander: section.textContent?.includes('Wander') ?? false,
+            wander: section.textContent?.includes('Orbis Engine') ?? false,
             captions,
           };
         });
@@ -230,7 +232,7 @@ const checks: Check[] = [
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const h2 = await page.textContent('section#limits h2');
-        if (!h2?.includes('What Wander can\u2019t do yet.'))
+        if (!h2?.includes('What Orbis Engine can\u2019t do yet.'))
           throw new Error(`bad limits h2: ${h2}`);
         const n = await page.$$eval('section#limits li', (els) => els.length);
         if (n !== 4) throw new Error(`expected 4 limits, got ${n}`);

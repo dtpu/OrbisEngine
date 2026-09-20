@@ -1,6 +1,8 @@
 .section {
   padding: var(--space-7) 0;
   border-top: 1px solid var(--rule);
+  /* Anchor jumps land below the sticky top bar. */
+  scroll-margin-top: 56px;
 }
 
 .inner {
