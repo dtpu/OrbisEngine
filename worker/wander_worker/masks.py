@@ -426,3 +426,193 @@ def moved_content_masks(
             )
         )
     return dict(person=person, moved=moved, residual=resid_out, stats=stats)
+
+
+# --- foreground people --------------------------------------------------------------------
+# people_masks labels every person PIXEL, which is the wrong question for the person-removal
+# cleaner. In a broadcast stadium shot the whole crowd in the stands is class 12, so the cleaner
+# inpaints the terraces into a grey smear; in an indoor phone clip the same map drops a limb or a
+# partly occluded body and leaves half a person in the plate. What the cleaner wants removed is
+# the FOREGROUND people, the ones that come back as avatars. Mask R-CNN answers that question:
+# it returns instances with boxes, so "big enough to reconstruct" is a box-height test, and the
+# semantic map is then used only to COMPLETE the instances that survived the test.
+#
+# Thresholds measured on the three fixture clips in public/clips (nine frames, boxes at score
+# >0.7, detector and segmenter run on CPU):
+#   - stadium celebration frame (848x478): the four foreground subjects measure 0.73, 0.60, 0.59
+#     and 0.38 of frame height; the stewards and spectators at the pitch-side barrier top out at
+#     0.19. Any cut in (0.19, 0.38] separates them on this frame.
+#   - phone/game clips: their single or paired subjects measure 0.75-0.93, far above either end.
+# 0.2 sits just above the measured crowd and well below the smallest real subject. It also agrees
+# with reconstruction: 0.2 of a 1080-line frame is a 216 px body, whose head is ~27 px, already
+# under the face height docs/known-limits.md calls unreadable - below this a person cannot become
+# an avatar, so leaving them in the plate as background texture is the consistent choice. A person
+# who is short only because the frame cuts them off is treated as background too; the growth below
+# is what recovers a limb of a SELECTED person, not a new subject.
+FOREGROUND_MIN_HEIGHT_FRAC = 0.2
+# same detector confidence scripts/shot_cuts.py::person_stats and the person stages use
+FOREGROUND_SCORE = 0.7
+# Growth band, as a fraction of the selected instance's larger box side. An instance mask is tight
+# and what it misses is thin - a hand, hair, a bag strap - so the band only has to be thin: 0.05 is
+# 17 px around the stadium player (box 350 px) and 40 px around a full-height 1080p subject, which
+# is the order of the dilation the cleaner applies anyway. 0.15 was measured to be far too much:
+# behind the players the crowd is one connected sheet of "person" pixels welded to the subject, and
+# a 52 px bite out of it took most of several spectators with it. On the stadium celebration frame
+# 0.15 removed 22.4% of the pixels, 0.05 with the guard below removes 14.9%, against the 32.8% the
+# semantic mask removes today - and what is left removed is the four foreground subjects.
+FOREGROUND_GROWTH_BOX_FRAC = 0.05
+# Self-check on that same failure, in the spirit of moved_content_masks' max_added_frac: what the
+# instance mask misses is a fraction of a body, so when the connected semantic pixels would add
+# more than half of the instance's own area, the semantic map is describing a crowd standing
+# against the subject rather than a missed limb. Drop the growth for that instance and keep the
+# instance alone, which is never worse than the instance mask the detector already committed to.
+FOREGROUND_MAX_GROWTH_FRAC = 0.5
+COCO_PERSON = 1
+_detector = None
+
+
+def _load_detector():
+    global _detector
+    if _detector is None:
+        import torch
+        from torchvision.models.detection import (
+            maskrcnn_resnet50_fpn_v2,
+            MaskRCNN_ResNet50_FPN_V2_Weights,
+        )
+
+        model = maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT).eval()
+        dev = (
+            torch.device("mps")
+            if torch.backends.mps.is_available()
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        _detector = (model.to(dev), dev)
+    return _detector
+
+
+def person_instances(images: np.ndarray, score: float = FOREGROUND_SCORE, batch_size: int = 2):
+    """images uint8 (N,H,W,3) -> yields (boxes (K,4) float x0,y0,x1,y1, masks (K,H,W) bool).
+
+    One tuple per frame, in order, so a caller never holds every frame's instances at once: at
+    1080p a dozen kept instances are already 25 MB of bool. Mask R-CNN keeps full-resolution
+    feature maps, so its forward batch is smaller than the segmenter's.
+    """
+    import torch
+
+    model, dev = _load_detector()
+    with torch.no_grad():
+        for i in range(0, len(images), batch_size):
+            batch = [
+                torch.from_numpy(np.ascontiguousarray(im)).permute(2, 0, 1).float().div(255).to(dev)
+                for im in images[i : i + batch_size]
+            ]
+            for pred in model(batch):
+                keep = (pred["labels"] == COCO_PERSON) & (pred["scores"] > score)
+                boxes = pred["boxes"][keep].float().cpu().numpy()
+                masks = (pred["masks"][keep, 0] > 0.5).cpu().numpy()
+                yield boxes, masks
+
+
+def select_foreground_mask(
+    boxes,
+    instances,
+    semantic: np.ndarray,
+    min_height_frac: float = FOREGROUND_MIN_HEIGHT_FRAC,
+    growth_box_frac: float = FOREGROUND_GROWTH_BOX_FRAC,
+    max_growth_frac: float = FOREGROUND_MAX_GROWTH_FRAC,
+) -> tuple[np.ndarray, dict]:
+    """One frame of detections + the semantic person map -> (bool (H,W), counts).
+
+    boxes (K,4) x0,y0,x1,y1 in pixels, instances bool (K,H,W), semantic bool (H,W) UNDILATED.
+    No model runs here: this is the whole selection rule, so it is testable on synthetic masks.
+
+    An instance is kept when its box is at least min_height_frac of the frame height. Each kept
+    instance is then grown with the semantic person pixels CONNECTED to it, so a limb, a bag or
+    hair the instance mask cut off is still covered, but the growth is confined to a band around
+    that instance (growth_box_frac of its larger box side) and is dropped entirely when it would
+    add more than max_growth_frac of the instance's own area. Semantic person pixels that reach no
+    kept instance - the crowd in the stands - stay out of the mask, and a crowd blob that touches
+    a kept instance contributes at most a band-deep bite of itself, or nothing.
+    """
+    import cv2
+
+    semantic = np.asarray(semantic, dtype=bool)
+    H, W = semantic.shape
+    boxes = np.asarray(boxes, dtype=float).reshape(-1, 4)
+    instances = np.asarray(instances, dtype=bool).reshape(-1, H, W)
+    out = np.zeros((H, W), dtype=bool)
+    selected, rejected, crowded, bands, grown_px = 0, 0, 0, [], 0
+    for k in range(len(boxes)):
+        x0, y0, x1, y1 = boxes[k]
+        if (y1 - y0) < min_height_frac * H:
+            rejected += 1
+            continue
+        selected += 1
+        seed = instances[k]
+        if not seed.any():
+            continue
+        band_px = max(1, int(round(growth_box_frac * max(y1 - y0, x1 - x0))))
+        bands.append(band_px)
+        region = (semantic | seed) & _dilate(seed, band_px)
+        _, lab = cv2.connectedComponents(region.astype(np.uint8), connectivity=8)
+        touched = np.unique(lab[seed])
+        grown = np.isin(lab, touched[touched > 0]) & ~seed
+        if grown.sum() > max_growth_frac * seed.sum():
+            crowded += 1
+            grown[:] = False
+        grown_px += int(grown.sum())
+        out |= seed | grown
+    counts = dict(
+        instances=int(len(boxes)),
+        selected=int(selected),
+        rejectedSmall=int(rejected),
+        rejectedGrowth=int(crowded),
+        bandPx=int(max(bands)) if bands else 0,
+        grownPx=int(grown_px),
+        maskPx=int(out.sum()),
+        semanticPx=int(semantic.sum()),
+    )
+    return out, counts
+
+
+def foreground_people_masks(
+    images: np.ndarray,
+    *,
+    min_height_frac: float = FOREGROUND_MIN_HEIGHT_FRAC,
+    score: float = FOREGROUND_SCORE,
+    dilate_px: int = 6,
+    batch_size: int = 8,
+    growth_box_frac: float = FOREGROUND_GROWTH_BOX_FRAC,
+    max_growth_frac: float = FOREGROUND_MAX_GROWTH_FRAC,
+    stats: list | None = None,
+) -> np.ndarray:
+    """images uint8 (N,H,W,3) -> bool (N,H,W), True where a FOREGROUND person is (dilated).
+
+    Same shape, dtype and dilation convention as people_masks, and a drop-in replacement for it
+    wherever the caller wants the reconstructed subjects rather than every person-coloured pixel.
+    Pass a list as `stats` to receive one select_foreground_mask count dict per frame.
+    """
+    N, H, W, _ = images.shape
+    out = np.zeros((N, H, W), dtype=bool)
+    det_batch = max(1, batch_size // 4)
+    for i in range(0, N, batch_size):
+        chunk = images[i : min(N, i + batch_size)]
+        semantic = people_masks(chunk, dilate_px=0, batch_size=batch_size)
+        for b, (boxes, instances) in enumerate(
+            person_instances(chunk, score=score, batch_size=det_batch)
+        ):
+            mask, counts = select_foreground_mask(
+                boxes,
+                instances,
+                semantic[b],
+                min_height_frac=min_height_frac,
+                growth_box_frac=growth_box_frac,
+                max_growth_frac=max_growth_frac,
+            )
+            out[i + b] = mask
+            if stats is not None:
+                stats.append(dict(frame=i + b, **counts))
+    if dilate_px > 0:
+        for i in range(N):
+            out[i] = _dilate(out[i], dilate_px)
+    return out
