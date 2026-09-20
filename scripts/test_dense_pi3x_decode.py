@@ -301,13 +301,23 @@ class ContainerSelection(unittest.TestCase):
 
 
 class PlanSelection(unittest.TestCase):
-    def test_decoded_timestamps_select_slots_and_metadata_says_so(self):
-        plan = sample_plan(12.0, 24, 24.0, pts_seconds=[index / 24.0 for index in range(24)])
+    def test_variable_rate_timestamps_select_slots_and_metadata_says_so(self):
+        # 10 fps for a second, then 30 fps: the timestamps leave the 20 fps average grid at once
+        pts = [index / 10.0 for index in range(10)] + [1.0 + index / 30.0 for index in range(30)]
+        plan = sample_plan(12.0, 40, 20.0, pts_seconds=pts)
         self.assertEqual(plan["sampleSelection"], SELECT_PTS_SLOTS)
         self.assertEqual(plan["timestampSource"], TIMES_PTS)
-        self.assertEqual(plan["samples"], list(range(0, 23, 2)))
-        self.assertEqual(plan["times"][1], 1 / 12.0)
         self.assertEqual(plan["plannedSamples"], len(plan["samples"]))
+        self.assertEqual(len(plan["samples"]), len(set(plan["samples"])))
+
+    def test_a_constant_rate_source_keeps_the_index_rule_it_always_had(self):
+        # 60000/1001 fps sampled at 12: the frames an earlier solve of the same clip used
+        pts = [index * 1001 / 60000 for index in range(3041)]
+        plan = sample_plan(12.0, 3041, 60000 / 1001, pts_seconds=pts)
+        self.assertEqual(plan["sampleSelection"], SELECT_CONTAINER_INDEX)
+        self.assertEqual(plan["timestampSource"], TIMES_PTS)
+        self.assertEqual(plan["samples"][:4], [0, 5, 10, 15])
+        self.assertEqual(plan["samples"], [int(round(k / 12 * 60000 / 1001)) for k in range(609)])
 
     def test_container_metadata_selection_is_named_when_no_timestamps_survive(self):
         plan = sample_plan(12.0, 24, 24.0)

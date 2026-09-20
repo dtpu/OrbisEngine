@@ -557,6 +557,20 @@ def decoded_timeline(frames, pts_seconds=None, pos_msec_seconds=None, average_fp
     return [index / average_fps for index in range(frames)], TIMES_AVERAGE_FPS
 
 
+def constant_rate(times, average_fps, tolerance=0.02):
+    """True when every decoded timestamp sits on the container's average-rate grid.
+
+    `tolerance` is a fraction of one frame interval: timestamp quantisation in a constant-rate
+    file is far below it, while a variable-rate phone clip misses its average grid by whole
+    frames within seconds.
+    """
+    average_fps = float(average_fps or 0)
+    if not math.isfinite(average_fps) or average_fps <= 0 or len(times) < 2:
+        return False
+    drift = np.abs(np.asarray(times, float) * average_fps - np.arange(len(times)))
+    return bool(drift.max() <= tolerance)
+
+
 def output_slots(times, fps):
     """The frame FFmpeg's fps filter would retain in each output slot, from the same timestamps.
 
@@ -596,7 +610,10 @@ def container_samples(frames, average_fps, fps):
 def sample_plan(fps, frames, average_fps, pts_seconds=None, pos_msec_seconds=None):
     """Which source frames this solve will reconstruct, and where their times came from."""
     times, label = decoded_timeline(frames, pts_seconds, pos_msec_seconds, average_fps)
-    if label == TIMES_AVERAGE_FPS:
+    if label == TIMES_AVERAGE_FPS or constant_rate(times, average_fps):
+        # A constant-rate source keeps the index rule it has always had, so a clip that solved
+        # before samples exactly the frames it sampled then. Only a source whose timestamps do
+        # not follow its average rate needs them to choose frames.
         samples = container_samples(frames, average_fps, fps)
         empty, selection = 0, SELECT_CONTAINER_INDEX
     else:
