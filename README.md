@@ -50,6 +50,23 @@ version, retained limitations, and the older review page’s historical work-in-
 Walk mode is the default. `?walk=0` restores the authoring camera. The source clip, reconstruction,
 and audio share one playback timeline. Recorded stereo mixes do not imply separated speakers.
 
+## Interactive bottle prototype
+
+The opt-in elevator prototype is available locally at
+[fourd.html?demo=elevator&interact=1&xr=1](http://127.0.0.1:5399/fourd.html?demo=elevator&interact=1&xr=1).
+It starts the recorded exchange normally in VR, then a deliberate close approach, directed
+microphone speech, or a valid bottle grip pauses the recording for local bottle handling and an
+explicitly fictional generated voice. The immersive panel provides microphone, Replay,
+Pause/Continue, Reset, and End voice controls; there is no text chat. Replay restores and plays the
+recorded state while retaining the visitor's pose and current voice history. Reset restores it
+paused. Neither a returned bottle nor VR re-entry restarts or loops the recording.
+
+Voice needs a private `OPENAI_API_KEY` on the local Vite server. The browser receives a short-lived
+session secret; static build output cannot create one. Recorded bodies stay paused apart from an
+optional whole-body turn: there is no new walking, reach, eye, or lip animation. See
+[interactive bottle prototype](docs/interactive-world.md) for manifest, head-anchor, and
+verification limits.
+
 ## Quest
 
 Enable Developer Mode and accept the headset's USB debugging prompt. With the demo running:
