@@ -108,7 +108,10 @@ Pointing at a row and pressing A or pulling the trigger also selects it.
 Press B again or point at the close button and pull the trigger to resume the current scene.
 Playback and artificial movement pause while browsing; your actual head movement remains tracked.
 Switching clips keeps the same VR session. The current scene stays visible while the next loads;
-a failed load leaves it available and shows a retry message in the sidebar.
+choose another clip to cancel a slow load, or choose the current clip to return to it.
+A failed load restores the previous scene and shows a retry message in the sidebar. Closing the
+message restores the playback state from before browsing. Release a held joystick after opening
+the sidebar before using it to browse.
 The previous scene stays prepared in memory for quick return visits. Loading a third scene
 replaces that spare before allocating another, so at most two scenes are resident. First visits
 still download or read cached assets and prepare their 3D data; the cache clears on page reload.
@@ -239,7 +242,10 @@ The turning browser check also needs that server. After building, run
 `XR_TEST_DIST=dist bun run test:xr-turning` to test this checkout's compiled code
 while using the running server for scene assets. Evidence stays under `.context/evidence/`.
 `bun test ./scripts/test-xr-scene-sidebar.ts` checks sidebar input edges, ray targets, scrolling,
-and bounded thumbnail loading. `XR_SIDEBAR_URL=http://127.0.0.1:5399 bun scripts/test-xr-scene-sidebar-browser.ts`
+and bounded thumbnail loading. `bun test ./scripts/test-scene-session.js` checks cancellation,
+playback restoration, activation rollback, cache bounds and disposal. `bun scripts/test-fourd-startup-browser.ts`
+checks startup failures and retry using isolated browser fixtures.
+`XR_SIDEBAR_URL=http://127.0.0.1:5399 bun scripts/test-xr-scene-sidebar-browser.ts`
 checks scene switching, preserved XR sessions, paused movement, and failed-load recovery with
 synthetic XR against the running viewer. These are not physical-headset measurements.
 
