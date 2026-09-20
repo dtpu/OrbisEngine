@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import Link from 'next/link';
-import { CodexTail } from '@/components/codex-tail';
 import './globals.css';
 
 // One family in two cuts: identifiers, hashes and sizes sit in the mono, everything an operator
@@ -49,10 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </a>
           </nav>
         </header>
-        <div className="shell">
-          <div className="shell__main">{children}</div>
-          <CodexTail />
-        </div>
+        {children}
       </body>
     </html>
   );

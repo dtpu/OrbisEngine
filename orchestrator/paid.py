@@ -14,7 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.database import ProviderClaimRecord, RunRecord
-from orchestrator.workflows.run import StageActivityInput
 
 UNRESOLVED = {"pending", "unknown"}
 TERMINAL = {"completed", "failed"}
@@ -194,40 +193,56 @@ class DatabasePaidGuard:
         self.code_version = code_version
         self.policy = PaidOperationPolicy(maximum_attempts)
 
-    def begin(self, request: StageActivityInput, attempt_id: str) -> str:
+    def begin(
+        self,
+        *,
+        run_id: str,
+        step: str,
+        attempt_id: str,
+        parameters: dict | None = None,
+    ) -> str:
+        """Open the claim for a step that is about to spend.
+
+        This is the record an operator reconciles against, not the thing that stops a second
+        launch: run_clip.py's own ledger does that, at the point where the money is actually
+        committed. Two guards around one launch is how a run ends up refusing to retry a stage
+        that never charged.
+        """
+        parameters = parameters or {}
         provider = {
-            "marble_submit": "marble",
+            "marble_video": "marble",
+            "marble_image": "marble",
+            "marble_multi": "marble",
             "world_prompt": "openai",
-            "object_describe": "openai",
             "anchors": "openai",
             "finetune": "ssh",
-        }.get(request.definition.get("executor"), "modal")
+        }.get(step, "modal")
         with self.session_factory.begin() as session:
             source_sha256 = self.source_sha256
             if source_sha256 is None:
-                run = session.get(RunRecord, request.run_id)
+                run = session.get(RunRecord, run_id)
                 if run is None:
-                    raise ValueError(f"unknown run: {request.run_id}")
+                    raise ValueError(f"unknown run: {run_id}")
                 source_sha256 = run.source_sha256
             claim = self.policy.begin(
                 session,
-                run_id=request.run_id,
+                run_id=run_id,
                 attempt_id=attempt_id,
                 provider=provider,
-                idempotency_key=f"{request.run_id}:{request.node_id}:{attempt_id}",
+                idempotency_key=attempt_id,
                 source_sha256=source_sha256,
-                logical_stage=request.stage_type,
-                operation=request.node_id,
-                parameters=request.parameters,
+                logical_stage=step,
+                operation=step,
+                parameters=parameters,
                 code_version=self.code_version,
-                hypothesis=request.parameters.get("hypothesis"),
-                estimated_cost=request.parameters.get("estimated_cost_usd"),
+                hypothesis=parameters.get("hypothesis"),
+                estimated_cost=parameters.get("estimated_cost_usd"),
             )
             return claim.id
 
-    def finish(self, claim_id: str, status: str, evidence) -> None:
+    def finish(self, claim_id: str, status: str, evidence=None) -> None:
         operation_id = None
-        for receipt in evidence.parent.rglob("*-generation.json"):
+        for receipt in evidence.rglob("*-generation.json") if evidence else ():
             try:
                 value = json.loads(receipt.read_text()).get("operation_id")
                 if isinstance(value, str) and value:

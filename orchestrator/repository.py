@@ -25,7 +25,6 @@ from orchestrator.database import (
     ProviderClaimRecord,
     RunRecord,
 )
-from orchestrator.graph import RunGraph
 
 
 TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "canceled"})
@@ -91,55 +90,6 @@ class PipelineRepository:
         self.code_revision = code_revision or os.environ.get("WANDER_CODE_REVISION", "unknown")
         self.environment_fingerprint = (
             environment_fingerprint or hashlib.sha256(sys.executable.encode()).hexdigest()[:16]
-        )
-
-    def create_run(self, run: Run, graph: RunGraph) -> None:
-        with self.sessions.begin() as session:
-            if session.get(RunRecord, run.id):
-                raise ValueError(f"run already exists: {run.id}")
-            session.add(
-                RunRecord(
-                    id=run.id,
-                    schema_version=run.schema_version,
-                    graph_schema=run.graph_schema,
-                    graph_version=run.graph_version,
-                    code_revision=run.code_revision,
-                    container_digest=run.container_digest,
-                    source_sha256=run.source_sha256,
-                    source_artifact_id=run.source_artifact_id,
-                    configuration=run.configuration,
-                    budget=run.budget.model_dump(mode="json"),
-                    status=run.status,
-                    created_by=run.created_by,
-                    created_at=run.created_at,
-                    updated_at=run.updated_at,
-                    next_event_sequence=1,
-                    parent_run_id=run.parent_run_id,
-                    branch_key=run.branch_key,
-                )
-            )
-            for node in graph.nodes.values():
-                session.add(
-                    NodeRecord(
-                        run_id=run.id,
-                        node_id=node.id,
-                        stage_type=node.stage_type,
-                        stage_definition=node.definition.model_dump(mode="json"),
-                        dependencies=list(node.dependencies),
-                        status=node.status,
-                        selected_attempt_id=node.selected_attempt_id,
-                        parent_node_id=node.parent_node_id,
-                        branch_key=node.branch_key,
-                        blocked_reason=node.blocked_reason,
-                        created_at=run.created_at,
-                        updated_at=run.updated_at,
-                    )
-                )
-        self.append_event(
-            run.id,
-            EventType.RUN,
-            run.id,
-            {"status": run.status, "graphFingerprint": graph.fingerprint},
         )
 
     def ping(self) -> None:

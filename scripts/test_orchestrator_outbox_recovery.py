@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from orchestrator.artifacts import LocalCAS, UploadOutbox, freeze_attempt
-from orchestrator.worker import flush_pending_outboxes
+from orchestrator.artifacts import flush_pending_outboxes
 from orchestrator.workspace import RunWorkspace
 
 RUN_ID = "run-outbox"

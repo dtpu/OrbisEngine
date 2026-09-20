@@ -37,7 +37,7 @@ import {
 } from '@/lib/format';
 import {
   activeMs,
-  dependenciesOf,
+  directDependencies,
   isExecuting,
   orderStages,
   stageNeedingAttention,
@@ -414,6 +414,9 @@ export default function RunConsole({ runId }: { runId: string }) {
     );
   }
 
+  // The nearest stages this one waits on. Anything further up is reached through those, and
+  // naming it again here would only repeat what the chain already says.
+  const after = selected ? (directDependencies(run.nodes).get(selected.id) ?? []) : [];
   const isGate = selected?.status === 'waiting_human';
   const reviews = run && selected ? reviewsFor(run, selected.id) : [];
   // When the reviewing agent defers to a human, its question travels in blockedReason.
@@ -589,10 +592,10 @@ export default function RunConsole({ runId }: { runId: string }) {
                       on <span className="mono">{selected.definition.resources.task_queue}</span>
                     </span>
                   ) : null}
-                  {dependenciesOf(selected).length > 0 ? (
+                  {after.length > 0 ? (
                     <span>
                       after{' '}
-                      {dependenciesOf(selected).map((dependency, index) => (
+                      {after.map((dependency, index) => (
                         <span key={dependency}>
                           {index > 0 ? ', ' : ''}
                           <button
@@ -786,11 +789,6 @@ export default function RunConsole({ runId }: { runId: string }) {
               />
 
               <div className={`decide${isGate ? ' decide--gate' : ''}`}>
-                <h3 className="decide__title">
-                  {isGate ? 'Your decision' : 'Steer this stage'}
-                  <small>recorded on the run with your reason</small>
-                </h3>
-
                 {agentQuestion ? (
                   <p className="ask">
                     <span className="ask__label">

@@ -106,6 +106,13 @@ const LEAD: BlockType[] = [
   'binary',
 ];
 
+/** Block types that put a picture on the screen rather than a number or a word. */
+const VISUAL = new Set<BlockType>(['splat', 'points', 'mesh', 'video', 'image']);
+
+export function isVisual(artifact: RunArtifact): boolean {
+  return VISUAL.has(classify(artifact).type);
+}
+
 export function leadArtifact(artifacts: RunArtifact[]): RunArtifact | undefined {
   return [...artifacts].sort(
     (a, b) => LEAD.indexOf(classify(a).type) - LEAD.indexOf(classify(b).type),

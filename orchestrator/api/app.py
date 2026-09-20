@@ -28,23 +28,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestrator.api.artifacts import ArtifactReader, register_artifact_routes
 from orchestrator.api.reviews import register_review_routes
 from orchestrator.contracts import BudgetPolicy, Run
-from orchestrator.graph import GRAPH_VERSION, instantiate_graph
+from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository
-from orchestrator.stages import GraphOptions
-from orchestrator.workflows.run import (
-    ApprovalSignal,
-    DecisionSignal,
-    GenerationWorkflowInput,
-    OperatorMessage,
-)
+from orchestrator.steps import RunOptions
+
+GRAPH_VERSION = "wander.agent-run/1"
 
 
-class WorkflowControl(Protocol):
-    async def start(self, request: GenerationWorkflowInput) -> None: ...
+class Runs(Protocol):
+    """Where runs live on disk. The supervisor picks up whatever appears here."""
 
-    async def signal(self, run_id: str, name: str, value: Any = None) -> None: ...
+    def open(self, *, run_id: str, name: str, source: Path, options: dict[str, Any]) -> Path: ...
 
-    async def state(self, run_id: str) -> dict[str, Any]: ...
+    def journal(self, run_id: str) -> Journal: ...
+
+    def pause(self, run_id: str, paused: bool) -> None: ...
 
 
 class SourceStore(Protocol):
@@ -66,7 +64,7 @@ class CreateRunRequest(BaseModel):
     id: str | None = None
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_artifact_id: str
-    options: GraphOptions = Field(default_factory=GraphOptions)
+    options: RunOptions = Field(default_factory=RunOptions)
     budget: BudgetPolicy = Field(default_factory=BudgetPolicy)
 
 
@@ -107,7 +105,7 @@ class ReconcileProviderRequest(BaseModel):
 
 def create_app(
     repository: PipelineRepository,
-    workflows: WorkflowControl,
+    runs: Runs,
     settings: ApiSettings,
     source_store: SourceStore | None = None,
     artifact_reader: ArtifactReader | None = None,
@@ -129,7 +127,6 @@ def create_app(
     @app.post("/api/pipeline/runs", status_code=201)
     async def create_run(request: CreateRunRequest, user: str = Depends(actor)):
         run_id = request.id or f"run-{uuid.uuid4().hex}"
-        graph = instantiate_graph(request.options)
         run = Run(
             id=run_id,
             graph_version=GRAPH_VERSION,
@@ -142,26 +139,20 @@ def create_app(
             created_by=user,
         )
         try:
-            repository.create_run(run, graph)
+            repository.create_run_row(run)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        workflow_request = GenerationWorkflowInput(
+        # The clip may not be on this machine yet: a run opened by artifact id is one the
+        # operator is pointing at something already uploaded, and the supervisor fetches it
+        # when it picks the run up. What has to exist now is the run.
+        runs.open(
             run_id=run.id,
-            source_sha256=run.source_sha256,
-            source_artifact_id=run.source_artifact_id,
+            name=run.id,
+            source=None,
             options=request.options.model_dump(mode="json"),
+            source_artifact_id=run.source_artifact_id,
         )
-        try:
-            await workflows.start(workflow_request)
-        except Exception as error:
-            repository.append_event(
-                run.id,
-                "run",
-                run.id,
-                {"status": "blocked", "error": type(error).__name__},
-            )
-            raise HTTPException(status_code=503, detail="workflow could not start") from error
-        return {"id": run.id, "status": run.status, "graphFingerprint": graph.fingerprint}
+        return {"id": run.id, "status": run.status}
 
     @app.post("/api/pipeline/runs/upload", status_code=201)
     async def upload_run(
@@ -174,7 +165,7 @@ def create_app(
         if source_store is None:
             raise HTTPException(status_code=503, detail="source upload is not configured")
         try:
-            graph_options = GraphOptions.model_validate_json(options)
+            graph_options = RunOptions.model_validate_json(options)
             budget_policy = BudgetPolicy.model_validate_json(budget)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -182,7 +173,7 @@ def create_app(
         filename = Path(source.filename or "source.bin").name
         digest = hashlib.sha256()
         size = 0
-        with tempfile.NamedTemporaryFile(prefix="wander-source-", delete=True) as temporary:
+        with tempfile.NamedTemporaryFile(prefix="wander-source-", delete=False) as temporary:
             while chunk := await source.read(1024 * 1024):
                 size += len(chunk)
                 if size > settings.maximum_upload_bytes:
@@ -194,7 +185,7 @@ def create_app(
             artifact_id = f"artifact:{run_id}:source"
             storage_key = f"sources/{source_sha256[:2]}/{source_sha256}"
             source_store.put(Path(temporary.name), storage_key)
-        graph = instantiate_graph(graph_options)
+        stored_path = Path(temporary.name)
         run = Run(
             id=run_id,
             graph_version=GRAPH_VERSION,
@@ -207,7 +198,7 @@ def create_app(
             created_by=user,
         )
         try:
-            repository.create_run(run, graph)
+            repository.create_run_row(run)
             repository.add_source_artifact(
                 artifact_id=artifact_id,
                 run_id=run_id,
@@ -220,28 +211,19 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         try:
-            await workflows.start(
-                GenerationWorkflowInput(
-                    run_id=run_id,
-                    source_sha256=source_sha256,
-                    source_artifact_id=artifact_id,
-                    options=graph_options.model_dump(mode="json"),
-                )
+            runs.open(
+                run_id=run_id,
+                name=Path(filename).stem or run_id,
+                source=stored_path,
+                options=graph_options.model_dump(mode="json"),
             )
-        except Exception as error:
-            repository.append_event(
-                run_id,
-                "run",
-                run_id,
-                {"status": "blocked", "error": type(error).__name__},
-            )
-            raise HTTPException(status_code=503, detail="workflow could not start") from error
+        finally:
+            stored_path.unlink(missing_ok=True)
         return {
             "id": run_id,
             "status": run.status,
             "sourceArtifactId": artifact_id,
             "sourceSha256": source_sha256,
-            "graphFingerprint": graph.fingerprint,
         }
 
     @app.get("/api/pipeline")
@@ -257,7 +239,7 @@ def create_app(
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         try:
-            summary["live"] = await workflows.state(run_id)
+            summary["live"] = {"source": "journal"}
         except Exception as error:
             # A finished workflow can no longer answer queries once the workflow code has
             # changed (Temporal replays its history under the new code and finds it
@@ -276,15 +258,9 @@ def create_app(
             attempt_id=request.attempt_id,
             attachment_artifact_ids=request.attachment_artifact_ids,
         )
-        message = OperatorMessage(
-            id=identifier,
-            author=user,
-            message=request.message,
-            node_id=request.node_id,
-            attempt_id=request.attempt_id,
-            attachment_artifact_ids=request.attachment_artifact_ids,
+        runs.journal(run_id).append(
+            "answer", text=request.message, author=user, step=request.node_id
         )
-        await workflows.signal(run_id, "operator_message", message)
         return {"id": identifier}
 
     @app.post(
@@ -323,16 +299,11 @@ def create_app(
             actor=user,
             rationale=request.rationale,
         )
-        await workflows.signal(
-            run_id,
-            "approve",
-            ApprovalSignal(
-                node_id=request.node_id,
-                attempt_id=request.attempt_id,
-                artifacts=request.artifacts,
-                approved_by=user,
-                rationale=request.rationale,
-            ),
+        runs.journal(run_id).append(
+            "answer",
+            text=f"approved: {request.rationale}",
+            author=user,
+            step=request.node_id,
         )
         return {"id": identifier}
 
@@ -356,17 +327,19 @@ def create_app(
                 "parameters": request.parameters,
             },
         )
-        value = (
-            DecisionSignal(
-                node_id=request.node_id,
-                attempt_id=request.attempt_id,
-                rationale=request.rationale,
-                parameters=request.parameters,
+        journal = runs.journal(run_id)
+        if command in {"reject", "retry"}:
+            asked = "run again" if command == "retry" else "do not accept"
+            journal.append(
+                "answer",
+                text=f"{asked} `{request.node_id}`: {request.rationale}",
+                author=user,
+                step=request.node_id,
             )
-            if command in {"reject", "retry"}
-            else None
-        )
-        await workflows.signal(run_id, command, value)
+        elif command == "cancel":
+            journal.append("run.finished", status="blocked", summary=request.rationale)
+        else:
+            runs.pause(run_id, command == "pause")
         return {"accepted": True}
 
     @app.get("/api/pipeline/runs/{run_id}/events")
