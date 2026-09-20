@@ -46,8 +46,23 @@ def runs_needing_work(root: Path) -> list[Path]:
         journal = Journal(run_dir)
         if journal.finished() or journal.unanswered():
             continue
+        if (run_dir / "paused").exists():
+            continue
         pending.append(run_dir)
     return pending
+
+
+def due(run_dir: Path, pushed: dict[str, float], push_after: float) -> bool:
+    """Whether to give this run another agent, having already given it one.
+
+    A session that ends without deciding anything would otherwise be started again
+    immediately, and an agent that has just decided it has nothing to do will decide that
+    again straight away -- a spin that costs a model call every pass. Waiting instead means a
+    run that is stuck still gets a fresh agent on a known cadence, which is what eventually
+    shifts it: a new session reads the journal rather than the conversation that gave up.
+    """
+    last = pushed.get(str(run_dir))
+    return last is None or (time.monotonic() - last) >= push_after
 
 
 def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> str:
@@ -91,6 +106,12 @@ def main(argv: list[str] | None = None) -> int:
         "--once", action="store_true", help="make one pass over the runs instead of watching"
     )
     parser.add_argument("--interval", type=float, default=15.0, help="seconds between passes")
+    parser.add_argument(
+        "--push-after",
+        type=float,
+        default=300.0,
+        help="seconds before a run that went nowhere is given a fresh agent",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.runs).resolve()
