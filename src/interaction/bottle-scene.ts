@@ -137,9 +137,9 @@ export class BottleScene {
       .getBoundingSphere(new THREE.Sphere()).radius;
     this.physics = new BottlePhysics({
       radius: Math.max(radius, 0.005 * host.stature),
-      // Keep the prop slightly above the sampled collision floor, whose height can sit below
-      // the visible splat surface. Apply this to support so pickup and release keep one position.
-      floorRadius: Math.max(radius, visualRadius) + 0.03 * host.stature,
+      // Intentional knee-height interaction support keeps the loose bottle within easy reach.
+      // This is a gameplay offset above measured floor, not reconstructed floor elevation.
+      floorRadius: Math.max(radius, visualRadius) + 0.25 * host.stature,
       gravity: 5.77 * host.stature,
       maxSpeed: 8 * host.stature,
       floorAt: host.floorAt,
