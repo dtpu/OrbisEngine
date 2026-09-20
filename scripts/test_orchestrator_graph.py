@@ -39,7 +39,6 @@ class GraphTests(unittest.TestCase):
                 "frame_align",
                 "clean",
                 "world_prompt",
-                "clean_review",
                 "marble_video_submit",
                 "marble_video",
                 "person_prep",
@@ -63,7 +62,7 @@ class GraphTests(unittest.TestCase):
         ready = set(graph.evaluate({"source_video"}))
         self.assertEqual(ready, {"clean", "person_prep", "pi3x", "world_prompt"})
 
-    def test_human_gate_waits_for_selected_clean_artifacts(self):
+    def test_world_submission_follows_the_cleaned_video(self):
         graph = instantiate_graph(GraphOptions(marble="video"))
         run_inputs = {"source_video"}
         succeed(graph, "admission")
@@ -71,9 +70,9 @@ class GraphTests(unittest.TestCase):
         succeed(graph, "clean")
         succeed(graph, "world_prompt")
         graph.evaluate(run_inputs)
-        self.assertEqual(graph.nodes["clean_review"].status, NodeStatus.WAITING_HUMAN)
+        # World submission waits on the cleaned video and the prompt, and on nothing else:
+        # the run goes straight from cleaning to generating the world.
         self.assertEqual(graph.nodes["marble_video"].status, NodeStatus.QUEUED)
-        succeed(graph, "clean_review")
         self.assertIn("marble_video_submit", graph.evaluate(run_inputs))
 
     def test_failed_dependency_blocks_only_descendants(self):
@@ -97,10 +96,10 @@ class GraphTests(unittest.TestCase):
                 {**artifacts_for(graph, "admission"), "secret": ("artifact:secret",)},
             )
 
-    def test_modes_rebind_world_and_review_inputs(self):
+    def test_modes_rebind_world_inputs(self):
         image = instantiate_graph(GraphOptions(marble="image"))
         self.assertEqual(
-            image.nodes["clean_review"].definition.inputs["clean_frame"].stage_id,
+            image.nodes["marble_image_submit"].definition.inputs["clean_frame"].stage_id,
             "clean_first",
         )
         self.assertEqual(

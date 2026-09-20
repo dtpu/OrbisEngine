@@ -241,9 +241,7 @@ class ReviewDecisionApplicationTests(unittest.TestCase):
         self.assertFalse(
             reviewable(self.graph.nodes["admission"].definition.model_dump(mode="json"))
         )
-        self.assertFalse(
-            reviewable(self.graph.nodes["clean_review"].definition.model_dump(mode="json"))
-        )
+        self.assertFalse(reviewable(self.graph.nodes["verify"].definition.model_dump(mode="json")))
 
     def test_pass_selects_the_agent_named_attempt(self):
         decision = ReviewDecision(
