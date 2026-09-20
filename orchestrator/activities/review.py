@@ -39,6 +39,10 @@ from orchestrator.workspace import RunWorkspace
 
 PERMITTED = ("quality.verdict", "attempt.retry", "human.ask")
 
+# One Codex session and one queue per run, kept beside the reviews.
+SESSION_FILE = "session.id"
+TODO_FILE = "todo.md"
+
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
@@ -53,8 +57,91 @@ def _snapshot(root: Path) -> dict[str, str]:
     }
 
 
+def read_session_id(reviews: Path) -> str | None:
+    """The Codex session this run has been using, if it has started one."""
+    try:
+        value = (reviews / SESSION_FILE).read_text().strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def write_session_id(reviews: Path, session: str) -> None:
+    (reviews / SESSION_FILE).write_text(session + "\n")
+
+
+def append_todo(todo: Path, request: ReviewInput) -> None:
+    """Add this attempt to the run's running list of things to judge.
+
+    One list per run, appended to as work arrives, so the agent sees the whole run rather than
+    one attempt at a time and can notice a stage failing the same way twice.
+    """
+    if not todo.exists():
+        todo.write_text(
+            "# Review queue\n\n"
+            "Each line is an attempt this run asked you to judge, oldest first. Mark a line\n"
+            "`[x]` once you have decided it and say what you decided. Leave `[ ]` alone.\n\n"
+        )
+    stamp = datetime.now(UTC).strftime("%H:%M:%S")
+    error = f" — {request.attempt_error}" if request.attempt_error else ""
+    with todo.open("a") as stream:
+        stream.write(
+            f"- [ ] {stamp} `{request.node_id}` attempt `{request.attempt_id}` "
+            f"{request.attempt_status}{error}\n"
+        )
+
+
+def parameter_lines(definition: dict[str, Any]) -> list[str]:
+    """The stage's overridable defaults, written out for the agent that may move them.
+
+    Everything here is already running at the value shown; a retry supplies only the names it
+    wants different. Anything not listed cannot be set, and the stage refuses an attempt that
+    names it, so the list is also the answer to "what can I even change".
+    """
+    properties = (definition.get("parameter_schema") or {}).get("properties") or {}
+    if not properties:
+        return [
+            "## Parameters",
+            "",
+            "This stage takes none. A retry of it repeats the same command, so retry only when",
+            "you believe the failure was transient; otherwise fix the output or ask.",
+            "",
+        ]
+    lines = [
+        "## Parameters you may set",
+        "",
+        "These are the stage's own defaults. It is running at these values now, so repeating one",
+        "unchanged changes nothing. Move a knob only when you can name the thing you saw and say",
+        "why that value addresses it; when you cannot, pass the attempt or ask rather than",
+        "guessing at a number.",
+        "",
+    ]
+    for name in sorted(properties):
+        rule = properties[name]
+        bounds = ""
+        if "minimum" in rule or "maximum" in rule:
+            bounds = f", {rule.get('minimum', '-')}..{rule.get('maximum', '-')}"
+        if "enum" in rule:
+            bounds = ", one of " + " | ".join(str(item) for item in rule["enum"])
+        default = repr(rule["default"]) if "default" in rule else "unset"
+        lines.append(
+            f"- `{name}` ({rule.get('type', 'any')}{bounds}) = {default} — "
+            f"{rule.get('description', '')}"
+        )
+    lines += [
+        "",
+        "A check you are not allowed to relax is not on this list. When the only way past a",
+        "stage is to loosen a tolerance or skip a guard, that is `human.ask`, not a retry.",
+        "",
+    ]
+    return lines
+
+
 def render_instructions(
-    packet: AgentTaskPacket, criteria: list[dict[str, Any]], attempt_status: str = "succeeded"
+    packet: AgentTaskPacket,
+    criteria: list[dict[str, Any]],
+    attempt_status: str = "succeeded",
+    todo: Path | None = None,
 ) -> str:
     latest = packet.attempts[-1].id if packet.attempts else ""
     failed = attempt_status != "succeeded"
@@ -109,16 +196,56 @@ def render_instructions(
         ' "hypothesis": "what will be different and why it should work",',
         ' "parameters": {"dilate": 24}}',
         "```",
-        "Parameters must fit the stage's `parameter_schema` in `task.json`. Retrying is cheap",
-        "relative to a wrong answer: prefer a retry you can justify over passing something weak.",
+        "Retrying is cheap relative to a wrong answer: prefer a retry you can justify over",
+        "passing something weak.",
         "",
+        *parameter_lines(packet.stage_definition),
         "```json",
         f'{{"tool": "human.ask", "node_id": "{packet.node_id}", "question": "what you need decided",'
         ' "artifact_ids": []}',
         "```",
         "",
         "Be specific in rationales: name the frames, values or regions you looked at.",
+        "",
+        "## If you get stuck",
+        "",
+        "Nothing here is worth waiting on forever. Give every command you run a timeout, and if",
+        "one hangs, kill it and find the answer another way rather than starting it again the",
+        "same way. Go quiet for five minutes and you will be interrupted and asked what you are",
+        "waiting on; go quiet again and the stage is handed to a person with nothing to read.",
+        "",
+        "Stopping is allowed and is better than that. When a tool will not run, an input is not",
+        "there, or the call is not yours to make, write `human.ask` and finish. The stage then",
+        "waits for an operator, who can answer you and let the run carry on; the attempt's",
+        "outputs are kept either way. An unanswerable question asked early costs the run far",
+        "less than a silent hour.",
     ]
+    if todo is not None:
+        lines += [
+            "",
+            "## The run's queue",
+            "",
+            f"`{todo}` lists every attempt this run has asked you to judge, oldest first. You",
+            "are the same session across the whole run, so you have seen the earlier ones. Read",
+            "it before deciding: a stage failing the same way twice means the parameter you",
+            "changed is not the cause, and a stage you already passed should not be re-argued.",
+            "Tick your line `[x]` and say what you decided, so the record survives you.",
+            "",
+            "## Checking without filling this session",
+            "",
+            "Reading whole videos or mask archives here costs you the context you need for the",
+            "rest of the run. For anything bulky, spawn a fresh agent that reports back a short",
+            "answer, for example:",
+            "",
+            "```bash",
+            "codex exec --skip-git-repo-check --sandbox read-only \\",
+            "  'Decode outputs/clean.mp4, compare frames 0-20 against attempt/, and reply with",
+            "   one line per frame: index, whether a person remains, and the evidence.'",
+            "```",
+            "",
+            "Use its answer as evidence and keep the detail out of here. Measure rather than",
+            "guess: a number you took from a file beats an impression of a thumbnail.",
+        ]
     if packet.operator_messages:
         lines += ["", "## Operator messages", ""]
         for message in packet.operator_messages:
@@ -168,7 +295,12 @@ class ReviewActivities:
         attempts, artifacts, messages = self._load_context(request)
         workspace = RunWorkspace(self.workspace_root, request.run_id)
         workspace.initialize()
-        scratch = workspace.root / "reviews" / request.node_id / request.attempt_id
+        reviews = workspace.root / "reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        session = read_session_id(reviews)
+        todo = reviews / TODO_FILE
+        append_todo(todo, request)
+        scratch = reviews / request.node_id / request.attempt_id
         outputs = scratch / "outputs"
         attempt_files = scratch / "attempt"
         for stale in (outputs, attempt_files):
@@ -220,12 +352,29 @@ class ReviewActivities:
             permitted_tools=PERMITTED,
         )
         outcome = self.harness.run(
-            packet, scratch, render_instructions(packet, criteria, request.attempt_status)
+            packet,
+            scratch,
+            render_instructions(packet, criteria, request.attempt_status, todo),
+            session=session,
         )
+        if outcome.session:
+            write_session_id(reviews, outcome.session)
         policy = self.harness.policy
         decided_by = f"agent:{policy.kind}:{policy.model or 'default'}:{policy.sandbox}"
         if outcome.decision is None:
-            reason = outcome.decision_error or outcome.result.error or "no decision"
+            reason = outcome.result.error or outcome.decision_error or "no decision"
+            if outcome.result.status == "stalled":
+                # The stage is left for a person rather than failed: the attempt's outputs are
+                # intact and whoever looks can approve it, retry it, or say what the agent was
+                # missing. Resuming is their call, not a silent one made here.
+                question = (
+                    f"The reviewing agent stopped working on this attempt ({reason}). Its "
+                    f"transcript is at {outcome.result.transcript_path}. The outputs are "
+                    "unchanged, so you can approve the stage, send it back for another "
+                    "attempt, or answer whatever it was stuck on."
+                )
+            else:
+                question = f"The reviewing agent could not judge this attempt ({reason})."
             return self._record(
                 request,
                 ReviewDecision(
@@ -234,7 +383,7 @@ class ReviewActivities:
                     decision="needs_human",
                     rationale=f"agent gave no usable decision: {reason}",
                     artifacts=request.artifacts,
-                    question=f"The reviewing agent could not judge this attempt ({reason}).",
+                    question=question,
                     decided_by=decided_by,
                 ),
             )

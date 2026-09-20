@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -82,32 +82,279 @@ PAID_ONCE = RetryPolicy(
     requires_changed_parameters=True,
     recover_before_retry=True,
 )
-CLEAN_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "fps": {"type": "number", "minimum": 1, "maximum": 60},
-        "dilate": {"type": "integer", "minimum": 0, "maximum": 200},
-        "bottom_extra": {"type": "integer", "minimum": 0, "maximum": 400},
-        "lama_px": {"type": "integer", "minimum": 256, "maximum": 2048},
-        "moved_mask": {"type": "boolean"},
-    },
-    "additionalProperties": False,
-}
-MARBLE_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647},
-        "interval": {"type": "integer", "minimum": 0, "maximum": 600},
-    },
-    "additionalProperties": False,
-}
-OBJECT_SHAPE_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "refine_strength": {"type": "number", "minimum": 0, "maximum": 1},
-    },
-    "additionalProperties": False,
-}
+
+
+def knob(kind: str, default: Any, description: str, **bounds: Any) -> dict[str, Any]:
+    """One overridable default.
+
+    The value a stage uses when nothing is supplied is written here rather than inside the
+    command that consumes it, so an attempt's ``task.json`` shows what the stage really ran with
+    and a reviewing agent can change one knob without restating the rest. ``description`` is for
+    that reader: say what the knob does and which symptom would justify moving it.
+    """
+    rule = {"type": kind, "description": description, **bounds}
+    if default is not None:
+        rule["default"] = default
+    return rule
+
+
+def tunables(**knobs: dict[str, Any]) -> dict[str, Any]:
+    """A stage's overridable defaults. Anything not named here cannot be set."""
+    return {"type": "object", "properties": dict(knobs), "additionalProperties": False}
+
+
+ADMISSION_PARAMETERS = tunables(
+    cut_threshold=knob(
+        "number",
+        0.10,
+        "scene score above which a frame is a candidate cut; raise it when a pan or a flash "
+        "is being read as a cut, lower it when a real cut is being missed",
+        minimum=0.0,
+        maximum=1.0,
+    ),
+    min_seconds=knob(
+        "number",
+        1.5,
+        "shots shorter than this are reported as too short to use",
+        minimum=0.1,
+        maximum=60.0,
+    ),
+)
+CLEAN_PARAMETERS = tunables(
+    fps=knob(
+        "number",
+        12,
+        "frames per second the clip is cleaned at",
+        minimum=1,
+        maximum=60,
+    ),
+    dilate=knob(
+        "integer",
+        20,
+        "pixels the person mask grows by before inpainting; raise it when a halo, a hand or a "
+        "strand of hair survives the clean",
+        minimum=0,
+        maximum=200,
+    ),
+    bottom_extra=knob(
+        "integer",
+        40,
+        "extra downward margin on the mask, for the contact shadow under the feet",
+        minimum=0,
+        maximum=400,
+    ),
+    lama_px=knob(
+        "integer",
+        960,
+        "long edge LaMa inpaints at; larger is sharper and slower",
+        minimum=256,
+        maximum=2048,
+    ),
+    moved_mask=knob(
+        "boolean",
+        False,
+        "clean everything that moved rather than only people: cast shadow, carried object, "
+        "passer-by. Off by default, so an ordinary clip is unchanged",
+    ),
+)
+WORLD_PROMPT_PARAMETERS = tunables(
+    samples=knob(
+        "integer",
+        6,
+        "frames sampled from the clip to describe the room from",
+        minimum=1,
+        maximum=32,
+    ),
+    model=knob(
+        "string",
+        "gpt-6-astra",
+        "vision model that writes the prompt",
+    ),
+)
+MARBLE_PARAMETERS = tunables(
+    seed=knob(
+        "integer",
+        7,
+        "generation seed for the image and multi-view modes; the video mode ignores it",
+        minimum=0,
+        maximum=2147483647,
+    ),
+)
+MARBLE_POLL_PARAMETERS = tunables(
+    interval=knob(
+        "integer",
+        60,
+        "seconds between polls of a submitted world; this never resubmits and never spends",
+        minimum=5,
+        maximum=600,
+    ),
+)
+TRACK_PARAMETERS = tunables(
+    fps=knob("number", 12, "frames per second the clip is tracked at", minimum=1, maximum=60),
+    det_thresh=knob(
+        "number",
+        0.15,
+        "MultiHMR detection threshold; lower it when a person present in the frames is missing "
+        "from the tracks, raise it when furniture is being tracked as a person",
+        minimum=0.01,
+        maximum=0.95,
+    ),
+)
+PERSON_PREP_PARAMETERS = tunables(
+    method=knob(
+        "string",
+        "maskrcnn",
+        "segmenter for the reference person mask",
+        enum=["segformer", "maskrcnn"],
+    ),
+    frame=knob(
+        "integer",
+        None,
+        "source frame to build the avatar from; omit to let the frame scorer choose, set it "
+        "when the chosen frame is occluded or motion-blurred",
+        minimum=0,
+    ),
+    score_stride=knob(
+        "integer",
+        3,
+        "frame stride for the reference-frame scorer; 1 scores every frame and is slower",
+        minimum=1,
+        maximum=30,
+    ),
+    dilate=knob(
+        "integer",
+        2,
+        "pixels the reference mask grows by; raise it when the cutout clips the subject",
+        minimum=0,
+        maximum=64,
+    ),
+)
+SCALE_PARAMETERS = tunables(
+    scale_probes=knob(
+        "integer",
+        5,
+        "depth-ratio probes the scale fit is allowed",
+        minimum=1,
+        maximum=20,
+    ),
+    scale0=knob(
+        "number",
+        None,
+        "skip the fit and use this SfM-to-Marble scale; only with a measured value in hand",
+        minimum=0.0001,
+    ),
+)
+ANCHOR_PARAMETERS = tunables(
+    ruler_tol=knob(
+        "number",
+        0.15,
+        "how far the world ruler and the avatar ruler may disagree before the stage fails",
+        minimum=0.01,
+        maximum=1.0,
+    ),
+    ruler_vlm=knob(
+        "boolean",
+        False,
+        "also ask the VLM to name a standard-size object for the world ruler; costs one image "
+        "call per sampled frame",
+    ),
+)
+FINETUNE_PARAMETERS = tunables(
+    ft_iters=knob(
+        "integer",
+        4000,
+        "fine-tune iterations",
+        minimum=100,
+        maximum=40000,
+    ),
+    ft_mask_dilate=knob(
+        "integer",
+        16,
+        "person-mask dilation for the fine-tune export; raise it when fragments of the subject "
+        "get baked into the world",
+        minimum=0,
+        maximum=200,
+    ),
+)
+OBJECT_DETECT_PARAMETERS = tunables(
+    joint=knob(
+        "integer",
+        21,
+        "SMPL joint index of the throwing hand the flight is measured from",
+        minimum=0,
+        maximum=51,
+    ),
+    dilate=knob(
+        "integer",
+        9,
+        "pixels the person mask grows by before an object is looked for beside it",
+        minimum=0,
+        maximum=64,
+    ),
+    min_area=knob("number", 20.0, "smallest object blob in pixels", minimum=1.0),
+    max_area=knob("number", 6000.0, "largest object blob in pixels", minimum=10.0),
+    max_gap=knob(
+        "integer",
+        2,
+        "frames an object may vanish for and still be one flight",
+        minimum=0,
+        maximum=30,
+    ),
+    min_len=knob("integer", 6, "shortest flight kept, in frames", minimum=2, maximum=300),
+    min_travel_px=knob(
+        "number",
+        150.0,
+        "a flight must move this far in pixels; lower it when a real short throw is dropped",
+        minimum=0.0,
+    ),
+    hand_px=knob(
+        "number",
+        45.0,
+        "how near the hand a flight must start to count as thrown",
+        minimum=0.0,
+    ),
+)
+OBJECT_LIFT_PARAMETERS = tunables(
+    joint=knob(
+        "integer",
+        21,
+        "SMPL joint index of the throwing hand",
+        minimum=0,
+        maximum=51,
+    ),
+    hand_sigma_m=knob(
+        "number",
+        0.12,
+        "how far, in metres, the fitted release point may sit from the hand",
+        minimum=0.001,
+        maximum=2.0,
+    ),
+)
+OBJECT_DESCRIBE_PARAMETERS = tunables(
+    n_crops=knob("integer", 6, "crops shown to the describing model", minimum=1, maximum=24),
+    upscale=knob(
+        "integer",
+        6,
+        "how much each crop is enlarged before it is shown; a small fast object needs more",
+        minimum=1,
+        maximum=16,
+    ),
+)
+OBJECT_SHAPE_PARAMETERS = tunables(
+    refine_strength=knob(
+        "number",
+        0.85,
+        "how far the refiner may move from the source crop; lower it to keep the real object's "
+        "appearance, raise it when the crop is too small to generate from",
+        minimum=0,
+        maximum=1,
+    ),
+    refine_first=knob(
+        "boolean",
+        True,
+        "refine the crop into a clean product image before lifting it to 3D",
+    ),
+)
 
 
 def stage_registry() -> dict[str, StageDefinition]:
@@ -124,6 +371,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "shots": output("shots", "application/json", "wander.shots/1"),
                 "shot_clips": output("shot_clip", "video/mp4", required=False, multiple=True),
             },
+            parameter_schema=ADMISSION_PARAMETERS,
             resources=local_resources(600),
             quality=QualityPolicy(automatic_checks=("source_identity", "shot_continuity")),
         ),
@@ -189,6 +437,7 @@ def stage_registry() -> dict[str, StageDefinition]:
             executor="world_prompt",
             inputs={"source": run_input("source_video")},
             outputs={"world_prompt": output("world_prompt", "application/json")},
+            parameter_schema=WORLD_PROMPT_PARAMETERS,
             resources=external_resources(900, "openai"),
             retry=RetryPolicy(paid=True),
             quality=QualityPolicy(automatic_checks=("prompt_grounding",)),
@@ -234,6 +483,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "world_receipt": output("world_receipt", "application/json"),
                 "world_thumbnail": output("world_thumbnail", "image/png"),
             },
+            parameter_schema=MARBLE_POLL_PARAMETERS,
             resources=external_resources(14400, "marble"),
             retry=RetryPolicy(automatic_attempts=6),
             quality=QualityPolicy(automatic_checks=("marble_receipt", "world_readable")),
@@ -266,6 +516,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "world_receipt": output("world_receipt", "application/json"),
                 "world_thumbnail": output("world_thumbnail", "image/png"),
             },
+            parameter_schema=MARBLE_POLL_PARAMETERS,
             resources=external_resources(14400, "marble"),
             retry=RetryPolicy(automatic_attempts=6),
             quality=QualityPolicy(automatic_checks=("marble_receipt", "world_readable")),
@@ -299,6 +550,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "world_receipt": output("world_receipt", "application/json"),
                 "world_thumbnail": output("world_thumbnail", "image/png"),
             },
+            parameter_schema=MARBLE_POLL_PARAMETERS,
             resources=external_resources(14400, "marble"),
             retry=RetryPolicy(automatic_attempts=6),
             quality=QualityPolicy(automatic_checks=("marble_receipt", "world_readable")),
@@ -350,6 +602,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 ),
                 "track_data": output("person_track_data", "application/octet-stream"),
             },
+            parameter_schema=TRACK_PARAMETERS,
             resources=modal_resources(concurrency="tracking"),
             retry=PAID_ONCE,
             quality=QualityPolicy(
@@ -366,6 +619,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "track": stage_output("tracks", "person_track"),
             },
             outputs={"prepared_person": output("prepared_person", "application/octet-stream")},
+            parameter_schema=PERSON_PREP_PARAMETERS,
             resources=local_resources(3600),
             quality=QualityPolicy(
                 automatic_checks=("person_mask",), agent_rubric="person_reference"
@@ -463,6 +717,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 ),
                 "object_crops": output("object_crops", "image/png", required=False, multiple=True),
             },
+            parameter_schema=OBJECT_DETECT_PARAMETERS,
             resources=local_resources(3600),
             quality=QualityPolicy(agent_rubric="dynamic_objects"),
         ),
@@ -478,6 +733,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "track_data": stage_output("tracks", "person_track_data"),
             },
             outputs={"object_track": output("object_track", "application/json")},
+            parameter_schema=OBJECT_LIFT_PARAMETERS,
             resources=local_resources(3600),
             quality=QualityPolicy(automatic_checks=("object_track",)),
         ),
@@ -495,6 +751,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "object_prompt": output("object_prompt", "application/json"),
                 "object_image": output("object_image", "image/png"),
             },
+            parameter_schema=OBJECT_DESCRIBE_PARAMETERS,
             resources=external_resources(900, "openai"),
             retry=RetryPolicy(paid=True),
         ),
@@ -548,6 +805,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "viewer_world": stage_output("package_people", "viewer_world"),
             },
             outputs={"scale_fit": output("scale_fit", "application/json")},
+            parameter_schema=SCALE_PARAMETERS,
             resources=local_resources(3600),
             quality=QualityPolicy(automatic_checks=("scale_ratio", "scale_spread")),
         ),
@@ -584,6 +842,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "pi3x_aux": stage_output("pi3x", "pi3x_aux"),
             },
             outputs={"anchor_report": output("anchor_report", "application/json")},
+            parameter_schema=ANCHOR_PARAMETERS,
             resources=external_resources(1800, "openai"),
             retry=RetryPolicy(paid=True),
             quality=QualityPolicy(automatic_checks=("anchor_consistency",)),
@@ -608,6 +867,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "finetuned_world": output("finetuned_world", "application/octet-stream"),
                 "finetune_receipt": output("finetune_receipt", "application/json"),
             },
+            parameter_schema=FINETUNE_PARAMETERS,
             resources=external_resources(28800, "finetune"),
             retry=PAID_ONCE,
             quality=QualityPolicy(agent_rubric="finetuned_world", human_approval=True),

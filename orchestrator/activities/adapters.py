@@ -27,6 +27,21 @@ def named(paths: tuple[Path, ...], filename: str) -> Path:
     return matches[0]
 
 
+def tuning(context: AdapterContext) -> dict[str, Any]:
+    """This attempt's parameters over the stage schema's declared defaults.
+
+    A stage's defaults live in its ``parameter_schema`` rather than in the command built below,
+    so an attempt's ``task.json`` shows the reviewing agent the value the stage actually ran
+    with, and an agent retry can move one knob without having to restate the rest.
+    """
+    properties = (context.request.definition.get("parameter_schema") or {}).get("properties") or {}
+    values = {name: rule["default"] for name, rule in properties.items() if "default" in rule}
+    values.update(
+        {name: value for name, value in context.request.parameters.items() if name in properties}
+    )
+    return values
+
+
 def bundle_root(paths: tuple[Path, ...], suffix: str) -> Path:
     for path in paths:
         for parent in (path, *path.parents):
@@ -39,6 +54,7 @@ class AdmissionAdapter:
     def build(self, context: AdapterContext) -> StageExecution:
         source = one(context, "source")
         report = context.attempt.outputs / "shots.json"
+        settings = tuning(context)
         command = (
             sys.executable,
             str(context.repository / "scripts/shot_cuts.py"),
@@ -46,6 +62,10 @@ class AdmissionAdapter:
             str(source),
             "--json",
             str(report),
+            "--threshold",
+            str(settings["cut_threshold"]),
+            "--min-seconds",
+            str(settings["min_seconds"]),
             "--no-score",
         )
         return StageExecution(
@@ -121,7 +141,7 @@ class AdmissionAdapter:
 class WorldPromptAdapter:
     def build(self, context: AdapterContext) -> StageExecution:
         output = context.attempt.outputs / "prompt.json"
-        parameters = context.request.parameters
+        settings = tuning(context)
         return StageExecution(
             command=(
                 sys.executable,
@@ -129,11 +149,11 @@ class WorldPromptAdapter:
                 "--clip",
                 str(one(context, "source")),
                 "--n",
-                str(parameters.get("samples", 6)),
+                str(settings["samples"]),
                 "--out",
                 str(output),
                 "--model",
-                str(parameters.get("model", "gpt-6-astra")),
+                str(settings["model"]),
             ),
             cwd=context.repository,
             credentials=("OPENAI_API_KEY",),
@@ -197,14 +217,14 @@ class CleanMultiAdapter:
         )["streams"][0]
         numerator, denominator = probe["avg_frame_rate"].split("/")
         source_fps = float(numerator) / float(denominator)
-        target_fps = float(context.request.parameters.get("fps", 12))
+        settings = tuning(context)
+        target_fps = float(settings["fps"])
         step = source_fps / target_fps
         only = ",".join(str(int(round(frame / step))) for frame in mode["frames"])
         output = context.attempt.outputs / "clean-multi"
         report = context.attempt.outputs / "clean-multi.json"
-        parameters = context.request.parameters
         command = [
-            str(context.request.parameters.get("modal", "modal")),
+            "modal",
             "run",
             "worker/modal_clean_video.py",
             "--clip",
@@ -222,13 +242,13 @@ class CleanMultiAdapter:
             "--height",
             str(probe["height"]),
             "--dilate",
-            str(parameters.get("dilate", 20)),
+            str(settings["dilate"]),
             "--bottom-extra",
-            str(parameters.get("bottom_extra", 40)),
+            str(settings["bottom_extra"]),
             "--lama-px",
-            str(parameters.get("lama_px", 960)),
+            str(settings["lama_px"]),
         ]
-        if parameters.get("moved_mask"):
+        if settings["moved_mask"]:
             command.append("--moved-mask")
         return StageExecution(
             command=tuple(command),
@@ -292,7 +312,7 @@ class MarbleSubmitAdapter:
                 *[f"{frame}:{azimuth}" for frame, azimuth in zip(frames, world_mode["azimuth"])],
             ]
         if mode in {"image", "multi"}:
-            command += ["--seed", str(context.request.parameters.get("seed", 7))]
+            command += ["--seed", str(tuning(context)["seed"])]
         return StageExecution(
             command=tuple(command),
             cwd=context.repository,
@@ -333,7 +353,7 @@ class MarblePollAdapter:
                 "--thumb",
                 str(context.attempt.outputs / "world-thumb.png"),
                 "--interval",
-                str(context.request.parameters.get("interval", 60)),
+                str(tuning(context)["interval"]),
             ),
             cwd=context.repository,
             credentials=("WLT_API_KEY",),
@@ -354,7 +374,7 @@ class MarblePollAdapter:
 class PersonPrepAdapter:
     def build(self, context: AdapterContext) -> StageExecution:
         output = context.attempt.outputs / "prepared-person"
-        parameters = context.request.parameters
+        settings = tuning(context)
         command = [
             sys.executable,
             str(context.repository / "scripts/prepare_lhm_person.py"),
@@ -362,10 +382,14 @@ class PersonPrepAdapter:
             "--out",
             str(output),
             "--method",
-            str(parameters.get("method", "maskrcnn")),
+            str(settings["method"]),
+            "--score-stride",
+            str(settings["score_stride"]),
+            "--dilate",
+            str(settings["dilate"]),
         ]
-        if parameters.get("frame") is not None:
-            command += ["--frame", str(parameters["frame"])]
+        if settings.get("frame") is not None:
+            command += ["--frame", str(settings["frame"])]
         return StageExecution(
             command=tuple(command),
             cwd=context.repository,
@@ -412,6 +436,7 @@ class ObjectDetectAdapter:
         output = context.attempt.outputs / "flights.json"
         crops = context.attempt.outputs / "crops"
         tracks = named(context.inputs["track_data"], "tracks.json")
+        settings = tuning(context)
         return StageExecution(
             command=(
                 sys.executable,
@@ -428,6 +453,7 @@ class ObjectDetectAdapter:
                 str(output),
                 "--crops",
                 str(crops),
+                *flags(settings),
             ),
             cwd=context.repository,
             output_roles={
@@ -481,6 +507,7 @@ class ObjectLiftAdapter:
                 str(tracks),
                 "--out",
                 str(context.attempt.outputs / "fit3d.json"),
+                *flags(tuning(context)),
             ),
             cwd=context.repository,
             output_roles={"outputs/fit3d.json": "object_track"},
@@ -511,6 +538,7 @@ class ObjectDescribeAdapter:
                 str(one(context, "cameras")),
                 "--out",
                 str(context.attempt.outputs / "description.json"),
+                *flags(tuning(context)),
             ),
             cwd=context.repository,
             output_roles={
@@ -529,23 +557,30 @@ class ObjectDescribeAdapter:
 class ObjectShapeAdapter:
     def build(self, context: AdapterContext) -> StageExecution:
         description = json.loads(one(context, "prompt").read_text())["description"]
-        return StageExecution(
-            command=(
-                str(context.request.parameters.get("modal", "modal")),
-                "run",
-                "worker/modal_image_to_3d.py",
-                "--image",
-                str(one(context, "image")),
-                "--out-dir",
-                str(context.attempt.outputs / "shape"),
+        settings = tuning(context)
+        command = [
+            "modal",
+            "run",
+            "worker/modal_image_to_3d.py",
+            "--image",
+            str(one(context, "image")),
+            "--out-dir",
+            str(context.attempt.outputs / "shape"),
+        ]
+        if settings["refine_first"]:
+            command += [
                 "--refine-first",
                 "--refine-prompt",
                 description["refinePrompt"],
                 "--refine-strength",
-                str(context.request.parameters.get("refine_strength", 0.85)),
-                "--note",
-                "orchestrated auto-object branch from retained source crops",
-            ),
+                str(settings["refine_strength"]),
+            ]
+        command += [
+            "--note",
+            "orchestrated auto-object branch from retained source crops",
+        ]
+        return StageExecution(
+            command=tuple(command),
             cwd=context.repository,
             output_roles={"outputs/shape/object.ply": "object_shape"},
             unknown_on_failure=True,
@@ -612,6 +647,23 @@ class ObjectPackageAdapter:
 
 # Parameters the policy layer allows alongside a proposal but which are not stage arguments.
 CONTROL_PARAMETERS = frozenset({"hypothesis", "estimated_cost_usd", "marble"})
+
+
+def flags(settings: dict[str, Any]) -> list[str]:
+    """Render resolved settings as ``--flag value`` for a script called directly.
+
+    A boolean is a bare flag when true and absent when false, matching argparse's store_true,
+    and an unset optional is left off so the script keeps its own behaviour.
+    """
+    rendered: list[str] = []
+    for name in sorted(settings):
+        value = settings[name]
+        if value is False or value is None:
+            continue
+        rendered.append(f"--{name.replace('_', '-')}")
+        if value is not True:
+            rendered.append(str(value))
+    return rendered
 
 
 def legacy_people_flags(options: dict[str, Any]) -> list[str]:
