@@ -1942,8 +1942,44 @@ class Pipeline:
         )
 
     def anchor_samples(self) -> str:
-        n = self.n_cameras()
-        return ",".join(str(round(k * (n - 1) / 7)) for k in range(8))
+        """Return saved dense-anchor sample IDs, never infer them from camera count."""
+        import numpy as np
+
+        folder = self.ctx / "pi3x"
+        sequence = json.loads((folder / "sequence.json").read_text())
+        cameras = json.loads(self.cameras().read_text())["cameras"]
+        anchors = sequence.get("anchors")
+        indices = sequence.get("sourceIndices")
+        if (
+            not isinstance(anchors, list)
+            or len(anchors) < 2
+            or any(type(index) is not int for index in anchors)
+            or len(set(anchors)) != len(anchors)
+            or any(index < 0 or index >= len(cameras) for index in anchors)
+        ):
+            raise ValueError(
+                "Pi3X sequence requires unique saved anchor sample IDs in camera range"
+            )
+        if (
+            not isinstance(indices, list)
+            or len(indices) != len(cameras)
+            or any(type(index) is not int or index < 0 for index in indices)
+            or len(set(indices)) != len(indices)
+            or any(
+                not isinstance(camera, dict)
+                or type(camera.get("sourceIndex")) is not int
+                or camera["sourceIndex"] != source_index
+                for camera, source_index in zip(cameras, indices)
+            )
+        ):
+            raise ValueError("Pi3X anchor source indices do not match the saved camera sequence")
+        with np.load(folder / "anchors.npz", allow_pickle=False) as saved:
+            required = {"poses", "points", "valid", "people", "conf"}
+            if not required.issubset(saved.files) or any(
+                saved[key].ndim == 0 or saved[key].shape[0] != len(anchors) for key in saved.files
+            ):
+                raise ValueError("Pi3X saved anchor count disagrees with anchors.npz")
+        return ",".join(str(index) for index in anchors)
 
     def diag(self, scale0: float, probe: int):
         """bake_video_colours --diag at one scale0 -> (5 sampled depth ratios, figure path).
