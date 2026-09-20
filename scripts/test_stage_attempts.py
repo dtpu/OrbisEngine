@@ -585,6 +585,13 @@ class PaidRunIntegrationTests(unittest.TestCase):
                         "world_mode",
                         return_value={"mode": "multi-image", "frames": [0]},
                     ),
+                    # This test isolates retained-output protection; source/camera
+                    # correspondence has its own decoded-frame fixture tests.
+                    patch.object(
+                        self.pipeline,
+                        "multi_source_selection",
+                        return_value={"frames": [{"frameIndex": 0}]},
+                    ),
                     patch.object(run_clip, "run") as provider,
                     self.assertRaisesRegex(run_clip.QualityStop, "retained"),
                 ):
@@ -620,7 +627,9 @@ class PaidRunIntegrationTests(unittest.TestCase):
             output = self.root / operation
             command = self.command(output)
 
-            def provider(_cmd, _log, **kwargs):
+            def provider(
+                _cmd, _log, *, raised=raised, output=output, reported_error=reported_error, **kwargs
+            ):
                 self.assertEqual(kwargs["attempts"], 1)
                 self.assertTrue(kwargs["append"])
                 if raised:
