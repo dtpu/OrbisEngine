@@ -16,7 +16,8 @@
   --space-8: 128px;
   --text-body: 17px;
   --leading-body: 1.6;
-  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: Figtree, ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Gilda Display', Georgia, 'Times New Roman', serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
