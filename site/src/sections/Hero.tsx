@@ -5,7 +5,10 @@ import { Eyebrow, H1 } from '../components/Heading';
 import { DEMO_URL } from '../content/links';
 import styles from './Hero.module.css';
 
-const POSTER = '/media/elevator/poster.jpg';
+// The elevator clip (two people, one handheld take): the recording on the left, and on the right
+// the same ten seconds rendered by the viewer from a viewpoint that walks off the recorded path.
+const SOURCE_POSTER = '/media/hero/source-poster.jpg';
+const WANDER_POSTER = '/media/hero/wander-poster.jpg';
 
 export default function Hero() {
   return (
@@ -29,8 +32,8 @@ export default function Hero() {
         <figure className={styles.pane}>
           <div className={styles.media}>
             <VideoLoop
-              src="/media/elevator/source.mp4"
-              poster={POSTER}
+              src="/media/hero/source.mp4"
+              poster={SOURCE_POSTER}
               label="Recorded elevator footage"
               className={styles.video}
             />
@@ -40,8 +43,8 @@ export default function Hero() {
         <figure className={styles.pane}>
           <div className={styles.media}>
             <VideoLoop
-              src="/media/elevator/wander.mp4"
-              poster={POSTER}
+              src="/media/hero/wander.mp4"
+              poster={WANDER_POSTER}
               label="Wander viewpoint moving through the same moment"
               className={styles.video}
             />

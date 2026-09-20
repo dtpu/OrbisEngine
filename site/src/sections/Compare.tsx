@@ -10,12 +10,23 @@ const hideBroken = (e: SyntheticEvent<HTMLImageElement>) => {
 
 type CompareScene = { id: string; caption: string };
 
-// Offsets are quoted in body-heights once each render pair is exported and measured against its
-// source frame. Until then the captions say so rather than stating a number nobody measured.
+// Each pair is the recorded frame at time t next to the viewer's render at the same t from a
+// standing position the recording never had. Offsets are quoted in body-heights (the scene's
+// mean character stature), measured from the viewer's start pose by scripts/capture-media.ts;
+// they are the numbers that script prints, not estimates.
 const compareScenes: CompareScene[] = [
-  { id: 'elevator', caption: 'Elevator. Viewpoint offset in body-heights: pending measurement.' },
-  { id: 'lobby', caption: 'Lobby. Viewpoint offset in body-heights: pending measurement.' },
-  { id: 'gym', caption: 'Gym. Viewpoint offset in body-heights: pending measurement.' },
+  {
+    id: 'elevator',
+    caption: 'Elevator at 6.0 s, a bottle in the air. Viewpoint: OFFSET_ELEVATOR.',
+  },
+  {
+    id: 'lobby',
+    caption: 'Lobby at 4.7 s, mid-wave. Viewpoint: OFFSET_LOBBY.',
+  },
+  {
+    id: 'gym',
+    caption: 'Gym at 8.0 s, dumbbells raised. Viewpoint: OFFSET_GYM.',
+  },
 ];
 
 export default function Compare() {
