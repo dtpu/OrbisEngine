@@ -289,3 +289,41 @@ runtime errors observable without marking a loaded scene as a startup failure, p
 startup messages, and bounds the diagnostic panel to the viewport. The real-browser regression
 `scripts/test-hud-errors-browser.ts` checks both error paths during advancing playback. This UI
 fix does not add any missing room geometry.
+
+## Inferred surroundings repair
+
+The following local repair reuses the existing image-generated kitchen as a separately rendered
+background. It retains the observed cooking-area PLY, all 609 actor samples, repaired appearance,
+floor placement, pan and freezer-door tracks byte-for-byte. No new Modal or Marble operation ran.
+Its scale is the inverse of the recorded native-to-generated registration, 2.719959249986597,
+with the viewer's existing background axis conversion. Spatial nearest-surface diagnostics are
+imperfect and are not independent semantic alignment validation.
+
+Adding the entire generated room initially occluded the cook's feet and duplicated surfaces.
+The delivered background instead removes generated centres in front of seven source-bound static
+depth buffers, centres within 0.04 body-heights of retained observed surfaces, and a source-fitted
+freezer-door exclusion volume. The exact anchor reconstruction matches the previously verified
+refined PLY. Surviving packed attributes are unchanged. The background has 1,153,808 splats,
+17,283,353 bytes, SHA-256 `fc19164d138681281ae7a669217cf1720a23ce09cc4a2f5cdeac59935ff625a9`.
+
+In the reproduced displaced view, near-black coverage drops from 28.70% to 2.77%; walking backward
+drops it from 58.20% to 2.19%. Looking behind the observer changes from an empty view to an inferred
+adjacent room. These are coverage improvements, not proof that the generated furniture or room is
+correct. Twelve source-camera checkpoints and six displaced views load without page errors.
+Four actor-only comparisons change at most 0.72% of tested opaque actor pixels after adding the
+background. The far side still has seams and voids, and a camera placed inside/behind cabinetry
+produces an unusable view. Walking retains the original grid and four tested directions; no new
+background collision or floor support is claimed. Brita and bag motion remain absent.
+
+The [new review](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/index.html)
+and current kitchen picker expose this improvement with an explicit inferred-surroundings label.
+The previous partial room remains available under `clip=kitchen-observed`; accepted gym assets
+and all other scene cards are preserved.
+
+The new preview is `/reviews/kitchen-continuation/room-context/preview.mp4`, 21,619,913 bytes,
+SHA-256 `595b85034ce22bd3ea075559cafaeb1692ccf1310fe618647d8b2279592354aa`. All 609 frames were newly
+captured with one visible cook and one visible pan at every sample. The real viewer completed
+a playback loop. Full decoding passes, duration is 50.730 seconds, and all 2,380 original AAC
+packet hashes, PTS/DTS, durations and priming values match. The preview labels the surroundings
+as inferred and retains the original-recording inset. Local filtering, coverage, walking and
+preview evidence is under `.context/evidence/kitchen-room-coverage/`.
