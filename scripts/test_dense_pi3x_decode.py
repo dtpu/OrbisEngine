@@ -260,8 +260,9 @@ class SlotSelection(unittest.TestCase):
     def test_one_frame_per_output_slot_at_half_the_source_rate(self):
         times = [index / 24.0 for index in range(24)]
         samples, empty = output_slots(times, 12.0)
-        # Every other frame, plus the final partial slot the fps filter also flushes.
-        self.assertEqual(samples, list(range(0, 23, 2)) + [23])
+        # Every other frame. Frame 23 rounds up into the slot at the stream's end, which the fps
+        # filter does not write: `ffmpeg -vf fps=12` on one second of 24 fps gives 12 frames.
+        self.assertEqual(samples, list(range(0, 23, 2)))
         self.assertEqual(empty, 0)
         self.assertEqual(len(samples), len(set(samples)))
 
@@ -275,12 +276,19 @@ class SlotSelection(unittest.TestCase):
         # Slots 2 and 3 have no frame behind them; the fps filter would repeat a neighbour.
         times = [0.0, 1 / 24, 2 / 24, 8 / 24, 9 / 24]
         samples, empty = output_slots(times, 12.0)
-        self.assertEqual(samples, [0, 2, 3, 4])
+        # the last frame rounds into the end slot, which is never written
+        self.assertEqual(samples, [0, 2, 3])
         self.assertEqual(empty, 2)
         self.assertEqual(len(samples), len(set(samples)))
 
     def test_no_frames_select_nothing(self):
         self.assertEqual(output_slots([], 12.0), ([], 0))
+
+    def test_a_last_frame_rounding_into_the_end_slot_is_not_sampled(self):
+        # 2 s at 30 fps: frame 59 (1.9667 s) rounds up into slot 24, which starts at the stream's
+        # end and which FFmpeg's fps filter never writes; it writes 24 frames, ending on frame 58
+        samples, empty = output_slots([i / 30 for i in range(60)], 12.0)
+        self.assertEqual((len(samples), samples[-1], empty), (24, 58, 0))
 
 
 class ContainerSelection(unittest.TestCase):
@@ -297,7 +305,7 @@ class PlanSelection(unittest.TestCase):
         plan = sample_plan(12.0, 24, 24.0, pts_seconds=[index / 24.0 for index in range(24)])
         self.assertEqual(plan["sampleSelection"], SELECT_PTS_SLOTS)
         self.assertEqual(plan["timestampSource"], TIMES_PTS)
-        self.assertEqual(plan["samples"], list(range(0, 23, 2)) + [23])
+        self.assertEqual(plan["samples"], list(range(0, 23, 2)))
         self.assertEqual(plan["times"][1], 1 / 12.0)
         self.assertEqual(plan["plannedSamples"], len(plan["samples"]))
 
