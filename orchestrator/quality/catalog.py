@@ -74,7 +74,7 @@ AUTOMATIC_CRITERIA: dict[str, tuple[str, tuple[str, ...]]] = {
 
 def _agent_criteria(stage: StageDefinition, rubric_name: str) -> tuple[RubricCriterion, ...]:
     output_roles = {output.role for output in stage.outputs.values()}
-    from_attempt = stage.id != "clean_review"
+    from_attempt = True
     mappings: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
         "cleaned_scene": (
             ("removal", "Removed subjects leave no material residuals", ("clean_report",)),
@@ -148,7 +148,6 @@ def _agent_criteria(stage: StageDefinition, rubric_name: str) -> tuple[RubricCri
 
 
 HUMAN_EVIDENCE: dict[str, tuple[str, ...]] = {
-    "clean_review": ("approval",),
     "audio_reviewed": ("audio_manifest",),
     "finetune": ("finetuned_world", "finetune_receipt"),
     "verify": ("quality_review",),

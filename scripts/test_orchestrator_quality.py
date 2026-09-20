@@ -187,13 +187,23 @@ class QualityContractTests(unittest.TestCase):
         self.assertEqual(decision.verdict, QualityVerdict.BLOCK)
 
     def test_human_gate_requests_review_then_controls_promotion(self):
-        contract = quality_catalog()["clean_review"]
-        agent_artifacts = artifacts_for(contract.agent)
+        # verify is the remaining stage with both an agent rubric and a human gate. It also
+        # carries an automatic check, so the whole ladder runs: automatic, then agent, then the
+        # human who decides promotion.
+        contract = quality_catalog()["verify"]
+        automatic_reviews = []
+        agent_artifacts = list(artifacts_for(contract.agent))
+        for rubric in contract.automatic:
+            evidence = artifacts_for(rubric)
+            agent_artifacts.extend(evidence)
+            automatic_reviews.append(review_for(rubric, evidence))
+        agent_artifacts = list({a.id: a for a in agent_artifacts}.values())
         agent_review = review_for(contract.agent, agent_artifacts)
+        earlier_reviews = (*automatic_reviews, agent_review)
 
         pending = evaluate_promotion(
             contract,
-            (agent_review,),
+            earlier_reviews,
             agent_artifacts,
             run_id=RUN_ID,
             attempt_id=ATTEMPT_ID,
@@ -206,7 +216,7 @@ class QualityContractTests(unittest.TestCase):
         approved = review_for(contract.human, all_artifacts)
         decision = evaluate_promotion(
             contract,
-            (agent_review, approved),
+            (*earlier_reviews, approved),
             all_artifacts,
             run_id=RUN_ID,
             attempt_id=ATTEMPT_ID,
@@ -217,7 +227,7 @@ class QualityContractTests(unittest.TestCase):
         denied = review_for(contract.human, all_artifacts, passed=False)
         decision = evaluate_promotion(
             contract,
-            (agent_review, denied),
+            (*earlier_reviews, denied),
             all_artifacts,
             run_id=RUN_ID,
             attempt_id=ATTEMPT_ID,

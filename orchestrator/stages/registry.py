@@ -207,17 +207,6 @@ def stage_registry() -> dict[str, StageDefinition]:
             quality=QualityPolicy(automatic_checks=("world_mode_measurements",)),
         ),
         StageDefinition(
-            id="clean_review",
-            title="Approve cleaned world input",
-            kind=StageKind.HUMAN,
-            inputs={
-                "clean_report": stage_output("clean", "clean_report"),
-                "clean_frame": stage_output("clean", "clean_frame"),
-            },
-            outputs={"approval": output("approval", "application/json")},
-            quality=QualityPolicy(agent_rubric="cleaned_scene", human_approval=True),
-        ),
-        StageDefinition(
             id="marble_image_submit",
             title="Submit cleaned image world generation",
             kind=StageKind.COMPUTE,
@@ -225,7 +214,6 @@ def stage_registry() -> dict[str, StageDefinition]:
             inputs={
                 "clean_frame": stage_output("clean_first", "clean_frame"),
                 "prompt": stage_output("world_prompt", "world_prompt"),
-                "approval": stage_output("clean_review", "approval"),
             },
             outputs={"provider_operation": output("provider_operation", "application/json")},
             parameter_schema=MARBLE_PARAMETERS,
@@ -258,7 +246,6 @@ def stage_registry() -> dict[str, StageDefinition]:
             inputs={
                 "clean_video": stage_output("clean", "clean_video"),
                 "prompt": stage_output("world_prompt", "world_prompt"),
-                "approval": stage_output("clean_review", "approval"),
             },
             outputs={"provider_operation": output("provider_operation", "application/json")},
             parameter_schema=MARBLE_PARAMETERS,
@@ -292,7 +279,6 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "clean_frames": stage_output("clean_multi", "clean_frames"),
                 "world_mode": stage_output("world_mode", "world_mode"),
                 "prompt": stage_output("world_prompt", "world_prompt"),
-                "approval": stage_output("clean_review", "approval"),
             },
             outputs={"provider_operation": output("provider_operation", "application/json")},
             parameter_schema=MARBLE_PARAMETERS,
