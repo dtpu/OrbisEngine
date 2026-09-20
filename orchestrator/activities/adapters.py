@@ -770,8 +770,12 @@ class LegacyPipelineAdapter:
         root = context.attempt.outputs
         run = root / "runs" / name
         run.mkdir(parents=True, exist_ok=True)
+        # run_clip.py checks this against its own graph before it runs anything, so the keys
+        # have to be the names that graph uses. The orchestrator's are per person --
+        # `person_prep:00` -- and the legacy graph calls that stage `person_prep`, so it found
+        # its dependency unsatisfied and refused: "dependency did not finish: ['person_prep']".
         dependencies = {
-            binding["stage_id"]: {"status": "ok"}
+            binding["stage_id"].split(":", 1)[0]: {"status": "ok"}
             for binding in context.request.definition.get("inputs", {}).values()
             if binding.get("source") == "stage_output"
         }
