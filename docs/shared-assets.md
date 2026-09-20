@@ -23,6 +23,38 @@ Do not give these keys a `VITE_` prefix: credentials belong in the local server,
 `.env.local` and the cache are gitignored. Keep the server on localhost (the default demo command).
 This is a local development viewer, not an authenticated public hosting service.
 
+## Prepared world cache
+
+HTTP caching saves downloads, but Spark normally decodes a world and builds its level-of-detail
+tree again for every fresh scene runtime. Prepare that data on the Mac to skip this CPU work on
+the Quest. With the local viewer running and Google Chrome installed:
+
+```sh
+bun run prepare:worlds --url http://127.0.0.1:5399 /marble-lobby-clean.spz /marble-elevator-clean.spz
+```
+
+Pass the world asset paths used by the scenes you want to accelerate. Preparation uses the
+installed Spark decoder and preserves its packed arrays, colour encoding, and detail tree exactly;
+it does not reduce scene detail. Verified outputs stay under `.context/prepared-worlds/` and are
+never uploaded. The source SHA-256 and installed Spark build identify each cache entry, so updated
+assets or dependencies cannot silently reuse stale data. Run the command again after such changes.
+`--force` rebuilds an existing entry.
+
+Vite serves these optional files through `/api/prepared-world/v1/`. The viewer uses the original
+world if a prepared entry is missing, incompatible, or corrupt. Add `xrworldcache=0` to compare
+the original loading path. Prepared files are larger than compressed SPZ sources (typically about
+three times larger for the current scenes), trading initial transfer size for less headset CPU
+work; subsequent visits can reuse the browser's disk cache. This shortcut requires the strong
+SHA-256 ETag supplied by the shared-assets server. Servers without that identity use normal loading.
+It does not bypass people, object, video, GPU-upload, or sorting work. The separate in-memory scene
+cache still keeps only the active scene and one previous scene.
+
+Validate the binary and HTTP behavior with
+`bun test ./scripts/test-prepared-world.ts ./scripts/test-prepared-world-server.ts`.
+After preparing the lobby, `bun scripts/test-prepared-world-browser.ts` compares its original and
+prepared packed data and real rendering, including fallback from a corrupt entry. Set
+`PREPARED_WORLD_TEST_URL` when testing another local port. Browser timings are not headset timings.
+
 ## Author credentials
 
 Give a teammate access to the provider workspace/project where the work runs, then share any
