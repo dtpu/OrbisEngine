@@ -37,6 +37,8 @@
 //   ?xrscale=        override world units per metre (default wander.upm)
 //   ?xreye=          eye height in metres when the runtime grants no floor (default 1.6)
 //   ?xrturn=         snap turn in degrees (default 30); 0 disables turning
+//   ?xrturnmode=     smooth | snap (default follows xrmove; teleport uses snap)
+//   ?xrturnspeed=    smooth turn speed in degrees/s at full deflection (default 90, 0..180)
 //   ?xrspeed=        smooth locomotion speed in m/s (default 1.4, a walk)
 //   ?xrpolyfill=1    force webxr-polyfill (phones, Cardboard); matches the rest of the repo
 import * as THREE from 'three';
@@ -157,9 +159,22 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const upm = Math.max(1e-4, num('xrscale', wander.upm || 1));
   const mode = q.get('xrmove') === 'smooth' ? 'smooth' : 'teleport';
   const physicalWalk = new PhysicalWalk(parseWalkGain(q.get('xrwalkgain')));
+  const requestedTurnMode = q.get('xrturnmode');
+  const turnMode =
+    requestedTurnMode === 'smooth' || requestedTurnMode === 'snap'
+      ? requestedTurnMode
+      : mode === 'smooth'
+        ? 'smooth'
+        : 'snap';
+  const requestedTurnSpeed = num('xrturnspeed', 90);
+  const turnSpeed = Number.isFinite(requestedTurnSpeed)
+    ? THREE.MathUtils.clamp(requestedTurnSpeed, 0, 180)
+    : 90;
   const report: Record<string, unknown> = {
     mode,
     walkGain: physicalWalk.gain,
+    turnMode,
+    turnSpeed,
     upm: +upm.toFixed(4),
     askedBudget: xrLod,
     adapt,
@@ -395,9 +410,12 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const EYE = (q.get('walk') === '1' && wander.walk?.eye) || num('xreye', 1.6) * upm; // walk mode: the desktop's own eye-height rule
   const ACCEL = 9;
   const DEAD = 0.2;
+  const TURN_DEAD = 0.15;
   const BLINK = 0.12; // seconds of black over a teleport or a snap turn
-  const axis = (v: number | undefined) =>
-    v === undefined || Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1 - DEAD);
+  const axis = (v: number | undefined, dead = DEAD) =>
+    v === undefined || !Number.isFinite(v) || Math.abs(v) <= dead
+      ? 0
+      : (THREE.MathUtils.clamp(v, -1, 1) - Math.sign(v) * dead) / (1 - dead);
 
   const sticks = { moveX: 0, moveY: 0, turnX: 0 };
   function readSticks() {
@@ -411,7 +429,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       const x = Math.abs(a[2] ?? 0) > Math.abs(a[0] ?? 0) ? a[2] : a[0];
       const y = Math.abs(a[3] ?? 0) > Math.abs(a[1] ?? 0) ? a[3] : a[1];
       if (src.handedness === 'right') {
-        sticks.turnX = axis(x);
+        sticks.turnX = axis(x, turnMode === 'smooth' ? TURN_DEAD : DEAD);
       } else {
         sticks.moveX = axis(x);
         sticks.moveY = axis(y);
@@ -498,13 +516,20 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     blink = 1;
   }
 
+  const turnUp = new THREE.Vector3(0, 1, 0);
+  const turnQuaternion = new THREE.Quaternion();
+  function turnAroundHead(angle: number) {
+    // Rotate about the HEAD, not the rig origin, or a turn also slides you sideways.
+    turnQuaternion.setFromAxisAngle(turnUp, angle);
+    rig.position.sub(head).applyQuaternion(turnQuaternion).add(head);
+    rig.quaternion.premultiply(turnQuaternion).normalize();
+    // Walking in this same frame must use the new heading.
+    headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
+  }
+
   function snapTurn(dir: number) {
     if (!SNAP) return;
-    // Rotate about the HEAD, not the rig origin, or a turn also slides you sideways.
-    const c = head.clone();
-    const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dir * SNAP);
-    rig.position.sub(c).applyQuaternion(qy).add(c);
-    rig.quaternion.premultiply(qy);
+    turnAroundHead(-dir * SNAP);
     avatarBody?.reset();
     blink = 0.7;
   }
@@ -522,6 +547,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   }
 
   function moveRig(dt: number) {
+    // Turning around an offset head translates the rig origin without walking. Start the body
+    // travel measurement after that pivot, so only accepted locomotion can animate a step.
+    bodyRigStart.copy(rig.position);
     // fourd.html's own soft boundary, applied to the RIG. Outward motion past the measured face is
     // scaled towards zero so you coast to a stop; inward motion is never damped, so it is always one
     // nudge back into the good region. The head is untouched by any of this.
@@ -604,7 +632,6 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         home.z - off.z,
       );
     }
-    bodyRigStart.copy(rig.position);
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
@@ -633,7 +660,11 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     } else {
       readSticks();
-      if (SNAP) {
+      if (turnMode === 'smooth') {
+        // Apply the stick's analog rate directly every frame: no latch, blink, or release coast.
+        // Pitch and roll stay with the headset's tracked pose.
+        if (SNAP && sticks.turnX) turnAroundHead(-sticks.turnX * turnSpeed * DEG * dt);
+      } else if (SNAP) {
         if (Math.abs(sticks.turnX) > 0.7) {
           if (!snapLatch) {
             snapTurn(Math.sign(sticks.turnX));

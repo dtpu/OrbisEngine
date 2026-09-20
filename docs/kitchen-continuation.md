@@ -102,3 +102,90 @@ frames 2130, 2158, 2159 and 2173 show both detections following stationary foreg
 texture as the camera moves. Neither is a supported thrown-object track. Their original output is
 retained with rejection evidence; they must not be packaged as flying props. Held cookware, the
 bag and appliance doors still need distinct source-bound tracking.
+
+## Refined source masks and moving-door candidate
+
+A further local candidate replaces the added person rectangles with traced source silhouettes,
+retaining the original saved person masks. Selected late geometry excludes the opened fridge,
+cook/bag and changed microwave region; the blurred final anchor remains excluded. This retains
+1,397,563 source-coloured splats, 25.3% more than the rectangular-mask candidate. Reviewed overlays
+bind each polygon to its actual source index and RGB hash. Static ghost fragments and missing
+surfaces are reduced but remain visible from displaced viewpoints.
+
+The separate door experiment extracts a planar freezer exterior from the closed source at
+36.169 seconds, fits its hinge to recovered depth and estimates opening angles from labelled
+corners at 37.497–39.500 seconds. It removes 51,276 static door splats and restores 2,889 observed
+interior splats. A 12 fps baked object track opens the door and holds the last measured angle.
+Sparse in-sample corner RMS is 5.87–12.07 pixels at 672-pixel image width. No dense or held-out
+tracking acceptance is claimed. The reverse face/thickness are unobserved; the planar reverse
+appearance is explicitly labelled inferred. Interior holes, missing handle detail and imperfect
+hand contact remain. The ten inspected source-camera views and two opposing views load in the
+real viewer with no page errors, but this remains an experimental reconstruction.
+
+The actor completion inventory confirms all 609 source-bound poses already exist. The minimum
+appearance repair would preserve 559 early frames and animate 50 late frames plus one control
+with the early canonical and recorded fixed scale. The current wrapper requires a fixed-scale
+passthrough, durable checkpoint and bounded execution before submission. The new workspace has no
+model volumes, required native body assets are absent locally, and one read-only check of the old
+`dtpu` profile returned an authentication failure. No retry, model download or paid job was launched.
+The full contract and receipt/ledger inventory are retained in private `actor-plan/` evidence.
+
+## Repair preview and object-loading checkpoint
+
+The repair candidate and full-length preview were published in private viewer/archive snapshot
+`33d0d6a0-db4e-4734-96aa-92fb534c7052`. All seven new/updated viewer entries passed remote
+SHA-256/size checks; fresh downloads of its object manifest, preview, review pages and unchanged gym
+preview matched. The 16,882 unaffected viewer entries and all 25,756 prior archive entries remained
+identical. The original accepted gym was not changed.
+
+The repair preview contains 609 actual viewer captures over 50.73 seconds. All 2,380 original AAC
+packet payloads, timestamps, durations and priming values are identical; video ends within one
+1/12288-second tick of the source endpoint. SHA-256:
+`e201da3998de99733d64a18deec5f215d6a85cdf346610679366e1c411bf5198`.
+Full decoding and an actual playback loop pass, with exactly one visible cook in every captured
+sample. Four-direction walking passes in the candidate; backward travel is 0.828 body-heights in
+1.8 seconds after the new body calibration. The forward stop remains near the counter.
+
+The user's subsequent report of absent objects is accurate for the earlier kitchen: its
+`objects.json` is empty. The new repair's explicitly selected manifest renders one Gaussian
+`freezer-door` object, confirmed by viewer state and screenshots with zero object-load warnings.
+It does not yet render the handled pan, kettle or bag. Do not describe it as complete object
+reconstruction. The review entry now distinguishes the new repair from the earlier empty-object
+scene. Pending source/hand-contact validation of further props remains separate work.
+
+## Continued object repair and authorized actor job
+
+The third pan hypothesis improves held-out centre errors to 3.10, 5.07 and 7.66 pixels at
+672-pixel source width. All 17 sampled mesh-handle proximity checks meet 0.05 body-heights.
+The real viewer renders the inferred held pan through 16.033 seconds, then switches to the
+retained observed counter pan. Exactly 2,678 source-selected Gaussian points were separated
+from the room for that timed static layer; all other room points are unchanged. Nineteen source
+views, two displaced views and four-direction walking were inspected. The mesh has invented
+appearance and approximate tilt, especially around 13 seconds; uncertain early tracking and
+other static remnants remain. This is an object-repair experiment, not whole-kitchen acceptance.
+
+Its full 609-frame preview preserves all 2,380 original AAC packet payloads, timestamps, durations
+and priming values. Exactly one cook and one pan layer are visible at every captured sample.
+Preview SHA-256: `32f64af62ae8cf80333e667e50fcdb17d4e10aa858e088005010d42292d94352`.
+
+Source inspection identifies the pouring object as a water-filter pitcher, correcting the earlier
+kettle label. The third pitcher hypothesis passes only 3/6 independent projection checks and
+fails pickup; the bag's third hypothesis also fails projection/contact/coverage. Both remain
+excluded from the delivered scene, with all attempts and review-only artifacts retained.
+
+The spending audit verified 24 existing logs and seven completed historical kitchen apps.
+Their observed $0.74521365 is already included in earlier workspace billing and must not be added
+again. Earlier overwritten failures and incomplete billing prevent certifying the original $27
+remainder. This does not establish that it is exhausted.
+
+The user subsequently authorized **up to $10 additional Modal spend** for the concrete saved-actor
+repair: reuse the early canonical for the final 50 samples plus sample 0 as a control, then preserve
+the 559 existing early outputs. This approval covers that corrective job and necessary cache setup;
+it does not reset other attempts or authorize automatic retries. A fresh read-only preflight now
+finds another session's completed LHM, native-body, DINO and face-model caches in `austin-jian547`.
+Reuse them; do not duplicate setup or stop the other session's jobs.
+
+The tested animation wrapper now preserves a fixed world scale, supports a 600-second execution
+limit and durably checkpoints generated outputs with input hashes and a recovery receipt. Eight
+new offline checks plus 35 existing recovery/accounting checks pass. A sparse 51-sample export
+must remain partial until its intended IDs, control output and explicit full-clip merge are verified.
