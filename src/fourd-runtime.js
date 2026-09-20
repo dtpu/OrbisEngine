@@ -797,6 +797,60 @@ export async function createFourD({ search, renderer, root, scope }) {
     'lobby-ft': { world: '/marble-lobby-finetuned.spz' },
     'gym-ft': { world: '/marble-gym2-finetuned.spz' },
     'gym-nobench': { world: '/marble-gym-clean2.spz' },
+    // gym-accepted: Austin's accepted gym (docs/gym-delivery.md) as the review picker at
+    // /reviews/gym-kitchen/picker-local.html opens it: the ?demo=gym preset above with these fields
+    // overriding it. The bare gym preset stays untouched as the comparison baseline.
+    'gym-accepted': {
+      world: '/reviews/austin-continuation/gym-replacement.spz',
+      worldfallback: 'none',
+      person: '/reviews/gym-repair/person-contact-candidate/sequence.json',
+      placement: '/reviews/gym-repair/registration/placement.json',
+      place: '1',
+      framealign: '/reviews/gym-repair/registration/framealign.json',
+      rotfix: '1',
+      objects: '/reviews/gym-repair/objects/objects-contact-candidate.json',
+      colliders: '/reviews/gym-repair/colliders.json',
+      video: '/reviews/gym-repair/source.mp4',
+      cam: '-0.048358088,0.024006001,0.090660819,-0.022907362,-0.591009064,-1.812260285',
+      fov: '63',
+      feetmode: 'sfm',
+      stance: '0',
+      feetlock: '0',
+      camdrift: '0',
+      audio: '0',
+    },
+    // kitchen: the full-length kitchen recording with Austin's fixture repair, copied from the same
+    // review picker (docs/gym-kitchen-delivery.md, docs/kitchen-continuation.md). The world is a
+    // 119 MB .ply rather than an .spz, so it loads slower than the other scenes.
+    kitchen: {
+      world: '/reviews/kitchen-continuation/fixture-repair/environment.ply',
+      people: '/reviews/kitchen-continuation/actor-repair/people.json',
+      video: '/reviews/gym-kitchen/kitchen/source.mp4',
+      objects: '/reviews/kitchen-continuation/fixture-repair/objects.json',
+      placement: '/reviews/kitchen-continuation/actor-repair/floor-placement.json',
+      bg: '/reviews/kitchen-continuation/fixture-repair/generated-context.spz',
+      bgscale: '2.719959249986597',
+      colliders: '/reviews/kitchen-continuation/room-access/colliders.json',
+      worldup: 'y',
+      worldscale: '1',
+      scale: '1',
+      floor: '-3.118813392508837',
+      pos: '0,0,0',
+      feet: '1',
+      feetmode: 'sfm',
+      feetlock: '0',
+      shadow: '0',
+      rot: '0,0,0',
+      stance: '0',
+      camdrift: '0',
+      place: '1',
+      rotfix: '0',
+      cam: '0,0,0,0,-0.224,-0.974',
+      fov: '63',
+      lod: '0',
+      audio: '0',
+      edgefade: '0',
+    },
     'atrium-ft': { world: '/marble-atrium-finetuned.spz' },
     'stairs2-ft': { world: '/marble-stairs2-finetuned.spz' },
     'elevator-ft': { world: '/marble-elevator-finetuned.spz' },
@@ -821,7 +875,13 @@ export async function createFourD({ search, renderer, root, scope }) {
       bg2scale: '1.2327',
       bg2fade: '-1.6,-2.2',
     },
-    kitchen: { world: '/marble-kitchen.spz', pos: '0.3,0.40,4.5', cam: '1.9,0.3,2.0,0.3,-0.2,0.5' },
+    // kitchen-marble: the first Marble kitchen world with the default corridor elder, an early smoke
+    // preset. It was ?demo=kitchen until that id went to the accepted kitchen scene above.
+    'kitchen-marble': {
+      world: '/marble-kitchen.spz',
+      pos: '0.3,0.40,4.5',
+      cam: '1.9,0.3,2.0,0.3,-0.2,0.5',
+    },
     // frame-0 person-free world: origin = source frame 0, elder on his true path (x=0). Marble invented
     // lettering on the right wall; the sign board is painted flat, the posters are left (see README).
     'corridor-video': {
@@ -898,6 +958,8 @@ export async function createFourD({ search, renderer, root, scope }) {
     if (q.get('demo') === k) Object.assign(DEMOS[k], { ...DEMOS[k.slice(0, -3)], ...DEMOS[k] });
   if (q.get('demo') === 'gym-nobench')
     Object.assign(DEMOS['gym-nobench'], { ...DEMOS.gym, ...DEMOS['gym-nobench'] });
+  if (q.get('demo') === 'gym-accepted')
+    Object.assign(DEMOS['gym-accepted'], { ...DEMOS.gym, ...DEMOS['gym-accepted'] });
   if (q.get('demo') === 'atrium-4d')
     Object.assign(DEMOS['atrium-4d'], { ...DEMOS.atrium, ...DEMOS['atrium-4d'] });
   // ?xr=1 forces ?exact=0 unless the URL already said otherwise: the exact layer renders the scene

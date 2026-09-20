@@ -751,6 +751,7 @@
       CLIPS.forEach((c, i) => $('primary').appendChild(makeCard(c, i + 1)));
       SPARES.forEach((c) => $('spares').appendChild(makeCard(c, '')));
       $('railcount').textContent = `${CLIPS.length}`;
+      $('moretoggle').hidden = SPARES.length === 0;
       $('moretoggle').addEventListener('click', () => {
         const s = $('spares');
         s.hidden = !s.hidden;
