@@ -1,4 +1,4 @@
-// Real desktop wrapper + scene runtimes. Requires the private stairs2 and lobby assets.
+// Real desktop wrapper + scene runtimes. Requires the private elevator, lobby and Tears of Steel assets.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
@@ -17,7 +17,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(`${base}/demo.html?clip=stairs2`, { timeout: 120000 });
+  await page.goto(`${base}/demo.html?clip=elevator`, { timeout: 120000 });
   const element = await page.locator('#frame').elementHandle();
   const frame = await element?.contentFrame();
   assert.ok(frame);
@@ -35,7 +35,7 @@ try {
     assert.equal(new URL(page.url()).searchParams.get('clip'), clip);
     assert.equal(await page.locator('.card.on').getAttribute('data-id'), clip);
   }
-  await ready('stairs2');
+  await ready('elevator');
   assert.equal(await page.locator('#railbtn').getAttribute('aria-expanded'), 'false');
   await page.click('#helpbtn');
   assert.equal(await page.locator('#helppop').isVisible(), true);
@@ -75,8 +75,8 @@ try {
   );
   await page.click('#soundbtn');
   await frame.waitForFunction(() => window.wander.audioState.muted);
-  await page.click('.card[data-id="stairs2"]');
-  await ready('stairs2');
+  await page.click('.card[data-id="elevator"]');
+  await ready('elevator');
   assert.equal(await frame.evaluate(() => window.wander.audioState.muted), true);
   assert.equal(
     await frame.evaluate(() => {
@@ -91,44 +91,44 @@ try {
     true,
   );
 
-  const atriumManifest = '**/worlds/atrium-4dpp/person/sequence.json*';
+  const tos31Manifest = '**/worlds/tos31-4d/person/sequence.json*';
   let releaseStall!: () => void;
   let sawStall!: () => void;
   const stalled = new Promise<void>((resolve) => (sawStall = resolve));
   const released = new Promise<void>((resolve) => (releaseStall = resolve));
-  await page.route(atriumManifest, async (route) => {
+  await page.route(tos31Manifest, async (route) => {
     sawStall();
     await released;
     await route.continue().catch(() => {});
   });
   await frame.evaluate(() => window.wander.play(true));
-  await page.click('.card[data-id="atrium"]');
+  await page.click('.card[data-id="tos31"]');
   await stalled;
-  await page.click('.card[data-id="stairs2"]');
-  await ready('stairs2');
+  await page.click('.card[data-id="elevator"]');
+  await ready('elevator');
   assert.equal(await frame.evaluate(() => window.wander.playing), true);
   releaseStall();
-  await page.unroute(atriumManifest);
+  await page.unroute(tos31Manifest);
 
-  await page.route(atriumManifest, (route) =>
+  await page.route(tos31Manifest, (route) =>
     route.fulfill({ status: 500, body: 'Injected scene loading failure' }),
   );
   for (const playing of [true, false]) {
     await frame.evaluate((playing) => window.wander.play(playing), playing);
-    await page.click('.card[data-id="atrium"]');
+    await page.click('.card[data-id="tos31"]');
     await page.waitForFunction(() =>
       document.querySelector('#loading')?.classList.contains('failed'),
     );
     await frame.waitForFunction(
       () => !(window as unknown as { __loadingScene?: unknown }).__loadingScene,
     );
-    assert.equal(await frame.evaluate(() => window.wander.demo), 'stairs2');
+    assert.equal(await frame.evaluate(() => window.wander.demo), 'elevator');
     assert.equal(await frame.evaluate(() => window.wander.playing), playing);
     assert.equal(await page.locator('#loadretry').isVisible(), true);
-    await page.click('.card[data-id="stairs2"]');
-    await ready('stairs2');
+    await page.click('.card[data-id="elevator"]');
+    await ready('elevator');
   }
-  await page.unroute(atriumManifest);
+  await page.unroute(tos31Manifest);
   await page.waitForFunction(
     () =>
       getComputedStyle(document.querySelector('#loading')!).opacity === '0' &&
