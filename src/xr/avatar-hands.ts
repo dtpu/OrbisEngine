@@ -145,12 +145,20 @@ export function createAvatarHands(renderer: THREE.WebGLRenderer, rig: THREE.Grou
     grip.add(controllerModel.group);
     hand.add(trackedModel.group);
     rig.add(grip, hand);
-    let source: XRInputSource | null = null;
+    // Controller slots survive scene replacement and can differ from inputSources order
+    // after a reconnect. Retain each slot's identity on its shared Three group.
+    let source: XRInputSource | null = renderer.xr.isPresenting
+      ? 'wanderInputSource' in grip.userData
+        ? grip.userData.wanderInputSource
+        : (renderer.xr.getSession()?.inputSources[index] ?? null)
+      : null;
     const connected = (event: { data: XRInputSource }) => {
       source = event.data;
+      grip.userData.wanderInputSource = source;
     };
     const disconnected = () => {
       source = null;
+      grip.userData.wanderInputSource = null;
       controllerModel.group.visible = trackedModel.group.visible = false;
     };
     grip.addEventListener('connected', connected);
