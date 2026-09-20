@@ -9,3 +9,4 @@ Do not retry one without a new idea, and add a line here when you measure a new 
 - Clips with too little parallax, or too dark, fail reconstruction.
 - GEN3C as a static fill generator lost to the FLUX panorama fill.
 - A dominant low horizontal plane can be a countertop rather than a walking floor. Kitchen source-labelled floor tiles lie about 0.61 body-heights below its selected counter plane; validate surface identity before using camera-height or walker-floor estimates.
+- Main-thread `toBlob` and `OffscreenCanvas.convertToBlob` took about four seconds per spectator image during native Quest XR sessions. Moving JPEG encoding to a dedicated worker reduced observed encoding latency to roughly 25–40 ms; simulated XR did not reproduce the main-thread stall.
