@@ -51,3 +51,24 @@ displaced views and walking in the real viewer before describing a candidate as 
 Stair support must be measured; a flat floor is insufficient. Prepared clips and completed
 subprocesses do not establish visual quality. Formal acceptance, publication and generation
 status will be recorded separately as evidence becomes available.
+
+## Current review state
+
+The selected Joker shot is 3.5035 seconds and Rocky museum stairs is 24.399375 seconds.
+Both browser inputs preserve the selected source timeline and audio. A local review page at
+`http://127.0.0.1:5401/reviews/joker-rocky-v1/index.html` exposes those inputs and an explicitly
+failed/experimental Joker preview. It is not a completed two-world delivery.
+
+Joker recovered 41 of 43 independent animation samples; samples 17 and 24 are missing.
+Playback interpolates those gaps. The real-viewer inspection also rejected the character's
+appearance and observed holes/residual actor fragments in the untrained stair surface.
+The cleaned-video revision retains floating head and limb fragments, so Marble submission
+has not been approved. Rocky's revised camera export is finite but contains a real batch
+boundary teleport; its animation and world remain unfinished. No Marble generation has
+been submitted for either candidate.
+
+The camera guard now measures static depth from the recorded supported anchor in the same
+normalized units as exported camera positions. It retains the existing rejection thresholds.
+The corrected calculation still rejects Rocky: camera 127 to 128 moves about 3.34 scene
+depths per second, with a step about 59.76 times the median. A successful GPU exit does not
+promote that camera path.
