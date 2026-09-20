@@ -7,6 +7,80 @@ import cv2
 import numpy as np
 from PIL import Image
 
+# worker/modal_multiperson.py mounts all of worker/stages as /root/stages, so the solver's and
+# the tracker's own modules travel with this one: their sample plan and their sequential decode
+# are imported rather than recomputed here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dense_pi3x import choose_decode_backend, opencv_first_frame
+from track_people import fps_rule_indices, sample_stream, source_metadata
+
+SAMPLE_AUTHORITY_CAMERAS = "cameras"
+SAMPLE_AUTHORITY_SEED = "seed-track"
+SAMPLE_AUTHORITY_FPS_RULE = "fps-rule"
+SAMPLE_AUTHORITY_NOTE = (
+    "cameras: the sampled source frames and their times were adopted from the solve's "
+    "cameras.json, which selects them from decoded presentation timestamps. seed-track: adopted "
+    "from the tracked person's own samples, which came from that same solve. fps-rule: neither "
+    "was supplied, so they came from round(time * container average fps), which only addresses "
+    "the right frames on a constant-rate source."
+)
+
+
+def adopted_samples(indices, times, authority):
+    """A supplied sample list, checked for the shape every per-sample record depends on."""
+    indices = np.asarray(indices, dtype=int)
+    times = np.asarray(times, dtype=float)
+    if len(indices) < 1:
+        raise ValueError(f"The supplied {authority} sample list is empty")
+    if len(indices) != len(times):
+        raise ValueError(f"The supplied {authority} indices and times differ in length")
+    if np.any(indices < 0) or np.any(np.diff(indices) <= 0):
+        raise ValueError(
+            f"The supplied {authority} samples must name increasing, unique source indices"
+        )
+    if not np.all(np.isfinite(times)):
+        raise ValueError(f"The supplied {authority} sample times are not finite")
+    return indices, times, authority
+
+
+def plan_samples(cameras, seed_indices, seed_times, fps_out, src_fps, count, start=0.0, stop=None):
+    """Which source frames to animate, at what times, and which rule chose them.
+
+    A supplied solve is the authority. dense_pi3x.py selects its samples from the decoded
+    presentation timestamps the way ffmpeg's `fps` filter does, so on a variable-rate source they
+    are not `round(time * average_fps)` at all and this stage's own rule could only disagree with
+    them -- it aborted on the mismatch before any GPU work, and where it did agree it then used a
+    decode-order index as a seek target. Adopting each camera's `sourceIndex` and `time` (or, with
+    no cameras, the tracked person's own samples, which came from that same solve) keeps every
+    pose paired with the camera that reconstructed its frame. With neither supplied the legacy
+    constant-rate rule stands, and says so.
+    """
+    if cameras is not None:
+        indices, times, authority = adopted_samples(
+            [int(c["sourceIndex"]) for c in cameras],
+            [float(c["time"]) for c in cameras],
+            SAMPLE_AUTHORITY_CAMERAS,
+        )
+    elif seed_indices is not None:
+        supplied = [int(i) for i in seed_indices]
+        indices, times, authority = adopted_samples(
+            supplied,
+            [float(t) for t in seed_times]
+            if seed_times is not None
+            else [index / float(src_fps) for index in supplied],
+            SAMPLE_AUTHORITY_SEED,
+        )
+    else:
+        duration = count / src_fps
+        stop = duration if stop is None else stop
+        indices, times = fps_rule_indices(fps_out, src_fps, count, start, stop)
+        if np.any(times < start) or np.any(times >= stop):
+            raise ValueError("Rounded samples leave the requested interval")
+        if len(set(indices.tolist())) != len(indices):
+            raise ValueError("Repeated source frames")
+        authority = SAMPLE_AUTHORITY_FPS_RULE
+    return indices, times, authority
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -72,35 +146,18 @@ def main():
     reference = json.loads(Path(a.reference).read_text())
     if source_sha != reference["prepared"]["sourceSha256"]:
         raise ValueError("Canonical appearance and motion must come from the same source video")
-    cap = cv2.VideoCapture(a.video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps, count, source_size = source_metadata(a.video)
     duration = count / fps
     if a.fps < 12 or fps < a.fps:
         raise ValueError("Require at least 12 distinct source frames per second")
-    # Match the dense camera export's divide-then-multiply order at half-frame ties.
     stop = duration if a.stop is None else a.stop
     if (
         not np.isfinite([a.start, stop, a.original_source_offset]).all()
         or not 0 <= a.start < stop <= duration
     ):
         raise ValueError("Invalid source interval")
-    requested = a.start + np.arange(int(np.ceil((stop - a.start) * a.fps))) / a.fps
-    requested = requested[requested < stop]
-    indices = np.rint(requested * fps).astype(int)
-    indices = np.clip(indices, 0, count - 1)
-    times = indices / fps
-    if np.any(times < a.start) or np.any(times >= stop):
-        raise ValueError("Rounded samples leave the requested interval")
-    if len(set(indices)) != len(indices):
-        raise ValueError("Repeated source frames")
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
-    if cameras and (
-        len(cameras) != len(indices)
-        or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))
-    ):
-        raise ValueError("Camera records must correspond exactly to sampled source indices")
     seed = (
         torch.load(a.seed_poses, map_location="cpu", weights_only=False) if a.seed_poses else None
     )
@@ -109,7 +166,27 @@ def main():
         if seed
         else {}
     )
-    if seed and not np.array_equal(seed["sourceIndices"], indices):
+    # Match the dense camera export's divide-then-multiply order at half-frame ties when this
+    # stage has to choose its own samples; adopt the solve's when it does not.
+    indices, times, authority = plan_samples(
+        cameras,
+        seed["sourceIndices"] if seed else None,
+        seed.get("timestamps") if seed else None,
+        a.fps,
+        fps,
+        count,
+        a.start,
+        stop,
+    )
+    print(f"{len(indices)} samples from {authority}", flush=True)
+    # Retained as guards, not as a schedule: after adoption these can only fire if the cameras
+    # and the seed track disagree with each other or a record is malformed.
+    if cameras and (
+        len(cameras) != len(indices)
+        or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))
+    ):
+        raise ValueError("Camera records must correspond exactly to sampled source indices")
+    if seed and not np.array_equal(np.asarray(seed["sourceIndices"], dtype=int), indices):
         raise ValueError("Seed pose source samples differ")
     if seed and not a.track_only and all(p is not None for p in seed["poses"]):
         raise ValueError("Seed has no missing source poses to recover")
@@ -120,6 +197,23 @@ def main():
         if a.track_only
         else PoseEstimator("./pretrained_models/human_model_files", device="cuda")
     )
+    # Only the samples this run has to re-estimate are decoded, and strictly forward. Nothing
+    # seeks: `CAP_PROP_POS_FRAMES` cannot reach the tail of a variable-rate file and can land on
+    # a neighbouring frame elsewhere in it, while these indices name positions in the decoder's
+    # own sequence -- the ordinals dense_pi3x.py counted when it solved the cameras.
+    wanted = (
+        set()
+        if a.track_only
+        else {
+            int(index)
+            for sample, index in enumerate(indices)
+            if not (seed and seed["poses"][sample] is not None)
+        }
+    )
+    backend, backend_reason = choose_decode_backend(*opencv_first_frame(cv2, a.video))
+    frames = sample_stream(a.video, backend, source_size, wanted) if wanted else iter(())
+    if wanted:
+        print(f"decode backend {backend} ({backend_reason})", flush=True)
     poses = []
     records = []
     missing = []
@@ -151,10 +245,16 @@ def main():
             poses.append(None)
             records.append(None)
             continue
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-        ok, bgr = cap.read()
-        if not ok:
-            raise RuntimeError(f"Unable to decode source frame {index}")
+        decoded, bgr = next(frames, (None, None))
+        if decoded is None:
+            raise RuntimeError(
+                f"Unable to decode source frame {index} for sample {sample}: the source stopped "
+                f"handing back frames before it ({backend}: {backend_reason})"
+            )
+        if int(decoded) != int(index):
+            raise RuntimeError(
+                f"Decoded source frame {int(decoded)} where sample {sample} asked for {int(index)}"
+            )
         raw = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         h, w = raw.shape[:2]
         padded, ow, oh = estimator.img_center_padding(raw)
@@ -247,7 +347,8 @@ def main():
         print(
             "source pose", sample + 1, "/", len(indices), "score", float(pose["scores"]), flush=True
         )
-    cap.release()
+    if hasattr(frames, "close"):
+        frames.close()  # Stops the decoder as soon as the last wanted frame has been used.
     if not a.track_only:
         del tensor, detected, K, choices
     del estimator
@@ -401,6 +502,10 @@ def main():
         frame_sha256=hashes,
         sourceIndices=used_indices,
         sourceFps=fps,
+        sampleAuthority=authority,
+        sampleAuthorityNote=SAMPLE_AUTHORITY_NOTE,
+        decodeBackend=backend,
+        decodeBackendReason=backend_reason,
         sourceSha256=source_sha,
         duration=duration,
         requestedSamples=len(indices),
