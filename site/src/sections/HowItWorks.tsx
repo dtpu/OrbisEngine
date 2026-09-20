@@ -16,7 +16,7 @@ export default function HowItWorks() {
         <Eyebrow>Pipeline</Eyebrow>
         <H2>How it works</H2>
       </div>
-      <ol className={styles.strip} aria-label="Pipeline steps">
+      <ol className={styles.strip} aria-label="Pipeline steps" tabIndex={0}>
         {steps.map((step) => (
           <li key={step.n} className={styles.step}>
             <div className={styles.numberRow}>
