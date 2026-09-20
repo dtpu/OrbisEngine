@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createFourD } from './fourd-runtime.js';
-import { ALL, SPARES } from './scene-catalog.ts';
+import { ALL } from './scene-catalog.ts';
 import { createSceneSession } from './scene-session.js';
 
 /** Keep one renderer and one native XRSession while replacing the recorded scene. */
@@ -18,7 +18,6 @@ export function startFourD(template) {
       meta: clip.place.split(' · ').slice(1).join(' · '),
       src: clip.src,
       posterTime: clip.poster,
-      spare: SPARES.some((spare) => spare.id === clip.id),
     })),
     createRuntime: createFourD,
   });
