@@ -31,6 +31,7 @@ import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile,
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
+from sequence_frames import MissingPersonFrames, first_world_frame, optional_first_world_frame
 from stage_attempts import StageAttempts, command_identity
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,8 +47,11 @@ LOCAL_ENV = {
     "KMP_DUPLICATE_LIB_OK": "TRUE",
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
     "LAMA_MODEL": os.path.expanduser("~/.cache/lama/big-lama.pt"),
-    "MODAL_PROFILE": os.environ.get("MODAL_PROFILE", "dtpu"),
 }
+# No default workspace: a paid stage must name the Modal profile that pays for it (paid_run records
+# it in the claim), and an unset profile must not silently fall back to one chosen here.
+if os.environ.get("MODAL_PROFILE"):
+    LOCAL_ENV["MODAL_PROFILE"] = os.environ["MODAL_PROFILE"]
 
 MARBLE_MODES = ("video", "image", "multi", "both", "none")
 # scale_fit gates on each sampled frame's depth-ratio MEDIAN (0.95-1.05) and on its p10/p90: the median
@@ -387,6 +391,20 @@ class Pipeline:
                 getattr(self.a, "clip", self.clip)
             )
             parameters, code, outputs = command_identity(cmd, ROOT, selection)
+            workspace = LOCAL_ENV.get("MODAL_PROFILE")
+            if not workspace:
+                raise ValueError("MODAL_PROFILE is unset; name the workspace that pays")
+            parameters = {**parameters, "workspace": workspace}
+            environment = {}
+            for item in getattr(self.a, "stage_environment", None) or []:
+                key, separator, value = item.partition("=")
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", key) or not separator or not value:
+                    raise ValueError("--stage-environment takes KEY=VALUE")
+                if key in environment:
+                    raise ValueError(f"--stage-environment repeats {key}")
+                environment[key] = value
+            if environment:
+                parameters["environment"] = environment
             existing = [str(path) for path in outputs if path.exists() or path.is_symlink()]
             if existing:
                 raise ValueError(
@@ -506,7 +524,21 @@ class Pipeline:
             json.loads(ident.read_text()).get("failedTracks") or []
         ):
             raise SkipStage(f"track {track['track']} failed the identity audit (changed person)")
+        unresolved = self.unresolved_people().get(str(idx))
+        if unresolved:
+            raise SkipStage(f"track {track['track']} is unresolved: {unresolved}")
         return track
+
+    # A person the footage cannot support (never fully in frame, no detector instance under the
+    # track) is a disclosed gap in the cast, not a reason to withhold everyone else.
+    UNPREPARABLE = (
+        "no sample of this track can be prepared",
+        "no Mask R-CNN person overlaps the track box",
+    )
+
+    def unresolved_people(self):
+        path = self.ctx / "unresolved-people.json"
+        return json.loads(path.read_text()) if path.is_file() else {}
 
     # ---- stages -------------------------------------------------------------
     def clean_first(self):
@@ -567,7 +599,12 @@ class Pipeline:
             str(a.bottom_extra),
             "--lama-px",
             str(a.lama_px),
-        ] + (["--moved-mask"] if a.moved_mask else [])
+        ] + (
+            ["--moved-mask"]
+            if a.moved_mask
+            # Omitted at its default so existing runs keep their command identity.
+            else (["--people-mask", a.people_mask] if a.people_mask != "semantic" else [])
+        )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
@@ -835,7 +872,7 @@ class Pipeline:
         return self.ctx / "mode.json"
 
     def world_prompt(self):
-        """Describe the source clip for all modes; image modes additionally disable recaptioning.
+        """Describe the source clip for all world-generation modes.
 
         A generated description is an input aid, not proof of geometry or reduced hallucination.
         """
@@ -851,7 +888,7 @@ class Pipeline:
                 str(self.prompt_json),
             ],
             self.ctx / "world_prompt.log",
-            attempts=2,
+            attempts=1,
         )
         rec = json.loads(self.prompt_json.read_text())
         say(f"   prompt: {rec['text_prompt']}")
@@ -1184,7 +1221,14 @@ class Pipeline:
                 "--swap-test",
                 "--json-out",
                 str(self.ctx / "identity.json"),
-            ],
+            ]
+            # Audit the people being reconstructed against each other: a fragment of the same
+            # person, or a spectator, is not a rival identity.
+            + (
+                ["--only-tracks", ",".join(str(i) for i in range(self.people_limit))]
+                if getattr(self, "people_limit", 0)
+                else []
+            ),
             cwd=ROOT,
             env=dict(os.environ, **LOCAL_ENV),
             stdout=subprocess.PIPE,
@@ -1236,6 +1280,27 @@ class Pipeline:
             )
             return
         self.track_or_skip(idx)
+        log = self.ctx / f"person_prep_{idx:02d}.log"
+        try:
+            self.prepare_track(idx, log)
+        except RuntimeError:
+            text = log.read_text(errors="replace") if log.is_file() else ""
+            reason = next(
+                (
+                    line.strip()
+                    for line in text.splitlines()
+                    if any(marker in line for marker in self.UNPREPARABLE)
+                ),
+                None,
+            )
+            if reason is None:
+                raise
+            unresolved = self.unresolved_people()
+            unresolved[str(idx)] = reason[:400]
+            (self.ctx / "unresolved-people.json").write_text(json.dumps(unresolved, indent=1))
+            raise SkipStage(f"track slot {idx} cannot be prepared: {reason[:200]}") from None
+
+    def prepare_track(self, idx, log):
         run(
             [
                 PY,
@@ -1252,7 +1317,7 @@ class Pipeline:
                 "--out",
                 str(self.ctx / f"prepared-{idx:02d}"),
             ],
-            self.ctx / f"person_prep_{idx:02d}.log",
+            log,
         )
 
     def recover_lhm(self, dest, mode, log):
@@ -1953,10 +2018,14 @@ class Pipeline:
         return rows, SHARE / f"{tag}-depth-ratio.png"
 
     def person_ply(self) -> Path:
-        p = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
-        if not p.exists():
-            raise RuntimeError(f"{p} is missing; the package stage has not run")
-        return p
+        """The reference body: the person's FIRST packaged frame, not sample 0.
+
+        A track need not start at sample 0 -- creed-v2's begins at sample 22 (source frame 44) and
+        has gaps -- so `person/frame_000.ply` is a file that need never exist even after a complete
+        package stage. scripts/sequence_frames.py reads the person's own `frames` list instead; on a
+        dense track starting at 0 that is `frame_000.ply`, unchanged.
+        """
+        return first_world_frame(ROOT / "public" / "worlds" / f"{self.name}-4d")
 
     def scale_fit(self):
         """Fit scale0, the SfM-to-Marble scale, against the Pi3X anchor cloud.
@@ -2060,7 +2129,10 @@ class Pipeline:
             raise RuntimeError("no fitted scale0: run the scale_fit stage first")
         floor = self.placement().get("floor")
         if floor is None:
-            raise RuntimeError("no implied floor: the package stage has not produced frame_000.ply")
+            raise RuntimeError(
+                "no implied floor: the package stage has left no person frame to measure the feet "
+                f"from (see {ROOT / 'public' / 'worlds' / f'{self.name}-4d' / 'person' / 'sequence.json'})"
+            )
         wdir = ROOT / "public" / "worlds" / f"{self.name}-4d"
         out = wdir / "placement.json"
         cmd = [
@@ -2321,8 +2393,9 @@ class Pipeline:
                     worldUrl=w.get("world_marble_url"),
                 )
             break
-        ply = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
-        if ply.exists():
+        # The person's first PACKAGED frame, which is sample 0 only on a track that starts there.
+        ply = optional_first_world_frame(ROOT / "public" / "worlds" / f"{self.name}-4d")
+        if ply is not None:
             body, feet = body_stats(ply)
             out.update(bodyHeight=body, feetY=feet)
             if out.get("height"):
@@ -2803,6 +2876,16 @@ def main():
         help="New rationale for a paid retry; relevant parameters or code must also change",
     )
     ap.add_argument(
+        "--stage-environment",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Provider-side state a paid stage depends on that the command line cannot show, such "
+        "as a staged weight file's SHA-256. Recorded in the claim, so correcting it after a failed "
+        "attempt is a changed parameter; the explicit hypothesis and the three-execution cap still "
+        "apply",
+    )
+    ap.add_argument(
         "--marble-key",
         default="WLT_API_KEY",
         help="name of the env var holding the Marble key (never the key itself)",
@@ -2889,6 +2972,14 @@ def main():
         action="store_true",
         help="clean everything that MOVED, not just the person: cast shadow, carried "
         "object, passer-by. Off by default, so every existing run is unchanged.",
+    )
+    ap.add_argument(
+        "--people-mask",
+        default="semantic",
+        choices=["semantic", "foreground"],
+        help="which people to remove. semantic: every pixel labelled person (a stadium crowd "
+        "goes too). foreground: detected people tall enough to reconstruct, grown by the person "
+        "pixels attached to them; distant crowds stay as background. Not with --moved-mask.",
     )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)

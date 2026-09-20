@@ -8,12 +8,13 @@ This is not a universal spending cap: direct worker invocations, model-cache sta
 fine-tuning, OpenAI, and Marble generation are outside this ledger. Reported compute costs
 are estimates, not independently verified bills.
 
-The allowance is three executions per original source SHA-256 and logical stage. The clean,
-first-frame clean, and multi-image clean operations share the inpainting allowance; individual
-LHM track suffixes have separate allowances. `--marble both` sequences its two clean operations
-so their claims do not overlap. A candidate rename or new output path does not create a new
-allowance. A retry needs a new `--stage-hypothesis` and changed relevant parameters or worker
-code. Pending or unknown attempts block further submissions until evidence is reconciled.
+The allowance is three executions per original source SHA-256, logical stage, and source selection
+window. The clean, first-frame clean, and multi-image clean operations share the inpainting
+allowance; individual LHM track suffixes have separate allowances. `--marble both` sequences its two
+clean operations so their claims do not overlap. A candidate rename or new output path does not
+create a new allowance. A retry needs a new `--stage-hypothesis` and changed relevant parameters or
+worker code. Pending or unknown attempts block further submissions for that window until evidence is
+reconciled; a pending window does not block the other windows of the same source.
 
 The runner hashes the original `--clip` by default, including when processing a derived shot.
 For independently encoded aliases or pretrimmed inputs, use a reviewed canonical
@@ -27,9 +28,27 @@ Existing result paths are retained. LHM destinations with compatible recovery re
 read-only recovery; legacy or incompatible destinations stop for inspection. Other paid stages
 need retained-output inspection and, when justified, a fresh candidate with the same ledger.
 A successful subprocess is recorded as a completed execution, not a visual quality verdict.
-Additional selected shots share their original source's allowance and are treated as retries of
-the same stage. Automatic `--all-shots` processing can therefore stop after the first shot;
-review subsequent shots separately with distinct hypotheses instead of changing the source hash.
+
+## Source selection windows
+
+A claim records the shot's source window in `parameters.sourceSelection` as `{start, end}` seconds
+of the original recording, or `null` for the whole source. Each distinct window of one source and
+stage carries its own three-execution allowance, so a multi-shot clip is processed shot by shot and
+`--all-shots` runs every shot without a hypothesis for each first attempt. A second attempt on the
+same window is still a retry: it needs a new `--stage-hypothesis` and changed relevant parameters or
+worker code.
+
+Windows are rounded to whole milliseconds, so float noise cannot invent a new window. Two windows
+that overlap by more than half of the shorter one are the same unit of paid work, and their attempts
+share one allowance; nudging boundaries by a few frames therefore buys nothing. A `null` window
+covers every window of that source. Neighbouring shots that only touch at a boundary are separate
+work. At most 24 distinct windows exist per original source and stage; beyond that the runner stops
+and asks for the selected shots to be reviewed rather than claiming more. Marble generation stays
+outside this ledger entirely, per window or otherwise, and must be accounted for separately.
+
+A claim's `number` remains the per source and stage ordinal that older ledgers recorded; the added
+`windowNumber` is the one to three ordinal inside its window. Saved ledgers written before windows
+existed carry no `windowNumber` and stay valid.
 
 ## Recover LHM outputs without inference
 
