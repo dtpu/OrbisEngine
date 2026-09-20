@@ -860,7 +860,6 @@
           if (c) {
             if (detail.loading && (current !== c.id || ready)) beginLoad(c);
             current = c.id;
-            $('srctxt').textContent = c.srctxt;
             for (const card of document.querySelectorAll('.card'))
               card.classList.toggle('on', card.dataset.id === c.id);
             const url = new URL(location.href);
