@@ -391,3 +391,11 @@ fit uncertainty and rejected bag work are documented there. Existing actor/camer
 the pan tracks, walking supports and accepted gym remain unchanged.
 No new paid operation was submitted. Review media is under
 `/reviews/kitchen-continuation/fixture-repair/`; older review versions remain available.
+
+Published to private bucket `wander-shared-797639045717`, viewer/archive snapshot
+`670344c7-b047-41d6-ae26-89b01d2bd275`. Every one of the twelve new or updated viewer paths
+passed remote checksum/size and fresh-download SHA-256 checks. All 16,963 unaffected viewer
+paths and 35,667 previous archive entries remain identical, including the accepted gym.
+Publication had no exclusions. Source bindings, rejected candidates, geometry scripts, browser
+checks and preview captures are under `evidence/kitchen-fixture-repair-v1/`. Local verification:
+`.context/evidence/kitchen-fixture-repair/publication-verification.json`.

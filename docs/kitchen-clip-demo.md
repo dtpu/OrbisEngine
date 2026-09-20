@@ -60,10 +60,13 @@ Brita and bag motion remain absent. Room holes, static fragments, approximate pa
 and imperfect cabinet/wall contact remain documented. This is the useful reviewed reference,
 with those limitations preserved. The accepted gym and its original assets are unchanged.
 
-Media lives in private bucket `wander-shared-797639045717`, outside Git. The current wall/aisle
-delivery uses viewer/archive snapshot `870f901a-462f-4f13-9c01-b839cb0ceb5f`; its viewer manifest is
-`viewer/snapshots/870f901a-462f-4f13-9c01-b839cb0ceb5f.json`. New geometry, preview and walking
-evidence are archived under `evidence/kitchen-room-access-v1/`. The earlier surroundings remain
+Media lives in private bucket `wander-shared-797639045717`, outside Git. The current fixture
+repair uses viewer/archive snapshot `670344c7-b047-41d6-ae26-89b01d2bd275`; its viewer manifest is
+`viewer/snapshots/670344c7-b047-41d6-ae26-89b01d2bd275.json`. All twelve new/updated viewer files
+passed remote hashes, sizes and fresh-download checks. Evidence is under
+`evidence/kitchen-fixture-repair-v1/`. The prior wall/aisle snapshot
+`870f901a-462f-4f13-9c01-b839cb0ceb5f` and `evidence/kitchen-room-access-v1/` are preserved.
+The earlier surroundings remain
 in snapshot `1a852341-85b3-4179-8ab6-cb964dc5d504` and `evidence/kitchen-room-context-v1/`.
 The actor repair, spending receipts and accepted gym remain preserved from snapshot
 `2884fb59-fec1-4a16-8a37-bd6115a13f6e` and its `evidence/kitchen-actor-pan-v4/` namespace.
