@@ -266,3 +266,26 @@ geometry and contact limitations retained. The [reusable kitchen workflow](kitch
 captures that process and adds explicit prop inventory and interaction coverage before cleaning.
 Its procedures still include manual authoring and review; documenting them adds no automatic
 held-object reconstruction feature or authorization for future paid runs.
+
+## Walkthrough coverage correction
+
+A subsequent user walkthrough exposed large black gaps in the room. A reproduced displaced
+camera view confirms that all 1,346,498 static splats load, with no failed scene requests; the
+gaps remain after removing the diagnostic overlay. The full 50.73-second animation must not be
+described as full spatial coverage. Seven retained depth observations do not supply a complete
+room, and the original video contains room surfaces the current asset does not preserve well.
+
+The all-eight-anchor export adds person ghosts and inconsistent refrigerator states. The earlier
+image-generated room has broader coverage but unvalidated room/actor registration and damaged
+structure. Neither is a validated replacement for the current repaired actor/prop scene. A complete
+walkthrough still requires recovering or reconstructing missing surfaces and checking registration
+and movement from displaced viewpoints. No additional paid generation was submitted for this
+diagnosis. Local captures and the request/error report are under
+`.context/evidence/kitchen-room-coverage/`.
+
+The screenshot also exposed a separate viewer bug: a runtime error could latch the startup-error
+flag, stop status replacement, and append diagnostics on every changing frame. The fix keeps
+runtime errors observable without marking a loaded scene as a startup failure, preserves genuine
+startup messages, and bounds the diagnostic panel to the viewport. The real-browser regression
+`scripts/test-hud-errors-browser.ts` checks both error paths during advancing playback. This UI
+fix does not add any missing room geometry.

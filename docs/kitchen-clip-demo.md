@@ -25,8 +25,13 @@ publication. Preserve other sessions' servers. `/api/shared-assets` reports the 
 
 ## What this version contains
 
-The kitchen covers the full 50.73-second recording with original audio/timing and 609 actor
-samples. James's final 50 samples reuse his early saved appearance; the 559 early samples
+The kitchen animation covers the full 50.73-second recording with original audio/timing and 609 actor
+samples. This is temporal coverage, **not a complete room reconstruction**. The static room uses
+seven selected source observations and has large missing surfaces, especially when walking away
+from the recorded camera path. Those black areas are absent geometry, not unfinished downloads
+or a detail setting. There is currently no validated complete kitchen walkthrough.
+
+James's final 50 samples reuse his early saved appearance; the 559 early samples
 are unchanged. The scene includes the inferred held pan, its handoff to the observed resting
 pan, and the freezer door's opening and late partial closing. The final actor pose is held
 for 0.067 seconds; the last measured door angle is held after 50.497 seconds.
