@@ -131,8 +131,8 @@ cache = modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=T
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=65536,
+    cpu=(4, 4),
+    memory=(65536, 65536),
     timeout=3600,
     retries=0,
     max_containers=1,
@@ -264,8 +264,8 @@ def main(
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=65536,
+    cpu=(4, 4),
+    memory=(65536, 65536),
     timeout=3600,
     retries=0,
     max_containers=1,

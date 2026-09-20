@@ -52,8 +52,8 @@ cache = modal.Volume.from_name("wander-clean-video-cache", create_if_missing=Tru
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=32768,
+    cpu=(4, 4),
+    memory=(32768, 32768),
     timeout=3600,
     retries=0,
     max_containers=2,
