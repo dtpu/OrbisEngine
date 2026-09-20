@@ -192,8 +192,8 @@ def stage():
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=65536,
+    cpu=(4, 4),
+    memory=(65536, 65536),
     timeout=1800,
     retries=0,
     max_containers=1,

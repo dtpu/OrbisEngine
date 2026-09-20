@@ -59,8 +59,8 @@ cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missin
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=32768,
+    cpu=(4, 4),
+    memory=(32768, 32768),
     timeout=1500,
     scaledown_window=2,
     max_containers=1,
