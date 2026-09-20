@@ -115,6 +115,25 @@ const checks: Check[] = [
     },
   },
   // --- sections append below ---
+  {
+    name: 'viewer: 3 loops, kbd caps, headset line',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const videos = await page.$$('section#viewer video');
+        if (videos.length !== 3) throw new Error(`expected 3 videos, got ${videos.length}`);
+        const kbds = await page.$$eval('section#viewer kbd', (els) =>
+          els.map((el) => el.textContent?.trim()),
+        );
+        for (const k of ['W', 'A', 'S', 'D', 'Space', 'Shift', 'R', 'M']) {
+          if (!kbds.includes(k)) throw new Error(`missing key cap ${k}`);
+        }
+        const text = (await page.textContent('section#viewer')) ?? '';
+        if (!text.includes('Works in a headset')) throw new Error('missing headset line');
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
