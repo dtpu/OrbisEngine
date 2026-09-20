@@ -15,6 +15,12 @@ The shared migration is complete; the active demo loads published scenes from a 
 
 The first visit downloads that scene's files into `.context/shared-assets/blobs/`; later visits use
 this cache. Video seeking and byte ranges work. No complete 8 GB download is required.
+
+Reviewed picker entries can name a private `sceneManifest` asset. Its
+`wander.viewer-scene/1` schema contains a `params` object of viewer query defaults; explicit
+URL options take precedence. The manifest cannot change the scene ID or select another
+manifest. These generated configurations are published with the media, outside Git. The
+gym and kitchen selections retain their existing reviewed assets through these configurations.
 Restart the local server to pick up a newly published snapshot. A running server pins its snapshot
 so a publish cannot mix an old scene manifest with new frames. `/api/shared-assets` shows the active
 snapshot, timestamp, and file count without exposing credentials.
