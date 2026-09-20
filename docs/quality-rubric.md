@@ -41,10 +41,12 @@ not damage the main view or walking route. Label invented appearance and unobser
 
 ## Retries
 
-- **Pass: advance. Fail: diagnose and retry only within the cap.** At most **two quality retries
-  after the first execution per clip/stage** (three executions total), each with a changed,
+- **Pass: advance. Fail: diagnose and retry only within the cap.** At most **three quality retries
+  after the first execution per clip/stage** (four executions total), each with a changed,
   justified parameter or a new code hypothesis and recorded before/after evidence, timing, and cost.
-  Persist attempts across resume and candidate renaming; never reset counters.
+  Persist attempts across resume and candidate renaming; never reset counters. A reviewing agent
+  that wants a further attempt stops and asks the operator rather than deciding for itself; the
+  orchestrator enforces this as `AGENT_RETRY_CAP` in `orchestrator/workflows/run.py`.
 - Rerunning a stage invalidates its downstream stages; rerun them.
 - Transport failures use a separate, finite request/backoff limit that accounts for SDK retries and
   every possible charge. A transport retry does not grant another quality attempt. Paid launch
