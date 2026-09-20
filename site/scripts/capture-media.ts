@@ -5,7 +5,7 @@
 // modified. Frames are read straight from the WebGL canvas, so software GL (a headless server
 // without a GPU) works, only slowly. Run after `bun run scripts/pull-media.ts`.
 //
-//   bun run scripts/capture-media.ts [--only hero,compare,viewer,steps] [--force]
+//   bun run scripts/capture-media.ts [--only hero,compare,viewer,steps,walk,rewind,audio] [--force]
 //
 // Camera offsets are reported in body-heights: the viewer's mean character stature for the
 // scene, which the walk mode also uses as the visitor's height. The numbers printed at the end
@@ -258,8 +258,15 @@ const describe = (info: SceneInfo, pos: Vec) => {
   return `${dx.toFixed(2)} right, ${dz.toFixed(2)} forward, ${dy.toFixed(2)} up (body-heights)`;
 };
 
-const want = (group: string, out: string) =>
-  (!only || only.includes(group)) && (force || !existsSync(join(outRoot, out)));
+// --only takes group names (hero, compare, viewer, steps) or a single output's stem (walk, rewind,
+// audio), so one loop can be redone without touching the others.
+const want = (group: string, out: string) => {
+  const stem = out.replace(/^.*\//, '').replace(/\..*$/, '');
+  return (
+    (!only || only.includes(group) || only.includes(stem)) &&
+    (force || !existsSync(join(outRoot, out)))
+  );
+};
 
 const measurements: string[] = [];
 const browser = await chromium.launch({
