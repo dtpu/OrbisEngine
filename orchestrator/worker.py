@@ -24,6 +24,7 @@ from orchestrator.artifacts import (
     DatabaseFilesystemArtifactResolver,
     LocalCAS,
     S3Archive,
+    UploadOutbox,
 )
 from orchestrator.graph import GRAPH_VERSION
 from orchestrator.paid import DatabasePaidGuard
@@ -46,6 +47,25 @@ async def heartbeat(path: Path) -> None:
     while True:
         path.touch()
         await asyncio.sleep(5)
+
+
+def flush_pending_outboxes(workspace_root: Path, store: LocalCAS, archive) -> int:
+    """Push attempt manifests that were queued but never reached the archive.
+
+    An attempt enqueues its files and flushes them immediately, but a flush can fail — a full
+    disk is the usual reason — and the attempt still finishes, because its outputs are already
+    safe in the local store. Nothing retried those entries afterwards, so the database recorded
+    artifacts whose blobs the archive never received, and the next stage to want one failed with
+    "artifact storage object is unavailable". Recovering at start-up costs nothing when there is
+    nothing to do.
+    """
+    recovered = 0
+    for outbox in sorted(Path(workspace_root).glob("*/outbox")):
+        try:
+            recovered += UploadOutbox(outbox, store, archive).flush()
+        except Exception as error:  # noqa: BLE001 - one bad run must not stop the worker
+            print(f"could not flush {outbox}: {error}", flush=True)
+    return recovered
 
 
 async def main() -> None:
@@ -114,7 +134,23 @@ async def main() -> None:
         graph_version=GRAPH_VERSION,
         code_revision=code_revision,
         container_digest=os.environ.get("WANDER_CONTAINER_DIGEST"),
+        repository_root=Path(os.environ.get("WANDER_REPOSITORY", "/app")),
+        workspace_root=Path(os.environ.get("WANDER_WORKSPACE_ROOT", "/var/lib/wander/runs")),
+        store=LocalCAS(Path(os.environ.get("WANDER_CAS_ROOT", "/var/lib/wander/cas"))),
+        archive=archive,
+        attempt_ledger=DatabaseAttemptLedger(
+            sessions,
+            code_revision=code_revision,
+            environment={"container": os.environ.get("WANDER_CONTAINER_DIGEST", "development")},
+        ),
     )
+    flushed = flush_pending_outboxes(
+        Path(os.environ.get("WANDER_WORKSPACE_ROOT", "/var/lib/wander/runs")),
+        LocalCAS(Path(os.environ.get("WANDER_CAS_ROOT", "/var/lib/wander/cas"))),
+        archive,
+    )
+    if flushed:
+        print(f"recovered {flushed} unflushed attempt manifests", flush=True)
     temporal = await Client.connect(required("WANDER_TEMPORAL_ADDRESS"))
     async with AsyncExitStack() as stack:
         activity_executor = ThreadPoolExecutor(
@@ -144,6 +180,8 @@ async def main() -> None:
                         lifecycle.finish_run,
                         lifecycle.load_run_state,
                         lifecycle.save_run_state,
+                        lifecycle.record_approval,
+                        lifecycle.publish_run,
                     ],
                     activity_executor=activity_executor,
                 )

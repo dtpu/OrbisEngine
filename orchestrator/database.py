@@ -66,6 +66,9 @@ class NodeRecord(Base):
         String(128), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), primary_key=True
     )
     node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # The registry stage this node instantiates. An expanded node's ID carries a branch suffix,
+    # so the type is what lets the node be rebuilt from its row.
+    stage_type: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     stage_definition: Mapped[dict[str, Any]] = mapped_column(Json, nullable=False)
     dependencies: Mapped[list[dict[str, Any]]] = mapped_column(Json, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
