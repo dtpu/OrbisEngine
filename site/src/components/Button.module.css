@@ -1,0 +1,23 @@
+.button {
+  display: inline-block;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  text-decoration: none;
+  transition: opacity 150ms;
+}
+
+.button:hover {
+  opacity: 0.8;
+}
+
+.primary {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.secondary {
+  border: 1px solid var(--fg);
+  background: transparent;
+  color: var(--fg);
+}
