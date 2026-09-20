@@ -116,8 +116,14 @@ def audit(
     stride: int = 1,
     swap_at: int | None = None,
     swap_pair: tuple[int, int] | None = None,
+    only: list[int] | None = None,
 ) -> dict:
     masks, (h, w) = load_masks(tracks)
+    if only is not None:
+        # The rivals that matter are the people being reconstructed. A short fragment of the SAME
+        # person (the tracker lost and re-found them) or a seated spectator is otherwise the "best
+        # other reference", and a correct track is rejected for resembling its own fragment.
+        masks = {t: m for t, m in masks.items() if t in set(only)}
     tids = sorted(masks)
     if len(tids) < 2:
         return dict(
@@ -269,9 +275,14 @@ def main():
         type=Path,
         help="a reversed-clip tracker run, if one exists, for a true forward/backward check",
     )
+    ap.add_argument(
+        "--only-tracks",
+        help="comma-separated track ranks to audit against each other (default: every track)",
+    )
     a = ap.parse_args()
+    only = [int(t) for t in a.only_tracks.split(",")] if a.only_tracks else None
 
-    doc = audit(a.tracks, a.clip, a.stride)
+    doc = audit(a.tracks, a.clip, a.stride, only=only)
     if doc.get("ok") is None:
         print(f"identity NOT CHECKED: {doc['reason']}")
         if a.json_out:
@@ -280,7 +291,9 @@ def main():
 
     if a.swap_test:
         mid = doc["swapMid"]
-        ctrl = audit(a.tracks, a.clip, a.stride, swap_at=mid, swap_pair=tuple(doc["swapPair"]))
+        ctrl = audit(
+            a.tracks, a.clip, a.stride, swap_at=mid, swap_pair=tuple(doc["swapPair"]), only=only
+        )
         doc["swapTest"] = dict(
             swapAt=mid,
             detected=not ctrl.get("ok", True),
