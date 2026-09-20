@@ -1,9 +1,9 @@
 """GPU person-removal pass: the scripts/clean_person_video.py path on an L4.
 
-Same three stages and the same numbers as the CPU reference (SegFormer people masks, dilated and
-extended downward for the shadow/contact, LaMa at --lama-px with a feathered alpha blend, libx264),
-but the masks run batched on CUDA and LaMa runs on CUDA, which is ~40x faster per frame. The clip
-itself is uploaded and decoded remotely, so no frame dumps cross the wire.
+SegFormer people masks are dilated and extended downward for shadow/contact, then LaMa fills
+the removal mask with feathering only outside its boundary before libx264 encoding. Masks and
+LaMa run on CUDA. The clip is uploaded and decoded remotely; first-frame diagnostic PNGs return
+with source bindings, model identity and hashes so blending and model failures can be separated.
 
   uv run --locked modal run worker/modal_clean_video.py --clip public/clips/bedroom.mp4 \
       --out .context/clips/bedroom-clean.mp4 \
@@ -49,6 +49,32 @@ app = modal.App("wander-clean-video")
 cache = modal.Volume.from_name("wander-clean-video-cache", create_if_missing=True)
 
 
+def composite_fill(image, fill, mask):
+    """Replace every removal-mask pixel; feather only outside its boundary."""
+    import cv2
+    import numpy as np
+
+    image, fill, mask = np.asarray(image), np.asarray(fill), np.asarray(mask)
+    if (
+        image.ndim != 3
+        or image.shape[-1] != 3
+        or fill.shape != image.shape
+        or mask.shape != image.shape[:2]
+        or not mask.size
+    ):
+        raise ValueError("Expected matching nonempty HWC RGB images and HW mask")
+    if not all(np.isfinite(value).all() for value in (image, fill, mask)):
+        raise ValueError("Composite inputs must be finite")
+    if not np.isin(mask, (0, 1)).all():
+        raise ValueError("Removal mask must be binary")
+    if any((value < 0).any() or (value > 255).any() for value in (image, fill)):
+        raise ValueError("Composite image values must be in [0, 255]")
+    mask = mask.astype(bool)
+    alpha = np.clip(cv2.GaussianBlur(mask.astype(np.float32), (0, 0), 3) * 1.5, 0, 1)
+    alpha = np.where(mask, 1.0, alpha)[..., None]
+    return (image * (1 - alpha) + fill * alpha).astype(np.uint8)
+
+
 @app.function(
     image=image,
     gpu="L4",
@@ -89,6 +115,7 @@ def clean(
     person is. Off by default: every existing caller keeps the person mask it has always had.
     """
     import hashlib
+    import importlib.metadata
     import io
     import subprocess
     import tarfile
@@ -111,6 +138,20 @@ def clean(
     moved_stats = None
     out_mp4 = out_png = masks_out = b""
     frames_tar = b""
+    diagnostic_images = {}
+    diagnostics = {"schema": "wander.clean-first-frame-diagnostics/1", "images": {}}
+
+    def capture(name, image):
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        data = buffer.getvalue()
+        diagnostic_images[name] = data
+        diagnostics["images"][name] = {
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "width": image.width,
+            "height": image.height,
+        }
+
     try:
         t = time.time()
         raw, provenance = resample_source(src, fps, width=W, height=H)
@@ -182,21 +223,40 @@ def clean(
         assert torch.cuda.is_available(), "no CUDA device"
         lama = SimpleLama(torch.device("cuda"))
         timings["lamaLoad"] = time.time() - t
+        diagnostics["packageVersion"] = importlib.metadata.version("simple-lama-inpainting")
+        with Path(LAMA_PT).open("rb") as weights:
+            diagnostics["modelSha256"] = hashlib.file_digest(weights, "sha256").hexdigest()
+        diagnostics["modelPath"] = LAMA_PT
 
         t = time.time()
         sw, sh = lama_px // 8 * 8, int(lama_px * H / W) // 8 * 8
         kept = []
         for i in sel:
             im, m = imgs[i].copy(), masks[i]
+            diagnostic_frame = not kept
+            if diagnostic_frame:
+                diagnostics["source"] = dict(kept_provenance[0])
+                diagnostics["sourceSha256"] = provenance["sourceSha256"]
+                diagnostics["sourceTimeBase"] = provenance["sourceTimeBase"]
+                diagnostics["inpaintingApplied"] = bool(m.any() and passes > 0)
+                capture("source.png", Image.fromarray(im))
+                capture("removal-mask.png", Image.fromarray(m.astype(np.uint8) * 255))
             if m.any():
-                for _ in range(passes):
+                for pass_index in range(passes):
                     small = Image.fromarray(im).resize((sw, sh), Image.LANCZOS)
                     sm = Image.fromarray(m.astype(np.uint8) * 255).resize((sw, sh), Image.NEAREST)
-                    fill = np.asarray(lama(small, sm).resize((W, H), Image.BICUBIC))
-                    alpha = np.clip(
-                        cv2.GaussianBlur(m.astype(np.float32), (0, 0), 3)[..., None] * 1.5, 0, 1
-                    )
-                    im = (im * (1 - alpha) + fill * alpha).astype(np.uint8)
+                    if diagnostic_frame:
+                        capture(f"pass-{pass_index:02d}-model-rgb.png", small)
+                        capture(f"pass-{pass_index:02d}-model-mask.png", sm)
+                    raw_fill = lama(small, sm)
+                    if diagnostic_frame:
+                        capture(f"pass-{pass_index:02d}-raw-fill.png", raw_fill)
+                    fill = np.asarray(raw_fill.resize((W, H), Image.BICUBIC))
+                    im = composite_fill(im, fill, m)
+                    if diagnostic_frame:
+                        capture(f"pass-{pass_index:02d}-composite.png", Image.fromarray(im))
+            if diagnostic_frame:
+                capture("composite.png", Image.fromarray(im))
             Image.fromarray(im).save(work / f"f_{i:04d}.png")
             kept_provenance[len(kept)]["cleanedImageSha256"] = hashlib.sha256(
                 (work / f"f_{i:04d}.png").read_bytes()
@@ -289,9 +349,17 @@ def clean(
         cpu=4,
         timings=timings,
         estimatedComputeUSD=elapsed * (0.000222 + 4 * 0.0000131 + 32 * 0.00000222),
+        diagnostics=diagnostics,
         **result,
     )
-    return dict(report=report, mp4=out_mp4, frame0=out_png, masks=masks_out, frames=frames_tar)
+    return dict(
+        report=report,
+        mp4=out_mp4,
+        frame0=out_png,
+        masks=masks_out,
+        frames=frames_tar,
+        diagnostics=diagnostic_images,
+    )
 
 
 @app.function(image=image, cpu=2, memory=8192, timeout=900, volumes={"/cache": cache})
@@ -369,6 +437,16 @@ def main(
         d.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(r["frames"]), mode="r") as tar:
             tar.extractall(d, filter="data")
+    diagnostic_base = report or frame0 or out or masks or frames_out
+    if diagnostic_base and r.get("diagnostics"):
+        diagnostic_path = Path(diagnostic_base).with_suffix("")
+        diagnostic_path = diagnostic_path.with_name(diagnostic_path.name + "-diagnostics")
+        diagnostic_path.mkdir(parents=True, exist_ok=True)
+        for name, data in r["diagnostics"].items():
+            if Path(name).name != name:
+                raise ValueError("Unexpected diagnostic image filename")
+            (diagnostic_path / name).write_bytes(data)
+        (diagnostic_path / "manifest.json").write_text(json.dumps(rep["diagnostics"], indent=2))
     if report:
         Path(report).parent.mkdir(parents=True, exist_ok=True)
         Path(report).write_text(json.dumps(rep, indent=2))

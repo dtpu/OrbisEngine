@@ -94,6 +94,7 @@ NUMBER_FLAGS = {
     "--det-thresh",
     "--overlap",
     "--batch",
+    "--anchors",
     "--track-id",
     "--fixed-world-scale",
     "--execution-timeout",

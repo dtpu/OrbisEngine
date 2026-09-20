@@ -67,7 +67,7 @@ cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missin
     retries=0,
     volumes={"/cache": cache},
 )
-def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
+def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16, anchors: int = 8) -> dict:
     import io
     import json
     import subprocess
@@ -119,7 +119,7 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
                 "--fps",
                 "12",
                 "--anchors",
-                "8",
+                str(anchors),
                 "--batch",
                 str(batch),
             ]
@@ -144,6 +144,8 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
     inference_wall = time.time() - started
     report = dict(
         experiment=experiment,
+        anchors=anchors if experiment == "pi3x" else None,
+        batch=batch if experiment == "pi3x" else None,
         inferenceWallSeconds=inference_wall,
         error=error,
         gpu="L4",
@@ -170,14 +172,16 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
 
 
 @app.local_entrypoint()
-def main(video: str, out: str, experiment: str = "vdpm", batch: int = 16):
+def main(video: str, out: str, experiment: str = "vdpm", batch: int = 16, anchors: int = 8):
     import io
     import json
     import tarfile
 
+    if batch < 1 or anchors < 2:
+        raise ValueError("Need a positive batch size and at least two global anchors")
     destination = Path(out)
     destination.mkdir(parents=True, exist_ok=False)
-    result = reconstruct.remote(Path(video).read_bytes(), experiment, batch)
+    result = reconstruct.remote(Path(video).read_bytes(), experiment, batch, anchors)
     archive_path = destination / "artifacts.tar.gz"
     archive_path.write_bytes(result["archive"])
     with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:
