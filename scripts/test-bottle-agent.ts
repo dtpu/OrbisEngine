@@ -22,6 +22,16 @@ const success = () =>
     Response.json({ value: 'ek_test_ephemeral', expires_at: 12345, private: fakeKey }),
   );
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 async function fixture(
   provider: (url: string, init: RequestInit) => Promise<Response> = success,
   env: Record<string, string> = { OPENAI_API_KEY: fakeKey },
@@ -312,6 +322,69 @@ describe('bottle agent credential boundary', () => {
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('60');
     expect(calls).toBe(4);
+  });
+
+  test('allows two overlapping sessions while preserving the concurrency gate', async () => {
+    const pending = [deferred<Response>(), deferred<Response>(), deferred<Response>()];
+    const entered = [deferred<void>(), deferred<void>(), deferred<void>()];
+    let calls = 0;
+    const f = await fixture(async () => {
+      entered[calls].resolve();
+      return pending[calls++].promise;
+    });
+    const first = f.post();
+    await entered[0].promise;
+    const second = f.post();
+    await entered[1].promise;
+
+    const rejectedWhileFull = await f.post();
+    expect(rejectedWhileFull.status).toBe(429);
+    expect(calls).toBe(2);
+
+    pending[0].resolve(await success());
+    expect((await first).status).toBe(200);
+    const replacement = f.post();
+    await entered[2].promise;
+
+    const rejectedWithTwoActive = await f.post();
+    expect(rejectedWithTwoActive.status).toBe(429);
+    expect(calls).toBe(3);
+
+    pending[1].resolve(await success());
+    pending[2].resolve(await success());
+    expect((await second).status).toBe(200);
+    expect((await replacement).status).toBe(200);
+  });
+
+  test('releases a failed provider slot without releasing the other active slot', async () => {
+    const failure = deferred<Response>();
+    const active = deferred<Response>();
+    const replacement = deferred<Response>();
+    const entered = [deferred<void>(), deferred<void>(), deferred<void>()];
+    let calls = 0;
+    const f = await fixture(async () => {
+      entered[calls].resolve();
+      calls++;
+      if (calls === 1) return failure.promise;
+      return (calls === 2 ? active : replacement).promise;
+    });
+    const failed = f.post();
+    await entered[0].promise;
+    const stillActive = f.post();
+    await entered[1].promise;
+    failure.reject(new Error('provider failed'));
+    expect((await failed).status).toBe(502);
+
+    const next = f.post();
+    await entered[2].promise;
+    const rejectedWhileStillFull = await f.post();
+    expect(rejectedWhileStillFull.status).toBe(429);
+    expect(calls).toBe(3);
+
+    active.resolve(await success());
+    replacement.resolve(await success());
+    expect((await stillActive).status).toBe(200);
+    expect((await next).status).toBe(200);
   });
 });
 
