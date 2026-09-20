@@ -30,16 +30,6 @@ duplicated. Re-running skips what is already cached. Narrow or widen it with `--
 `--path`, `--prefix` or `--all` (the whole pinned snapshot); `--help` lists the options.
 Run it before `bun run demo`, on the machine that will present. Expect several GB and some minutes.
 
-## Browser caching
-
-Asset responses carry an ETag and `Cache-Control: private, max-age=600`. Within one server run that
-is safe on its own, because the run pins one snapshot. A request that also names its content —
-`?snap=<snapshot id>`, or `?v=<sha256 prefix>` — is served `immutable` for a year instead, so a
-repeat visit makes no request at all. The dev server injects a small script into `demo.html` and
-`fourd.html` that appends `?snap=` to the viewer's asset fetches; `?assetver=0` turns it off. A new
-snapshot changes that id, so every asset URL changes with it and cached bytes are never reused
-across snapshots. Pages, modules and `/api/shared-assets` stay uncached.
-
 Do not give these keys a `VITE_` prefix: credentials belong in the local server, never the browser.
 `.env.local` and the cache are gitignored. Keep the server on localhost (the default demo command).
 This is a local development viewer, not an authenticated public hosting service.
