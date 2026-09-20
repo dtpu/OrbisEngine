@@ -1,5 +1,9 @@
 # Kitchen investigation and input review policy
 
+This records the original investigation. The subsequent authorized live kitchen **and gym** video
+tests, prompt-recaption defect/fix, candidate identities and separate API/visual conclusions are in
+[the video-input evaluation](video-input-evaluation.md). The old kitchen remains preserved.
+
 The poor kitchen preview combines an imperfect generated environment, damaged cleaned inputs,
 and unvalidated camera/person registration. Export corruption is ruled out for the inspected asset.
 A clean-looking origin panorama is not evidence that displaced viewpoints will hold up.
@@ -26,16 +30,25 @@ Conversely, re-encoding the same recording must not create a fresh paid-stage al
 
 ## Correct input provenance before another alignment attempt
 
-`worker/modal_clean_video.py` resamples with FFmpeg, then approximates source indices using rounded
-average FPS. That does not preserve the exact decoded frame selected by the filter. Daniel's later
-log reports 305/609 mismatched labels, including four selected kitchen inputs one source frame later
-than their labels. This review confirmed the formula in current code, but did not recover the original
-framehash artifact to independently reproduce those counts.
+The former `worker/modal_clean_video.py` resampled with FFmpeg, then approximated source indices
+using rounded average FPS. Recovery of Daniel's two archived framehash files now independently
+confirms 609 unique exact pixel-hash matches and 305 incorrect labels. These artifacts preserve
+their recorded framehash PTS; they do not recover the original file's native container timebase.
 
-Persist actual decoded index and PTS through resampling, cleaning and selection, bound to the source
-hash. Validate each exact image/camera pair and rerun held-out registration before accepting placement.
-Do not patch four clip-specific indices or assume a one-frame correction repairs generated geometry.
-This provenance repair is follow-up work, outside the selected integration.
+New cleaning runs observe the actual FFmpeg filter selections, cross-check frame checksums before
+and after resampling, and join them to decoded source ordinals and FFprobe PTS. Reports and mask
+archives retain the source SHA-256 and timebase; each returned cleaned image has its own hash and
+source binding. Partial selection preserves the requested order. The full cleaned video is hashed.
+Missing/nonmonotonic PTS or unsupported FFmpeg diagnostics fail explicitly.
+
+Multi-image selection now requires source-bound camera metadata and exact retained frame indices
+and PTS before paid cleaning. Submission verifies the image hashes and selection receipt. Existing
+world reuse and known-operation recovery remain read-only paths without new cleaning prerequisites.
+Run `uv run --locked scripts/test_source_timing.py` for the offline pixel-identity and recovery tests.
+
+These changes do not relabel existing outputs or prove camera geometry. A reconstructed historical
+mapping needs independent pixel corroboration, and placement still needs held-out registration.
+Do not patch clip-specific indices or assume a timing correction repairs generated geometry.
 
 ## Video-first policy
 
@@ -48,7 +61,9 @@ translational parallax or consistent moving fixtures.
 
 The provider documents [video input](https://docs.worldlabs.ai/api) and automatic caption generation
 when a prompt is omitted. That does not establish that video pixels are discarded. Video requests now
-retain the pipeline's source-grounded description, pin `marble-1.1`, and request private permissions.
+send the pipeline's source-grounded description, pin `marble-1.1`, and request private permissions.
+Prompted video now also requests `disable_recaption=true`; sending text alone did not preserve it in
+the live provider response. Request intent is not proof of either retention or visual correctness.
 The entire cleaned clip at the configured processing frame rate is uploaded; this does not mean every
 original source frame or unmodified source pixel is retained. Input bytes/SHA-256 and the exact request
 are saved in the existing submission receipts. Existing operation recovery still prevents resubmission.
@@ -56,7 +71,8 @@ are saved in the existing submission receipts. Existing operation recovery still
 Offline tests verify video-first decisions, explicit still overrides, full input-byte transfer to the
 mock transport, prompt/model/private request fields, input mutation rejection, credential handling,
 and recovery. They do **not** establish fewer hallucinations or improved kitchen geometry. No new
-video-versus-stills generation was run for this change. Such a comparison must bind the same source
+video-versus-stills generation was run for the original policy change; the later live evaluation
+linked above documents actual trials and their confounds. A controlled comparison must bind the same source
 and cleaned inputs, record model/settings, and judge matching held-out and displaced views; a prompt
 or a successful API request is not a visual acceptance result.
 
@@ -91,3 +107,10 @@ inspection, Playwright and recorded provenance, not a successful external AI app
 Private source images, screenshots, hashes, browser reports and detailed audits remain in
 `.context/evidence/branch-comparison/` and `.context/evidence/integration-final/`, outside Git.
 No new Marble generation or GPU inference was launched for this investigation.
+
+## September 19 delivery recovery
+
+A later, separate `kitchen-cooking` run was recovered with 610 detections across two appearance
+fragments. [The delivery report](gym-kitchen-delivery.md) describes its source mapping, one duplicate
+suppression, 609 retained samples, original audio and full-duration preview. It does not promote
+the old `test1.mov` alignment or claim that the new kitchen geometry/object reconstruction passed.
