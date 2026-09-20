@@ -410,7 +410,7 @@ class PersonPrepAdapter:
 
 class AudioPackageAdapter:
     def build(self, context: AdapterContext) -> StageExecution:
-        world = one(context, "viewer_world")
+        world = bundle_root(context.inputs["viewer_world"], "-4d")
         config = one(context, "audio_config")
         return StageExecution(
             command=(
