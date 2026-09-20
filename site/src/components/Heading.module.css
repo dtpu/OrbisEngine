@@ -1,0 +1,17 @@
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.h1 {
+  font-size: clamp(40px, 6vw, 72px);
+  line-height: 1.05;
+}
+
+.h2 {
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.15;
+}
