@@ -133,6 +133,42 @@ class CatalogueTests(unittest.TestCase):
                 with self.subTest(step=name, after=needed):
                     self.assertLess(order.index(needed), order.index(name))
 
+    def test_a_multiperson_run_names_its_stages_the_way_run_clip_does(self):
+        """run_clip.py calls them person_prep_00 whenever the multiperson graph is asked for.
+
+        It does that even when tracking then finds one person, so the shape of the graph and
+        the number of people are separate questions. Offering `person_prep` to an agent on a
+        multiperson run points it at a stage that graph does not contain.
+        """
+        from orchestrator.steps import PER_PERSON, base_step, people_steps
+
+        plan = ["pi3x", "tracks", *PER_PERSON, "package_people"]
+        single = people_steps(plan, 1, multiperson=False)
+        self.assertIn("person_prep", single)
+        self.assertNotIn("person_prep_00", single)
+
+        one_of_many = people_steps(plan, 1, multiperson=True)
+        self.assertIn("person_prep_00", one_of_many)
+        self.assertNotIn("person_prep", one_of_many)
+
+        two = people_steps(plan, 2, multiperson=True)
+        self.assertEqual(
+            [name for name in two if name.startswith("lhm_motion")],
+            ["lhm_motion_00", "lhm_motion_01"],
+        )
+        self.assertEqual(base_step("lhm_motion_01"), "lhm_motion")
+        self.assertEqual(base_step("package_people"), "package_people")
+
+    def test_a_person_waits_on_their_own_steps_and_a_join_on_everyones(self):
+        from orchestrator.cli import needs_of
+
+        self.assertEqual(needs_of("lhm_frozen_01", 2, True), ["person_prep_01"])
+        self.assertEqual(
+            sorted(n for n in needs_of("package_people", 2, True) if n.startswith("lhm_motion")),
+            ["lhm_motion_00", "lhm_motion_01"],
+        )
+        self.assertEqual(needs_of("lhm_frozen", 1, False), ["person_prep"])
+
     def test_what_costs_money_is_marked(self):
         paid = {name for name, step in STEPS.items() if step.paid}
         for name in ("marble_video", "pi3x", "tracks", "lhm_frozen", "lhm_motion", "finetune"):
