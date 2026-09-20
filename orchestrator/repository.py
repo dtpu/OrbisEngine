@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,9 +66,32 @@ def artifact_name(artifact: ArtifactRecord) -> str:
     return relative.rsplit("/", 1)[-1] if relative else artifact.id
 
 
+def _parse_time(value: str | None) -> datetime:
+    """A journal timestamp, or now when the line did not carry one."""
+    if value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
 class PipelineRepository:
-    def __init__(self, sessions: sessionmaker[Session]):
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        *,
+        code_revision: str | None = None,
+        environment_fingerprint: str | None = None,
+    ):
         self.sessions = sessions
+        # Stamped onto attempts so a row says which code produced it. The environment default
+        # is the interpreter the steps will actually run under, which is the thing that has
+        # bitten this pipeline: a venv without torch looks identical from the outside.
+        self.code_revision = code_revision or os.environ.get("WANDER_CODE_REVISION", "unknown")
+        self.environment_fingerprint = (
+            environment_fingerprint or hashlib.sha256(sys.executable.encode()).hexdigest()[:16]
+        )
 
     def create_run(self, run: Run, graph: RunGraph) -> None:
         with self.sessions.begin() as session:
@@ -476,6 +502,134 @@ class PipelineRepository:
             node.updated_at = datetime.now(timezone.utc)
         self.append_event(
             run_id, EventType.NODE, node_id, {"status": status, "blockedReason": blocked_reason}
+        )
+
+    def create_run_row(self, run: Run) -> None:
+        """Open a run with no graph.
+
+        The plan a run starts with is a suggestion, and the agent may not follow it, so nodes
+        are made as steps are run rather than declared up front. A run that plans nothing is
+        still a run.
+        """
+        with self.sessions.begin() as session:
+            if session.get(RunRecord, run.id):
+                raise ValueError(f"run already exists: {run.id}")
+            session.add(
+                RunRecord(
+                    id=run.id,
+                    schema_version=run.schema_version,
+                    graph_schema=run.graph_schema,
+                    graph_version=run.graph_version,
+                    code_revision=run.code_revision,
+                    container_digest=run.container_digest,
+                    source_sha256=run.source_sha256,
+                    source_artifact_id=run.source_artifact_id,
+                    configuration=run.configuration,
+                    budget=run.budget.model_dump(mode="json"),
+                    status=run.status,
+                    created_by=run.created_by,
+                    created_at=run.created_at,
+                    updated_at=run.updated_at,
+                    next_event_sequence=1,
+                    parent_run_id=run.parent_run_id,
+                    branch_key=run.branch_key,
+                )
+            )
+        self.append_event(run.id, EventType.RUN, run.id, {"status": run.status})
+
+    def ensure_node(
+        self,
+        *,
+        run_id: str,
+        node_id: str,
+        stage_type: str,
+        definition: dict[str, Any],
+        dependencies: list[str] | None = None,
+    ) -> None:
+        """Make sure a step has a row, adding one if the run never planned it.
+
+        The plan a run opens with is a suggestion, so the agent may run something that was not
+        in it. Without this such a step is invisible: the dashboard shows the plan and not the
+        work. An existing row keeps its status and history; only its description is refreshed.
+        """
+        now = datetime.now(timezone.utc)
+        with self.sessions.begin() as session:
+            node = session.get(
+                NodeRecord, {"run_id": run_id, "node_id": node_id}, with_for_update=True
+            )
+            if node is not None:
+                node.stage_definition = definition
+                node.updated_at = now
+                return
+            session.add(
+                NodeRecord(
+                    run_id=run_id,
+                    node_id=node_id,
+                    stage_type=stage_type,
+                    stage_definition=definition,
+                    dependencies=list(dependencies or ()),
+                    status="queued",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        self.append_event(run_id, EventType.NODE, node_id, {"status": "queued", "added": True})
+
+    def record_attempt_started(
+        self,
+        *,
+        run_id: str,
+        node_id: str,
+        attempt_id: str,
+        number: int,
+        command: list[str],
+        parameters: dict[str, Any],
+        started_at: str | None = None,
+    ) -> None:
+        """Write the row for a step the agent has just started. Safe to repeat."""
+        with self.sessions.begin() as session:
+            if session.get(AttemptRecord, attempt_id) is not None:
+                return
+            session.add(
+                AttemptRecord(
+                    id=attempt_id,
+                    run_id=run_id,
+                    node_id=node_id,
+                    number=number,
+                    schema_version="wander.attempt/1",
+                    status="running",
+                    parameters=parameters,
+                    command=command,
+                    code_revision=self.code_revision,
+                    environment_fingerprint=self.environment_fingerprint,
+                    started_at=_parse_time(started_at),
+                )
+            )
+        self.append_event(
+            run_id, EventType.ATTEMPT, node_id, {"attemptId": attempt_id, "status": "running"}
+        )
+
+    def record_attempt_finished(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        status: str,
+        error: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        with self.sessions.begin() as session:
+            attempt = session.get(AttemptRecord, attempt_id, with_for_update=True)
+            if attempt is None:
+                raise KeyError(f"unknown attempt: {attempt_id}")
+            attempt.status = status
+            attempt.error = error
+            attempt.finished_at = _parse_time(finished_at)
+        self.append_event(
+            run_id,
+            EventType.ATTEMPT,
+            attempt_id,
+            {"attemptId": attempt_id, "status": status, "error": error},
         )
 
     def reopen_run(self, run_id: str) -> bool:
