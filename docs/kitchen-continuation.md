@@ -152,3 +152,40 @@ The user's subsequent report of absent objects is accurate for the earlier kitch
 It does not yet render the handled pan, kettle or bag. Do not describe it as complete object
 reconstruction. The review entry now distinguishes the new repair from the earlier empty-object
 scene. Pending source/hand-contact validation of further props remains separate work.
+
+## Continued object repair and authorized actor job
+
+The third pan hypothesis improves held-out centre errors to 3.10, 5.07 and 7.66 pixels at
+672-pixel source width. All 17 sampled mesh-handle proximity checks meet 0.05 body-heights.
+The real viewer renders the inferred held pan through 16.033 seconds, then switches to the
+retained observed counter pan. Exactly 2,678 source-selected Gaussian points were separated
+from the room for that timed static layer; all other room points are unchanged. Nineteen source
+views, two displaced views and four-direction walking were inspected. The mesh has invented
+appearance and approximate tilt, especially around 13 seconds; uncertain early tracking and
+other static remnants remain. This is an object-repair experiment, not whole-kitchen acceptance.
+
+Its full 609-frame preview preserves all 2,380 original AAC packet payloads, timestamps, durations
+and priming values. Exactly one cook and one pan layer are visible at every captured sample.
+Preview SHA-256: `32f64af62ae8cf80333e667e50fcdb17d4e10aa858e088005010d42292d94352`.
+
+Source inspection identifies the pouring object as a water-filter pitcher, correcting the earlier
+kettle label. The third pitcher hypothesis passes only 3/6 independent projection checks and
+fails pickup; the bag's third hypothesis also fails projection/contact/coverage. Both remain
+excluded from the delivered scene, with all attempts and review-only artifacts retained.
+
+The spending audit verified 24 existing logs and seven completed historical kitchen apps.
+Their observed $0.74521365 is already included in earlier workspace billing and must not be added
+again. Earlier overwritten failures and incomplete billing prevent certifying the original $27
+remainder. This does not establish that it is exhausted.
+
+The user subsequently authorized **up to $10 additional Modal spend** for the concrete saved-actor
+repair: reuse the early canonical for the final 50 samples plus sample 0 as a control, then preserve
+the 559 existing early outputs. This approval covers that corrective job and necessary cache setup;
+it does not reset other attempts or authorize automatic retries. A fresh read-only preflight now
+finds another session's completed LHM, native-body, DINO and face-model caches in `austin-jian547`.
+Reuse them; do not duplicate setup or stop the other session's jobs.
+
+The tested animation wrapper now preserves a fixed world scale, supports a 600-second execution
+limit and durably checkpoints generated outputs with input hashes and a recovery receipt. Eight
+new offline checks plus 35 existing recovery/accounting checks pass. A sparse 51-sample export
+must remain partial until its intended IDs, control output and explicit full-clip merge are verified.
