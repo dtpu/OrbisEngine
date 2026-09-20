@@ -15,6 +15,7 @@ import type {
   ObjectReader,
   StorageEnvironment,
 } from '../scripts/lib/shared-storage.ts';
+const DOWNLOAD_ATTEMPTS = 2;
 export interface ByteRange {
   start: number;
   end: number;
@@ -22,6 +23,7 @@ export interface ByteRange {
 export interface SharedAssetDependencies {
   s3?: ObjectReader;
   cacheDir?: string;
+  stallMs?: number;
 }
 export type AssetMiddleware = (
   req: IncomingMessage,
@@ -68,6 +70,7 @@ export function sharedAssets(
   const local = env.WANDER_ASSETS_MODE === 'local';
   const s3 = dependencies.s3 || client(env);
   const cacheDir = dependencies.cacheDir || path.join(ROOT, '.context/shared-assets/blobs');
+  const stallMs = dependencies.stallMs ?? 30000;
   let pinned: Promise<PinnedCatalog> | null | undefined;
   const downloads = new Map<string, Promise<string>>();
   async function catalog(): Promise<PinnedCatalog> {
@@ -104,21 +107,35 @@ export function sharedAssets(
         f.sha256,
         (async () => {
           await mkdir(cacheDir, { recursive: true });
-          const temp = `${dest}.${randomUUID()}.part`;
-          try {
-            const object = await s3.send(
-              new GetObjectCommand({ Bucket: config.bucket, Key: f.key }),
-            );
-            await pipeline(
-              object.Body as NodeJS.ReadableStream,
-              createWriteStream(temp, { flags: 'wx', mode: 0o600 }),
-            );
-            if ((await stat(temp)).size !== f.size || (await hashFile(temp)) !== f.sha256)
-              throw new Error('Asset checksum mismatch');
-            await rename(temp, dest);
-            return dest;
-          } finally {
-            await unlink(temp).catch(() => {});
+          // A stalled S3 stream never ends on its own, and every later request for the blob joins
+          // the same promise: the viewer then sits a few frames short until the server restarts.
+          for (let attempt = 1; ; attempt++) {
+            const temp = `${dest}.${randomUUID()}.part`;
+            try {
+              const object = await s3.send(
+                new GetObjectCommand({ Bucket: config.bucket, Key: f.key }),
+              );
+              const body = object.Body as NodeJS.ReadableStream & { destroy(e?: Error): void };
+              const stalled = () => body.destroy(new Error('Asset download stalled'));
+              let watchdog = setTimeout(stalled, stallMs);
+              body.on('data', () => {
+                clearTimeout(watchdog);
+                watchdog = setTimeout(stalled, stallMs);
+              });
+              try {
+                await pipeline(body, createWriteStream(temp, { flags: 'wx', mode: 0o600 }));
+              } finally {
+                clearTimeout(watchdog);
+              }
+              if ((await stat(temp)).size !== f.size || (await hashFile(temp)) !== f.sha256)
+                throw new Error('Asset checksum mismatch');
+              await rename(temp, dest);
+              return dest;
+            } catch (e) {
+              if (attempt >= DOWNLOAD_ATTEMPTS) throw e;
+            } finally {
+              await unlink(temp).catch(() => {});
+            }
           }
         })().finally(() => downloads.delete(f.sha256)),
       );
