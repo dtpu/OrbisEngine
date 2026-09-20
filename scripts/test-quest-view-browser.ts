@@ -104,12 +104,15 @@ try {
     { timeout: 180000 },
   );
   await viewer.evaluate(() => document.fonts?.ready);
-  // The panel starts closed; the header button opens it.
-  await viewer.locator('#questviewbtn').click();
-  const panel = viewer.locator('.quest-view-panel');
+  const view = viewer.locator('.quest-stage');
   const live = () =>
     viewer.waitForFunction(
-      () => document.querySelector('.quest-view-panel [role=status]')?.textContent === 'Live',
+      () => {
+        const stage = document.querySelector<HTMLElement>('.quest-stage');
+        return (
+          stage?.querySelector('[role=status]')?.textContent === 'Live' && stage.hidden === false
+        );
+      },
       null,
       { timeout: 20000 },
     );
@@ -189,7 +192,7 @@ try {
   const cadence = await viewer.evaluate(
     () =>
       new Promise<{ frames: number; elapsed: number }>((resolve) => {
-        const picture = document.querySelector('.quest-view-panel img')!;
+        const picture = document.querySelector('.quest-stage img')!;
         let frames = 0;
         const started = performance.now();
         const observer = new MutationObserver((records) => {
@@ -260,7 +263,11 @@ try {
   );
   uploadDelay = 0;
   await live();
-  await panel.getByRole('button', { name: 'Close Quest view' }).click();
+  // Nobody watching: a hidden viewer tab stops the relay from being polled.
+  await viewer.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
   await producer.waitForFunction(
     () => (window.__xr as { questView: { viewers: number } }).questView.viewers === 0,
     null,
@@ -282,17 +289,19 @@ try {
     (await producer.evaluate(() => window.__fakeXR.frames.length)) > stopped.xrFrames,
     'headset keeps rendering',
   );
-  await viewer.locator('#questviewbtn').click();
+  await viewer.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
   await live();
   await producer.evaluate(async () => {
     await window.wander.spark.renderer.xr.getSession()!.end();
   });
   await viewer.waitForFunction(
-    () =>
-      document.querySelector('.quest-view-panel [role=status]')?.textContent ===
-      'Waiting for Quest',
+    () => document.querySelector('.quest-stage [role=status]')?.textContent === 'Waiting for Quest',
   );
-  assert.equal(await panel.locator('img').getAttribute('src'), null);
+  assert.equal(await view.locator('img').getAttribute('src'), null);
+  assert.ok(await view.evaluate((element) => (element as HTMLElement).hidden));
   await producer.click('#xrBtn');
   await live();
   assert.deepEqual(errors, []);
@@ -305,7 +314,7 @@ try {
     ),
   );
   console.log(
-    'Quest view integration passed: rendered left eye, JPEG orientation, head rotation, GL state, live panel, idle capture pause, session end/re-entry. Synthetic XR only.',
+    'Quest view integration passed: rendered left eye, JPEG orientation, head rotation, GL state, live stage, idle capture pause, session end/re-entry. Synthetic XR only.',
   );
 } finally {
   await browser.close();

@@ -576,7 +576,6 @@
         <div class="vsep"></div>
         <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
         <button class="hbtn" id="audiomodebtn" aria-pressed="false" hidden>Spatial dialogue</button>
-        <button class="hbtn" id="questviewbtn">Quest view</button>
         <div class="hmenu">
           <button class="hbtn" id="helpbtn" aria-expanded="false" aria-controls="helppop">
             Controls
@@ -653,7 +652,7 @@
       // on by default; ?walk=0 gives the free camera back for authoring.
       import '@fontsource/instrument-serif';
       import '@fontsource-variable/manrope';
-      import { mountQuestViewPanel } from '/src/quest-view-panel.ts';
+      import { mountQuestStage } from '/src/quest-stage.ts';
 
       const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
@@ -918,9 +917,9 @@
 
       /* ---------------- stage ---------------- */
       const frame = $('frame');
-      mountQuestViewPanel({
+      // While a headset shares its view, the stage shows that instead of the desktop viewer.
+      mountQuestStage({
         stage: $('stage'),
-        toggle: $('questviewbtn'),
         isLocalPresenting: () => !!frame.contentWindow?.wander?.spark?.renderer?.xr.isPresenting,
       });
       let ready = false,
