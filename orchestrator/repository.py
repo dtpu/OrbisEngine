@@ -97,6 +97,7 @@ class PipelineRepository:
                     NodeRecord(
                         run_id=run.id,
                         node_id=node.id,
+                        stage_type=node.stage_type,
                         stage_definition=node.definition.model_dump(mode="json"),
                         dependencies=list(node.dependencies),
                         status=node.status,
@@ -406,6 +407,11 @@ class PipelineRepository:
                 "canceled": bool(run.canceled),
                 "nodes": {
                     node.node_id: {
+                        "stage_type": node.stage_type or node.node_id,
+                        "definition": node.stage_definition,
+                        "dependencies": list(node.dependencies or ()),
+                        "parent_node_id": node.parent_node_id,
+                        "branch_key": node.branch_key,
                         "status": node.status,
                         "blocked_reason": node.blocked_reason,
                         "selected_attempt_id": node.selected_attempt_id,
@@ -432,7 +438,21 @@ class PipelineRepository:
                     NodeRecord, {"run_id": run_id, "node_id": node_id}, with_for_update=True
                 )
                 if node is None:
-                    continue
+                    # A node created by expansion: one person per track, one branch per object.
+                    # It has no row until now, and without one a resumed run loses the work.
+                    node = NodeRecord(
+                        run_id=run_id,
+                        node_id=node_id,
+                        stage_type=value.get("stage_type") or node_id,
+                        stage_definition=value.get("definition") or {},
+                        dependencies=value.get("dependencies") or [],
+                        status=value["status"],
+                        parent_node_id=value.get("parent_node_id"),
+                        branch_key=value.get("branch_key"),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(node)
                 node.status = value["status"]
                 node.blocked_reason = value.get("blocked_reason")
                 node.selected_attempt_id = value.get("selected_attempt_id")
