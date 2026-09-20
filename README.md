@@ -1,5 +1,10 @@
 # Wander
 
+**Austin kitchen clip demo:** this branch contains the complete committed kitchen/gym delivery
+from `austin/gym-kitchen`, including the actor repair, object playback, placement tools and
+reusable kitchen workflow. Start with the [kitchen demo guide](docs/kitchen-clip-demo.md) for
+the reviewed scene, preview videos, shared asset snapshot and remaining limitations.
+
 Stand inside a processed video and walk around while its people and objects replay the recorded
 action. The demo combines a generated environment, animated people, fitted objects, and original
 audio. New viewpoints can expose generated content; the viewer is an observer and does not change
@@ -7,17 +12,18 @@ what happened.
 
 ## Run the demo
 
-Use [Bun](https://bun.sh/docs/installation) 1.2.21+ and Chrome. Clone only `main` so the archived branches and their history are not downloaded:
+Use [Bun](https://bun.sh/docs/installation) 1.2.21+ and Chrome. Clone this demo branch:
 
 ```sh
-git clone --no-tags --single-branch --branch main https://github.com/StockerMC/wander.git
-cd wander
+git clone --no-tags --single-branch --branch austin-kitchen-clip-demo https://github.com/dtpu/htn2026.git htn2026-kitchen-demo
+cd htn2026-kitchen-demo
 bun install --frozen-lockfile
 # Save the read-only teammate credentials shared privately as .env.local.
 bun run demo
 ```
 
-Open **http://127.0.0.1:5399/demo.html**. The root URL redirects here. The local Bun server loads
+Open the [kitchen clip picker](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair).
+The standard presets remain at `/demo.html`. The local Bun server loads
 scene assets from private S3 and caches them on demand; credentials never enter browser code.
 The shared migration is complete. Restart Vite to adopt a newly published snapshot. See
 [shared assets](docs/shared-assets.md) for credentials, publishing, and recovery.
