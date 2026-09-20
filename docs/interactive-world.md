@@ -31,6 +31,35 @@ Published original mixes do not contain isolated per-person dialogue. See [audio
 XR controller triggers currently serve teleport aiming; interaction must have explicit input
 priority so selecting a character does not also teleport the user.
 
+## Reusing the reconstruction skeleton
+
+The missing runtime skeleton does not mean the reconstruction started without one.
+`worker/stages/lhm_person.py` supplies SMPL-X root, body, hand, and jaw pose parameters to LHM.
+It saves canonical appearance attributes, query points, neutral transforms, and parameters in
+`canonical-state.pt`. `worker/stages/lhm_animate.py` reuses that state with different source poses
+through `animation_infer_gs`, then exports the resulting Gaussian frames.
+
+The pinned [LHM renderer](https://github.com/aigc3d/LHM/blob/4f88aaeb3629249fbbddb4d0784a06962d9e1338/LHM/models/rendering/gs_renderer.py)
+uses SMPL-X transforms to animate Gaussian positions and orientations. This gives us a concrete
+route to investigate retaining the person's appearance while adding joint control. The browser
+package currently contains the results of those transforms, not an exported controllable rig.
+The saved state alone is not a standalone browser asset; extraction also needs the matching
+model implementation and its body/skinning data.
+
+The first technical proof should load one retained canonical avatar, export the joint hierarchy,
+rest transforms, Gaussian attributes and deformation data, then reproduce a known source pose
+in the browser. Compare that result against the existing baked frame before trying a new arm
+pose. Preserve the model's deformation corrections and coordinate transforms; adding bones to
+a posed PLY alone does not establish that the surface is correctly bound to them.
+
+Once joint control works, add idle and walk motion, transitions, navigation, and a hand target.
+An agent can then select these actions. A skeleton by itself supplies neither locomotion nor
+convincing bottle contact. A simple rigged stand-in can test those mechanics earlier, but would
+be an illustrative replacement rather than the reconstructed person's original appearance.
+Exact retained source-state availability for the elevator cast must be verified independently
+of the existence of the generic LHM export pipeline. No conversion or headset performance has
+been demonstrated by this investigation.
+
 ## Suggested first experience
 
 Select a person, choose **Talk**, and pause the recorded scene at its current time. Ask a question
