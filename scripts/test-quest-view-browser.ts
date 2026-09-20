@@ -104,6 +104,8 @@ try {
     { timeout: 180000 },
   );
   await viewer.evaluate(() => document.fonts?.ready);
+  // The panel starts closed; the header button opens it.
+  await viewer.locator('#questviewbtn').click();
   const panel = viewer.locator('.quest-view-panel');
   const live = () =>
     viewer.waitForFunction(
@@ -258,7 +260,7 @@ try {
   );
   uploadDelay = 0;
   await live();
-  await panel.getByRole('button', { name: 'Minimize Quest view' }).click();
+  await panel.getByRole('button', { name: 'Close Quest view' }).click();
   await producer.waitForFunction(
     () => (window.__xr as { questView: { viewers: number } }).questView.viewers === 0,
     null,
