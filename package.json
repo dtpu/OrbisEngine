@@ -17,6 +17,7 @@
     "test:publish-policy": "node --test scripts/test-publish-policy.ts",
     "test:audio": "bun test ./scripts/test-fourd-audio.ts",
     "test:static-colliders": "bun test ./scripts/test-static-colliders.ts",
+    "test:walk-collision": "bun test ./scripts/test-walk-collision.ts ./scripts/test-static-colliders.ts",
     "test:audio-browser": "bun scripts/test-fourd-audio-browser.ts",
     "smoke:xr": "bun scripts/smoke-xr.ts",
     "test:xr": "bun test ./scripts/test-xr-physical-walk.ts ./scripts/test-xr-teleport.ts ./scripts/test-xr-hands.ts ./scripts/test-xr-body.ts ./scripts/test-xr-body-geometry.ts ./scripts/test-person-size.ts",
