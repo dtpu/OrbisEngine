@@ -81,6 +81,7 @@ type SceneInfo = {
   upm: number;
   stature: number;
   home: Vec;
+  dir: Vec;
   homeLook: Vec;
   box: [Vec, Vec];
   dur: number;
@@ -122,6 +123,7 @@ async function openScene(browser: Browser, demo: string, walk: boolean, size: [n
       upm: w.upm,
       stature: walk && w.walk ? w.walk.stature : 1.7 * w.upm,
       home: w.camera.position.toArray() as Vec,
+      dir: dir.clone().normalize().toArray() as Vec,
       homeLook: look.toArray() as Vec,
       box: [w.clampBox.min.toArray(), w.clampBox.max.toArray()] as [Vec, Vec],
       dur: w.dur,
@@ -155,12 +157,15 @@ async function render(frame: Frame, pose: Pose) {
     if (pose.pos) w.camera.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
     if (pose.look) w.camera.lookAt(pose.look[0], pose.look[1], pose.look[2]);
   }, pose);
-  // Two rendered frames: one to apply the pose, one for the splat sort to catch up.
-  await frame.evaluate(
-    () =>
-      new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res()))),
-  );
-  return grabJpeg(frame);
+  // The splat sort runs off the main thread and lags a camera jump by several frames. The
+  // renderer is deterministic, so a frame is final once two grabs in a row are identical.
+  let image = await grabJpeg(frame);
+  for (let i = 0; i < 12; i++) {
+    const next = await grabJpeg(frame);
+    if (next.equals(image)) break;
+    image = next;
+  }
+  return image;
 }
 
 function run(args: string[]) {
@@ -223,18 +228,32 @@ async function sequence(
 const clampTo = (p: Vec, box: [Vec, Vec], margin = 0.05): Vec =>
   p.map((v, i) => Math.min(box[1][i] - margin, Math.max(box[0][i] + margin, v))) as Vec;
 
-// Offset from the home pose in body-heights: +x right, +z back (the viewer looks down -z at home).
-function offset(info: SceneInfo, right: number, forward: number, up = 0): Vec {
+// A point in body-heights relative to the home pose: right of, in front of, and above it, along
+// the direction the home pose faces.
+function relative(info: SceneInfo, right: number, forward: number, up = 0): Vec {
   const s = info.stature;
-  return clampTo(
-    [info.home[0] + right * s, info.home[1] + up * s, info.home[2] - forward * s],
-    info.box,
-  );
+  const [dx, , dz] = info.dir;
+  const len = Math.hypot(dx, dz) || 1;
+  const fx = dx / len;
+  const fz = dz / len;
+  return [
+    info.home[0] + (-fz * right + fx * forward) * s,
+    info.home[1] + up * s,
+    info.home[2] + (fx * right + fz * forward) * s,
+  ];
 }
+const offset = (info: SceneInfo, right: number, forward: number, up = 0) =>
+  clampTo(relative(info, right, forward, up), info.box);
 const describe = (info: SceneInfo, pos: Vec) => {
   const s = info.stature;
-  const dx = (pos[0] - info.home[0]) / s;
-  const dz = -(pos[2] - info.home[2]) / s;
+  const [ddx, , ddz] = info.dir;
+  const len = Math.hypot(ddx, ddz) || 1;
+  const fx = ddx / len;
+  const fz = ddz / len;
+  const ox = pos[0] - info.home[0];
+  const oz = pos[2] - info.home[2];
+  const dx = (-fz * ox + fx * oz) / s;
+  const dz = (fx * ox + fz * oz) / s;
   const dy = (pos[1] - info.home[1]) / s;
   return `${dx.toFixed(2)} right, ${dz.toFixed(2)} forward, ${dy.toFixed(2)} up (body-heights)`;
 };
@@ -269,16 +288,51 @@ try {
   }
 
   // Compare: one instant per scene from a standing position the recording never had.
-  const compare: { id: string; demo: string; t: number; right: number; forward: number }[] = [
-    { id: 'elevator', demo: 'elevator', t: 6.0, right: 1.0, forward: 0.6 },
-    { id: 'lobby', demo: 'lobby', t: 4.733, right: -1.0, forward: 0.8 },
-    { id: 'gym', demo: 'gym-accepted', t: 8.0, right: 1.0, forward: 0.4 },
+  // Standing position (right, forward) and the point looked at (lookRight, lookForward), in
+  // body-heights from the walk start pose, which is where the recording begins.
+  const compare: {
+    id: string;
+    demo: string;
+    t: number;
+    right: number;
+    forward: number;
+    lookRight: number;
+    lookForward: number;
+  }[] = [
+    {
+      id: 'elevator',
+      demo: 'elevator',
+      t: 6.0,
+      right: 1.0,
+      forward: 0.6,
+      lookRight: 0,
+      lookForward: 3,
+    },
+    {
+      id: 'lobby',
+      demo: 'lobby',
+      t: 4.733,
+      right: 0.8,
+      forward: -1.0,
+      lookRight: 0,
+      lookForward: 0.6,
+    },
+    {
+      id: 'gym',
+      demo: 'gym-accepted',
+      t: 8.0,
+      right: 1.0,
+      forward: 0.4,
+      lookRight: 0,
+      lookForward: 3,
+    },
   ];
   for (const c of compare) {
     if (!want('compare', `${c.id}/render.jpg`)) continue;
     const { page, frame, info } = await openScene(browser, c.demo, true, [1280, 720]);
     const pos = offset(info, c.right, c.forward);
-    await still(frame, { t: c.t, pos, look: info.homeLook }, `${c.id}/render.jpg`);
+    const look = relative(info, c.lookRight, c.lookForward);
+    await still(frame, { t: c.t, pos, look }, `${c.id}/render.jpg`);
     const actual = (await frame.evaluate(() => window.wander.camera.position.toArray())) as Vec;
     measurements.push(`${c.id} t=${c.t}s: ${describe(info, actual)}`);
     await page.close();
