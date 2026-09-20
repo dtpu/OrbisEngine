@@ -64,8 +64,10 @@ Default movement is teleport with snap turning; `?xr=1&xrmove=smooth` enables sm
 In smooth mode the left stick walks and strafes in the direction you face, with analog speed;
 the right stick snap-turns without changing your height. Physical leaning, walking and crouching
 remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
-physical steps cover 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2; it does
-not magnify head rotation, eye height or crouching. Re-enter VR after changing these options.
+physical steps cover up to 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2;
+only the extra travel is limited by the scene boundary and, in walk mode, obstacle checks.
+Physical head tracking remains unrestricted; the gain does not magnify head rotation, eye height
+or crouching. Re-enter VR after changing these options.
 VR shows illustrative gloves at your tracked controller poses, with finger curls driven by the
 trigger and grip buttons. When the headset supplies hand tracking, the gloves follow its finger
 joints. Their appearance is invented; tracking does not reconstruct your real skin or clothing.
@@ -74,8 +76,11 @@ A simple torso, arms, legs and shoes provide a first-person body when you look d
 reach toward tracked hands/controllers; the torso and walking steps are estimated from head pose
 and movement. This is an illustrative avatar, not measured full-body or foot tracking. `xrbody=0`
 hides the body while keeping hands available.
-Entering VR starts playback, which loops until paused; exiting VR pauses it. In walk mode,
-joystick movement uses the desktop floor and obstacle checks, including known stair heights.
+Entering VR starts playback, which loops until paused; exiting VR pauses it. With `walk=1`,
+smooth joystick movement uses the desktop floor and obstacle checks, including known stair heights.
+Default teleport mode aims at supported, unblocked floor cells and moves the rig and avatar to
+the selected height. Both modes follow supported floor beneath the head; unknown geometry cannot
+be selected as a teleport landing. Exiting VR restores the saved desktop camera and floor.
 `personsize=0.9` makes recorded people 10% smaller around their moving foot anchor without changing
 the scene's scale or your eye height. The default is 1. This is a visual adjustment, not a new
 measurement of the recorded person's height or a repair of missing reconstructed geometry.
@@ -186,12 +191,12 @@ The formatted inline scripts in `demo.html` and `fourd.html` still use JavaScrip
 The audio browser check needs installed Chrome. With the live demo running, use `bun run smoke:xr`
 for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/directory` for
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
-With that server running, `bun run test:xr-locomotion` checks physical movement gain, tracked height,
-recentring, snap turns, joystick walking and session re-entry using simulated headset input.
-`bun scripts/test-xr-playback.ts` checks looping and VR playback controls;
-`bun scripts/test-xr-ground-browser.ts` checks joystick movement on the stair collision data.
-`bun scripts/test-xr-body-browser.ts` checks the estimated body, stepping and crouching and captures
-simulated views under `.context/evidence/quest-debug/`.
+`bun run test:xr` runs all XR and person-size unit tests without Chrome or a server.
+With Chrome installed and that server running, `bun run test:xr-browser` runs the simulated XR
+browser suite: physical gain and wall checks, tracked height, re-entry, teleporting between levels,
+stair support, body stepping/crouching, playback controls and runtime person scaling.
+`bun run test:xr-locomotion` retains the focused movement check; `bun run test:person-size-browser`
+runs the authoring-scale regression alone. Simulated captures stay under `.context/evidence/`.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
 Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
 checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)
@@ -235,4 +240,3 @@ does not grant redistribution rights.
 Contributors: **Aayan Karmali (StockerMC), Austin Jian, and Daniel Pu**. The archive preserves the
 original development history and human authorship. To move this lean app to a future public repo,
 start from the single-branch clone above and push **main only** to that separate remote.
-
