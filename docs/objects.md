@@ -176,6 +176,12 @@ checks also apply to nonwalkable boxes. An inferred conservative frame envelope 
 space between real struts; declare that approximation in provenance. With no manifest, the existing
 occupancy-grid behavior is retained. Generated geometry and review evidence belong in private storage.
 
+Reachable explicit support also joins the walkable region, including where the observed floor
+grid has a hole. Its finite footprint does not erase occupied cells, raise the step limit, or
+disable capsule collision. This lets reviewed floor bridges connect an aisle without opening
+routes through counters or walls. Support outside the scene's camera bounds still needs reviewed
+bounds; loading a support manifest does not enlarge those bounds automatically.
+
 Grid collision uses the same circular horizontal footprint as the walker capsule. It checks
 overlap with each occupied cell's full rectangle, so a diagonal corner outside the body's radius
 does not block an open route, while thin wall and column contacts still do. This does not remove
