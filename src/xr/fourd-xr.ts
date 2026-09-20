@@ -28,6 +28,7 @@
 //   ?xr=1            enable; adds an Enter VR button when the browser reports immersive-vr
 //   ?xrmove=         teleport (default) | smooth
 //   ?xrwalkgain=     physical horizontal travel multiplier, 1..2 (default 1)
+//   ?xrview=0        disable the local single-eye spectator preview
 //   ?xrhands=0      hide the illustrative controller gloves and tracked hands
 //   ?xrbody=0       hide the estimated first-person body
 //   ?xrlod=          splat budget while presenting (default 500000, Spark's own WebXR figure)
@@ -46,6 +47,7 @@ import { createAvatarBody } from './avatar-body';
 import { createAvatarHands } from './avatar-hands';
 import { PhysicalWalk, parseWalkGain } from './physical-walk';
 import { raycastWalkFloor } from './teleport';
+import { createQuestView } from './quest-view';
 
 type Wander = {
   spark: { lodSplatCount?: number };
@@ -194,6 +196,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   if (avatarHands) report.hands = avatarHands.state;
   const avatarBody = q.get('xrbody') === '0' ? null : createAvatarBody(renderer, rig);
   if (avatarBody) report.body = avatarBody.state;
+  const questView =
+    q.get('xrview') === '0' ? null : createQuestView(renderer, q.get('demo') || 'scene');
+  if (questView) report.questView = questView.state;
 
   const vignette = buildVignette();
   const marker = buildMarker(upm);
@@ -587,8 +592,10 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // the SAME frame it was computed for. No lag, and fourd.html keeps its loop.
   const origRender = renderer.render.bind(renderer);
   renderer.render = function (sc: THREE.Object3D, cam: THREE.Camera) {
-    if (renderer.xr.isPresenting && sc === scene && cam === camera) tick();
+    const xrFrame = renderer.xr.isPresenting && sc === scene && cam === camera;
+    if (xrFrame) tick();
     origRender(sc, cam);
+    if (xrFrame) questView?.afterRender();
   } as typeof renderer.render;
 
   function tick() {
