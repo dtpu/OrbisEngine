@@ -644,7 +644,12 @@ def stage_registry() -> dict[str, StageDefinition]:
             title="Build canonical person",
             kind=StageKind.COMPUTE,
             executor="lhm_frozen",
-            inputs={"prepared_person": stage_output("person_prep", "prepared_person")},
+            inputs={
+                # Every legacy command opens the clip: run_clip.py requires --clip and probes
+                # it before it reaches the stage being asked for.
+                "source": run_input("source_video"),
+                "prepared_person": stage_output("person_prep", "prepared_person"),
+            },
             outputs={
                 "canonical_person": output(
                     "canonical_person", "application/octet-stream", multiple=True
