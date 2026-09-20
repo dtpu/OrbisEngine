@@ -132,6 +132,13 @@ class RunStateRoundTripTests(unittest.TestCase):
         )
         self.assertTrue(canceled)
 
+    def test_a_resumed_run_stops_saying_it_finished(self):
+        """The dashboard read "succeeded" while the pipeline was working on the run again."""
+        self.repository.finish_run(RUN_ID, "succeeded")
+        self.assertTrue(self.repository.reopen_run(RUN_ID))
+        self.assertEqual(self.repository.run_summary(RUN_ID)["status"], "running")
+        self.assertFalse(self.repository.reopen_run(RUN_ID), "a running run is already open")
+
     def test_an_unknown_run_has_no_state(self):
         self.assertIsNone(self.repository.load_run_state("no-such-run"))
 
