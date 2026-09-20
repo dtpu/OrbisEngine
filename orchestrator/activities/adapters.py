@@ -671,6 +671,12 @@ def flags(settings: dict[str, Any]) -> list[str]:
     return rendered
 
 
+# run_clip.py's own name for a stage the orchestrator calls something else. Its single-person
+# graph calls the packaging stage `package`; every other stage shares its name, and the
+# dependency state file has to use the names that graph checks against.
+LEGACY_STAGE_NAMES = {"package_people": "package"}
+
+
 # The only legacy stage that exists solely in run_clip.py's multiperson graph. The per-person
 # stages are named `lhm_frozen_00`, `lhm_motion_00`, `package_people` there and `lhm_frozen`,
 # `lhm_motion`, `package` in the single-person one -- and it is the single-person names the
@@ -678,6 +684,16 @@ def flags(settings: dict[str, Any]) -> list[str]:
 # attempt directory, its own materialized `prepared-person`, and one person in it. Asking for
 # the multiperson graph for those stages names something it does not contain.
 MULTIPERSON_STAGES = frozenset({"tracks"})
+
+
+def legacy_stage_name(node_id: str) -> str:
+    """The legacy pipeline's name for the stage an orchestrator node runs.
+
+    A person is a node here, so the node is `person_prep:00` where run_clip.py has
+    `person_prep`, and the orchestrator's `package_people` is its `package`.
+    """
+    base = node_id.split(":", 1)[0]
+    return LEGACY_STAGE_NAMES.get(base, base)
 
 
 def legacy_people_flags(options: dict[str, Any]) -> list[str]:
@@ -775,7 +791,7 @@ class LegacyPipelineAdapter:
         # `person_prep:00` -- and the legacy graph calls that stage `person_prep`, so it found
         # its dependency unsatisfied and refused: "dependency did not finish: ['person_prep']".
         dependencies = {
-            binding["stage_id"].split(":", 1)[0]: {"status": "ok"}
+            legacy_stage_name(binding["stage_id"]): {"status": "ok"}
             for binding in context.request.definition.get("inputs", {}).values()
             if binding.get("source") == "stage_output"
         }
@@ -840,8 +856,11 @@ def _copy_files(paths: tuple[Path, ...], destination: Path) -> None:
 
 def materialize_pi3x(context: AdapterContext, root: Path, name: str) -> None:
     destination = root / "runs" / name / "pi3x"
-    for role in ("cameras", "point_clouds", "pi3x_aux"):
-        _copy_files(context.inputs.get(role, ()), destination)
+    # framealign.json has to land beside cameras.json: that is where sfm_frame.py looks for it,
+    # and without it every packager and diagnostic silently falls back to camera 0's own axes
+    # -- the phone's pitch at frame 0 rather than gravity.
+    for name_of_input in ("cameras", "point_clouds", "pi3x_aux", "alignment"):
+        _copy_files(context.inputs.get(name_of_input, ()), destination)
 
 
 def materialize_person_prep(context: AdapterContext, root: Path, name: str) -> None:
