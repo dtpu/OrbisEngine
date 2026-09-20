@@ -73,3 +73,25 @@ package identity/transport is uncertain. The pitcher interaction is around 4.5â€
 Reproduction scripts, exact source bindings, rejected candidates and browser evidence are kept
 under `.context/evidence/kitchen-fixture-repair/` and archived with the publication. See the
 [delivery history](kitchen-continuation.md) for earlier actor repair, spending and scene limits.
+
+## Preview and delivery verification
+
+The new preview contains 609 newly captured viewer frames across 50.730 seconds. One cook,
+one pan layer and the three moving fixture layers are active at every sampled time; source
+occlusion can still hide their pixels. Full decoding passes. All 2,380 original AAC payload
+hashes, PTS/DTS, durations and priming values are unchanged. Preview SHA-256 is
+`8d3c3d25ec045757a64dd7e0e5ce1d4191c4184b5ba25e3231e6a8e130a84a3d`.
+
+The real viewer completed a playback loop. After the last microwave cleanup, the source-camera
+checks, appliance close-ups and keyboard route through the actual clip picker were repeated.
+There were no page errors or object warnings. Final static world: 1,756,110 splats; source-bound
+fixture manifests and model hashes validate. All other clip-picker cards remain unchanged.
+The repository format check passes; no runtime code or test was changed by this asset repair.
+
+Published to private bucket `wander-shared-797639045717`, viewer/archive snapshot
+`670344c7-b047-41d6-ae26-89b01d2bd275`. Every one of the twelve new or updated viewer paths
+passed remote checksum/size and fresh-download SHA-256 checks. All 16,963 unaffected viewer
+paths and 35,667 previous archive entries remain identical, including the accepted gym.
+Publication had no exclusions. Source bindings, rejected candidates, geometry scripts, browser
+checks and preview captures are under `evidence/kitchen-fixture-repair-v1/`. Local verification:
+`.context/evidence/kitchen-fixture-repair/publication-verification.json`.
