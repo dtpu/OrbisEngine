@@ -1,6 +1,55 @@
 // Shared by the desktop scene rail and the in-headset sidebar.
 export const CLIPS = [
   {
+    id: 'kitchen-repair',
+    title: 'Kitchen · fixture repair',
+    place: 'Kitchen · phone · 50.73 s',
+    src: '/reviews/gym-kitchen/kitchen/source.mp4',
+    poster: 40,
+    sub: 'Full recording; moving doors and small pot lid',
+    free: 'WASD to walk; drag to look',
+    lead: 'James cooks through the full recording, with a solid freezer door, animated microwave door and small pot lid. Walk around the counter to reach him.',
+    proof: [
+      'One cook and original audio across all 50.73 seconds',
+      'Moving freezer and microwave doors, pan and small pot lid',
+      'Repaired wall beside the fridge and supported kitchen aisle',
+    ],
+    caveat:
+      'Brita and carried bag motion remain absent. Interiors, unseen surfaces and parts of door/lid motion are inferred. Small items remain blurry; seams and imperfect contact remain.',
+    srctxt: 'Original 50.73-second kitchen recording, preserving audio and timing.',
+  },
+  {
+    id: 'gym-accepted',
+    title: 'Gym · accepted scene',
+    place: 'Gym · phone · 18.07 s',
+    src: '/reviews/gym-repair/source.mp4',
+    poster: 8,
+    sub: 'Accepted person, two dumbbells and bench colliders',
+    free: 'Walk around the bench',
+    lead: 'Austin’s accepted gym reconstruction, preserving its original assets and placement.',
+    proof: ['Animated person and both dumbbells', 'Bench collision surfaces retained'],
+    caveat:
+      'Broad body shape, imperfect foot/back contact and late hand/dumbbell separation remain. Dumbbell geometry is inferred.',
+    srctxt: 'Original phone clip of a man lifting dumbbells on an incline bench.',
+  },
+  {
+    id: 'plaza',
+    title: 'Two friends outside the venue',
+    place: 'Engineering building plaza · phone · 11 s',
+    src: '/clips/img5594-video-baseline/playback.mp4',
+    poster: 5,
+    sub: 'Two people cross the plaza in one handheld phone clip',
+    free: 'Walk around them; stay near the recorded side of the plaza',
+    lead: 'Two friends walk past the building entrance. Both are reconstructed from one phone clip and stand on the ground measured from the footage.',
+    proof: [
+      'Both people keep their size and footing through the clip',
+      'The entrance, benches and paving are the alignment landmarks',
+    ],
+    caveat:
+      'The backpack on the brown-hoodie friend is missing from the avatar. Sign text is garbled because the world is generated, and areas the phone never saw are invented.',
+    srctxt: 'One 11-second phone clip filmed outside the hackathon venue.',
+  },
+  {
     id: 'elevator',
     title: 'Two people, one handheld take',
     place: 'Fourth-floor lift lobby · phone · 10.0 s',

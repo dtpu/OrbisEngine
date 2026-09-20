@@ -798,6 +798,73 @@ export async function createFourD({ search, renderer, root, scope }) {
     // the single-image LHM avatar ?demo=atrium shipped before the face fix, at its own scale
     'atrium-4d': { person: '/worlds/atrium-4d/person/sequence.json', scale: '0.8160' },
     'lobby-ft': { world: '/marble-lobby-finetuned.spz' },
+    // Austin's accepted gym: the replacement room, the contact-candidate person and dumbbells, and the
+    // bench colliders, on top of the gym preset's own fit (merged below).
+    'gym-accepted': {
+      world: '/reviews/austin-continuation/gym-replacement.spz',
+      worldfallback: 'none',
+      person: '/reviews/gym-repair/person-contact-candidate/sequence.json',
+      placement: '/reviews/gym-repair/registration/placement.json',
+      place: '1',
+      framealign: '/reviews/gym-repair/registration/framealign.json',
+      rotfix: '1',
+      objects: '/reviews/gym-repair/objects/objects-contact-candidate.json',
+      colliders: '/reviews/gym-repair/colliders.json',
+      video: '/reviews/gym-repair/source.mp4',
+      cam: '-0.048358088,0.024006001,0.090660819,-0.022907362,-0.591009064,-1.812260285',
+      fov: '63',
+      feetmode: 'sfm',
+      stance: '0',
+      feetlock: '0',
+      camdrift: '0',
+      audio: '0',
+    },
+    // Austin's repaired kitchen: observed-geometry room, one cook for the whole take, moving doors
+    // and lid, with the generated surroundings as a separate background layer. (`kitchen` is already
+    // the old bare-world preset further down, so this one carries the repair's name.)
+    'kitchen-repair': {
+      world: '/reviews/kitchen-continuation/fixture-repair/environment.ply',
+      people: '/reviews/kitchen-continuation/actor-repair/people.json',
+      video: '/reviews/gym-kitchen/kitchen/source.mp4',
+      objects: '/reviews/kitchen-continuation/fixture-repair/objects.json',
+      placement: '/reviews/kitchen-continuation/actor-repair/floor-placement.json',
+      bg: '/reviews/kitchen-continuation/fixture-repair/generated-context.spz',
+      bgscale: '2.719959249986597',
+      colliders: '/reviews/kitchen-continuation/room-access/colliders.json',
+      worldup: 'y',
+      worldscale: '1',
+      scale: '1',
+      floor: '-3.118813392508837',
+      pos: '0,0,0',
+      feet: '1',
+      feetmode: 'sfm',
+      feetlock: '0',
+      shadow: '0',
+      rot: '0,0,0',
+      stance: '0',
+      camdrift: '0',
+      place: '1',
+      rotfix: '0',
+      cam: '0,0,0,0,-0.224,-0.974',
+      fov: '63',
+      lod: '0',
+      audio: '0',
+      edgefade: '0',
+    },
+    // Two friends crossing the plaza outside the venue; both placed on the measured ground.
+    plaza: {
+      world: '/marble-img5594-video-baseline-clean.spz',
+      people: '/worlds/img5594-video-baseline-4d/people.json',
+      person: '/worlds/img5594-video-baseline-4d/person/sequence.json',
+      video: '/clips/img5594-video-baseline/playback.mp4',
+      place: '1',
+      rot: '0,0,0',
+      rotfix: '0',
+      feetmode: 'sfm',
+      feetlock: '0',
+      stance: '0',
+      camdrift: '0',
+    },
     'gym-ft': { world: '/marble-gym2-finetuned.spz' },
     'gym-nobench': { world: '/marble-gym-clean2.spz' },
     'atrium-ft': { world: '/marble-atrium-finetuned.spz' },
@@ -899,6 +966,8 @@ export async function createFourD({ search, renderer, root, scope }) {
   // round 19: ?demo=<clip>-ft is the preset exactly as it ships, on the fine-tuned world it used to open
   for (const k of ['lobby-ft', 'gym-ft', 'atrium-ft', 'stairs2-ft', 'elevator-ft'])
     if (q.get('demo') === k) Object.assign(DEMOS[k], { ...DEMOS[k.slice(0, -3)], ...DEMOS[k] });
+  if (q.get('demo') === 'gym-accepted')
+    Object.assign(DEMOS['gym-accepted'], { ...DEMOS.gym, ...DEMOS['gym-accepted'] });
   if (q.get('demo') === 'gym-nobench')
     Object.assign(DEMOS['gym-nobench'], { ...DEMOS.gym, ...DEMOS['gym-nobench'] });
   if (q.get('demo') === 'atrium-4d')
