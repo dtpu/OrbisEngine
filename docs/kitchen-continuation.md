@@ -248,3 +248,21 @@ serves the committed viewer build and verified local media, using the existing s
 unchanged baseline clips. The portable picker retains all eleven cards. This preview uses no Vite
 restart and exposes only public media/build files. Shared-storage review pages use the normal
 `/fourd.html` from the teammate's checkout.
+
+## Verified publication and user review
+
+Both scenes and previews are published in `wander-shared-797639045717`, viewer/archive snapshot
+`2884fb59-fec1-4a16-8a37-bd6115a13f6e`. All 65 new or updated viewer entries passed remote SHA-256
+and size checks. Fresh downloads of the previews, actor motion, manifests, picker and review pages
+matched. The 16,887 unaffected viewer entries and all 25,800 prior archive entries were preserved.
+Every accepted gym dependency remains unchanged. New outputs, source observations, failed object
+hypotheses, original spending ledger and the additional authorized job receipt are archived under
+`evidence/kitchen-actor-pan-v4/`. The local verification report is
+`.context/evidence/kitchen-continuation/actor-repair-10usd/publication-verification.json`.
+
+The user reviewed the kitchen as good and specifically identified the missing Brita water-filter
+pitcher. Use this version as a reference for similar kitchen clips, with the recorded object,
+geometry and contact limitations retained. The [reusable kitchen workflow](kitchen-workflow.md)
+captures that process and adds explicit prop inventory and interaction coverage before cleaning.
+Its procedures still include manual authoring and review; documenting them adds no automatic
+held-object reconstruction feature or authorization for future paid runs.
