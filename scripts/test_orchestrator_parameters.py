@@ -11,7 +11,10 @@ told to the agent in ``task.json``, so both are checked against the scripts them
 """
 
 import ast
+import re
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from types import SimpleNamespace
 
 from orchestrator.activities.adapters import (
+    default_adapters,
     flags,
     legacy_parameter_flags,
     legacy_people_flags,
@@ -153,6 +157,74 @@ OVERRIDDEN_DEFAULTS = {("person_prep", "method"): "segformer"}
 def declared(stage_id: str) -> dict[str, dict]:
     schema = stage_registry()[stage_id].parameter_schema or {}
     return schema.get("properties", {})
+
+
+class GraphShapeTests(unittest.TestCase):
+    """Each legacy stage has to name a stage the graph it asks for actually contains.
+
+    run_clip.py calls the per-person stages `lhm_frozen_00`, `lhm_motion_00` and
+    `package_people` in its multiperson graph, and `lhm_frozen`, `lhm_motion` and `package` in
+    its single-person one. The orchestrator wants the single-person names: it does its own
+    fan-out, so each person is a node with its own attempt directory holding one person. Asking
+    for the multiperson graph everywhere made those three name something it does not contain.
+    """
+
+    def command(self, executor: str, stage_id: str) -> tuple[str, ...]:
+        adapter = default_adapters()[executor]
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        context = SimpleNamespace(
+            request=SimpleNamespace(
+                run_id="run-1",
+                node_id=stage_id,
+                definition={"inputs": {}, "outputs": {}, "retry": {}},
+                parameters={},
+                options={"people": 16, "all_people": True},
+            ),
+            attempt=SimpleNamespace(outputs=root),
+            repository=Path("."),
+            inputs={"source": (root / "source.mp4",)},
+        )
+        return adapter.build(context).command
+
+    def test_only_tracking_asks_for_the_multiperson_graph(self):
+        stages = {
+            "track_people": ("tracks", "tracks", True),
+            "lhm_frozen": ("lhm_frozen:00", "lhm_frozen", False),
+            "lhm_motion": ("lhm_motion:00", "lhm_motion", False),
+            "package_people": ("package_people", "package", False),
+        }
+        for executor, (node_id, legacy, multiperson) in stages.items():
+            with self.subTest(stage=node_id):
+                command = self.command(executor, node_id)
+                self.assertEqual(command[command.index("--only") + 1], legacy)
+                self.assertEqual("--people" in command, multiperson)
+
+    def test_every_named_stage_exists_in_the_graph_it_asks_for(self):
+        """Read run_clip.py's own graph builders rather than trusting a list here."""
+        source = (ROOT / "scripts/run_clip.py").read_text()
+
+        def named(start: str, end: str) -> set[str]:
+            return set(re.findall(r'"([a-z_0-9]+)"', source.split(start)[1].split(end)[0]))
+
+        # Both graphs open with world_half(), so its stages belong to each of them.
+        world = named("def world_half", "def single_graph")
+        single = world | named("def single_graph", "def multiperson_graph")
+        multi = world | named("def multiperson_graph", "\nclass ")
+        for executor, node_id in (
+            ("track_people", "tracks"),
+            ("lhm_frozen", "lhm_frozen:00"),
+            ("lhm_motion", "lhm_motion:00"),
+            ("package_people", "package_people"),
+            ("clean_video", "clean"),
+            ("pi3x", "pi3x"),
+            ("frame_align", "frame_align"),
+        ):
+            command = self.command(executor, node_id)
+            legacy = command[command.index("--only") + 1]
+            wanted = multi if "--people" in command or "--all-people" in command else single
+            with self.subTest(stage=node_id, legacy=legacy):
+                self.assertIn(legacy, wanted, f"{legacy} is not in the graph this command asks for")
 
 
 class DeclaredDefaultTests(unittest.TestCase):
