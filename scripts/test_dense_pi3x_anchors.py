@@ -34,6 +34,7 @@ from dense_pi3x import (  # noqa: E402
     anchor_spread,
     confidence_threshold,
     mask_mode,
+    measure_spread,
     similarity,
 )
 
@@ -237,6 +238,25 @@ class AnchorSpread(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             anchor_spread([pose_at(0), pose_at(1)], [np.nan, -1.0])
         self.assertIn("positive median depth", str(caught.exception))
+
+    def test_the_measurement_and_the_refusal_are_the_same_number(self):
+        # `measure_spread` is what chooses between the global and the chained solve, and
+        # `anchor_spread` is the limit each window is then held to. They have to agree.
+        poses = [pose_at(x) for x in np.linspace(0, 1.6, 8)]
+        self.assertEqual(measure_spread(poses, [2.4] * 8), anchor_spread(poses, [2.4] * 8))
+
+    def test_measuring_a_traversal_returns_it_instead_of_refusing_it(self):
+        # game-s1 measured 12.55 depths. Refusing here would leave the chained solve with no way
+        # to find out how far the clip travels.
+        poses = [pose_at(x) for x in np.linspace(0, 51.3, 8)]
+        spread, depth = measure_spread(poses, [4.087] * 8)
+        self.assertGreater(spread, ANCHOR_SPREAD_LIMIT)
+        self.assertAlmostEqual(depth, 4.087)
+
+    def test_measuring_unusable_anchor_geometry_still_raises(self):
+        with self.assertRaises(RuntimeError) as caught:
+            measure_spread([pose_at(0)], [1.0])
+        self.assertIn("unusable", str(caught.exception))
 
 
 class SimilarityGuards(unittest.TestCase):
