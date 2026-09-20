@@ -686,6 +686,9 @@ def stage_registry() -> dict[str, StageDefinition]:
             executor="package_people",
             inputs={
                 "motions": stage_output("lhm_motion", "person_motion"),
+                # package_person_sequence.py reads the motion directory: sequence.json names
+                # the frames and every PLY it names has to be beside it.
+                "frames": stage_output("lhm_motion", "person_frames"),
                 "alignment": stage_output("frame_align", "frame_alignment"),
                 "source": run_input("source_video"),
             },
