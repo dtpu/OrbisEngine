@@ -44,7 +44,7 @@ Of 21,367 labelled depth samples, 18,400 lie within the fitted tolerance. Their 
 Next work must preserve recorded objects, keep James aligned with the room through the full clip,
 and validate movement through observed open space. A camera-centred depth calibration is being
 investigated: it can adjust floor contact while preserving each recorded camera projection, without
-optimizing articulation. It has not been implemented or accepted at this checkpoint.
+optimizing articulation. The later calibration experiment below implements this transform; it is not a whole-scene acceptance.
 
 Private evidence is under `.context/evidence/kitchen-continuation/`. The current source, frames,
 previews and published snapshot are documented in [the delivery report](gym-kitchen-delivery.md).
@@ -72,3 +72,33 @@ The new-main video evaluation records two additional kitchen generations and one
 4,800 provider credits total across the three. Those receipts remain separate historical spending;
 this continuation submitted none. Neither the new credentials nor those evaluation results reset
 stage allowances. See [the evaluation](video-input-evaluation.md).
+
+## Floor calibration experiment
+
+`scripts/calibrate_person_floor.py` uses a fixed positive depth scale per appearance track about
+each recorded camera centre. Its placement manifest preserves original PLY/f32 geometry, poses,
+source indices and timing; it validates input hashes, the measured source correspondence and floor
+uncertainty. Final-viewer offsets include the global registration scale. Four synthetic regressions
+check pixel invariance, floor contact, tilted planes, sequence gaps and unstable-scale rejection.
+
+At native world scale, the early/late factors are 1.123970 and 1.131966. Opaque low-point contact RMS
+falls from 0.1068/0.1062 to 0.0166/0.0161 body-heights. Maximum residuals remain 0.0920/0.0444
+body-heights. These are geometric proxies, not measured anatomical contacts. All actual compact
+splat positions preserve their matched source-camera pixels to numerical precision at sampled
+times. Intermediate camera interpolation and opposing views are separate checks.
+
+Eight source-camera views plus two displaced views loaded in the real viewer with no page errors.
+The transform and visibility handover are applied correctly. Visible room holes, static person
+remnants, absent held objects and the closed refrigerator still fail reconstruction acceptance.
+Floor contact alone does not establish valid cabinet/wall contact or repair body articulation.
+
+Initial desktop walking measurements also confirm the user's restriction. A 1.8-second backward
+input from the opening position travels 0.149 body-heights in the current image-generated room,
+versus 0.940 in the observed-geometry experiment. Forward movement stops near the front counter
+in both. These are individual movement checks, not certification of all free space or headset use.
+
+The old automatic object detector retained two putative flights. Sequentially decoded source
+frames 2130, 2158, 2159 and 2173 show both detections following stationary foreground plate/dish-rack
+texture as the camera moves. Neither is a supported thrown-object track. Their original output is
+retained with rejection evidence; they must not be packaged as flying props. Held cookware, the
+bag and appliance doors still need distinct source-bound tracking.
