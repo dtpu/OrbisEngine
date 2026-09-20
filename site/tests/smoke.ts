@@ -170,6 +170,41 @@ const checks: Check[] = [
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
+  {
+    name: 'compare: 3 sliders with Recorded/Wander labels and body-height captions',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const result = await page.$eval('section#compare', (section) => {
+          const sliders = section.querySelectorAll('input[type="range"][aria-label="Compare"]');
+          const imgs = section.querySelectorAll('img');
+          const captions = Array.from(section.querySelectorAll('li > p')).map(
+            (p) => p.textContent ?? '',
+          );
+          return {
+            h2: section.querySelector('h2')?.textContent ?? '',
+            sliders: sliders.length,
+            imgs: imgs.length,
+            recorded: section.textContent?.includes('Recorded') ?? false,
+            wander: section.textContent?.includes('Wander') ?? false,
+            captions,
+          };
+        });
+        if (result.h2 !== 'Same second, new angle') throw new Error(`bad h2: ${result.h2}`);
+        if (result.sliders !== 3) throw new Error(`expected 3 sliders, got ${result.sliders}`);
+        if (result.imgs !== 6) throw new Error(`expected 6 images, got ${result.imgs}`);
+        if (!result.recorded || !result.wander) throw new Error('missing slider labels');
+        if (result.captions.length !== 3 || result.captions.some((c) => !/body-height/.test(c))) {
+          throw new Error(`captions must mention body-heights: ${result.captions.join(' | ')}`);
+        }
+        if (result.captions.some((c) => /\bm\b|metre|meter/i.test(c))) {
+          throw new Error('captions must not use metres');
+        }
+      });
+      const relevant = errors.filter((e) => !/media\//.test(e));
+      if (relevant.length > 0) throw new Error(`console errors: ${relevant.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
