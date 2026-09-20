@@ -126,8 +126,18 @@ export class BottleScene {
       size?.length === 3 && size.every(Number.isFinite)
         ? (Math.max(...size) * scale) / 2
         : 0.025 * host.stature;
+    this.visual = new BottleVisual(
+      host.stature,
+      size?.length === 3 ? new THREE.Vector3(...size).multiplyScalar(scale) : undefined,
+    );
+    // The invented visible bottle is taller than some source proxies. Its bounding sphere
+    // keeps every held/released orientation above support without widening wall collisions.
+    const visualRadius = new THREE.Box3()
+      .setFromObject(this.visual.proxy)
+      .getBoundingSphere(new THREE.Sphere()).radius;
     this.physics = new BottlePhysics({
       radius: Math.max(radius, 0.005 * host.stature),
+      floorRadius: Math.max(radius, visualRadius),
       gravity: 5.77 * host.stature,
       maxSpeed: 8 * host.stature,
       floorAt: host.floorAt,
@@ -149,10 +159,6 @@ export class BottleScene {
       facingCos: 0.35,
       allowInitialApproach: true,
     });
-    this.visual = new BottleVisual(
-      host.stature,
-      size?.length === 3 ? new THREE.Vector3(...size).multiplyScalar(scale) : undefined,
-    );
     host.scene.add(this.visual.group);
     this.visual.group.visible = false;
     this.marker = new THREE.Mesh(
@@ -844,9 +850,9 @@ export class BottleScene {
           : 'bystander';
     const index = Math.max(0, this.host.people.indexOf(person));
     const styles = [
-      'easygoing and lightly playful',
-      'calm, friendly, and a little dry',
-      'curious and upbeat',
+      'deadpan, skeptical, and hard to impress; short dry comebacks, understated competitive streak, never a cheerleader',
+      'cocky and competitive; quick banter, casually challenges the visitor, talks a little trash and can take it back',
+      'blunt and impatient with nonsense; sharp observations, independent opinions, reluctant respect when earned',
     ];
     return {
       id: person.id,
@@ -880,6 +886,7 @@ export class BottleScene {
       returnTarget: this.targetPosition()?.toArray() ?? null,
       voiceConnected: this.client.connected,
       voiceStatus: this.voiceStatus,
+      voiceErrorCode: this.client.lastProviderErrorCode,
       microphoneMuted: this.muted,
       poseType: 'paused recorded pose; automatic whole-body facing only',
       returnType: 'assisted target, not animated reach',

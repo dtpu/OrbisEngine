@@ -562,6 +562,25 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     expect(stopped).toBe(1);
   });
 
+  test('other wrapped provider errors still close capture and retain only a sanitized code', async () => {
+    const detail = 'provider detail must not reach diagnostics';
+    const { client, channel, statuses } = await connected();
+    channel.emit({
+      type: 'error',
+      event_id: 'fatal-provider-error',
+      error: {
+        type: 'invalid_request_error',
+        code: 'invalid_api_key',
+        message: detail,
+      },
+    });
+    expect(client.connected).toBe(false);
+    expect(client.lastProviderErrorCode).toBe('invalid_api_key');
+    expect(stopped).toBe(1);
+    expect(statuses.at(-1)).toBe('Voice connection failed. Re-enter VR to retry.');
+    expect(statuses.join(' ')).not.toContain(detail);
+  });
+
   test('speech detection stays active during playback, with answers after accepted audio commit only', async () => {
     const { client, channel } = await connected();
     channel.speech();
@@ -695,6 +714,32 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     expect(speaking.at(-1)).toBe(false);
     expect(channel.responses()).toHaveLength(1);
     expect(channel.sent).toContainEqual({ type: 'response.cancel', response_id: 'response' });
+  });
+
+  test('a response.cancel race keeps capture connected and accepts the next directed speech', async () => {
+    const { client, channel, statuses } = await connected();
+    react(client, channel, 'stale');
+    channel.created('stale');
+    client.setPlayback(true);
+    channel.done('stale', 'cancelled');
+    channel.emit({
+      type: 'error',
+      event_id: 'cancel-race',
+      error: {
+        type: 'invalid_request_error',
+        code: 'response_cancel_not_active',
+        message: 'provider detail must not reach diagnostics',
+      },
+    });
+    expect(client.connected).toBe(true);
+    expect(statuses.at(-1)).not.toContain('failed');
+    expect(channel.responses()).toHaveLength(1);
+    client.setPlayback(false);
+    channel.speech('next');
+    channel.commit('next');
+    expect(channel.responses()).toHaveLength(2);
+    expect(client.lastProviderErrorCode).toBe('response_cancel_not_active');
+    expect(statuses.join(' ')).not.toContain('provider detail');
   });
 
   test('a directed interruption can answer once the prior cancelled response finishes', async () => {

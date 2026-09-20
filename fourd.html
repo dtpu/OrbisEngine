@@ -138,6 +138,7 @@
   import { createStanceResolver } from '/src/person-stance.ts';
   import { personVisibility } from '/src/person-visibility.ts';
   import { countGridFootprintContacts } from '/src/walk-collision.ts';
+  import { interpolateBottleFloor } from '/src/interaction/bottle-floor.ts';
   import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
   import {
     parseStaticColliders,
@@ -3677,6 +3678,36 @@
       cell.floor = support;
     return cell;
   }
+  function interactionFloorAt(x, z) {
+    if (!walkGrid) {
+      const floor = sampleFloor(x, z);
+      return Number.isFinite(floor) ? floor : null;
+    }
+    const cell = walkCell(x, z, Infinity);
+    if (Number.isFinite(cell.floor)) return cell.floor;
+    const k = walkIdx(x, z);
+    if (k < 0) return null;
+    const i = k % walkGrid.width,
+      j = (k - i) / walkGrid.width;
+    const neighbours = [];
+    for (let dj = -1; dj <= 1; dj++)
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const ni = i + di,
+          nj = j + dj;
+        if (ni >= 0 && ni < walkGrid.width && nj >= 0 && nj < walkGrid.height)
+          neighbours.push(walkGrid.floor[nj * walkGrid.width + ni]);
+      }
+    // The grid has sparse one-cell omissions in otherwise measured floor coverage. Unlike the
+    // walker, which carries its previous height across those cells, a loose bottle needs a support
+    // plane. Fill only a one-cell interior omission with two neighbouring measurements that agree
+    // within one grid cell of vertical change. Wider holes and all outside cells stay unsupported.
+    return interpolateBottleFloor(
+      { floor: cell.floor, inside: !!cell.inside, distance: cell.dist },
+      neighbours,
+      Math.min(WALK_STEP_UP, walkGrid.cell),
+    );
+  }
   function walkBandMask(h) {
     // the solid bins a body standing on floor h would occupy
     // Classify a bin by its centre. Rounding the lower edge down includes a tread whose
@@ -4926,8 +4957,7 @@
           play,
           seek: setTime,
           floorAt(x, z) {
-            const floor = walkGrid ? walkCell(x, z, Infinity).floor : sampleFloor(x, z);
-            return Number.isFinite(floor) ? floor : null;
+            return interactionFloorAt(x, z);
           },
           blockedAt(position, radius) {
             const center = new THREE.Vector3(...position);
