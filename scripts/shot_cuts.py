@@ -479,16 +479,53 @@ def trim(video: Path, shot: dict, out: Path, fps: float) -> Path:
 
 # ---------------------------------------------------------------- teleport guard
 def scene_depth(pi3x: Path) -> float | None:
-    """Median distance from the first anchor camera to its own points: the scene's own scale."""
+    """Median static depth in exported-camera units, using the recorded scale anchor.
+
+    Legacy outputs without an anchor identity use their first supported anchor. Without
+    any recorded normalization scale, legacy camera/anchor coordinates share native units.
+    An explicitly invalid reference is unchecked, never silently replaced by another view.
+    """
     import numpy as np
 
     f = pi3x / "anchors.npz"
     if not f.exists():
         return None
-    z = np.load(f)
-    pts, valid, cam = z["points"][0], z["valid"][0].astype(bool), z["poses"][0][:3, 3]
-    P = pts[valid].reshape(-1, 3)
-    return float(np.median(np.linalg.norm(P - cam, axis=1))) if len(P) else None
+    cameras_file = pi3x / "cameras.json"
+    reference = (
+        json.loads(cameras_file.read_text()).get("reference", {}) if cameras_file.exists() else {}
+    )
+    recorded = reference.get("staticScaleReference", {})
+    scale = reference.get("scale", recorded.get("scale", 1.0))
+    if isinstance(scale, bool) or not isinstance(scale, (int, float)):
+        return None
+    if not np.isfinite(scale) or scale <= 0:
+        return None
+    with np.load(f) as z:
+        selected = recorded.get("anchorOrdinal")
+        if "anchorOrdinal" in recorded:
+            if type(selected) is not int or not 0 <= selected < len(z["poses"]):
+                return None
+            candidates = [selected]
+        else:
+            candidates = range(len(z["poses"]))
+        people = z["static_people"] if "static_people" in z else z.get("people")
+        for j in candidates:
+            pose = z["poses"][j]
+            if not np.isfinite(pose).all():
+                continue
+            pts = z["points"][j]
+            valid = z["valid"][j].astype(bool) & np.isfinite(pts).all(-1)
+            if people is not None:
+                valid &= ~people[j].astype(bool)
+            offsets = pts[valid].reshape(-1, 3) - pose[:3, 3]
+            # Camera-to-world rotations map positive camera z into the observed half-space.
+            offsets = offsets[(offsets @ pose[:3, :3])[:, 2] > 0]
+            distances = np.linalg.norm(offsets, axis=1)
+            distances = distances[np.isfinite(distances) & (distances > 0)]
+            if len(distances):
+                depth = float(np.median(distances)) * scale
+                return depth if np.isfinite(depth) and depth > 0 else None
+    return None
 
 
 def teleport_check(pi3x: Path) -> dict:
@@ -513,7 +550,10 @@ def teleport_check(pi3x: Path) -> dict:
     dt[dt <= 0] = float(np.median(dt[dt > 0])) if (dt > 0).any() else 1.0
     depth = scene_depth(pi3x)
     if not depth:
-        return dict(ok=None, reason="no anchors.npz, so the scene has no scale to measure against")
+        return dict(
+            ok=None,
+            reason="no supported finite static anchor depth and normalization scale in exported-camera units",
+        )
     speed = steps / dt / depth  # scene depths per second
     typical = max(float(np.median(steps)), 1e-9)
     spike = steps / typical
