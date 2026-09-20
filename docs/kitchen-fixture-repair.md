@@ -95,3 +95,16 @@ paths and 35,667 previous archive entries remain identical, including the accept
 Publication had no exclusions. Source bindings, rejected candidates, geometry scripts, browser
 checks and preview captures are under `evidence/kitchen-fixture-repair-v1/`. Local verification:
 `.context/evidence/kitchen-fixture-repair/publication-verification.json`.
+
+## Shareable team video
+
+The [team MP4](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/kitchen-team-share.mp4)
+is a standalone 1280×720 H.264/AAC file, 20,721,178 bytes, suitable for sending directly to the team.
+At the user's request, audio ends at 48.730 seconds, leaving the final two seconds silent while
+keeping the complete 50.730-second video. All 609 compressed video packets and their timestamps
+match the reviewed preview exactly; video has not been re-encoded. The earlier audio is re-encoded
+as AAC at 192 kb/s. The original preview and reconstruction audio remain available.
+
+SHA-256: `cd918e4a7368d18ce0c6910b1f1a8c8c6f8ab70a01fef4d2aaee4cfba7b34ad3`.
+Full decoding, stream durations and actual browser tail playback pass. The review page has a
+**Download team MP4** link. Export verification is under `.context/evidence/kitchen-share-export/`.
