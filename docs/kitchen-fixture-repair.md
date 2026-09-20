@@ -108,3 +108,9 @@ as AAC at 192 kb/s. The original preview and reconstruction audio remain availab
 SHA-256: `cd918e4a7368d18ce0c6910b1f1a8c8c6f8ab70a01fef4d2aaee4cfba7b34ad3`.
 Full decoding, stream durations and actual browser tail playback pass. The review page has a
 **Download team MP4** link. Export verification is under `.context/evidence/kitchen-share-export/`.
+
+The export is published in `wander-shared-797639045717`, viewer/archive snapshot
+`dbdbf4a1-5bfb-4746-b16a-7d763fa86b84`. The MP4, export manifest and updated download page passed
+remote checksum/size and fresh-download SHA-256 checks. All 16,974 unaffected viewer entries
+and 36,709 prior archive entries remain unchanged. Export evidence is archived under
+`evidence/kitchen-team-video-v1/`.
