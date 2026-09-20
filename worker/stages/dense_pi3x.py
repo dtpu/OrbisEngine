@@ -102,10 +102,12 @@ def similarity(src, dst, minimum=MIN_SIMILARITY_POINTS, spread=MIN_SIMILARITY_SP
         moments = np.linalg.eigvalsh(aa.T @ aa / len(a))
         if not np.isfinite(moments).all() or moments[-1] <= 0:
             raise RuntimeError("Anchor correspondences have no finite spread to align")
-        if moments[0] <= spread * moments[-1]:
+        # a plane (floor, wall) still fixes a rotation; only a line or a point does not, so the
+        # test is the SECOND principal spread, not the smallest
+        if moments[1] <= spread * moments[-1]:
             raise RuntimeError(
                 f"Anchor correspondences are degenerate: principal spreads "
-                f"{moments[0]:.3e}/{moments[-1]:.3e} put them on a line or a point, "
+                f"{moments[1]:.3e}/{moments[-1]:.3e} put them on a line or a point, "
                 "which does not determine a rotation"
             )
         try:
@@ -567,6 +569,14 @@ def output_slots(times, fps):
     latest = {}
     for index, seconds in enumerate(times):
         latest[int(math.floor(float(seconds) * fps + 0.5))] = index
+    # At end of stream the filter only writes slots that start before the stream's end (last
+    # timestamp plus that frame's duration, rounded the same way), so a final frame that rounds
+    # UP into the slot at the end is never written. The last frame's duration is taken as the
+    # gap before it.
+    if len(times) > 1:
+        end = float(times[-1]) + (float(times[-1]) - float(times[-2]))
+        cutoff = int(math.floor(end * fps + 0.5))
+        latest = {slot: index for slot, index in latest.items() if slot < cutoff}
     slots = sorted(latest)
     if not slots:
         return [], 0
@@ -826,10 +836,17 @@ def main():
     opened, first_frame = opencv_first_frame(cv2, a.video)
     backend, backend_reason = choose_decode_backend(opened, first_frame)
     with_cap = cv2.VideoCapture(a.video)
-    source_size = (
-        int(probe.get("width") or with_cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
-        int(probe.get("height") or with_cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+    # The size must describe the pixels this backend hands over. OpenCV applies a stream's display
+    # rotation and reports the rotated size; the FFmpeg fallback decodes with -noautorotate, which
+    # is the coded size the probe reports. Mixing them puts the intrinsics on the wrong axes.
+    capture_size = (
+        int(with_cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+        int(with_cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
     )
+    probe_size = (int(probe.get("width") or 0), int(probe.get("height") or 0))
+    source_size = capture_size if backend == DECODE_OPENCV and min(capture_size) > 0 else probe_size
+    if min(source_size) < 1:
+        source_size = capture_size
     srcfps = float(probe.get("averageFps") or with_cap.get(cv2.CAP_PROP_FPS) or 0)
     container = int(probe.get("containerFrames") or with_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     with_cap.release()
@@ -847,9 +864,18 @@ def main():
     plan = sample_plan(a.fps, horizon, srcfps, pts_seconds=pts, pos_msec_seconds=stamps)
     wanted = {source: sample for sample, source in enumerate(plan["samples"])}
     # A resumed run reuses f_NNNNNN.jpg by sample number. If this run samples different source
-    # frames than the last one did, those files are pictures of other moments, and the cached
+    # frames than the last one did (or a different video, or other anchors), those files are
+    # pictures of other moments, and the cached
     # anchor prediction was made from them, so both go.
-    fingerprint = json.dumps(dict(fps=a.fps, backend=backend, samples=plan["samples"]))
+    fingerprint = json.dumps(
+        dict(
+            fps=a.fps,
+            backend=backend,
+            samples=plan["samples"],
+            anchors=a.anchors,
+            sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
+        )
+    )
     planfile = framesdir / "plan.json"
     if planfile.exists() and planfile.read_text() != fingerprint:
         for stale in framesdir.glob("f_*.jpg"):
