@@ -19,6 +19,9 @@ Judge candidates and cap retries per `docs/quality-rubric.md`.
 ## Tooling
 
 - Bun for viewer commands, `uv run --locked` for Python tools. Keep `bun.lock` and `uv.lock` current.
+- A pipeline run is a directory. `orchestrator/supervisor.py` gives each one an agent, the agent
+  does things with `wander` (`orchestrator/cli.py`), and `journal.jsonl` beside the run is what
+  happened. There is no workflow engine and no artifact transport between steps.
 - Run `bun run format:check` after code edits (Ruff for Python, Prettier for web code); use ordinary readable blocks.
 - Start Vite only with `bunx --bun vite --port 5399 --host 127.0.0.1`. `RECORD=1` disables reload during captures.
 - At most two subagents at once, on independent tasks; do not poll them.

@@ -823,7 +823,12 @@ def solve_raw(pi3x: Path, clip: str, anchor_samples: str | None = None):
     """
     cams_p = pi3x / "cameras.json"
     cams = json.load(open(cams_p))["cameras"]
-    C = np.array([np.array(c["camera_to_world"])[:3, 3] for c in cams], float)
+    # A frame the solve could not reconstruct records no camera. Gravity is estimated from the
+    # positions that exist; a gap contributes nothing rather than breaking the estimate.
+    recorded = [c for c in cams if c]
+    if not recorded:
+        raise ValueError(f"{cams_p} records no cameras")
+    C = np.array([np.array(c["camera_to_world"])[:3, 3] for c in recorded], float)
     scene = pi3x / "static-scene.npy"
     if not scene.exists():
         from bake_video_colours import static_cloud_from_anchors

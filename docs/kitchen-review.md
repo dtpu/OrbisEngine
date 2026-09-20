@@ -44,7 +44,7 @@ Missing/nonmonotonic PTS or unsupported FFmpeg diagnostics fail explicitly.
 Multi-image selection now requires source-bound camera metadata and exact retained frame indices
 and PTS before paid cleaning. Submission verifies the image hashes and selection receipt. Existing
 world reuse and known-operation recovery remain read-only paths without new cleaning prerequisites.
-Run `uv run --locked scripts/test_source_timing.py` for the offline pixel-identity and recovery tests.
+Run `uv run --locked scripts/tests/test_source_timing.py` for the offline pixel-identity and recovery tests.
 
 These changes do not relabel existing outputs or prove camera geometry. A reconstructed historical
 mapping needs independent pixel corroboration, and placement still needs held-out registration.

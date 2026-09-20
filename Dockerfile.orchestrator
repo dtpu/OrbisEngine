@@ -1,0 +1,20 @@
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+
+ARG INSTALL_MEDIA_TOOLS=0
+ARG UV_ONLY_GROUP=
+RUN if [ "$INSTALL_MEDIA_TOOLS" = "1" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends ffmpeg git openssh-client rsync \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN if [ -n "$UV_ONLY_GROUP" ]; then \
+      uv sync --frozen --only-group "$UV_ONLY_GROUP"; \
+    else \
+      uv sync --frozen --no-dev; \
+    fi
+COPY . .
+
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1

@@ -49,6 +49,15 @@ LOCAL_ENV = {
     "MODAL_PROFILE": os.environ.get("MODAL_PROFILE", "dtpu"),
 }
 
+
+def runs_dir() -> Path:
+    return Path(os.environ.get("WANDER_RUNS_DIR", ROOT / ".context/run")).expanduser().resolve()
+
+
+def public_dir() -> Path:
+    return Path(os.environ.get("WANDER_PUBLIC_DIR", ROOT / "public")).expanduser().resolve()
+
+
 MARBLE_MODES = ("video", "image", "multi", "both", "none")
 # scale_fit gates on each sampled frame's depth-ratio MEDIAN (0.95-1.05) and on its p10/p90: the median
 # alone passed hpwide with p10 0.71 / p90 1.37 -- two modes, 0.7 and 1.15, from a 15 deg frame tilt,
@@ -304,6 +313,39 @@ def probe(clip: Path) -> dict:
     )
 
 
+def clean_sample_count(clip: Path, fps: float) -> int:
+    """Count the actual frames FFmpeg emits for the clean worker's FPS filter.
+
+    `nb_frames` is container metadata and can disagree with decoded frames. Framemd5 is a
+    compact decoded stream, so this observes the same `fps` selection without retaining images.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(clip),
+            "-map",
+            "0:v:0",
+            "-vf",
+            f"fps={fps}",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "framemd5",
+            "-",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    count = sum(line.startswith(b"0,") for line in result.stdout.splitlines())
+    if not count:
+        raise ValueError("FFmpeg emitted no sampled frames for --clean-masks validation")
+    return count
+
+
 def body_stats(ply: Path) -> tuple[float, float]:
     """(body height, feet y) of frame 0 from the opaque splats, the numbers fourd.html derives."""
     import numpy as np
@@ -324,13 +366,13 @@ class Pipeline:
         self.clip = Path(clip or a.clip).resolve()
         self.name = name or a.name
         self.shot = shot
-        self.ctx = ROOT / ".context" / "run" / self.name
+        self.ctx = runs_dir() / self.name
         self.ctx.mkdir(parents=True, exist_ok=True)
         for directory in (SHARE, CLIPS, MARBLE_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         self.state = State(self.ctx / "state.json")
         self.info = probe(self.clip)
-        public = ROOT / "public"
+        public = public_dir()
         if not self.clip.is_relative_to(public):
             # Keep externally supplied source footage available to the shared viewer too.
             dest = public / "clips" / self.name / ("source" + self.clip.suffix.lower())
@@ -554,7 +596,10 @@ class Pipeline:
 
     def clean_flags(self):
         a = self.a
-        return [
+        clean_masks = getattr(a, "clean_masks", None)
+        if clean_masks and a.moved_mask:
+            raise ValueError("--clean-masks cannot be combined with --moved-mask")
+        flags = [
             "--fps",
             str(a.fps),
             "--width",
@@ -567,7 +612,50 @@ class Pipeline:
             str(a.bottom_extra),
             "--lama-px",
             str(a.lama_px),
-        ] + (["--moved-mask"] if a.moved_mask else [])
+        ]
+        if clean_masks:
+            self.validate_clean_masks(Path(clean_masks))
+            flags += ["--masks-in", str(Path(clean_masks).resolve())]
+        return flags + (["--moved-mask"] if a.moved_mask else [])
+
+    def validate_clean_masks(self, path: Path):
+        """Require packed masks for this source's observed FFmpeg sampling before any Modal call."""
+        import numpy as np
+
+        if not path.is_file():
+            raise ValueError(f"--clean-masks is not a file: {path}")
+        try:
+            with np.load(path, allow_pickle=False) as archive:
+                packed = archive["masks"]
+                declared = archive["shape"] if "shape" in archive.files else None
+        except (OSError, ValueError, KeyError) as error:
+            raise ValueError(f"Invalid --clean-masks archive {path}: {error}") from error
+        expected_height, expected_width = self.info["height"], self.info["width"]
+        expected_packed_width = math.ceil(expected_width / 8)
+        if packed.dtype != np.uint8 or packed.ndim != 3:
+            raise ValueError(
+                "--clean-masks masks must be a three-dimensional uint8 packed-bit array"
+            )
+
+        expected_shape = (
+            clean_sample_count(self.clip, self.a.fps),
+            expected_height,
+            expected_packed_width,
+        )
+        if tuple(packed.shape) != expected_shape:
+            raise ValueError(
+                "--clean-masks shape "
+                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
+            )
+        if declared is not None and tuple(declared.tolist()) != (
+            expected_shape[0],
+            expected_height,
+            expected_width,
+        ):
+            raise ValueError(
+                "--clean-masks shape metadata does not match the observed sampled frame count "
+                "and source dimensions"
+            )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
@@ -679,7 +767,7 @@ class Pipeline:
                     "--marble-dir",
                     str(MARBLE_DIR),
                     "--spz",
-                    f"public/marble-{self.name}-{suffix}.spz",
+                    str(public_dir() / f"marble-{self.name}-{suffix}.spz"),
                     "--thumb",
                     str(SHARE / f"{self.name}-{suffix}-thumb.png"),
                     *(extra or []),
@@ -729,7 +817,7 @@ class Pipeline:
                         "--marble-dir",
                         str(MARBLE_DIR),
                         "--spz",
-                        f"public/marble-{self.name}-{suffix}.spz",
+                        str(public_dir() / f"marble-{self.name}-{suffix}.spz"),
                         "--thumb",
                         str(SHARE / f"{self.name}-{suffix}-thumb.png"),
                     ],
@@ -749,7 +837,8 @@ class Pipeline:
             f"poll of operation {op_id} failed {self.a.poll_attempts} times. The world "
             f"is generated and paid for; recover it by hand with "
             f"`{Path(PY).name} scripts/marble_world.py {input_type} poll {op_id} --name {self.name}-{suffix} "
-            f"--marble-dir {MARBLE_DIR} --spz public/marble-{self.name}-{suffix}.spz`. "
+            f"--marble-dir {MARBLE_DIR} --spz "
+            f"{public_dir() / f'marble-{self.name}-{suffix}.spz'}`. "
             f"Last error: {last}"
         )
 
@@ -757,7 +846,7 @@ class Pipeline:
         """--reuse-world: adopt an existing world. No generation, no credits."""
         wid = self.a.reuse_world
         wj = MARBLE_DIR / f"{self.name}-{suffix}-world.json"
-        spz = ROOT / "public" / f"marble-{self.name}-{suffix}.spz"
+        spz = public_dir() / f"marble-{self.name}-{suffix}.spz"
         if wj.exists() and spz.exists() and json.loads(wj.read_text()).get("world_id") == wid:
             say(f"   reusing world {wid} already on disk ({spz.name}); no network, no credits")
             return
@@ -1008,7 +1097,7 @@ class Pipeline:
             raise QualityStop("blocked", "No finite positive fitted scale0; run scale_fit first")
         # verify_world renders with the viewer's own mapping (no re-anchoring), so it needs the
         # packaged, levelled cameras.json, not the raw Pi3X one
-        packaged = ROOT / "public" / "worlds" / f"{self.name}-4d" / "cameras.json"
+        packaged = public_dir() / "worlds" / f"{self.name}-4d" / "cameras.json"
         cameras = packaged if packaged.exists() else self.cameras()
         review = [
             getattr(self.a, field, None)
@@ -1345,6 +1434,10 @@ class Pipeline:
         )
 
     def lhm_motion(self, idx=None):
+        recover_missing = getattr(self.a, "recover_missing_poses", False)
+        fixed_scale = getattr(self.a, "fixed_world_scale", None)
+        if recover_missing and (idx is None or fixed_scale is None):
+            raise ValueError("Missing-pose recovery needs a saved track and measured fixed scale")
         if idx is None:
             dest = self.ctx / "lhm-motion"
             if self.recover_lhm(dest, "motion", self.ctx / "lhm_motion.log"):
@@ -1416,12 +1509,14 @@ class Pipeline:
                 str(self.ctx / "pi3x" / f"frame_{first:03d}.ply"),
                 "--out",
                 str(dest),
+                *(["--recover-missing-poses"] if recover_missing else []),
+                *(["--fixed-world-scale", str(fixed_scale)] if fixed_scale is not None else []),
             ],
             self.ctx / f"lhm_motion_{idx:02d}.log",
         )
 
     def package(self):
-        out = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        out = public_dir() / "worlds" / f"{self.name}-4d"
         shutil.rmtree(out, ignore_errors=True)
         run(
             [
@@ -1439,7 +1534,7 @@ class Pipeline:
         )
 
     def package_people(self):
-        out = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        out = public_dir() / "worlds" / f"{self.name}-4d"
         shutil.rmtree(out, ignore_errors=True)
         motions = []
         for i in range(self.people_limit):
@@ -1474,7 +1569,7 @@ class Pipeline:
         under gravity, and only an accepted flight is lifted, described from its own pixels, given a
         shape and packaged. A clip in which nothing is thrown reports that and passes.
         """
-        world = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        world = public_dir() / "worlds" / f"{self.name}-4d"
         if not (world / "people.json").exists() and not (world / "person").exists():
             raise RuntimeError("the people package has not run; objects live beside it")
         if not self.object_specs:
@@ -1844,11 +1939,12 @@ class Pipeline:
     # ---- world scale + fine-tune ------------------------------------------
     def world_spz(self) -> Path:
         for suffix in ("clean", "image", "multi"):
-            p = ROOT / "public" / f"marble-{self.name}-{suffix}.spz"
+            p = public_dir() / f"marble-{self.name}-{suffix}.spz"
             if p.exists():
                 return p
         raise RuntimeError(
-            f"no Marble world on disk for {self.name}: expected public/marble-{self.name}-clean.spz"
+            f"no Marble world on disk for {self.name}: expected "
+            f"{public_dir() / f'marble-{self.name}-clean.spz'}"
         )
 
     def cameras(self) -> Path:
@@ -1953,7 +2049,7 @@ class Pipeline:
         return rows, SHARE / f"{tag}-depth-ratio.png"
 
     def person_ply(self) -> Path:
-        p = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
+        p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if not p.exists():
             raise RuntimeError(f"{p} is missing; the package stage has not run")
         return p
@@ -2061,7 +2157,7 @@ class Pipeline:
         floor = self.placement().get("floor")
         if floor is None:
             raise RuntimeError("no implied floor: the package stage has not produced frame_000.ply")
-        wdir = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
         out = wdir / "placement.json"
         cmd = [
             PY,
@@ -2173,7 +2269,7 @@ class Pipeline:
         s = (self.state.data["stages"].get("_scale") or {}).get("scale0")
         if s is None:
             raise RuntimeError("no fitted scale0: run the scale_fit stage first")
-        out = ROOT / "public" / f"marble-{self.name}-finetuned"
+        out = public_dir() / f"marble-{self.name}-finetuned"
         if Path(f"{out}.spz").exists() and "finetune" not in (self.a.force or ""):
             raise RuntimeError(f"{out}.spz already exists; pass --force finetune to redo it")
         export = self.ctx / "ft-export"
@@ -2321,7 +2417,7 @@ class Pipeline:
                     worldUrl=w.get("world_marble_url"),
                 )
             break
-        ply = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
+        ply = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if ply.exists():
             body, feet = body_stats(ply)
             out.update(bodyHeight=body, feetY=feet)
@@ -2373,10 +2469,10 @@ class Pipeline:
             f"marble-{self.name}-clean.spz",
             f"marble-{self.name}-image.spz",
         ):
-            if (ROOT / "public" / cand).exists():
+            if (public_dir() / cand).exists():
                 world = "/" + cand
                 break
-        manifest = ROOT / "public" / "worlds" / f"{self.name}-4d" / "people.json"
+        manifest = public_dir() / "worlds" / f"{self.name}-4d" / "people.json"
         people_arg = ""
         if manifest.exists():
             doc = json.loads(manifest.read_text())
@@ -2609,7 +2705,7 @@ def cut_check(a) -> dict:
     the shots and cannot change its mind about which one it picked half way through.
     """
     clip = Path(a.clip).resolve()
-    out = ROOT / ".context" / "run" / a.name / "cuts.json"
+    out = runs_dir() / a.name / "cuts.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     source_hash = hashlib.sha256()
     with clip.open("rb") as source:
@@ -2755,11 +2851,11 @@ def resolve_shots(a) -> list[tuple[str, Path, dict | None]]:
         )
         say(
             f"   --shot N processes a different one, --all-shots processes every shot separately, "
-            f"and every shot's score is in {ROOT / '.context/run' / a.name / 'cuts.json'}"
+            f"and every shot's score is in {runs_dir() / a.name / 'cuts.json'}"
         )
     plan = []
     for shot in chosen:
-        dest = ROOT / "public" / "clips" / f"{a.name}-shot{shot['index']:02d}.mp4"
+        dest = public_dir() / "clips" / f"{a.name}-shot{shot['index']:02d}.mp4"
         name = (
             a.name if len(chosen) == 1 and not a.all_shots else f"{a.name}-shot{shot['index']:02d}"
         )
@@ -2769,7 +2865,7 @@ def resolve_shots(a) -> list[tuple[str, Path, dict | None]]:
                     PY,
                     "scripts/shot_cuts.py",
                     "--report",
-                    str(ROOT / ".context" / "run" / a.name / "cuts.json"),
+                    str(runs_dir() / a.name / "cuts.json"),
                     "--trim",
                     str(shot["index"]),
                     "--out",
@@ -2788,6 +2884,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
     ap.add_argument("--name", required=True)
+    ap.add_argument(
+        "--orchestrated",
+        action="store_true",
+        help="submit the durable Temporal pipeline instead of using the legacy in-process runner",
+    )
+    ap.add_argument("--pipeline-api", default="http://127.0.0.1:8000")
+    ap.add_argument("--pipeline-token-env", default="WANDER_API_TOKEN")
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument(
         "--source-sha256",
@@ -2890,12 +2993,29 @@ def main():
         help="clean everything that MOVED, not just the person: cast shadow, carried "
         "object, passer-by. Off by default, so every existing run is unchanged.",
     )
+    ap.add_argument(
+        "--clean-masks",
+        metavar="PATH",
+        help="packed uint8 NPZ masks for the exact observed FFmpeg --fps sampling; skips the "
+        "clean worker's segmentation, dilation, and contact-margin extension",
+    )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)
     ap.add_argument(
         "--person-frame", type=int, help="source frame for the LHM avatar (default: middle)"
     )
     ap.add_argument("--person-method", default="maskrcnn", choices=["segformer", "maskrcnn"])
+    ap.add_argument(
+        "--recover-missing-poses",
+        action="store_true",
+        help="estimate only missing saved-track poses from source pixels in a fresh candidate; "
+        "requires --fixed-world-scale from the retained registration",
+    )
+    ap.add_argument(
+        "--fixed-world-scale",
+        type=float,
+        help="retain a measured native/world scale for saved-track animation without refitting",
+    )
     ap.add_argument(
         "--all-people",
         action="store_true",
@@ -2976,6 +3096,34 @@ def main():
         help="keep this run local; normally outputs are archived privately without viewer promotion",
     )
     a = ap.parse_args()
+    if a.clean_masks and a.moved_mask:
+        ap.error("--clean-masks cannot be combined with --moved-mask")
+    if a.clean_masks and a.orchestrated:
+        ap.error("--clean-masks is currently supported by the direct runner only")
+    if a.orchestrated:
+        from run_pipeline import main as run_orchestrated
+
+        arguments = [
+            "--clip",
+            a.clip,
+            "--name",
+            a.name,
+            "--api",
+            a.pipeline_api,
+            "--token-env",
+            a.pipeline_token_env,
+            "--marble",
+            "none" if a.skip_marble else a.marble,
+            "--people",
+            str(a.people or (4 if a.all_people else 1)),
+        ]
+        if a.all_people:
+            arguments.append("--all-people")
+        if a.no_objects:
+            arguments.append("--no-objects")
+        if not a.skip_finetune and a.gpu_box:
+            arguments.append("--finetune")
+        raise SystemExit(run_orchestrated(arguments))
     if a.marble_key and os.environ.get(a.marble_key, "").startswith("-"):
         sys.exit("--marble-key takes the NAME of an env var, not a key")
     if a.shot is not None and a.all_shots:
