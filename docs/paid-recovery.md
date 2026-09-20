@@ -76,6 +76,14 @@ not mean the full recording was reconstructed: the recovery manifest stays parti
 command exits with that status after downloading outputs. Validate exact intended sample IDs and
 hashes before explicitly merging them with retained outputs. The wrapper never fills missing poses.
 
+Tracked animation selects the earliest sample with both a retained pose and declared person
+depth. `--registration-sample` binds that reference to its own source camera, source index and
+track ROI; it does not discard earlier poses. A one-pose prepass computes the same fixed median
+depth ratio before chronological export. Missing declared files or mismatched source records
+stop before submission. The option cannot be combined with `--fixed-world-scale`, and unset
+standalone calls retain their previous first-pose registration behavior. This resolves missing
+opening depth, not bad poses, appearance, floor contact or camera reconstruction.
+
 After inspecting saved provider or recovery evidence, reconcile the corresponding ledger claim:
 
 ```sh
