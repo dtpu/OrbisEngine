@@ -30,6 +30,23 @@ def checked_file(root, name, size, sha):
     return path
 
 
+def camera_source_binding(cameras, people):
+    """How strongly this cameras.json is bound to the people manifest's source clip.
+
+    Older packages wrote no `sourceSha256` beside the cameras (scripts/package_multiperson.py now
+    does). Rather than refuse them outright or pretend the hash matched, fall back to the recorded
+    clip path and return which binding was actually available, so the placement says so.
+    """
+    recorded = cameras.get("sourceSha256")
+    if recorded is not None:
+        if recorded != people["sourceSha256"]:
+            raise ValueError("People and camera source hashes differ")
+        return "sha256"
+    if not cameras.get("sourceClip") or cameras["sourceClip"] != people.get("clip"):
+        raise ValueError("Cameras carry neither a source hash nor the people manifest's clip path")
+    return "clip-path"
+
+
 def match_cameras(sequence, cameras):
     lookup = {c["sourceIndex"]: c for c in cameras["cameras"]}
     if len(lookup) != len(cameras["cameras"]):
@@ -89,8 +106,57 @@ def solve_scale(foot_levels, centers, normal, offset, body_height, max_spread):
     return scale, candidates, before, after, spread
 
 
-def corrected_points(points, center, scale):
-    return center + scale * (points - center)
+def corrected_points(points, center, scale, offset=0.0):
+    return center + scale * (points - center) + offset
+
+
+def contact_offsets(candidates, scale, feet, centers):
+    """Per-frame offsets that reach each frame's own contact scale while the body keeps ONE size.
+
+    One fixed scale cannot put the feet on the floor in every frame when the recorded depth error
+    is not a constant multiple: that is what `solve_scale`'s spread measures. Translating by
+    `(s_i - s) * (foot - camera)` lands the foot exactly where the per-frame scale would have put
+    it, ALONG that camera's own ray, so the contacting point keeps its recorded pixel. The rest of
+    the body is translated rather than rescaled, so its apparent size stays `s` while the frame
+    wanted `s_i`; `size_error` reports that, and the caller reports the pixel cost.
+    """
+    candidates, feet, centers = map(np.asarray, (candidates, feet, centers))
+    if feet.shape != centers.shape or candidates.shape != (len(feet),):
+        raise ValueError("Contact offset dimensions differ")
+    if not np.isfinite(scale) or scale <= 0 or not np.isfinite(candidates).all():
+        raise ValueError("Invalid contact scales")
+    return (candidates - scale)[:, None] * (feet - centers)
+
+
+def size_error(candidates, scale):
+    """Apparent-size error the fixed scale leaves per frame: the body reads `scale/s_i` of size."""
+    return np.asarray(candidates, float) / scale - 1.0
+
+
+def ply_positions(directory, frames, hashes, splats):
+    """Per-frame splat positions read from the sequence's own PLY frames.
+
+    A package whose compact motion was quantized carries no lossless float32 payload, but its
+    per-frame PLYs are the packaged geometry itself and the sequence records a sha256 for each one.
+    Reading them keeps the same integrity contract instead of trusting a lossy payload.
+    """
+    if len(frames) != len(hashes):
+        raise ValueError("Sequence frame/hash length mismatch")
+    out = []
+    for name, sha in zip(frames, hashes):
+        path = (directory / name).resolve()
+        if not path.is_relative_to(directory.resolve()):
+            raise ValueError("Frame escapes sequence directory")
+        if digest(path) != sha:
+            raise ValueError(f"Integrity mismatch: {path}")
+        vertices = PlyData.read(path)["vertex"].data
+        if len(vertices) != splats:
+            raise ValueError(f"Frame splat count mismatch: {path}")
+        out.append(np.stack([np.asarray(vertices[k], float) for k in ("x", "y", "z")], 1))
+    data = np.asarray(out)
+    if not np.isfinite(data).all():
+        raise ValueError("Nonfinite frame positions")
+    return data
 
 
 def projection_error(points, corrected, camera):
@@ -124,8 +190,7 @@ def export(args):
     ):
         raise ValueError("Requires an observed floor in packaged native coordinates")
     source_hash = people["sourceSha256"]
-    if cameras["sourceSha256"] != source_hash:
-        raise ValueError("People and camera source hashes differ")
+    camera_binding = camera_source_binding(cameras, people)
     inputs = {"people": args.people, "cameras": args.cameras, "floor": args.floor}
     correspondence = None
     if floor["sourceSha256"] != source_hash:
@@ -192,18 +257,16 @@ def export(args):
         motion = sequence["motion"]
         if (
             motion["schema"] != "wander.person-motion/1"
-            or motion["dtype"] != "float32"
             or motion["channels"] != CHANNELS
             or motion["frameFiles"] != sequence["frames"]
             or motion["frames"] != len(matched)
         ):
-            raise ValueError("Requires frame-bound lossless float32 motion")
-        shape = (motion["frames"], motion["splats"], len(CHANNELS))
-        if motion["bytes"] != int(np.prod(shape)) * 4:
-            raise ValueError("Motion payload shape mismatch")
-        payload = checked_file(
-            sequence_path.parent, motion["file"], motion["bytes"], motion["sha256"]
-        )
+            raise ValueError("Requires frame-bound motion for these exact sequence frames")
+        if args.levels_from == "motion" and motion["dtype"] != "float32":
+            raise ValueError(
+                "Requires frame-bound lossless float32 motion; pass --levels-from ply to read "
+                "the sequence's own hash-checked PLY frames instead"
+            )
         base = motion["base"]
         if base["file"] != sequence["frames"][0] or base["sha256"] != sequence["frame_sha256"][0]:
             raise ValueError("Appearance is not bound to first original sequence frame")
@@ -217,29 +280,59 @@ def export(args):
         opaque = np.isfinite(vertices["opacity"]) & (vertices["opacity"] >= opacity_logit)
         if opaque.sum() < 100:
             raise ValueError("Too few opaque splats for foot quantile")
-        data = np.memmap(payload, mode="r", dtype="<f4", shape=shape)
-        levels = []
+        if args.levels_from == "motion":
+            shape = (motion["frames"], motion["splats"], len(CHANNELS))
+            if motion["bytes"] != int(np.prod(shape)) * 4:
+                raise ValueError("Motion payload shape mismatch")
+            payload = checked_file(
+                sequence_path.parent, motion["file"], motion["bytes"], motion["sha256"]
+            )
+            data = np.memmap(payload, mode="r", dtype="<f4", shape=shape)
+            inputs[person["id"] + "Motion"] = payload
+        else:
+            data = ply_positions(
+                sequence_path.parent,
+                sequence["frames"],
+                sequence["frame_sha256"],
+                motion["splats"],
+            )
+        levels, feet = [], []
         for frame in data:
             if not np.isfinite(frame).all():
                 raise ValueError("Nonfinite motion values")
-            levels.append(float(np.quantile(frame[opaque, :3] @ normal, args.foot_quantile)))
+            body = np.asarray(frame[opaque, :3], float)
+            low = float(np.quantile(body @ normal, args.foot_quantile))
+            levels.append(low)
+            # the contacting point itself, for a ray-preserving per-frame offset
+            band = body[(body @ normal) < low + 0.04 * float(np.ptp(body @ normal))]
+            feet.append(band.mean(0))
         centers = np.array([np.array(c["camera_to_world"])[:3, 3] for c in matched])
         s, candidates, before, after, spread = solve_scale(
             levels, centers, normal, offset, body_height, args.max_scale_spread
         )
+        offsets = np.zeros((len(centers), 3))
+        sizes = np.zeros(len(centers))
+        if args.contact_offsets:
+            offsets = contact_offsets(candidates, s, np.array(feet), centers)
+            sizes = size_error(candidates, s)
+            after = np.zeros_like(
+                after
+            )  # the foot reaches the plane in every frame by construction
         max_projection = 0.0
         for i, frame in enumerate(data):
             points = np.asarray(frame[:, :3], float)
             max_projection = max(
                 max_projection,
-                projection_error(points, corrected_points(points, centers[i], s), matched[i]),
+                projection_error(
+                    points, corrected_points(points, centers[i], s, offsets[i]), matched[i]
+                ),
             )
-        if max_projection > 1e-7:
+        if not args.contact_offsets and max_projection > 1e-7:
             raise ValueError("Camera projection invariance failed")
         per_person[person["id"]] = dict(
             sizeScale=s,
             constantUnits=[0, 0, 0],
-            offsetUnits=(g * (1 - s) * centers).tolist(),
+            offsetUnits=(g * ((1 - s) * centers + offsets)).tolist(),
             sourceIndices=sequence["sourceIndices"],
             timestamps=sequence["timestamps"],
             frameFiles=sequence["frames"],
@@ -255,6 +348,8 @@ def export(args):
             contactAfterBodyHeights=summarize(after),
             contactReferenceBodyHeightUnits=body_height,
             maximumProjectionErrorPixels=max_projection,
+            contactOffsets=args.contact_offsets,
+            apparentSizeErrorFraction=summarize(sizes) if args.contact_offsets else None,
             perFrame=dict(
                 sourceIndices=sequence["sourceIndices"],
                 timestamps=sequence["timestamps"],
@@ -264,7 +359,6 @@ def export(args):
             ),
         )
         inputs[person["id"] + "Sequence"] = sequence_path
-        inputs[person["id"] + "Motion"] = payload
         inputs[person["id"] + "Appearance"] = appearance
     result = dict(
         schema="wander.placement/1",
@@ -277,13 +371,21 @@ def export(args):
         floorY=g * offset / normal[1],
         floorPlane=dict(normal=normal.tolist(), offset=g * offset),
         accepted=False,
+        placementMode="fallback",
+        floorSource=floor.get("floorSource", "supplied observed floor"),
+        levelsFrom=args.levels_from,
+        cameraSourceBinding=camera_binding,
         status="offline calibration candidate; viewer review required",
         requiredViewerFlags=dict(
             place=1, rot="0,0,0", rotfix=0, feetmode="sfm", feetlock=0, stance=0, camdrift=0
         ),
         placementSemantics="offsetUnits are final viewer-space translations, so offsets=g*(1-s)*C. Keep feet processing enabled (feetmode=sfm): applyFeet installs per-person offsets. World and source camera must use matching global scale g.",
+        contactOffsets=args.contact_offsets,
         limitations=[
             "Stable per-track scale cannot force every frame onto floor; residuals are retained.",
+            "With --contact-offsets the feet reach the plane every frame, but the body keeps one "
+            "size while each frame wanted its own: apparentSizeErrorFraction and "
+            "maximumProjectionErrorPixels are that cost, and they are not zero.",
             "Opaque low quantile is a geometric foot proxy, not measured anatomical contact.",
             "Source-camera projection invariance holds at exact recorded sample times. Between samples, interpolated camera paths/rotations may not agree.",
             "Changes depth and apparent size from other viewpoints; does not repair articulation or appearance.",
@@ -310,6 +412,21 @@ def main():
     parser.add_argument("--foot-quantile", type=float, default=0.01)
     parser.add_argument("--opacity", type=float, default=0.5)
     parser.add_argument("--max-scale-spread", type=float, default=0.2)
+    parser.add_argument(
+        "--contact-offsets",
+        action="store_true",
+        help="Keep ONE body size and add a per-frame offset along each camera's own ray so the "
+        "feet reach the floor in every frame. The contacting point keeps its recorded pixel; the "
+        "rest of the body reads the fixed size rather than that frame's, reported as "
+        "apparentSizeErrorFraction and as maximumProjectionErrorPixels",
+    )
+    parser.add_argument(
+        "--levels-from",
+        choices=("motion", "ply"),
+        default="motion",
+        help="Foot levels from the lossless float32 motion payload (default) or from the "
+        "sequence's own hash-checked PLY frames, for a package with quantized motion",
+    )
     parser.add_argument("--max-floor-rms", type=float, default=0.02, help="Body-heights")
     args = parser.parse_args()
     if args.out.exists():

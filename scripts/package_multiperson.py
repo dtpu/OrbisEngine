@@ -188,6 +188,10 @@ def main():
                 frameAlign=fa,
                 source=str(a.cameras),
                 sourceClip=str(a.clip),
+                # people.json and every sequence.json carry this hash; without it here a consumer
+                # that pairs cameras with people (scripts/calibrate_person_floor.py) can only bind
+                # them by file path.
+                sourceSha256=hashlib.sha256(Path(a.clip).read_bytes()).hexdigest(),
                 cameras=out_cams,
             ),
             indent=1,

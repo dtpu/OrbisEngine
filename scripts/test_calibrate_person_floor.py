@@ -5,7 +5,15 @@ import unittest
 
 import numpy as np
 
-from calibrate_person_floor import corrected_points, match_cameras, projection_error, solve_scale
+from calibrate_person_floor import (
+    camera_source_binding,
+    contact_offsets,
+    corrected_points,
+    match_cameras,
+    projection_error,
+    size_error,
+    solve_scale,
+)
 
 
 class CameraCentredFloor(unittest.TestCase):
@@ -69,6 +77,54 @@ class CameraCentredFloor(unittest.TestCase):
         sequence["timestamps"][1] = 1.6
         with self.assertRaisesRegex(ValueError, "source index/time"):
             match_cameras(sequence, cameras)
+
+
+class ContactOffsets(unittest.TestCase):
+    def test_per_frame_offset_lands_every_foot_and_keeps_its_pixel(self):
+        # Two frames whose recorded depth error is NOT a constant multiple, so one scale cannot
+        # contact both: the spread gate refuses it, and the offsets reach the floor anyway.
+        centers = np.array([[0.0, 2, 0], [1.0, 2, 0], [-1.0, 2, 0]])
+        feet = np.array([[0.2, 0.5, -3.0], [1.1, 1.0, -2.0], [-0.9, 0.8, -2.5]])
+        # each frame's own contact scale: extend the camera-to-foot ray until it reaches y = 0
+        candidates = (0 - centers[:, 1]) / (feet[:, 1] - centers[:, 1])
+        with self.assertRaisesRegex(ValueError, "Uncertain"):
+            solve_scale(feet[:, 1], centers, [0, 1, 0], 0, 1.7, 0.2)
+        scale = float(np.median(candidates))
+        offsets = contact_offsets(candidates, scale, feet, centers)
+        for i in range(len(centers)):
+            moved = corrected_points(feet[i : i + 1], centers[i], scale, offsets[i])
+            exact = centers[i] + candidates[i] * (feet[i] - centers[i])
+            np.testing.assert_allclose(moved[0], exact, atol=1e-12)
+            self.assertAlmostEqual(float(moved[0][1]), 0.0)  # on the y = 0 floor
+            camera = dict(
+                camera_to_world=np.block(
+                    [[np.eye(3), centers[i][:, None]], [np.zeros(3), 1]]
+                ).tolist(),
+                source_intrinsics=[[800, 0, 320], [0, 700, 240], [0, 0, 1]],
+            )
+            # the contacting point itself moved along its own ray, so its pixel is unchanged
+            self.assertLess(projection_error(feet[i : i + 1], moved, camera), 1e-9)
+        np.testing.assert_allclose(
+            size_error(candidates, scale), candidates / scale - 1, atol=1e-12
+        )
+        self.assertGreater(float(np.max(np.abs(size_error(candidates, scale)))), 0.15)
+
+    def test_contact_offsets_reject_mismatched_shapes(self):
+        with self.assertRaisesRegex(ValueError, "dimensions differ"):
+            contact_offsets([1.0, 2.0], 1.0, np.zeros((3, 3)), np.zeros((3, 3)))
+
+
+class CameraBinding(unittest.TestCase):
+    def test_hash_binding_preferred_and_path_binding_named(self):
+        people = dict(sourceSha256="a" * 64, clip="/clips/x.mp4")
+        self.assertEqual(camera_source_binding(dict(sourceSha256="a" * 64), people), "sha256")
+        with self.assertRaisesRegex(ValueError, "source hashes differ"):
+            camera_source_binding(dict(sourceSha256="b" * 64), people)
+        self.assertEqual(
+            camera_source_binding(dict(sourceClip="/clips/x.mp4"), people), "clip-path"
+        )
+        with self.assertRaisesRegex(ValueError, "neither a source hash"):
+            camera_source_binding(dict(sourceClip="/clips/other.mp4"), people)
 
 
 if __name__ == "__main__":
