@@ -222,6 +222,24 @@ class ActivityTests(unittest.TestCase):
         self.assertIn("WANDER_KEY_THAT_IS_NOT_SET", result.error)
         self.assertFalse(marker.exists(), "the stage ran without the credential it declared")
 
+    def test_a_command_that_cannot_be_built_blocks_with_the_reason(self):
+        """Raising here left the ledger holding an attempt that said running for ever.
+
+        lhm_frozen asked for a clip it had never declared, so building its command raised
+        before anything ran: no command, no logs, no reason, and a node the dashboard showed
+        as working.
+        """
+
+        def build(context):
+            raise ValueError("requires exactly one source artifact")
+
+        result = self.runner(CommandAdapter(build)).execute(self.request(), "attempt-1")
+        self.assertEqual(result.status, "blocked")
+        self.assertIn("could not be built", result.error)
+        self.assertIn("source artifact", result.error)
+        attempt = self.root / "runs/run-1/attempts/example/attempt-1"
+        self.assertEqual(json.loads((attempt / "result.json").read_text())["status"], "blocked")
+
     def test_missing_adapter_blocks_without_starting_attempt(self):
         result = self.runner(CommandAdapter(lambda context: None)).execute(
             self.request("missing"), "attempt-1"

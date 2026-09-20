@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from types import SimpleNamespace
 
 from orchestrator.activities.adapters import (
+    LegacyPipelineAdapter,
     default_adapters,
     flags,
     legacy_parameter_flags,
@@ -199,6 +200,24 @@ class GraphShapeTests(unittest.TestCase):
                 command = self.command(executor, node_id)
                 self.assertEqual(command[command.index("--only") + 1], legacy)
                 self.assertEqual("--people" in command, multiperson)
+
+    def test_every_legacy_stage_declares_the_clip_its_command_opens(self):
+        """run_clip.py requires --clip and probes it before reaching the stage asked for.
+
+        lhm_frozen declared only its prepared person, so building its command raised before
+        anything ran, and the ledger was left holding an attempt that said running for ever.
+        """
+        legacy = {
+            stage.id: stage
+            for stage in stage_registry().values()
+            if isinstance(default_adapters().get(stage.executor), LegacyPipelineAdapter)
+        }
+        self.assertTrue(legacy, "precondition: some stages run through the legacy pipeline")
+        for stage_id, stage in legacy.items():
+            with self.subTest(stage=stage_id):
+                binding = stage.inputs.get("source")
+                self.assertIsNotNone(binding, f"{stage_id} never asks for the clip")
+                self.assertEqual(binding.role, "source_video")
 
     def test_every_named_stage_exists_in_the_graph_it_asks_for(self):
         """Read run_clip.py's own graph builders rather than trusting a list here."""
