@@ -584,7 +584,12 @@ class Pipeline:
             str(a.bottom_extra),
             "--lama-px",
             str(a.lama_px),
-        ] + (["--moved-mask"] if a.moved_mask else [])
+        ] + (
+            ["--moved-mask"]
+            if a.moved_mask
+            # Omitted at its default so existing runs keep their command identity.
+            else (["--people-mask", a.people_mask] if a.people_mask != "semantic" else [])
+        )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
@@ -2916,6 +2921,14 @@ def main():
         action="store_true",
         help="clean everything that MOVED, not just the person: cast shadow, carried "
         "object, passer-by. Off by default, so every existing run is unchanged.",
+    )
+    ap.add_argument(
+        "--people-mask",
+        default="semantic",
+        choices=["semantic", "foreground"],
+        help="which people to remove. semantic: every pixel labelled person (a stadium crowd "
+        "goes too). foreground: detected people tall enough to reconstruct, grown by the person "
+        "pixels attached to them; distant crowds stay as background. Not with --moved-mask.",
     )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)

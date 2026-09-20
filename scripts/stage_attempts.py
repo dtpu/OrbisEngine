@@ -142,7 +142,14 @@ NUMBER_FLAGS = {
     "--track-id",
     "--refine-strength",
 }
-TEXT_FLAGS = {"--experiment", "--mask-backend", "--alignment", "--depth-roi", "--refine-prompt"}
+TEXT_FLAGS = {
+    "--experiment",
+    "--mask-backend",
+    "--alignment",
+    "--depth-roi",
+    "--refine-prompt",
+    "--people-mask",
+}
 INPUT_FLAGS = {
     "--image",
     "--cameras",
