@@ -70,6 +70,16 @@ def write_session_id(reviews: Path, session: str) -> None:
     (reviews / SESSION_FILE).write_text(session + "\n")
 
 
+def forget_session(reviews: Path) -> None:
+    """Start the next review fresh.
+
+    Used after a session stops answering. Resuming one that already stopped twice tends to stop
+    a third time, and the run's memory is not lost with it: the queue file holds what was
+    decided, and the next review reads it.
+    """
+    (reviews / SESSION_FILE).unlink(missing_ok=True)
+
+
 def append_todo(todo: Path, request: ReviewInput) -> None:
     """Add this attempt to the run's running list of things to judge.
 
@@ -357,7 +367,9 @@ class ReviewActivities:
             render_instructions(packet, criteria, request.attempt_status, todo),
             session=session,
         )
-        if outcome.session:
+        if outcome.result.status == "stalled":
+            forget_session(reviews)
+        elif outcome.session:
             write_session_id(reviews, outcome.session)
         policy = self.harness.policy
         decided_by = f"agent:{policy.kind}:{policy.model or 'default'}:{policy.sandbox}"

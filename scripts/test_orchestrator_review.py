@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from orchestrator.activities.review import ReviewActivities
+from orchestrator.agent import harness as harness_module
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.artifacts import DatabaseFilesystemArtifactResolver, LocalCAS, freeze_attempt
 from orchestrator.contracts import NodeStatus, Run
@@ -129,6 +130,98 @@ class ReviewActivityTests(unittest.TestCase):
             attempt_ledger=self.ledger,
             harness=HarnessAgent(policy),
         )
+
+    def resumable_harness(self, body: str, **policy) -> HarnessPolicy:
+        """A fake harness that can continue a session, the way Codex does.
+
+        Its command takes ``{session}``, which the harness fills in with the session the agent
+        announced last time. That is what makes one run one conversation.
+        """
+        script = self.root / "resumable.py"
+        script.write_text(textwrap.dedent(body))
+        return HarnessPolicy(
+            kind="command",
+            command=(sys.executable, "-u", str(script), "{session}"),
+            timeout_seconds=60,
+            **policy,
+        )
+
+    def test_a_run_keeps_one_session_and_one_queue_across_reviews(self):
+        """Every attempt this run asks about goes to the same agent, with the list it has seen.
+
+        Judging each attempt in a fresh session makes the same mistake twice: a stage that has
+        already failed one way looks new, and a stage already passed gets re-argued.
+        """
+        policy = self.resumable_harness(
+            """
+            import json, pathlib, sys
+            session = sys.argv[1]
+            if not session:
+                print(json.dumps({"type": "thread.started", "thread_id": "t1"}))
+            pathlib.Path("seen-session.txt").write_text(session)
+            json.dump({"tool": "quality.verdict", "node_id": "clean",
+                       "attempt_id": json.load(open("task.json"))["attempts"][-1]["id"],
+                       "verdict": "pass", "rationale": "residual within tolerance"},
+                      open("decision.json", "w"))
+            """
+        )
+        activities = self.activities(policy)
+        activities.review(self.request, f"{RUN_ID}:9:1:agent")
+        reviews = self.root / "runs" / RUN_ID / "reviews"
+        self.assertEqual((reviews / "session.id").read_text().strip(), "t1")
+        queue = (reviews / "todo.md").read_text()
+        self.assertEqual(queue.count("- [ ] "), 1)
+        self.assertIn(self.request.attempt_id, queue)
+
+        activities.review(self.request, f"{RUN_ID}:9:2:agent")
+        scratch = reviews / "clean" / self.request.attempt_id
+        self.assertEqual((scratch / "seen-session.txt").read_text(), "t1")
+        self.assertEqual((reviews / "todo.md").read_text().count("- [ ] "), 2)
+
+    def test_the_brief_names_the_queue_and_the_knobs_this_stage_has(self):
+        policy = fake_harness(
+            self.root,
+            """
+            import json
+            brief = open("TASK.md").read()
+            assert "todo.md" in brief, "the brief does not point at the run's queue"
+            assert "`dilate`" in brief and "= 20" in brief, "the brief hides the stage's knobs"
+            json.dump({"tool": "quality.verdict", "node_id": "clean",
+                       "attempt_id": json.load(open("task.json"))["attempts"][-1]["id"],
+                       "verdict": "pass", "rationale": "read the brief"},
+                      open("decision.json", "w"))
+            """,
+        )
+        self.assertEqual(
+            self.activities(policy).review(self.request, f"{RUN_ID}:9:1:agent").decision, "pass"
+        )
+
+    def test_a_stalled_review_asks_a_person_and_starts_the_next_one_fresh(self):
+        """A session that stopped answering twice is not the one to ask a third time.
+
+        The run's memory is the queue file, not the session, so dropping it loses nothing that
+        matters and the stage is left where an operator can resume it.
+        """
+        polled = harness_module.POLL_SECONDS
+        harness_module.POLL_SECONDS = 0.2
+        self.addCleanup(setattr, harness_module, "POLL_SECONDS", polled)
+        policy = self.resumable_harness(
+            """
+            import json, sys, time
+            if not sys.argv[1]:
+                print(json.dumps({"type": "thread.started", "thread_id": "t1"}))
+            time.sleep(60)
+            """,
+            idle_seconds=1,
+            idle_nudges=1,
+        )
+        decision = self.activities(policy).review(self.request, f"{RUN_ID}:9:1:agent")
+        self.assertEqual(decision.decision, "needs_human")
+        self.assertIn("stopped working", decision.question)
+        self.assertIn("transcript", decision.question)
+        reviews = self.root / "runs" / RUN_ID / "reviews"
+        self.assertFalse((reviews / "session.id").exists())
+        self.assertIn(self.request.attempt_id, (reviews / "todo.md").read_text())
 
     def test_pass_verdict_keeps_the_reviewed_attempt_and_is_recorded(self):
         policy = fake_harness(
