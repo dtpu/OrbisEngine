@@ -46,7 +46,8 @@ near a recorded held pose: a successful return attaches the bottle to that pause
 the recording paused. It is not an animated catch, hand closure, or new body motion. A miss stays
 available for pickup; press X to restore an out-of-reach bottle.
 
-Loose bottles also use inferred support across single-cell gaps inside the measured floor region,
+Interaction loads the measured collision grid even when desktop walking is disabled. Loose bottles
+also use inferred support across single-cell gaps inside the measured floor region,
 requiring at least two neighboring floor samples that agree within one grid cell of height.
 This repairs sparse sampling gaps, not larger unknown areas or the outside boundary. The visible
 bottle has a separate conservative floor clearance so its base does not sink into the support.
@@ -59,11 +60,20 @@ leaves the glove visible. The locator stays upright when the bottle rotates. It 
 positions or enlarge the measured wall collider. The separate floor clearance encloses the
 replacement bottle in any orientation. The source bottle returns on replay.
 
+Coarse occupied floor cells can extend above their measured surface. A descending bottle sweeps to
+the first blocking boundary near known floor and settles there; side walls and ceilings still bounce
+it. This is conservative collision support, not a more precise reconstruction of the floor.
+
 Replay restores the recorded bottle, people, and source time to the start and plays once. It keeps
 the visitor's headset position and orientation; an existing voice session keeps its conversation
 history while it receives the reset state. Returning the bottle, ending playback, reconnecting
 voice, or leaving and re-entering VR does not loop or restart the recording automatically. After
 an interruption, press X to restore the recorded exchange.
+
+Main's in-VR scene sidebar remains available on right-controller B, with A selecting a scene.
+Switching scenes stops the old microphone. Returning to a cached interrupted scene keeps its bottle
+and paused recording, reconnects voice, and preserves the native XR session. The interaction opt-in
+carries across scene choices; a scene without a separately packaged thrown object uses normal playback.
 
 ## Runtime boundaries
 
@@ -130,7 +140,7 @@ source-audio pause, controller X replay, a grip and short throw into the assiste
 automatic smooth whole-body facing, reset of the facing transform, and paused VR re-entry.
 The expanded range, locator, rotated controller grip alignment, and recorded/proxy bottle visibility
 passed in the actual viewer; screenshots were reviewed with the held bottle clear of the source
-actor. The final focused interaction suite contains 94 passing tests. A comparison against the
+actor. The final focused interaction suite contains 95 passing tests. A comparison against the
 source footage confirmed the basic held-pose target; this is not a precise new wrist reconstruction.
 The ordinary viewer still loops when the experiment is absent. Focused tests, existing XR/audio/
 collision regressions, TypeScript/build, and repository formatting were checked separately.
@@ -141,7 +151,7 @@ generated audio through the spatial output graph. The full live interaction brow
 the revised prompt produced a short scene-specific greeting without an assistant introduction.
 SDK lifecycle/audio-gate unit checks use mocked transport.
 
-The latest real-asset check also dropped bottles at the two reported sparse-floor locations using
+The latest real-asset check also dropped bottles at the reported sparse-floor locations using
 the production floor callback and visual clearance; both settled above support. Two synthetic
 spoken turns through the live provider paused source playback and produced measured audio while
 the microphone stayed connected. The replies followed the new dry, competitive style. This checks
@@ -161,3 +171,9 @@ and spatial sound still need headset testing. Screenshots and measurements stay 
 After merging current main (`c93119a`), the updated character/bottle build entered a visible
 immersive session on the Quest with microphone permission granted and voice connected. Browser
 interaction checks, TypeScript/build, and formatting also passed after the merge.
+
+Main through `0546438` is now integrated with its persistent scene lifecycle and B/A sidebar.
+The combined live-provider browser check passed speech, three reported drop locations with and
+without walking enabled, switching away/back without replay, and grabbing after cached reactivation.
+Main's sidebar suite also passed cache/session preservation and failure recovery. The final build
+entered visible immersive VR on the physical Quest with voice connected (provider HTTP 201).
