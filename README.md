@@ -24,34 +24,31 @@ flowchart LR
   F --> G[Walk around in it]
 ```
 
-1. **Cameras.** [Pi3X](https://github.com/yyfz/Pi3) works out where the camera was in every frame, plus depth.
-2. **Room.** People are masked out with Mask R-CNN and the holes filled with [LaMa](https://github.com/advimman/lama). [World Labs Marble](https://docs.worldlabs.ai/api) generates a full Gaussian-splat room from the cleaned video. An OpenAI vision model writes the scene description that goes with it and screens the result. Optionally the room is then trained against the real frames with [gsplat](https://github.com/nerfstudio-project/gsplat), so invented surfaces get replaced by recorded ones.
-3. **People.** Each person is tracked and rebuilt as an [LHM](https://huggingface.co/3DAIGC/LHM-500M-HF) avatar of about 40,000 Gaussians, driven by their motion in the video.
-4. **Placement.** Scale and floor are fitted so feet land where they actually stood.
-5. **Viewer.** Three.js with [Spark](https://sparkjs.dev) for splats and WebXR for Quest. The source video is the master clock, so motion and audio stay in sync. The voice conversation uses the OpenAI Realtime API.
+| Step      | What happens                                                    | Built on                                                       |
+| --------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| Cameras   | Find where the camera was in every frame, plus depth            | [Pi3X](https://github.com/yyfz/Pi3)                            |
+| Clean     | Mask the people out and fill the holes                          | Mask R-CNN, [LaMa](https://github.com/advimman/lama)           |
+| Room      | Generate a full Gaussian-splat room from the cleaned video      | [Marble](https://docs.worldlabs.ai/api), OpenAI vision         |
+| Correct   | Train the room against the real frames (optional)               | [gsplat](https://github.com/nerfstudio-project/gsplat)         |
+| People    | Track each person and rebuild them as an animated avatar        | [LHM](https://huggingface.co/3DAIGC/LHM-500M-HF)               |
+| Placement | Fit scale and floor so feet land where they stood               |                                                                |
+| Viewer    | Walk around in a browser or a Quest, synced to the source video | Three.js, [Spark](https://sparkjs.dev), WebXR, OpenAI Realtime |
 
-GPU stages run on [Modal](https://modal.com). Scenes are stored in S3 and streamed by a small local server.
+GPU stages run on [Modal](https://modal.com). Scenes are stored in S3.
 
 ## What we tried first
 
-**Rebuilding the room from the footage.** [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3),
-[VGGT](https://github.com/facebookresearch/vggt) and [Brush](https://github.com/ArthurBrussee/brush)
-gave us a room that looked great from where the camera had been and fell apart everywhere else.
-We measured why: a camera walking forward only records about 41° off its own path, and coverage at
-90° was zero. You cannot rebuild what was never filmed.
+| Idea                                | Tried                                                                                                                                                                                                                | What happened                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Rebuild the room from the footage   | [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3), [VGGT](https://github.com/facebookresearch/vggt), [Brush](https://github.com/ArthurBrussee/brush)                                            | Great from the camera's spot, broken everywhere else                       |
+| Generate only the missing views     | [Stable Virtual Camera](https://github.com/Stability-AI/stable-virtual-camera), [GeoNVS](https://github.com/MinJunKang/GeoNVS), [GEN3C](https://github.com/nv-tlabs/GEN3C), [Lyra](https://github.com/nv-tlabs/lyra) | A courtyard that did not exist, grey mush, a shop sign turned to gibberish |
+| Rebuild people from depth           | [V-DPM](https://github.com/eldar/vdpm), [PIFuHD](https://github.com/facebookresearch/pifuhd)                                                                                                                         | Melted limbs                                                               |
+| Refine body poses against the video | our own optimiser                                                                                                                                                                                                    | Worse. One camera cannot tell how far away a hand is                       |
 
-**Generating only the missing views.** [Stable Virtual Camera](https://github.com/Stability-AI/stable-virtual-camera),
-[GeoNVS](https://github.com/MinJunKang/GeoNVS), [GEN3C](https://github.com/nv-tlabs/GEN3C) and
-[Lyra](https://github.com/nv-tlabs/lyra). We got a courtyard that did not exist, grey mush, a real
-shop sign rewritten into gibberish, and a scene too slow to walk through.
+A camera walking forward only records about 41° off its own path, so you cannot rebuild what was
+never filmed. What worked was generating the whole room, then correcting it with the footage.
 
-**People.** [V-DPM](https://github.com/eldar/vdpm) and [PIFuHD](https://github.com/facebookresearch/pifuhd)
-gave melted limbs before LHM worked. Refining body poses against the footage made them worse,
-because one camera cannot tell you how far away a hand is.
-
-What worked was to stop reconstructing the room, generate all of it, and then correct it with the
-footage. The [research log](docs/research-log.md) has every approach with its result, and
-[known limits](docs/known-limits.md) lists the dead ends.
+Full list in the [research log](docs/research-log.md). Dead ends in [known limits](docs/known-limits.md).
 
 ## Run the viewer
 
@@ -66,36 +63,36 @@ bun run demo
 
 Open http://127.0.0.1:5399/demo.html and pick a scene.
 
-Scene files are not in this repo. They live in our private S3 bucket, so out of the box this only
-works with the team's read-only credentials in `.env.local` (see `.env.example`). Without them you
-can run a scene bundle someone gives you:
+Scenes are not in this repo. You have three ways to get one:
 
-```sh
-tar -xzf orbis-sample.tar.gz        # unpacks into public/
-WANDER_ASSETS_MODE=local bun run demo
-```
+- **Team credentials:** put the read-only keys in `.env.local` (see `.env.example`).
+- **A scene bundle:** `tar -xzf orbis-sample.tar.gz`, then `WANDER_ASSETS_MODE=local bun run demo`.
+- **Your own clip:** see below.
 
-or process your own clip, below. Details are in [shared assets](docs/shared-assets.md).
+| Key           | Does          |
+| ------------- | ------------- |
+| W A S D       | Walk          |
+| Drag or click | Look around   |
+| Shift         | Run           |
+| Space         | Play or pause |
+| R             | Reset         |
+| M             | Overhead map  |
 
-**Controls:** WASD to walk, drag or click to look, Shift to run, Space to play or pause, R to
-reset, M for the overhead map.
+### Quest
 
-**Quest:** enable Developer Mode, plug in the headset, then:
+1. Enable Developer Mode and plug in the headset.
+2. Run `adb reverse tcp:5399 tcp:5399`.
+3. In the Meta Browser open `http://localhost:5399/demo.html?xr=1` and press Enter VR.
 
-```sh
-adb reverse tcp:5399 tcp:5399
-```
+B on the right controller opens the scene list. The desktop page shows what the headset sees.
 
-Open `http://localhost:5399/demo.html?xr=1` in the Meta Browser and press Enter VR. B on the right
-controller opens the scene list. The desktop page shows a live view of what the headset sees. For
-the voice and bottle scene, open `fourd.html?demo=elevator&interact=1&xr=1` with an
-`OPENAI_API_KEY` set on the server. Movement options and the rest are in
-[developing](docs/DEVELOPING.md#quest-details).
+To talk to a person and pick up the bottle, open `fourd.html?demo=elevator&interact=1&xr=1` with
+`OPENAI_API_KEY` set on the server. More options in [developing](docs/DEVELOPING.md#quest-details).
 
 ## Process your own clip
 
-You need [uv](https://docs.astral.sh/uv/), Python 3.11 or 3.12, FFmpeg, a Modal account, a World
-Labs API key and an OpenAI key. Put the keys in `.env.author` (`.env.example` lists them).
+You need [uv](https://docs.astral.sh/uv/), Python 3.11 or 3.12, FFmpeg, and keys for Modal, World
+Labs and OpenAI in `.env.author` (`.env.example` lists them).
 
 ```sh
 uv sync --locked --group inference
@@ -105,14 +102,13 @@ uv run --locked --group inference scripts/run_clip.py \
   --marble video --all-people --fps 12 --skip-finetune --no-publish
 ```
 
-The run stops once so you can check the cleaned frames (people gone, room intact). Run the same
-command again with `--gate-pass` to continue. Running it again after a crash resumes where it
-stopped. A 10-second clip takes about 25 minutes and costs roughly $0.15 of Modal GPU plus 1,600
-Marble credits.
+- The run stops once so you can check the cleaned frames. Run it again with `--gate-pass` to continue.
+- Running the same command after a crash resumes where it stopped.
+- A 10-second clip takes about 25 minutes, roughly $0.15 of Modal GPU plus 1,600 Marble credits.
+- Read [paid recovery](docs/paid-recovery.md) before retrying a failed paid stage.
 
-Clips that work: one continuous shot, 5 to 15 seconds, people at least 150 px tall, some sideways
-camera movement, decent light. Every paid stage is recorded in a ledger, so read
-[paid recovery](docs/paid-recovery.md) before retrying a failed one.
+**Clips that work:** one continuous shot, 5 to 15 seconds, people at least 150 px tall, some
+sideways camera movement, decent light.
 
 ## Limits
 
