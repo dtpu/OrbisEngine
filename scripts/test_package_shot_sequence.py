@@ -109,6 +109,45 @@ def make_candidate(root: Path, name: str, timestamps: list[float], duration: flo
     return world
 
 
+def make_world_only_cameras(path: Path, packaged: bool = False) -> Path:
+    """A raw `.context/run/<name>/pi3x/cameras.json` for a shot that reconstructs no person.
+
+    Camera 0 sits at (1, 2, 3) in the raw solve, so the packagers' reframe (camera 0 to the origin,
+    scripts/sfm_frame.py) is visible in the output rather than a no-op. `packaged=True` writes the
+    file scripts/package_multiperson.py would already have produced, which must be copied through.
+    """
+
+    def translation(x, y, z):
+        return [[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, z], [0, 0, 0, 1]]
+
+    document = {
+        "coordinates": "Pi3X raw export" if not packaged else "OpenGL, camera 0 = identity",
+        "cameras": [
+            {
+                "sourceIndex": 0,
+                "time": 0.0,
+                "camera_to_world": translation(1, 2, 3) if not packaged else translation(0, 0, 0),
+                "source_intrinsics": [[40.0, 0.0, 32.0], [0.0, 40.0, 24.0], [0.0, 0.0, 1.0]],
+                "source_image_size": [64, 48],
+            },
+            {
+                "sourceIndex": 4,
+                "time": 0.4,
+                "camera_to_world": translation(1, 2, 4) if not packaged else translation(0, 0, 1),
+                "source_intrinsics": [[40.0, 0.0, 32.0], [0.0, 40.0, 24.0], [0.0, 0.0, 1.0]],
+                "source_image_size": [64, 48],
+            },
+        ],
+    }
+    if packaged:
+        document["frameAlign"] = None
+        document["source"] = "already packaged by scripts/package_multiperson.py"
+        document["sourceClip"] = "fixture.mp4"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document))
+    return path
+
+
 def person_visibility(runs, timestamps, duration):
     """src/person-visibility.ts:2-33, re-implemented here so the merged runs are checked, not trusted.
 
@@ -203,6 +242,8 @@ class ShotSequence(unittest.TestCase):
             1.4,
             [{"id": "person", "timestamps": [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]}],
         )
+        # a close-up shot's own solve: a world and cameras, and no people.json anywhere
+        self.raw_cameras = make_world_only_cameras(self.root / "run/clip-shot01/pi3x/cameras.json")
         self.entries = [
             {
                 "candidateDir": str(self.shot0),
@@ -230,6 +271,19 @@ class ShotSequence(unittest.TestCase):
                 },
             },
         ]
+
+    def world_only_entries(self, **overrides):
+        """people, world-only, people -- the shape a cut sequence with one close-up shot has."""
+        entry = {
+            "world": "/marble-clip-shot01-clean.spz",
+            "sourceStart": 2.0,
+            "sourceEnd": 4.0,
+            "people": "none",
+            "noPeopleReason": "at most 24% of the person is ever inside the frame",
+            "camerasJson": str(self.raw_cameras),
+        }
+        entry.update(overrides)
+        return [self.entries[0], entry, self.entries[2]]
 
     def write_list(self, entries=None, name="shots.json") -> Path:
         path = self.root / name
@@ -387,6 +441,170 @@ class ShotSequence(unittest.TestCase):
             (self.out / "s00-person/sequence.json").stat().st_ino,
             (self.shot0 / "person/sequence.json").stat().st_ino,
         )
+
+    # ---------------------------------------------------------------- world-only shots
+    def test_a_world_only_shot_contributes_its_window_world_and_cameras(self):
+        report = self.run_package(self.world_only_entries())
+        manifest = self.merged()
+        self.assertEqual(len(manifest["shots"]), 3)
+        middle = manifest["shots"][1]
+        self.assertEqual(middle["sourceStart"], 2.0)
+        self.assertEqual(middle["sourceEnd"], 4.0)
+        self.assertEqual(middle["world"], "/marble-clip-shot01-clean.spz")
+        self.assertEqual(middle["people"], [])
+        self.assertIsNone(middle["primary"])
+        self.assertIsNone(middle["sampleRange"])
+        self.assertIsNone(middle["trimOffsetSeconds"])
+        self.assertIn("world-only", middle["trimOffsetSource"])
+        self.assertEqual(middle["cameras"], "shots/01/cameras.json")
+        self.assertTrue((self.out / "shots/01/cameras.json").is_file())
+        # the cast is only the two people shots'; nobody was invented for the middle one
+        self.assertEqual(
+            [p["id"] for p in manifest["people"]], ["s00-person", "s00-person_01", "s02-person"]
+        )
+        self.assertEqual(report["output"]["peopleCount"], 3)
+
+    def test_a_world_only_shot_s_cameras_are_written_in_the_packaged_shape(self):
+        self.run_package(self.world_only_entries())
+        packaged = json.loads((self.out / "shots/01/cameras.json").read_text())
+        # the shape scripts/package_multiperson.py:183-194 writes into a world directory
+        self.assertEqual(
+            sorted(packaged), ["cameras", "coordinates", "frameAlign", "source", "sourceClip"]
+        )
+        self.assertIn("camera 0 = identity", packaged["coordinates"])
+        self.assertIsNone(packaged["frameAlign"])
+        self.assertEqual(packaged["source"], str(self.raw_cameras))
+        self.assertEqual(packaged["sourceClip"], str(self.source))
+        for camera in packaged["cameras"]:
+            self.assertEqual(
+                sorted(camera),
+                [
+                    "camera_to_world",
+                    "sourceIndex",
+                    "source_image_size",
+                    "source_intrinsics",
+                    "time",
+                ],
+            )
+            self.assertEqual(len(camera["camera_to_world"]), 4)
+        # camera 0 goes to the origin, and every other camera moves with it: the frame fourd.html
+        # measures a start pose in (src/start-view.ts firstSourceCamera)
+        first, second = (c["camera_to_world"] for c in packaged["cameras"])
+        self.assertEqual([row[3] for row in first], [0.0, 0.0, 0.0, 1.0])
+        self.assertEqual([row[3] for row in second], [0.0, 0.0, 1.0, 1.0])
+
+    def test_an_already_packaged_cameras_file_is_copied_through_unchanged(self):
+        already = make_world_only_cameras(self.root / "packaged/cameras.json", packaged=True)
+        report = self.run_package(self.world_only_entries(camerasJson=str(already)))
+        self.assertEqual(
+            json.loads((self.out / "shots/01/cameras.json").read_text()),
+            json.loads(already.read_text()),
+        )
+        self.assertIn("already packaged", report["shots"][1]["camerasFrom"])
+
+    def test_a_world_only_shot_still_terminates_the_grid_at_its_cut(self):
+        self.run_package(self.world_only_entries())
+        manifest = self.merged()
+        # its own cut is on the grid, so a neighbour's last visibility interval stops there
+        self.assertIn(4.0, manifest["timestamps"])
+        self.assertIn(2.0, manifest["timestamps"])
+        # every mapped sample of the two people shots, plus a terminator at each of the three cuts
+        # that is not the end of the clip (2.0 and 4.0; shot 2 ends at the clip's end)
+        self.assertEqual(len(manifest["timestamps"]), 7 + 6 + 2)
+
+    def test_nobody_is_visible_during_a_world_only_shot(self):
+        self.run_package(self.world_only_entries())
+        manifest = self.merged()
+        for person in manifest["people"]:
+            visible = person_visibility(
+                person["visibleSampleRuns"], manifest["timestamps"], manifest["duration"]
+            )
+            for time in (2.0, 2.5, 3.0, 3.5, 3.99):
+                self.assertFalse(visible(time), f"{person['id']} is visible in the world-only shot")
+            start, end = (
+                manifest["shots"][person["shotIndex"]]["sourceStart"],
+                manifest["shots"][person["shotIndex"]]["sourceEnd"],
+            )
+            seen = [t for t in (i * SOURCE_SECONDS / 600 for i in range(600)) if visible(t)]
+            self.assertTrue(seen and all(start <= t < end for t in seen))
+
+    def test_the_report_lists_the_world_only_shot_with_its_reason(self):
+        report = self.run_package(self.world_only_entries())
+        self.assertEqual(
+            report["shotsWithoutPeople"],
+            [
+                dict(
+                    index=1,
+                    world="/marble-clip-shot01-clean.spz",
+                    sourceStart=2.0,
+                    sourceEnd=4.0,
+                    reason="at most 24% of the person is ever inside the frame",
+                    cameras="shots/01/cameras.json",
+                )
+            ],
+        )
+        self.assertEqual(report["shots"][1]["peopleCount"], 0)
+        self.assertIsNone(report["shots"][1]["mappedInterval"])
+        self.assertEqual(
+            self.merged()["shotSequence"]["shotsWithoutPeople"][0]["reason"],
+            "at most 24% of the person is ever inside the frame",
+        )
+
+    def test_a_world_only_shot_may_still_carry_its_own_placement(self):
+        placement = self.root / "run/clip-shot01/placement.json"
+        placement.write_text(json.dumps({"floorY": -0.25}))
+        self.run_package(self.world_only_entries(placementJson=str(placement)))
+        self.assertEqual(self.merged()["shots"][1]["placement"], "shots/01/placement.json")
+        self.assertEqual(
+            json.loads((self.out / "shots/01/placement.json").read_text())["floorY"], -0.25
+        )
+
+    def test_a_missing_people_json_is_an_error_not_a_silent_world_only_shot(self):
+        (self.shot1 / "people.json").unlink()
+        with self.assertRaisesRegex(SequenceError, 'must say so: set "people": "none"'):
+            self.run_package()
+
+    def test_a_world_only_shot_without_a_reason_is_refused(self):
+        with self.assertRaisesRegex(SequenceError, "requires a noPeopleReason"):
+            self.run_package(self.world_only_entries(noPeopleReason=None))
+        with self.assertRaisesRegex(SequenceError, "requires a noPeopleReason"):
+            self.run_package(self.world_only_entries(noPeopleReason="   "))
+
+    def test_only_the_string_none_declares_a_world_only_shot(self):
+        with self.assertRaisesRegex(SequenceError, 'people must be absent or the string "none"'):
+            self.run_package(self.world_only_entries(people=[]))
+        with self.assertRaisesRegex(SequenceError, 'people must be absent or the string "none"'):
+            self.run_package(self.world_only_entries(people=False))
+
+    def test_a_world_only_shot_must_name_its_cameras(self):
+        with self.assertRaisesRegex(SequenceError, "camerasJson must be a path"):
+            self.run_package(self.world_only_entries(camerasJson=None))
+        with self.assertRaisesRegex(SequenceError, "camerasJson .* does not exist"):
+            self.run_package(self.world_only_entries(camerasJson=str(self.root / "absent.json")))
+
+    def test_a_cameras_file_with_no_cameras_is_refused(self):
+        empty = self.root / "empty-cameras.json"
+        empty.write_text(json.dumps({"cameras": []}))
+        with self.assertRaisesRegex(SequenceError, "no non-empty `cameras` list"):
+            self.run_package(self.world_only_entries(camerasJson=str(empty)))
+
+    def test_a_cameras_file_missing_a_camera_s_own_fields_is_refused(self):
+        broken = self.root / "broken-cameras.json"
+        broken.write_text(json.dumps({"cameras": [{"sourceIndex": 0}]}))
+        with self.assertRaisesRegex(SequenceError, "camera 0 is missing time"):
+            self.run_package(self.world_only_entries(camerasJson=str(broken)))
+
+    def test_declaring_no_people_over_a_candidate_that_has_them_is_refused(self):
+        with self.assertRaisesRegex(SequenceError, "will not discard"):
+            self.run_package(self.world_only_entries(candidateDir=str(self.shot1)))
+
+    def test_a_sequence_of_only_world_only_shots_is_refused(self):
+        entries = [
+            self.world_only_entries()[1],
+            dict(self.world_only_entries()[1], sourceStart=4.5, sourceEnd=6.0),
+        ]
+        with self.assertRaisesRegex(SequenceError, "no shot contributes a sample"):
+            self.run_package(entries)
 
     # ---------------------------------------------------------------- audio
     def test_audio_manifest_covers_the_whole_original_clip(self):

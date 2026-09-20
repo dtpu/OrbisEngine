@@ -126,6 +126,68 @@ test('shotGaps mirrors the packager`s own gap list', () => {
   expect(shotGaps(shots, 0)).toEqual([]);
 });
 
+// A close-up whose subject is never really in frame, or a stylised character the pose model
+// refuses, reconstructs a world and no person. package_shot_sequence.py writes the shot with an
+// empty cast, no primary and the reason it was told; the viewer must play it like any other shot.
+const worldOnly = {
+  index: 1,
+  candidate: 'clip-shot02',
+  world: '/marble-clip-shot02-clean.spz',
+  sourceStart: 6.0,
+  sourceEnd: 9.5,
+  placement: null,
+  cameras: 'shots/01/cameras.json',
+  primary: null,
+  people: [],
+  noPeopleReason: 'at most 24% of the person is ever inside the frame',
+  sharedPlacement: null,
+  sharedScale: null,
+  floorFit: null,
+};
+
+test('a world-only shot parses as an ordinary shot with an empty cast', () => {
+  const shots = parseShots([raw[0], worldOnly])!;
+  expect(shots).toHaveLength(2);
+  expect(shots[1].people).toEqual([]);
+  expect(shots[1].primary).toBeNull();
+  expect(shots[1].world).toBe('/marble-clip-shot02-clean.spz');
+  expect(shots[1].cameras).toBe('shots/01/cameras.json');
+  expect(shots[1].noPeopleReason).toBe('at most 24% of the person is ever inside the frame');
+  // its window is real, so it owns its source time exactly as a shot with a cast does
+  expect(activeShotIndex(shots, 6.0)).toBe(1);
+  expect(activeShotIndex(shots, 9.4999)).toBe(1);
+  expect(activeShotIndex(shots, 9.5)).toBe(-1);
+  expect(shotAssetUrl('/worlds/clip-sequence-4d/', shots[1].cameras)).toBe(
+    '/worlds/clip-sequence-4d/shots/01/cameras.json',
+  );
+});
+
+test('an undeclared empty cast is not a world-only shot', () => {
+  // the packager only ever writes `noPeopleReason` when it was told one; without it an empty
+  // `people` is a packaging fault and the viewer must not present it as an artistic choice
+  const { noPeopleReason: _omitted, ...undeclared } = worldOnly;
+  const shots = parseShots([raw[0], undeclared])!;
+  expect(shots[1].people).toEqual([]);
+  expect(shots[1].noPeopleReason).toBeNull();
+  expect(parseShots([raw[0], { ...worldOnly, noPeopleReason: '' }])![1].noPeopleReason).toBeNull();
+});
+
+test('a world-only shot between two casts still bounds both of them', () => {
+  const shots = parseShots([
+    { ...raw[0], sourceEnd: 6.0 },
+    worldOnly,
+    { ...raw[1], index: 2, sourceStart: 9.5, sourceEnd: 12 },
+  ])!;
+  expect(shotGaps(shots, 12)).toEqual([]);
+  const lookup = createShotLookup(shots);
+  for (const t of [0, 5.999, 6, 9.4999, 9.5, 11.999]) {
+    expect(lookup(t)).toBe(activeShotIndex(shots, t));
+  }
+  expect(lookup(6)).toBe(1);
+  expect(lookup(5.999)).toBe(0);
+  expect(lookup(9.5)).toBe(2);
+});
+
 test('shotAssetUrl resolves package-relative paths beside people.json', () => {
   const base = '/worlds/clip-sequence-4d/';
   expect(shotAssetUrl(base, 'shots/00/cameras.json')).toBe(

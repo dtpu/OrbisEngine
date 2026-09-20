@@ -29,6 +29,15 @@ export interface ShotWindow {
   primary: string | null;
   /** Merged ids of the people confined to this shot by their `visibleSampleRuns`. */
   people: string[];
+  /**
+   * Why this shot reconstructs nobody, when the packager was told so explicitly (a close-up where
+   * the body is never really in frame, a stylised character the pose model refuses). Null for an
+   * ordinary shot. A world-only shot is a normal shot in every other way: it swaps in its own
+   * world, cameras and placement, and with no primary to look at its start pose falls back to the
+   * first source camera (src/start-view.ts). An empty `people` with no reason recorded is a
+   * packaging fault, not a declared one, so the two are not the same thing.
+   */
+  noPeopleReason: string | null;
   candidate: string | null;
   sharedPlacement: { bodyHeightUnits?: number; feetY?: number } | null;
   sharedScale: unknown;
@@ -83,6 +92,8 @@ export function parseShots(raw: unknown): ShotWindow[] | null {
       people: Array.isArray(s.people)
         ? s.people.filter((p): p is string => typeof p === 'string')
         : [],
+      noPeopleReason:
+        typeof s.noPeopleReason === 'string' && s.noPeopleReason ? s.noPeopleReason : null,
       candidate: typeof s.candidate === 'string' ? s.candidate : null,
       sharedPlacement:
         s.sharedPlacement && typeof s.sharedPlacement === 'object'
