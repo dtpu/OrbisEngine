@@ -289,6 +289,67 @@ class SampleAuthority(unittest.TestCase):
         self.assertEqual([int(i) for i in indices], list(range(0, 240, 2)))
         np.testing.assert_allclose(times, np.arange(0, 240, 2) / 24.0)
 
+    def test_only_the_tracked_person_s_own_samples_are_requested(self):
+        """A track's gaps are not work this run was asked for and did not do.
+
+        soccer-s2: 96 solved samples, a track present in 90 of them. Counting all 96 as
+        requested made a complete animation certify as partial source-motion coverage.
+        """
+        indices, times, _ = la.plan_samples(
+            self.cameras(self.VFR_INDICES), None, None, 12, 59.49, 477
+        )
+        absent = {3, 4, 9}
+        poses = [None if sample in absent else object() for sample in range(len(indices))]
+        requested = la.requested_samples(indices, times, poses, True)
+        seeded = [s for s in range(len(indices)) if s not in absent]
+        self.assertEqual([sample for sample, _, _ in requested], seeded)
+        # Cameras stay the authority for what each of those sample numbers addresses.
+        self.assertEqual(
+            [index for _, index, _ in requested], [self.VFR_INDICES[s] for s in seeded]
+        )
+        np.testing.assert_allclose(
+            [time for _, _, time in requested], [self.VFR_INDICES[s] / 59.49 for s in seeded]
+        )
+        self.assertFalse([sample for sample, _, _ in requested if sample in absent])
+
+    def test_requested_samples_match_the_frames_a_track_run_can_export(self):
+        """The certification rule itself: requestedSamples has to equal the exported frames."""
+        indices, times, _ = la.plan_samples(
+            self.cameras(self.VFR_INDICES), None, None, 12, 59.49, 477
+        )
+        poses = [None if sample in (0, 5) else object() for sample in range(len(indices))]
+        exported = [sample for sample, pose in enumerate(poses) if pose is not None]
+        self.assertEqual(len(la.requested_samples(indices, times, poses, True)), len(exported))
+
+    def test_a_gappy_track_on_a_constant_rate_clip_keeps_the_old_indices_and_times(self):
+        indices, times, _ = la.plan_samples(None, None, None, 12, 24.0, 240)
+        poses = [None if sample in (71, 80, 81) else object() for sample in range(len(indices))]
+        requested = la.requested_samples(indices, times, poses, True)
+        self.assertEqual(len(requested), len(indices) - 3)
+        for sample, index, time in requested:
+            self.assertEqual(index, int(indices[sample]))
+            self.assertAlmostEqual(time, float(times[sample]))
+
+    def test_pose_recovery_still_requests_the_samples_it_has_to_re_estimate(self):
+        """Without --track-only the gaps are the work: they stay requested."""
+        indices, times, _ = la.plan_samples(
+            self.cameras(self.VFR_INDICES), None, None, 12, 59.49, 477
+        )
+        poses = [None if sample in (3, 4) else object() for sample in range(len(indices))]
+        self.assertEqual(len(la.requested_samples(indices, times, poses, False)), len(indices))
+
+    def test_every_sample_is_requested_without_a_seed_track(self):
+        indices, times, _ = la.plan_samples(None, None, None, 12, 24.0, 240)
+        requested = la.requested_samples(indices, times, None, False)
+        self.assertEqual([index for _, index, _ in requested], [int(i) for i in indices])
+
+    def test_a_seed_of_the_wrong_length_is_refused(self):
+        indices, times, _ = la.plan_samples(
+            self.cameras(self.VFR_INDICES), None, None, 12, 59.49, 477
+        )
+        with self.assertRaises(ValueError):
+            la.requested_samples(indices, times, [object()] * 3, True)
+
     def test_malformed_supplied_samples_are_refused(self):
         for bad in ([3, 3, 9], [3, 9, 8], [-1, 4, 8], []):
             with self.assertRaises(ValueError):
