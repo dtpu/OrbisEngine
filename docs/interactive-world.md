@@ -1,8 +1,9 @@
 # Interactive world exploration
 
-This is a proposal, not an implemented feature. The first experiment is to enter a reconstructed
-scene, select a person, and have a conversation grounded in that scene. A later experiment adds
-one movable prop and lets the character respond to changes the viewer actually made.
+This is a proposal, not an implemented feature. The first experiment is a VR bottle-tossing
+scene: speak to a character through the headset microphone, catch the bottle, and throw it back.
+The character reacts to what actually happens. Conversation is voice-only, with no typed chat,
+chat panel, or transcript in the intended experience.
 
 ## First implementation goal
 
@@ -22,12 +23,13 @@ started conversation and a cooldown so walking around does not trigger repeated 
 Implement and review these stages in order:
 
 1. **Playback, interrupt, and reset:** opt-in scene entry paused, an immersive Replay control,
-   desktop and XR selection, grab/hold/release, recorded-motion ownership, and a reliable reset.
+   XR selection, grab/hold/release, recorded-motion ownership, and a reliable reset.
    Validate the exact bottle scene visually.
 2. **Throw and return:** bounded simulated throws, supported floor/wall contacts, an explicit
    assisted catch region near a recorded receiving pose, misses, and pickup after a miss.
-3. **Conversation:** explicit voice/text connection, scene/event context, proximity and bottle
-   reactions, transcripts, cancellation, and cleanup. No connection starts merely on page load.
+3. **Conversation:** explicit headset microphone activation, spoken answers, scene/event context,
+   proximity and bottle reactions, interruption, and cleanup. No connection starts merely on page
+   load. If microphone access fails, offer retry or mute status; do not introduce a text fallback.
 4. **Facing and actions:** whole-body turning around the character's position, a return marker,
    and an offer to replay. The agent cannot start or loop the recording on its own.
 5. **Acceptance:** demonstrate approach, catch, conversation, successful return, miss, reset,
@@ -38,6 +40,54 @@ Natural reaching, independent head/eye movement, lip sync, and new walking anima
 this first implementation. Initial engineering scaffolding exists locally for bottle physics
 and the agent connection; it is not yet integrated or a demonstrated viewer feature.
 
+## Voice and event logic
+
+The recording, bottle, and conversation have independent state:
+
+| System       | States and authority                                                                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recording    | Paused interaction or a manually started, single replay. Only visitor controls can start playback.                                                   |
+| Bottle       | Recorded track, held by visitor, simulated flight, resting after a miss, or accepted by a character. Exactly one system owns its position at a time. |
+| Conversation | Off, connecting, listening, speaking, or suspended during replay. Microphone use requires explicit activation and browser/headset permission.        |
+
+Stopping the recording freezes its people and soundtrack, not the application. Head and hand
+tracking, locomotion, bottle simulation, and live voice continue on their own updates. The first
+prototype does not synthesize new body animation while the recorded person is paused.
+
+Choose one active conversational character by pointing and selecting **Talk** in VR. Once voice
+is enabled, approaching that character can trigger a greeting. Use separate arrival/departure
+distances and a cooldown so small movements do not repeat it. Nearby people do not all answer,
+and walking away and back does not silently switch the active character. Use small selection,
+microphone, and speaking cues plus audible feedback; the experience must not require reading a
+conversation. Internal speech events may be used by the connection without becoming a chat UI.
+
+Seed the scene script from the manifest's recorded participants, held spans, and flights. This
+provides the original exchange's timing and roles, not a complete inferred personality or a fixed
+dialogue. During interaction, process actual events in this order:
+
+1. Validate and apply the local event immediately: proximity, grab, release, assisted return,
+   miss, replay, or reset. Controller grip grabs a reachable bottle; releasing grip supplies the
+   throw velocity. Do not wait for the agent before transferring ownership or advancing physics.
+2. Update scene context with the bottle owner, recording state, selected character, and event.
+   Send meaningful changes, not every frame, to the active voice session.
+3. Let the agent choose a spoken response and optionally request a supported action such as
+   facing the visitor, showing a return target, or offering replay. Validate that the action is
+   still allowed in the current scene and return its actual result.
+4. Cancel obsolete speech and pending actions when the visitor interrupts, resets, replays, or
+   leaves. A late response must not act on a newer scene state. Keep conversation history across
+   a replay/reset but explicitly tell the agent what physical state changed.
+
+An assisted return succeeds only when the simulated bottle reaches an available receiving
+region with a clear path. Otherwise it continues its flight or lands for pickup. The agent cannot
+declare a successful catch, teleport the bottle, start playback, or issue unsupported walking or
+joint animation. The initial receiving region is approximate and needs visual review against a
+paused pose; accepting the bottle does not imply an animated reach or hand closure.
+
+While listening, normal speech starts a turn; speaking over an answer interrupts it. A VR mic
+control mutes/unmutes the input, and ending Talk or leaving the scene releases the microphone
+and connection. Source replay suspends live input and answers. Connection failure leaves local
+movement and bottle interaction working, with a retry cue and no keyboard requirement.
+
 ## Manual replay while staying in VR
 
 Interaction mode is the default for this experiment. Entering or re-entering VR does not start
@@ -45,13 +95,17 @@ the source recording. Walking, hand input, and an explicitly connected conversat
 while the recording is paused. The current bodies hold their recorded poses until we add further
 animation; whole-body facing remains an illustrative interaction.
 
-Provide these controls both on desktop and inside the immersive scene:
+Provide these controls inside the immersive scene, accessible with controllers:
 
+- **Talk / microphone:** select a character and enable voice, with mute and end-conversation
+  controls. Show whether input is active, suspended, or unavailable without a chat panel.
 - **Replay recording:** deliberately restore the original character/bottle state and play once
   from the beginning. Keep the visitor's position and orientation. Make the bottle reset clear
   in the control's description. Retain conversation history and notify the agent of the reset.
 - **Pause / continue:** stop or continue that single playback without leaving VR. A catch can
-  also interrupt playback and transfer the bottle to the visitor.
+  also interrupt playback and transfer the bottle to the visitor. Continue is available only
+  while the original exchange is still intact. Once the visitor takes ownership of the bottle,
+  use Replay to explicitly restore the recorded exchange instead of silently snapping it back.
 - **Reset scene:** restore the original starting state and remain in interaction mode, paused.
 
 At the end of a replay, stop at a valid final pose and return to interaction mode. Returning the
@@ -70,9 +124,9 @@ opt-in experiment. Verify that the scene still accepts input after the recording
 
 | Interaction                                                 | Assessment                     | Main work                                                                                   |
 | ----------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
-| Point at a person or object and inspect it                  | Small first step               | Selection volumes, labels, and desktop/XR input routing.                                    |
+| Point at a person or object and inspect it                  | Small first step               | Selection volumes, selection cues, and XR input routing.                                    |
 | Speak to a person and hear an answer from their location    | Feasible prototype             | Scene context, a voice session, a live audio route, and conversation controls.              |
-| Ask a character to highlight an object or replay a moment   | Feasible prototype             | Explicit viewer actions with validated arguments and results.                               |
+| Ask a character for a return target or a replay offer       | Feasible prototype             | Validated viewer actions; the visitor starts replay manually.                               |
 | Pick up an independently loaded prop                        | Moderate                       | Hand attachment, ownership of its transform, release behavior, and reset.                   |
 | Open a door or move furniture embedded in the room          | Larger asset task              | Separate the object, repair the revealed background, and update collision geometry.         |
 | Make a recorded person walk over, gesture, or accept a prop | Larger animation task          | A controllable body representation, new motion, navigation, and contact handling.           |
@@ -127,11 +181,14 @@ or headset performance has been demonstrated by this investigation.
 
 ## Suggested first experience
 
-Enter the paused scene, select a person, and choose **Talk**. Ask a question
-about something visible. Hear a generated answer from the selected person's position, with a
-transcript and a clear indication that this is AI dialogue. Ask the character to highlight a
-known object. End the conversation and remain in the scene. Use **Replay recording** to watch the
-original exchange when desired.
+Enter the paused scene, select a person, and choose **Talk** to enable the headset microphone.
+Approach and greet the character. Hear a generated answer from their position, with a speaking
+cue and an audible introduction that identifies this as an AI character. Use **Replay recording**
+to watch the original exchange once; live conversation is suspended during playback. Catch the
+bottle with grip to interrupt the exchange, then talk while holding it. Throw it toward the
+assisted receiving region or miss and pick it up. The character reacts to the result. Remain in
+interaction mode until deliberately choosing Replay or Reset; returning the bottle never starts
+the source recording on its own.
 
 Start with a paused body and a speaking indicator. This proves conversation and scene awareness
 without claiming new body or lip animation. Use a standard synthetic voice. A character's persona
@@ -143,18 +200,21 @@ Keep generated responses separate from the original recorded soundtrack and tran
 1. **Entity registry:** adapt existing person/prop IDs into selectable entities with labels,
    position anchors, selection volumes, context, and supported actions. Extra static hotspots
    belong in scene manifests, not per-scene runtime constants.
-2. **Interaction controller:** desktop pointing and XR selection emit the same events. Begin with
-   one active conversation, explicit microphone activation, cancellation, and a text fallback.
+2. **Interaction controller:** XR selection chooses one active conversation. Use explicit
+   microphone activation, voice interruption, and cancellation. Route immersive menu selections
+   before teleport input, and use grip for bottle handling. No typed input is part of this scope.
 3. **Agent context:** provide the selected entity, reviewed scene facts, playback time, nearby
    entity IDs, and current interaction state. Add session memory for the conversation. Geometry
    and rendering alone do not give a language model knowledge of the scene.
-4. **Action interface:** expose a short list such as `inspect_entity`, `highlight_entity`, and
-   `seek_recording`. The viewer validates targets and supported operations, executes actions,
-   and returns the actual result. The model chooses actions; local code handles rendering,
-   collision, and animation on every frame.
+4. **Action interface:** expose a short list such as `face_player`, `show_return_target`, and
+   `offer_replay`. The last action offers the existing manual control; it never starts playback.
+   The viewer validates targets and supported operations, executes actions, and returns the
+   actual result. The model chooses actions; local code handles rendering, collision, and
+   animation on every frame.
 5. **Live voice:** use a separate live audio source attached to a reviewed head anchor, with a
-   documented approximate fallback when needed. Keep original playback paused during the first
-   experiment. Stop microphone tracks and responses on exit, scene change, or cancellation.
+   documented approximate fallback when needed. Keep original playback paused during live
+   conversation. Stop microphone tracks and responses on exit, scene change, or ending Talk.
+   Interrupting an answer cancels its speech and pending actions while keeping listening active.
 
 One candidate is the [OpenAI Realtime API](https://developers.openai.com/api/docs/guides/realtime),
 which supports browser speech conversations, interruptions, and conversation state. Its browser
@@ -163,12 +223,12 @@ flow uses a server-created ephemeral credential and WebRTC. Keep the project key
 execute actions requested during the conversation. This is an integration option, not a selected
 model, cost estimate, or tested Quest configuration.
 
-## Next experiment: one prop that changes the conversation
+## Bottle ownership and later expansion
 
-Use a prop already rendered separately. Give it explicit recorded, held, and released states so
-the recorded track and hand controller never both write its transform. Support reset to the
-recording. Validate collision and the visual result before adding throwing or a physical handoff.
-Send successful pickup/release events to the character so its response reflects actual state.
+Use the bottle already rendered separately. Give it explicit ownership states so the recorded
+track, hand controller, and physics never write its transform simultaneously. Validate collision,
+release motion, and the receiving region against the visible scene. Send confirmed pickup,
+return, and miss events to the character so its responses reflect actual state.
 
 A lamp or door can use deterministic rules; it does not need a separate language-model session.
 Multiple characters can have different contexts and memories while sharing the same agent
@@ -176,13 +236,17 @@ implementation. Autonomous conversations between characters can follow after one
 
 ## Evidence needed before calling the prototype successful
 
-- Selection consistently targets the intended visible entity on desktop and a physical headset.
+- Selection consistently targets the intended visible entity on a physical headset, with no
+  typing needed to select, converse, handle the bottle, replay, or reset.
 - Speech comes from the selected anchor and follows head turns; original audio does not double.
-- Interruption and cancellation stop speech, microphone capture, and pending actions correctly.
+- Speaking over an answer cancels its speech and pending actions while listening stays active.
+  Ending Talk, leaving the scene, or exiting VR releases microphone capture and the connection.
 - Scene changes cannot apply a late response or action to an entity in the new scene.
-- A claimed highlight, seek, or pickup is confirmed by actual viewer state.
+- A claimed turn, return target, pickup, or return is confirmed by actual viewer state.
+- Replay and Reset behave as specified after a grab, missed throw, return, voice interruption,
+  disconnect, and VR re-entry. Continue cannot overwrite visitor-owned bottle state.
 - Measure response delay, API usage, and headset frame rate; none is established by this proposal.
 
-The first product choice is whether the character explains the recorded moment or participates
-in a fictional continuation. The second is whether conversation alone makes a compelling demo,
-or whether manipulating one prop is essential to the experience.
+The chosen first experience is a fictional continuation grounded in the recorded scene, with
+voice and bottle interaction both required. Runtime integration, assisted-contact quality,
+headset microphone behavior, and device performance remain to be demonstrated.
