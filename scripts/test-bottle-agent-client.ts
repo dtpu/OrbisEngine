@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Quaternion, Vector3 } from 'three';
-import { BottleAgentClient } from '../src/interaction/bottle-agent-client';
+import { BottleAgentClient, type AgentIdentity } from '../src/interaction/bottle-agent-client';
 import { sceneCharacterInstructions } from '../src/interaction/character-prompt';
+import { CharacterVoiceCast } from '../src/interaction/character-voice-cast';
+import type { CharacterVoice } from '../src/interaction/character-voice';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -184,7 +186,7 @@ function replace(name: string, value: unknown) {
   if (!originals.has(name)) originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
 }
-let clients: BottleAgentClient[];
+let clients: { disconnect(): void }[];
 let stopped: number;
 let requests: string[];
 let captures: MediaTrackConstraints[];
@@ -202,7 +204,7 @@ function setup(
   const actions: string[] = [];
   const speaking: boolean[] = [];
   let acceptSpeech = true;
-  const identity = {
+  const identity: AgentIdentity = {
     sceneId: 'bottle',
     personId: 'person',
     personLabel: 'Character',
@@ -390,6 +392,7 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
       interrupt_response: false,
     });
     expect(config.max_output_tokens).toBe(256);
+    expect(config.audio.output.voice).toBe('ash');
     expect(config.instructions).toBe(sceneCharacterInstructions());
     expect(config.tools.map((t: any) => t.name)).toEqual([
       'face_player',
@@ -457,6 +460,7 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
       personId: 'person',
       personLabel: 'Character',
       objectId: 'bottle',
+      voice: 'ash',
     });
     expect(new Headers(calls[0].init.headers).has('Authorization')).toBe(false);
     expect(new Headers(calls[1].init.headers).get('Authorization')).toBe('Bearer ek_fixture');
@@ -987,5 +991,210 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     expect(statuses.at(-1)).not.toContain('text');
     expect(Audio.instances[0].closed).toBe(true);
     expect(client.connected).toBe(false);
+  });
+});
+
+describe('fixed character voices and cast routing', () => {
+  async function castFixture(connect = true) {
+    const characters: AgentIdentity[] = [
+      { sceneId: 'bottle', personId: 'one', personLabel: 'One', objectId: 'bottle', voice: 'ash' },
+      { sceneId: 'bottle', personId: 'two', personLabel: 'Two', objectId: 'bottle', voice: 'echo' },
+    ];
+    let selected = characters[0];
+    let addressed: CharacterVoice = 'ash';
+    const actions: string[] = [];
+    const speaking: boolean[] = [];
+    const cast = new CharacterVoiceCast({
+      characters,
+      identity: () => selected,
+      status: () => {},
+      speaking: (value) => speaking.push(value),
+      action: (name) => {
+        actions.push(name);
+        return 'ok';
+      },
+      speechStarted: (voice) => {
+        if (voice !== addressed) return false;
+        selected = characters.find((character) => character.voice === voice)!;
+        cast.setPlayback(false);
+        cast.notify({ event: 'directed speech' });
+        return true;
+      },
+    });
+    clients.push(cast);
+    if (connect) {
+      const pending = cast.connect();
+      for (let round = 0; round < 4; round++) {
+        await tick();
+        for (const peer of Peer.instances) {
+          if (peer.channel.readyState !== 'connecting') continue;
+          peer.channel.open();
+          peer.channel.acknowledge();
+        }
+      }
+      await pending;
+      expect(cast.connected).toBe(true);
+    }
+    const channels = Object.fromEntries(
+      Peer.instances.map((peer) => [
+        peer.channel.sent.find((event) => event.type === 'session.update').session.audio.output
+          .voice,
+        peer.channel,
+      ]),
+    ) as Record<CharacterVoice, Channel>;
+    return {
+      cast,
+      channels,
+      actions,
+      speaking,
+      address: (voice: CharacterVoice) => {
+        addressed = voice;
+      },
+    };
+  }
+
+  test.each(['ash', 'echo'] as const)(
+    'failure of the %s connection stops both microphones and peers',
+    async (voice) => {
+      const { cast, channels } = await castFixture();
+      channels[voice].emit({
+        type: 'error',
+        event_id: 'fatal-provider-error',
+        error: {
+          type: 'invalid_request_error',
+          code: 'invalid_api_key',
+          message: 'private provider details',
+        },
+      });
+      await tick();
+      expect(cast.connected).toBe(false);
+      expect(cast.lastProviderErrorCode).toBe('invalid_api_key');
+      expect(stopped).toBe(2);
+      expect(Peer.instances.every((peer) => peer.closed)).toBe(true);
+      expect(Audio.instances.every((audio) => audio.closed)).toBe(true);
+      expect(requests.filter((url) => url.startsWith('/api'))).toHaveLength(2);
+    },
+  );
+
+  test('synchronous audio initialization failure prevents the second client from starting', async () => {
+    let audioAttempts = 0;
+    replace(
+      'AudioContext',
+      class {
+        constructor() {
+          audioAttempts++;
+          throw new Error('audio unavailable');
+        }
+      },
+    );
+    const { cast } = await castFixture(false);
+    await cast.connect();
+    await tick();
+    expect(audioAttempts).toBe(1);
+    expect(captures).toHaveLength(0);
+    expect(requests).toHaveLength(0);
+    expect(Peer.instances).toHaveLength(0);
+    expect(cast.connected).toBe(false);
+  });
+
+  test('an explicit Echo preset reaches both credentials and SDK configuration', async () => {
+    const bodies: unknown[] = [];
+    replace('fetch', async (url: string, init: RequestInit) => {
+      if (String(url).startsWith('/api')) {
+        bodies.push(JSON.parse(init.body as string));
+        return Response.json({ value: 'ek_fixture', model: 'gpt-realtime', voice: 'echo' });
+      }
+      return new Response('fixture answer');
+    });
+    const { client, identity } = setup();
+    identity.voice = 'echo';
+    const pending = client.connect();
+    await tick();
+    const channel = Peer.instances[0].channel;
+    channel.open();
+    channel.acknowledge();
+    await pending;
+    expect(client.connected).toBe(true);
+    expect(bodies).toEqual([{ ...identity }]);
+    expect(
+      channel.sent.find((event) => event.type === 'session.update').session.audio.output.voice,
+    ).toBe('echo');
+  });
+
+  test('mismatched credential voice is rejected before provider setup and capture is released', async () => {
+    replace('fetch', async (url: string) => {
+      requests.push(String(url));
+      return Response.json({ value: 'ek_fixture', model: 'gpt-realtime', voice: 'echo' });
+    });
+    const { client } = setup();
+    await client.connect();
+    expect(client.connected).toBe(false);
+    expect(Peer.instances).toHaveLength(0);
+    expect(requests).toEqual(['/api/bottle-agent/session']);
+    expect(stopped).toBe(1);
+  });
+
+  test('first directed utterance reaches the addressed voice and switching back reuses both connections', async () => {
+    const { cast, channels, address } = await castFixture();
+    expect(Object.keys(channels).sort()).toEqual(['ash', 'echo']);
+    expect(Peer.instances).toHaveLength(2);
+    expect(captures).toHaveLength(2);
+    expect(channels.ash.responses()).toHaveLength(0);
+    expect(channels.echo.responses()).toHaveLength(0);
+    const firstClient = cast.activeClient;
+    address('echo');
+    channels.ash.speech('first');
+    channels.echo.speech('first');
+    channels.ash.commit('first');
+    channels.echo.commit('first');
+    expect(channels.ash.responses()).toHaveLength(0);
+    expect(channels.echo.responses()).toHaveLength(1);
+    expect(cast.activeClient).not.toBe(firstClient);
+    channels.echo.created('echo-first');
+    channels.echo.done('echo-first');
+    address('ash');
+    channels.echo.speech('second');
+    channels.ash.speech('second');
+    channels.echo.commit('second');
+    channels.ash.commit('second');
+    expect(channels.ash.responses()).toHaveLength(1);
+    expect(channels.echo.responses()).toHaveLength(1);
+    expect(cast.activeClient).toBe(firstClient);
+    expect(Peer.instances).toHaveLength(2);
+    expect(requests.filter((url) => url.startsWith('/api'))).toHaveLength(2);
+    expect(tracks.every((track) => track.enabled)).toBe(true);
+    cast.disconnect();
+    expect(stopped).toBe(2);
+    expect(Peer.instances.every((peer) => peer.closed)).toBe(true);
+    expect(Audio.instances.every((audio) => audio.closed)).toBe(true);
+  });
+
+  test('switching voice invalidates old output and tools while reactions reach only the selection', async () => {
+    const { cast, channels, address, actions, speaking } = await castFixture();
+    Peer.instances.forEach((peer) => peer.track());
+    cast.setPlayback(false);
+    cast.notify({ event: 'approach' });
+    channels.ash.created('old');
+    expect(channels.ash.responses()).toHaveLength(1);
+    expect(channels.echo.responses()).toHaveLength(0);
+    address('echo');
+    channels.echo.speech('switch');
+    channels.echo.commit('switch');
+    channels.ash.tool('late', 'face_player', '{}', 'old');
+    channels.ash.emit({
+      type: 'output_audio_buffer.started',
+      event_id: 'late-audio',
+      response_id: 'old',
+    });
+    await tick();
+    expect(actions).toHaveLength(0);
+    expect(speaking.at(-1)).not.toBe(true);
+    expect(Audio.instances[0].nodes[2].gain.value).toBe(0);
+    expect(channels.echo.responses()).toHaveLength(1);
+    channels.echo.created('current');
+    channels.echo.done('current');
+    cast.notify({ event: 'bottle caught' });
+    expect(channels.echo.responses()).toHaveLength(2);
+    expect(channels.ash.responses()).toHaveLength(1);
   });
 });
