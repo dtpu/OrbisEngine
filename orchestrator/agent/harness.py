@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -217,6 +218,7 @@ class HarnessAgent:
         workspace: Path,
         instructions: str,
         session: str | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> HarnessOutcome:
         """Review one attempt, nudging the agent back to work if it goes silent.
 
@@ -255,6 +257,7 @@ class HarnessAgent:
                     transcript,
                     mode,
                     budget,
+                    heartbeat,
                 )
             except subprocess.TimeoutExpired:
                 result = AgentResult(
@@ -327,6 +330,7 @@ class HarnessAgent:
         transcript: Path,
         mode: str,
         budget: float,
+        heartbeat: Callable[[], None] | None = None,
     ) -> int:
         """Run one harness process, raising :class:`Stalled` if it stops writing.
 
@@ -352,6 +356,8 @@ class HarnessAgent:
                     return process.wait(timeout=POLL_SECONDS)
                 except subprocess.TimeoutExpired:
                     pass
+                if heartbeat:
+                    heartbeat()
                 now = time.monotonic()
                 size = transcript.stat().st_size
                 if size != written:
