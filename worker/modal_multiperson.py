@@ -149,7 +149,13 @@ def track(
     min_track_samples: int,
     overlay_every: int,
 ):
-    import io, json, os, subprocess, tarfile, tempfile, time, traceback
+    import io
+    import os
+    import subprocess
+    import tarfile
+    import tempfile
+    import time
+    import traceback
 
     root = Path(tempfile.mkdtemp(prefix="tracks-"))
     (root / "source.mp4").write_bytes(video)
@@ -199,7 +205,7 @@ def track(
                 log.flush()
             if proc.wait() != 0:
                 raise RuntimeError(f"track_people exited {proc.returncode}")
-    except Exception:
+    except Exception:  # noqa: BLE001 - retain tracking diagnostics for any inference failure
         error = traceback.format_exc()
         print(error, flush=True)
     cache.commit()
@@ -209,14 +215,14 @@ def track(
             if path.is_file():
                 archive.add(path, arcname=str(path.relative_to(out)))
     seconds = time.time() - started
-    report = dict(
-        seconds=seconds,
-        error=error,
-        gpu="L4",
-        codeRevision=LHM_REV,
-        estimatedComputeUSD=seconds * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
-    )
-    return dict(report=report, archive=buf.getvalue())
+    report = {
+        "seconds": seconds,
+        "error": error,
+        "gpu": "L4",
+        "codeRevision": LHM_REV,
+        "estimatedComputeUSD": seconds * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
+    }
+    return {"report": report, "archive": buf.getvalue()}
 
 
 @app.local_entrypoint()
@@ -231,7 +237,9 @@ def main(
     min_track_samples: int = 8,
     overlay_every: int = 0,
 ):
-    import io, json, tarfile
+    import io
+    import json
+    import tarfile
 
     dest = Path(out)
     dest.mkdir(parents=True, exist_ok=True)
@@ -264,46 +272,49 @@ def main(
     volumes={"/cache": cache},
     scaledown_window=2,
 )
-def animate_track(inputs: dict, flags: list):
-    """lhm_animate.py --track-only: one canonical avatar driven by ONE track's poses.
+def animate_track(inputs: dict, flags: list, recovery_id: str = "", execution_timeout: int = 0):
+    """Drive one saved canonical with retained track poses and durable generated outputs."""
+    import hashlib
+    import tempfile
+    import time
+    import traceback
 
-    Same code path as the single-person animate stage in worker/modal_lhm.py; the difference is
-    that MultiHMR is never called here, so the pose for every sample is the one the tracker
-    already assigned to this identity. Re-detecting would pick whichever person is nearest and
-    is exactly how identities swap when two people cross.
-    """
-    import io, json, os, subprocess, tarfile, tempfile, time, traceback
-    from huggingface_hub import snapshot_download
+    from stages.lhm_execution import animation_options, link_model_caches, run_logged_inference
+    from stages.lhm_recovery import (
+        atomic_json,
+        file_hash,
+        finish_checkpoint,
+        remote_root,
+        start_checkpoint,
+    )
 
-    start = time.time()
-    root = Path(tempfile.mkdtemp(prefix="lhm-track-"))
-    prepared = root / "prepared"
-    prepared.mkdir()
-    out = root / "output"
-    out.mkdir()
-    allowed = {
-        "source.mp4",
-        "canonical-state.pt",
-        "reference.json",
-        "cameras.json",
-        "depth-reference.ply",
-        "seed-poses.pt",
-        "seed-motion.json",
-    }
-    for name, data in inputs.items():
-        if name not in allowed:
-            raise ValueError(f"Unexpected prepared input {name}")
-        (prepared / name).write_bytes(data)
-    prior = Path("/cache/data/pretrained_models")
-    link = Path("/opt/lhm/pretrained_models")
-    if not prior.exists():
-        raise RuntimeError("Stage public LHM prior assets before GPU inference")
-    if not link.exists():
-        link.symlink_to(prior, target_is_directory=True)
-    os.chdir("/opt/lhm")
+    animation_options(execution_timeout=execution_timeout)
+    start = time.monotonic()
+    checkpoint, out = start_checkpoint("/cache", recovery_id, "motion")
+    cache.commit()
     error = None
     model_id = "3DAIGC/LHM-500M-HF"
     try:
+        from huggingface_hub import snapshot_download
+
+        root = Path(tempfile.mkdtemp(prefix="lhm-track-"))
+        prepared = root / "prepared"
+        prepared.mkdir()
+        allowed = {
+            "source.mp4",
+            "canonical-state.pt",
+            "reference.json",
+            "cameras.json",
+            "depth-reference.ply",
+            "seed-poses.pt",
+            "seed-motion.json",
+        }
+        if set(inputs) != allowed:
+            raise ValueError("Animation requires exactly the declared saved inputs")
+        for name, data in inputs.items():
+            (prepared / name).write_bytes(data)
+        links = link_model_caches()
+        atomic_json(out / "model-cache-links.json", links)
         model = snapshot_download(model_id, revision=MODEL_REV, local_files_only=True)
         cmd = [
             "python",
@@ -329,39 +340,48 @@ def animate_track(inputs: dict, flags: list):
             "--track-only",
             *flags,
         ]
-        with (out / "inference.log").open("w") as log:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-            )
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                log.write(line)
-                log.flush()
-            if proc.wait() != 0:
-                raise RuntimeError(f"LHM inference exited {proc.returncode}")
-    except Exception:
+        run_logged_inference(
+            cmd,
+            out / "inference.log",
+            started=start,
+            execution_timeout=execution_timeout,
+            cwd="/opt/lhm",
+        )
+    except Exception:  # noqa: BLE001 - preserve generated outputs even after timeout/setup failure
         error = traceback.format_exc()
         print(error, flush=True)
+        with (out / "inference.log").open("a") as log:
+            log.write(error)
+    elapsed = time.monotonic() - start
+    report = {
+        "seconds": elapsed,
+        "error": error,
+        "experiment": "track-canonical-source-motion",
+        "gpu": "L4",
+        "cpu": 4,
+        "memoryGiB": 64,
+        "timeoutSeconds": execution_timeout or 3600,
+        "executionFlags": flags,
+        "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
+        "codeRevision": LHM_REV,
+        "model": model_id,
+        "modelRevision": MODEL_REV,
+        "estimatedComputeUSD": elapsed * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
+        "timingScope": "Worker setup and inference; excludes final output hashing and volume commit",
+        "recoveryId": recovery_id,
+        "remotePath": remote_root(recovery_id),
+    }
+    atomic_json(out / "modal-run.json", report)
+    manifest = finish_checkpoint(checkpoint, mode="motion", error=error, require_registration=True)
     cache.commit()
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
-        for f in sorted(out.iterdir()):
-            if f.is_file():
-                archive.add(f, arcname=f.name)
-        elapsed = time.time() - start
-        report = dict(
-            seconds=elapsed,
-            error=error,
-            experiment="track-canonical-source-motion",
-            gpu="L4",
-            codeRevision=LHM_REV,
-            model=model_id,
-            modelRevision=MODEL_REV,
-            estimatedComputeUSD=elapsed * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
-        )
-        (out / "modal-run.json").write_text(json.dumps(report, indent=2))
-        archive.add(out / "modal-run.json", arcname="modal-run.json")
-    return dict(report=report, archive=buf.getvalue())
+    return {
+        "report": report,
+        "recoveryId": recovery_id,
+        "remotePath": remote_root(recovery_id),
+        "manifestSha256": file_hash(checkpoint / "manifest.json"),
+        "status": manifest["status"],
+        "totalWorkerSeconds": time.monotonic() - start,
+    }
 
 
 @app.local_entrypoint()
@@ -374,11 +394,26 @@ def animate(
     depth_reference: str = "",
     track_id: int = 0,
     depth_roi: str = "",
+    fixed_world_scale: float | None = None,
+    execution_timeout: int = 0,
 ):
-    import io, json, tarfile
+    import hashlib
+    import json
+    import tarfile
 
+    from worker.stages.lhm_execution import animation_options
+    from worker.stages.lhm_recovery import atomic_json, new_receipt, recover_outputs, submit_once
+
+    scale_flags, options = animation_options(fixed_world_scale, execution_timeout)
     dest = Path(out)
-    dest.mkdir(parents=True, exist_ok=True)
+    # Refuse an existing destination before any call, including after an ambiguous submission.
+    receipt_path, receipt = new_receipt(dest, "motion")
+    print(f"Recovery receipt: {receipt_path}; volume path: {receipt['remotePath']}", flush=True)
+    print(
+        "To recover without inference: uv run --locked python worker/stages/lhm_recovery.py "
+        f"--receipt {receipt_path}",
+        flush=True,
+    )
     folder = Path(canonical)
     track = Path(track_dir)
     inputs = {
@@ -392,13 +427,26 @@ def animate(
         "seed-poses.pt": (track / "source-poses.pt").read_bytes(),
         "seed-motion.json": (track / "motion.json").read_bytes(),
     }
-    flags = ["--track-id", str(track_id)]
+    flags = ["--track-id", str(track_id), *scale_flags]
     if depth_roi:
         flags += ["--depth-roi", depth_roi]
-    result = animate_track.remote(inputs, flags)
-    (dest / "artifacts.tar.gz").write_bytes(result["archive"])
-    with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:
-        archive.extractall(dest, filter="data")
+    receipt["execution"] = {
+        "trackId": track_id,
+        "flags": flags,
+        "timeoutSeconds": execution_timeout or 3600,
+        "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
+    }
+    atomic_json(receipt_path, receipt)
+    function = animate_track.with_options(**options) if options else animate_track
+    result = submit_once(
+        function, receipt_path, inputs, flags=flags, execution_timeout=execution_timeout
+    )
+    manifest = recover_outputs(receipt_path, cache)
+    with tarfile.open(dest / "artifacts.tar.gz", mode="w:gz", compresslevel=1) as archive:
+        for name in sorted(manifest["files"]):
+            archive.add(dest / name, arcname=name)
     print(json.dumps(result["report"], indent=2))
-    if result["report"]["error"]:
-        raise RuntimeError("LHM track animation failed; see the downloaded inference.log")
+    if manifest["status"] != "complete":
+        raise RuntimeError(
+            "LHM track outputs are partial/failed; see recovery-manifest.json and inference.log"
+        )
