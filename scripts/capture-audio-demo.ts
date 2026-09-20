@@ -242,11 +242,15 @@ try {
           (await state()).credit,
         );
         const credit = await frame.locator('#audio-credit').boundingBox(),
-          bar = await page.locator('#bar').boundingBox();
-        check('credit clears wrapper controls', credit && bar && credit.y + credit.height < bar.y, {
-          credit,
-          bar,
-        });
+          stage = await page.locator('#stage').boundingBox();
+        check(
+          'credit stays inside the stage',
+          credit &&
+            stage &&
+            credit.y >= stage.y &&
+            credit.y + credit.height <= stage.y + stage.height,
+          { credit, stage },
+        );
       }
       await page.screenshot({ path: path.join(out, `${clip}-sound.png`) });
       if (clip === 'elevator') {
