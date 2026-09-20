@@ -10,6 +10,7 @@ export type WalkMapGrid = {
   oz: number;
 };
 export type WalkMapOptions = {
+  container?: HTMLElement;
   grid: WalkMapGrid;
   position: () => MapPoint;
   yaw: () => number;
@@ -20,6 +21,7 @@ export type WalkMapOptions = {
 };
 
 export function createWalkMap({
+  container = document.body,
   grid,
   position,
   yaw,
@@ -46,7 +48,7 @@ export function createWalkMap({
     #walk-map .map-legend span:first-child{color:#f1c777}#walk-map .map-legend span:nth-child(2){color:#80bded}
     #walk-map p{font-size:12px;margin:9px 0 0;max-width:300px;min-height:30px;color:#c6d0dc}`;
   document.head.append(style);
-  document.body.append(panel);
+  container.append(panel);
   const toggle = panel.querySelector('button')!,
     body = panel.querySelector<HTMLDivElement>('.map-panel')!;
   const canvas = panel.querySelector('canvas')!,
@@ -123,6 +125,7 @@ export function createWalkMap({
   let cursor: MapPoint | null = null,
     open = false;
   function setOpen(value: boolean) {
+    if (value && (!container.isConnected || container.hidden)) return;
     open = value;
     body.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
@@ -134,7 +137,7 @@ export function createWalkMap({
     }
   }
   function draw() {
-    if (!open) return;
+    if (!open || !container.isConnected || container.hidden) return;
     ctx.drawImage(base, 0, 0);
     for (const p of people()) {
       const [x, y] = project(p.x, p.z);
@@ -206,6 +209,7 @@ export function createWalkMap({
     }
   });
   const keys = (e: KeyboardEvent) => {
+    if (!container.isConnected || container.hidden) return;
     if (e.code === 'KeyM' && !e.repeat) {
       e.preventDefault();
       setOpen(!open);
