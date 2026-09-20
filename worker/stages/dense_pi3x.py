@@ -16,6 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wander_worker.masks import people_masks
 from wander_worker.ply import write_point_ply, home_distance
+from pi3x_support import (
+    fit_ray_intrinsics,
+    person_sequence_metadata,
+    person_support,
+    static_scale_reference,
+)
 
 
 def similarity(src, dst):
@@ -51,38 +57,11 @@ def viewer_camera(
     matrix = np.eye(4)
     matrix[:3, :3] = flip @ reference_rotation @ batch_rotation @ pose[:3, :3] @ flip
     matrix[:3, 3] = flip @ (reference_rotation @ center + reference_translation) * world_scale
+    if not np.isfinite(matrix).all():
+        raise ValueError("Nonfinite transformed camera")
+    if not np.isfinite(np.linalg.inv(matrix)).all():
+        raise ValueError("Nonfinite inverse camera")
     return matrix
-
-
-def fit_ray_intrinsics(rays, valid, source_size):
-    """Fit a pinhole K to learned rays; retain residual because rays need not be pinhole."""
-    h, w = rays.shape[:2]
-    y, x = np.mgrid[:h, :w]
-    good = valid & np.isfinite(rays).all(-1) & (rays[..., 2] > 1e-6)
-    good[1::2] = False
-    good[:, 1::2] = False
-    xy = rays[good, :2] / rays[good, 2:3]
-    pixels = np.stack([x[good] + 0.5, y[good] + 0.5], axis=1)
-    if len(xy) < 100:
-        raise ValueError("Insufficient valid rays for intrinsic fit")
-    K = np.eye(3)
-    errors = []
-    for axis in range(2):
-        design = np.column_stack([xy[:, axis], np.ones(len(xy))])
-        focal, principal = np.linalg.lstsq(design, pixels[:, axis], rcond=None)[0]
-        if focal <= 0:
-            raise ValueError("Nonpositive fitted focal length")
-        K[axis, axis], K[axis, 2] = focal, principal
-        errors.append(design @ [focal, principal] - pixels[:, axis])
-    source_K = np.diag([source_size[0] / w, source_size[1] / h, 1.0]) @ K
-    return dict(
-        intrinsics=K.tolist(),
-        source_intrinsics=source_K.tolist(),
-        image_size=[w, h],
-        source_image_size=list(source_size),
-        intrinsic_fit_pixel_rmse=float(np.sqrt(np.mean(np.sum(np.square(errors), axis=0)))),
-        intrinsics_method="Least-squares zero-skew pinhole fit to predicted rays; pixel centers at x+0.5,y+0.5. Source K undoes the two resize operations. This is estimated, not supplied calibration.",
-    )
 
 
 def main():
@@ -178,9 +157,7 @@ def main():
     inv = np.linalg.inv(base["poses"][0])
     R0, t00 = inv[:3, :3], inv[:3, 3]
     flip = np.array([1.0, -1.0, -1.0])
-    zz = (base["points"][0] @ R0.T + t00)[..., 2]
-    good = base["valid"][0] & (~base["people"][0]) & (zz > 0)
-    scale = 3 / np.median(zz[good])
+    scale, scale_reference = static_scale_reference(base, anchors, indices, times)
     rng = np.random.default_rng(13)
     matches = []
     for j in range(len(anchors)):
@@ -190,6 +167,8 @@ def main():
     cams = [None] * N
     log = []
     point_counts = []
+    support = []
+    home, home_frame = None, None
     camera_dir = out / "camera-batches"
     camera_dir.mkdir(exist_ok=True)
     for lo in range(0, N, a.batch):
@@ -232,9 +211,22 @@ def main():
             xyz = p["points"][j][valid] @ R.T * s + t
             col = p["rgb"][j][valid]
             xyz = (xyz @ R0.T + t00) * scale * flip
-            if len(xyz) < 100:
-                raise RuntimeError(f"Person vanished at {times[i]}s ({len(xyz)} points)")
-            write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
+            if not np.isfinite(xyz).all():
+                raise ValueError(f"Nonfinite transformed person points at sample {i}")
+            observed = person_support(i, indices[i], times[i], len(xyz))
+            support.append(observed)
+            person_file = out / f"frame_{i:03d}.ply"
+            if observed["supported"]:
+                write_point_ply(person_file, xyz.astype("float32"), col)
+            else:
+                if person_file.exists():
+                    raise RuntimeError(
+                        f"Conflicting retained person PLY for unsupported sample: {person_file}"
+                    )
+                print(
+                    f"insufficient person support at {times[i]:.3f}s ({len(xyz)} points)",
+                    flush=True,
+                )
             point_counts.append(len(xyz))
             camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)
             cams[i] = dict(
@@ -253,8 +245,11 @@ def main():
                     valid=p["valid"][j],
                     camera_to_world=camera,
                 )
-            if i == 0:
+            if observed["supported"] and home is None:
                 home = home_distance(xyz)
+                if not np.isfinite(home) or home <= 0:
+                    raise ValueError("Invalid supported-person home distance")
+                home_frame = dict(sample=i, sourceIndex=int(indices[i]), time=float(times[i]))
         log.append(
             dict(
                 first=lo,
@@ -271,7 +266,7 @@ def main():
         torch.cuda.empty_cache()
     meta = dict(
         backend="pi3x-dense-anchors",
-        frames=[f"frame_{i:03d}.ply" for i in range(N)],
+        **person_sequence_metadata(support),
         count=N,
         fps=a.fps,
         timestamps=times.tolist(),
@@ -280,6 +275,8 @@ def main():
         sourceIndices=indices.tolist(),
         people_only=True,
         home_distance=home,
+        homeDistanceReference=home_frame,
+        staticScaleReference=scale_reference,
         sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
         seconds=time.time() - t0,
         peakVRAMGB=torch.cuda.max_memory_allocated() / 1e9,
@@ -288,7 +285,7 @@ def main():
         anchors=anchors,
         batch=a.batch,
         pointCounts=point_counts,
-        note="Each source frame reconstructed with shared static anchors. >=12 independent frames/sec; single observed-facing surface, not complete human volume.",
+        note="Estimated cameras retain all source sample slots. Person surfaces exist only where mask/depth support is sufficient; single observed-facing surface, not complete human volume.",
     )
     (out / "sequence.json").write_text(json.dumps(meta, indent=2))
     (out / "cameras.json").write_text(
@@ -299,6 +296,8 @@ def main():
                     rotation=R0.tolist(),
                     translation=t00.tolist(),
                     scale=float(scale),
+                    coordinateReferenceSample=0,
+                    staticScaleReference=scale_reference,
                     world_axis_flip=flip.tolist(),
                 ),
                 cameras=cams,
