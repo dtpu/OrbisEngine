@@ -40,7 +40,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from sfm_frame import origin_c2w as levelled_origin, describe as describe_frame
 
@@ -214,8 +213,20 @@ def video_frames(clip: Path, w: int, h: int):
     p.wait()
 
 
+def _torch():
+    """Import torch on first use.
+
+    Colour baking needs it, but readers such as read_spz are pure numpy and are imported by
+    stages that never bake, notably frame_align. Importing at module scope made those stages
+    depend on a GPU-sized package they never call.
+    """
+    import torch
+
+    return torch
+
+
 def smoothstep(e0, e1, x):
-    t = torch.clamp((x - e0) / (e1 - e0), 0, 1)
+    t = _torch().clamp((x - e0) / (e1 - e0), 0, 1)
     return t * t * (3 - 2 * t)
 
 
@@ -385,6 +396,12 @@ def static_cloud_from_anchors(anchors: Path, cameras: Path, anchor_samples, conf
     a = np.load(anchors)
     cams = json.load(open(cameras))["cameras"]
     poses = a["poses"].astype(np.float64)
+    missing = [i for i in anchor_samples if not cams[i]]
+    if missing:
+        raise ValueError(
+            f"anchor frames {missing} have no camera in {cameras}; the static cloud is built "
+            "from the anchors themselves, so each one must have been solved"
+        )
     pub = np.array([cams[i]["camera_to_world"] for i in anchor_samples], np.float64)
     ap, pp = poses[:, :3, 3], pub[:, :3, 3]
     S, D = ap - ap.mean(0), pp - pp.mean(0)
@@ -527,9 +544,10 @@ def main():
         help="two source frames for the figures, e.g. 0,275 (default first and middle)",
     )
     ap.add_argument("--diag", action="store_true", help="depth-ratio diagnostic only")
-    ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
+    ap.add_argument("--device", default="mps" if _torch().backends.mps.is_available() else "cpu")
     a = ap.parse_args()
     t0 = time.time()
+    torch = _torch()
     dev = torch.device(a.device)
     a.share.mkdir(parents=True, exist_ok=True)
 

@@ -66,6 +66,15 @@ not mean the full recording was reconstructed: the recovery manifest stays parti
 command exits with that status after downloading outputs. Validate exact intended sample IDs and
 hashes before explicitly merging them with retained outputs. The wrapper never fills missing poses.
 
+For a reviewed missing detection, `--recover-missing-poses` explicitly enables new pose inference
+from those source frames while retaining every non-null saved pose. This is a new paid candidate,
+not output recovery: use a fresh destination and the same source ledger, and supply
+`--fixed-world-scale` from the retained registration so the repair cannot refit the body's scale.
+The default remains saved-track-only animation. Review the recovered person's identity, projected
+joints and continuity against the source before adoption, especially for a leading gap where no
+previous pose can guide association. Complete coverage and hash validation still apply; this flag
+does not fill gaps by copying or interpolating poses, and a remaining gap still fails completeness.
+
 After inspecting saved provider or recovery evidence, reconcile the corresponding ledger claim:
 
 ```sh
