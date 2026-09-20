@@ -1,7 +1,7 @@
 import Section from '../components/Section';
 import Button from '../components/Button';
 import VideoLoop from '../components/VideoLoop';
-import { Eyebrow, H1 } from '../components/Heading';
+import { H1 } from '../components/Heading';
 import { DEMO_URL } from '../content/links';
 import header from '../brand/header.jpg';
 import styles from './Hero.module.css';
@@ -24,7 +24,6 @@ export default function Hero() {
       </figure>
 
       <div className={styles.copy}>
-        <Eyebrow>ORBIS ENGINE</Eyebrow>
         <H1 className={styles.title}>Step inside a video.</H1>
         <p className={styles.sub}>
           One clip becomes a room you can walk through, with its people, objects, and sound
