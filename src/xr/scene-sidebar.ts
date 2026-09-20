@@ -79,6 +79,8 @@ export function createSceneSidebar({
   let menuHeld = false;
   let confirmHeld = false;
   let stickDirection = 0;
+  let stickNeedsRelease = false;
+  let openRequested = false;
   let repeatRemaining = 0;
   let stickSelection = false;
   let thumbnailGeneration = 0;
@@ -198,7 +200,7 @@ export function createSceneSidebar({
         ctx.fillStyle = '#2d554b';
         ctx.fillRect(0, y, 6, ROW_HEIGHT);
       }
-      if (focused && !state.busy) {
+      if (focused) {
         ctx.strokeStyle = '#63847b';
         ctx.lineWidth = 2;
         ctx.strokeRect(12, y + 5, WIDTH - 34, ROW_HEIGHT - 10);
@@ -370,6 +372,7 @@ export function createSceneSidebar({
   }
 
   function close() {
+    openRequested = false;
     if (!state.open) return;
     state.open = panel.visible = false;
     state.hover = -1;
@@ -385,6 +388,7 @@ export function createSceneSidebar({
     menuHeld = false;
     confirmHeld = false;
     stickDirection = 0;
+    stickNeedsRelease = false;
     repeatRemaining = 0;
     for (const { input } of inputs) {
       input.trigger = false;
@@ -432,6 +436,16 @@ export function createSceneSidebar({
     return index >= 0 && index < clips.length ? index : -1;
   }
 
+  function readStick(sources: XRInputSource[]) {
+    let axis = 0;
+    for (const source of sources) {
+      const axes = source.gamepad?.axes;
+      const value = axes && axes.length >= 4 ? axes[3] : axes?.[1] || 0;
+      if (Math.abs(value) > Math.abs(axis)) axis = value;
+    }
+    return Math.abs(axis) > 0.55 ? Math.sign(axis) : 0;
+  }
+
   function update({
     headPosition,
     headQuaternion,
@@ -450,7 +464,9 @@ export function createSceneSidebar({
       return;
     }
     if (session !== activeSession) {
+      const requested = openRequested;
       close();
+      openRequested = requested;
       primed = false;
       stickDirection = 0;
       repeatRemaining = 0;
@@ -480,13 +496,17 @@ export function createSceneSidebar({
       return { source, edge };
     });
     primed = true;
-    if (menuPressed) {
-      if (state.open) close();
+    if (menuPressed || openRequested) {
+      if (state.open && menuPressed) close();
       else {
         const index = pressed.findIndex(
           ({ source }) => source === rightSource && source?.targetRayMode === 'tracked-pointer',
         );
         open(headPosition, headQuaternion, Math.max(0.001, upm), inputs[index]?.controller);
+        stickDirection = readStick(sources);
+        stickNeedsRelease = stickDirection !== 0;
+        repeatRemaining = 0;
+        openRequested = false;
       }
       if (state.open) {
         requestVisibleThumbnails();
@@ -533,16 +553,15 @@ export function createSceneSidebar({
       state.hover = hover;
       dirty = true;
     }
-    if (!state.busy) {
-      let axis = 0;
-      for (const source of sources) {
-        const axes = source.gamepad?.axes;
-        const value = axes && axes.length >= 4 ? axes[3] : axes?.[1] || 0;
-        if (Math.abs(value) > Math.abs(axis)) axis = value;
-      }
-      const direction = Math.abs(axis) > 0.55 ? Math.sign(axis) : 0;
+    {
+      const direction = readStick(sources);
+      if (!direction) stickNeedsRelease = false;
       repeatRemaining -= Math.max(0, Math.min(0.1, dt));
-      if (direction && (direction !== stickDirection || repeatRemaining <= 0)) {
+      if (
+        !stickNeedsRelease &&
+        direction &&
+        (direction !== stickDirection || repeatRemaining <= 0)
+      ) {
         state.focus = Math.max(0, Math.min(clips.length - 1, state.focus + direction));
         repeatRemaining = direction !== stickDirection ? 0.38 : 0.14;
         stickSelection = true;
@@ -564,9 +583,6 @@ export function createSceneSidebar({
         dirty = true;
         onSelect(clips[selectedTarget].id);
       }
-    } else {
-      stickDirection = 0;
-      repeatRemaining = 0;
     }
     requestVisibleThumbnails();
     if (dirty) draw();
@@ -596,6 +612,13 @@ export function createSceneSidebar({
       state.status = message;
       state.busy = busy;
       state.error = busy ? '' : message;
+      dirty = true;
+    },
+    showError(message: string) {
+      if (disposed) return;
+      state.status = state.error = message;
+      state.busy = false;
+      if (!state.open) openRequested = true;
       dirty = true;
     },
     close,

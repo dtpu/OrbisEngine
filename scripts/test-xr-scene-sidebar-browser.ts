@@ -408,7 +408,37 @@ try {
     );
   }
 
-  // Fail a required, previously unused manifest to exercise rollback instead of a cache hit.
+  // Hold a required manifest indefinitely: a second controller choice must not wait for it.
+  const lobbyManifest = '**/worlds/lobby-4d/person/sequence.json*';
+  let releaseStall!: () => void;
+  let sawStall!: () => void;
+  const stalled = new Promise<void>((resolve) => (sawStall = resolve));
+  const released = new Promise<void>((resolve) => (releaseStall = resolve));
+  await page.route(lobbyManifest, async (route) => {
+    sawStall();
+    await released;
+    await route.continue().catch(() => {}); // Cancellation can close the underlying request.
+  });
+  await button(5);
+  await focus(1);
+  await button(4);
+  await stalled;
+  assert.equal((await state()).sidebar.busy, true);
+  await focus(3);
+  await button(4);
+  await assertRuntime('atrium');
+  assert.equal((await state()).sidebar.error, '');
+  releaseStall();
+  await page.unroute(lobbyManifest);
+  await frames(8);
+  assert.equal((await state()).demo, 'atrium', 'A late cancelled load cannot replace the choice');
+  records.cancelledLoad = await state();
+  await button(5);
+  await focus(2);
+  await button(4);
+  await assertRuntime('stairs2');
+
+  // Fail a required manifest to exercise rollback instead of a cache hit.
   await page.route('**/worlds/lobby-4d/person/sequence.json*', (route) =>
     route.fulfill({
       status: 500,
@@ -456,10 +486,39 @@ try {
     (window.wander as ViewerDiagnostics & { setMuted(value: boolean): void }).setMuted(false);
   });
   await assertAudio(false);
+
+  // Throw after the old XR binding is disposed. The reactivated binding must show the error.
+  await page.evaluate(() => {
+    const renderer = window.wander.spark.renderer;
+    const setAnimationLoop = renderer.setAnimationLoop;
+    renderer.setAnimationLoop = function (callback) {
+      if (callback) {
+        renderer.setAnimationLoop = setAnimationLoop;
+        throw new Error('Injected activation failure');
+      }
+      return setAnimationLoop.call(this, callback);
+    };
+    window.__sidebarTest.prior = window.wander;
+  });
+  await button(5);
+  await focus(2);
+  await button(4);
+  await page.waitForFunction(() => {
+    const sidebar = (window.__xr as Report).sidebar;
+    return sidebar.open && sidebar.error.includes('Injected activation failure') && !sidebar.busy;
+  });
+  assert.equal(await page.evaluate(() => window.wander === window.__sidebarTest.prior), true);
+  assert.equal((await state()).playing, false, 'Restored error sidebar pauses playback');
+  await assertRuntime('lobby');
+  records.activationFailure = await state();
+  await page.screenshot({ path: `${out}/menu-activation-error.png` });
+  await button(5);
+  assert.equal((await state()).playing, true, 'Closing the error restores prior playback intent');
+  await assertAudio(false);
   assert.deepEqual(errors, []);
   await writeFile(`${out}/checks.json`, JSON.stringify(records, null, 2));
   console.log(
-    'XR sidebar: pause/tracking, blocked movement, spare scrolling, two retained-session switches, failure and retry passed.',
+    'XR sidebar: tracking, controls, cache/session preservation, stalled-load replacement, failure/retry and activation rollback passed.',
   );
 } finally {
   await browser.close();

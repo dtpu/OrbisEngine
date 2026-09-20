@@ -90,6 +90,45 @@ try {
     await frame.evaluate(() => window.__demoSwitchRenderer === window.wander.spark.renderer),
     true,
   );
+
+  const atriumManifest = '**/worlds/atrium-4dpp/person/sequence.json*';
+  let releaseStall!: () => void;
+  let sawStall!: () => void;
+  const stalled = new Promise<void>((resolve) => (sawStall = resolve));
+  const released = new Promise<void>((resolve) => (releaseStall = resolve));
+  await page.route(atriumManifest, async (route) => {
+    sawStall();
+    await released;
+    await route.continue().catch(() => {});
+  });
+  await frame.evaluate(() => window.wander.play(true));
+  await page.click('.card[data-id="atrium"]');
+  await stalled;
+  await page.click('.card[data-id="stairs2"]');
+  await ready('stairs2');
+  assert.equal(await frame.evaluate(() => window.wander.playing), true);
+  releaseStall();
+  await page.unroute(atriumManifest);
+
+  await page.route(atriumManifest, (route) =>
+    route.fulfill({ status: 500, body: 'Injected scene loading failure' }),
+  );
+  for (const playing of [true, false]) {
+    await frame.evaluate((playing) => window.wander.play(playing), playing);
+    await page.click('.card[data-id="atrium"]');
+    await page.waitForFunction(() =>
+      document.querySelector('#loading')?.classList.contains('failed'),
+    );
+    await frame.waitForFunction(
+      () => !(window as unknown as { __loadingScene?: unknown }).__loadingScene,
+    );
+    assert.equal(await frame.evaluate(() => window.wander.demo), 'stairs2');
+    assert.equal(await frame.evaluate(() => window.wander.playing), playing);
+    assert.equal(await page.locator('#loadretry').isVisible(), true);
+    await page.click('.card[data-id="stairs2"]');
+    await ready('stairs2');
+  }
+  await page.unroute(atriumManifest);
   await page.waitForFunction(
     () =>
       getComputedStyle(document.querySelector('#loading')!).opacity === '0' &&
@@ -99,7 +138,7 @@ try {
   await mkdir('.context/evidence/xr-scene-sidebar', { recursive: true });
   await page.screenshot({ path: '.context/evidence/xr-scene-sidebar/merged-desktop-shell.png' });
   console.log(
-    'Desktop shell: header controls, live scene switching, cached return and mute persistence pass.',
+    'Desktop shell: controls, switching/cache, mute persistence, stalled-load cancellation and playback restoration pass.',
   );
 } finally {
   await browser.close();

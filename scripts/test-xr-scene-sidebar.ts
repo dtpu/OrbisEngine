@@ -252,7 +252,7 @@ describe('XR scene sidebar', () => {
     expect(f.selected).toEqual(['scene-1', 'scene-4']);
   });
 
-  test('A selects once, ignores left X, and cannot click through opening or a busy scene', () => {
+  test('A selects once, ignores left X, and can replace a pending selection without repeating held input', () => {
     const f = fixture();
     f.button(1, 4, true);
     f.open();
@@ -265,14 +265,15 @@ describe('XR scene sidebar', () => {
     f.tick();
     expect(f.selected).toEqual(['scene-3']);
     f.sidebar.setStatus('Loading scene', true);
+    f.pointAt(1, 320, 154 + 156 * 4 + 70);
     f.button(1, 4, false);
     f.button(1, 4, true);
     f.sidebar.setStatus('', false);
     f.tick();
-    expect(f.selected).toEqual(['scene-3']);
+    expect(f.selected).toEqual(['scene-3', 'scene-4']);
     f.button(1, 4, false);
     f.button(1, 4, true);
-    expect(f.selected).toEqual(['scene-3', 'scene-3']);
+    expect(f.selected).toEqual(['scene-3', 'scene-4', 'scene-4']);
   });
 
   test('actual Three ray intersections select a row once and close target works', () => {
@@ -290,7 +291,7 @@ describe('XR scene sidebar', () => {
     expect(f.sidebar.state.open).toBe(false);
   });
 
-  test('scrolls all the way to spare clips, busy blocks selection and held triggers cannot click through opening', () => {
+  test('scrolls to spare clips during loading and held triggers cannot click through opening', () => {
     const f = fixture(15);
     f.button(1, 0, true);
     f.open();
@@ -312,10 +313,51 @@ describe('XR scene sidebar', () => {
     f.sources[0].gamepad.axes[3] = -1;
     f.button(1, 0, false);
     f.button(1, 0, true);
-    expect(f.sidebar.state.focus).toBe(14);
-    expect(f.selected).toEqual(['scene-14']);
+    expect(f.sidebar.state.focus).toBe(13);
+    expect(f.selected).toEqual(['scene-14', 'scene-13']);
     f.button(1, 5, true);
     expect(f.sidebar.state.open).toBe(false);
+  });
+
+  test('a stick held while opening must return to neutral before browsing or repeating', () => {
+    const f = fixture();
+    f.sources[0].gamepad.axes[3] = 1;
+    f.open();
+    f.pose.dt = 0.1;
+    for (let frame = 0; frame < 20; frame++) f.tick();
+    expect(f.sidebar.state.focus).toBe(0);
+    // Reversing without releasing is still the held input that opened the menu.
+    f.sources[0].gamepad.axes[3] = -1;
+    f.tick();
+    expect(f.sidebar.state.focus).toBe(0);
+    f.sources[0].gamepad.axes[3] = 0;
+    f.tick();
+    f.sources[0].gamepad.axes[3] = 1;
+    f.tick();
+    expect(f.sidebar.state.focus).toBe(1);
+    for (let frame = 0; frame < 5; frame++) f.tick();
+    expect(f.sidebar.state.focus).toBeGreaterThan(1);
+    f.button(1, 5, true);
+    f.button(1, 5, false);
+    f.button(1, 5, true);
+    const reopenedFocus = f.sidebar.state.focus;
+    for (let frame = 0; frame < 20; frame++) f.tick();
+    expect(f.sidebar.state.focus).toBe(reopenedFocus);
+  });
+
+  test('an error opens the restored sidebar on its next tracked pose without consuming held A', () => {
+    const f = fixture();
+    f.sources[1].gamepad.buttons[4].pressed = true;
+    f.sidebar.showError('Could not switch. Choose another clip.');
+    f.tick();
+    expect(f.sidebar.state.open).toBe(true);
+    expect(f.sidebar.state.error).toContain('Could not switch');
+    expect(f.sidebar.state.busy).toBe(false);
+    f.tick();
+    expect(f.selected).toEqual([]);
+    f.button(1, 4, false);
+    f.button(1, 4, true);
+    expect(f.selected).toHaveLength(1);
   });
 
   test('decodes only two visible source posters and safely cancels stale callbacks', () => {
