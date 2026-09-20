@@ -287,7 +287,7 @@ try {
         return {
           floor,
           minimum,
-          radius: options.floorRadius ?? options.radius,
+          radius: (options.floorRadius ?? options.radius) + (options.floorLift ?? 0),
           state: physics.snapshot(),
         };
       });
