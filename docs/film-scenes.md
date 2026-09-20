@@ -96,3 +96,16 @@ normalized units as exported camera positions. It retains the existing rejection
 The corrected calculation still rejects the second Rocky solve: camera 127 to 128 moves about 3.34 scene
 depths per second, with a step about 59.76 times the median. A successful GPU exit does not
 promote that camera path.
+
+The current user direction is Joker only, using NVIDIA H100 in the background. One bounded
+appearance comparison uses the pinned LHM-1B checkpoint, keeping the existing source image,
+mask, saved pose and head crop fixed against the rejected 500M baseline. Its GPU timeout is
+1200 seconds, with zero automatic retries and a durable Modal recovery receipt. The larger
+model cache is staged separately on CPU. This does not authorize another cleanup execution
+or establish that the appearance is improved. No further Rocky inference is scheduled.
+
+Before this comparison, retained Joker/Rocky worker reports total approximately $0.54 in
+estimated execution cost. Reserving the new H100 timeout, CPU cache staging, and $1 of
+overhead gives a conservative planned total of about $3.15 within the existing $10 cap.
+These are estimates rather than verified invoices. The background controller and receipts
+remain under the author's ignored `.context` directories; inspect them before resubmitting.
