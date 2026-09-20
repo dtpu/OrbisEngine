@@ -25,12 +25,12 @@ from typing import Any
 
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.steps import (
-    PER_PERSON,
     SAME_AS,
     STEPS,
     base_step,
+    needs_of,
     people_steps,
-    suggested_order,
+    planned_steps,
 )
 
 RUN_FILE = "run.json"
@@ -369,6 +369,11 @@ def graph_shape(context: RunContext) -> tuple[int, bool]:
 def plan_for(context: RunContext) -> list[str]:
     """The steps this run has, named the way run_clip.py will name them.
 
+    What is on the list is what the run was opened for: a run submitted with no world and no
+    objects has no `marble_video` and no `objects`, because the agent is told to start
+    everything that is ready and a catalogue entry on this list is work it will do. Listing
+    the whole catalogue instead is how an operator who excluded a 1600-credit world gets one.
+
     Whether the per-person stages are `person_prep` or `person_prep_00` is decided by the
     shape of the graph the run asked for, not by how many people turned up: a run with
     --people 16 uses the multiperson graph even when tracking finds one. How many of them
@@ -376,29 +381,7 @@ def plan_for(context: RunContext) -> list[str]:
     will never exist.
     """
     people, many = graph_shape(context)
-    return people_steps(suggested_order(), people, multiperson=many)
-
-
-def needs_of(step: str, people: int, multiperson: bool) -> list[str]:
-    """What a step wants finished, in the names this run's graph uses.
-
-    A per-person step waits on its own person and nobody else's: person 01's avatar does not
-    depend on person 00's. A step that joins them -- packaging -- waits on all of them.
-    """
-    described = STEPS.get(base_step(step))
-    if described is None:
-        return []
-    _, _, index = step.rpartition("_")
-    mine = index if index.isdigit() else None
-    wanted: list[str] = []
-    for need in described.after:
-        if not multiperson or need not in PER_PERSON:
-            wanted.append(need)
-        elif mine is not None:
-            wanted.append(f"{need}_{mine}")
-        else:
-            wanted.extend(f"{need}_{person:02d}" for person in range(max(1, people)))
-    return wanted
+    return people_steps(planned_steps(context.options), people, multiperson=many)
 
 
 def waiting_on(step: str, done: set[str], people: int = 1, multiperson: bool = False) -> list[str]:
@@ -560,8 +543,8 @@ def command_status(context: RunContext, args: argparse.Namespace) -> int:
     if waiting:
         print(f"  waiting on an answer to: {waiting}")
     print("\n  step              last        what it is for")
-    for name in suggested_order():
-        described = STEPS[name]
+    for name in plan_for(context):
+        described = STEPS[base_step(name)]
         last = journal.last_status(name) or "-"
         mark = "x" if name in done else " "
         print(f"  [{mark}] {name:<15} {last:<10}  {described.summary}")
