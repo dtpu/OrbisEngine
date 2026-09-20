@@ -331,6 +331,9 @@ class Step:
     after: tuple[str, ...] = ()
     parameters: dict[str, Any] = field(default_factory=dict)
     paid: bool = False
+    # Environment this step cannot run without. Modal authenticates through ~/.modal.toml, so
+    # a Modal step names nothing here; Marble and OpenAI read a key and fail instantly.
+    credentials: tuple[str, ...] = ()
     # Said to the agent in its own words when the step is worth a second thought.
     caution: str = ""
 
@@ -369,12 +372,24 @@ STEPS: dict[str, Step] = {
             parameters=WORLD_PROMPT_PARAMETERS,
             paid=True,
             caution="Costs one vision call per sampled frame.",
+            credentials=("OPENAI_API_KEY",),
+        ),
+        Step(
+            name="review",
+            summary="Build the contact sheets that get looked at before a world is paid for",
+            writes="review/ (sampled frames from the cleaned clip)",
+            after=("clean",),
+            caution=(
+                "run_clip.py stops here unless it is told to carry on, because 1600 credits "
+                "are about to be spent on whatever these frames show. Look at them first; "
+                "`--gate-pass` is how you say you have and that they are worth it."
+            ),
         ),
         Step(
             name="marble_video",
             summary="Generate the static world from the cleaned clip, and fetch it when it is ready",
             writes="marble/<world>-video.spz, world.spz and a thumbnail",
-            after=("clean", "world_prompt"),
+            after=("clean", "world_prompt", "review"),
             parameters=MARBLE_PARAMETERS | MARBLE_POLL_PARAMETERS,
             paid=True,
             caution=(
@@ -382,6 +397,7 @@ STEPS: dict[str, Step] = {
                 "One world per new source clip. If a submission already exists, poll it -- never "
                 "resubmit, because a resubmit after the operation exists buys a second world."
             ),
+            credentials=("WLT_API_KEY",),
         ),
         Step(
             name="pi3x",
@@ -460,6 +476,7 @@ STEPS: dict[str, Step] = {
             | OBJECT_SHAPE_PARAMETERS,
             paid=True,
             caution="Generating a shape is a paid Modal call per object.",
+            credentials=("OPENAI_API_KEY",),
         ),
         Step(
             name="scale_fit",
@@ -485,6 +502,7 @@ STEPS: dict[str, Step] = {
                 "The tolerance and the bypass flags are an operator's call, not a retry knob. If "
                 "the only way past this is to loosen a guard, ask."
             ),
+            credentials=("OPENAI_API_KEY",),
         ),
         Step(
             name="finetune",

@@ -24,6 +24,18 @@ from orchestrator.agent.harness import HarnessAgent
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.steps import STEPS, Step, suggested_order
 
+# What the steps themselves need. Modal authenticates through ~/.modal.toml, so HOME covers
+# it; Marble and OpenAI read a key from the environment and fail instantly without one.
+CREDENTIALS = (
+    "OPENAI_API_KEY",
+    "WLT_API_KEY",
+    "MODAL_PROFILE",
+    "MODAL_TOKEN_ID",
+    "MODAL_TOKEN_SECRET",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+)
+
 SESSION_FILE = "session.id"
 BRIEF_FILE = "BRIEF.md"
 BIN_DIR = "bin"
@@ -192,7 +204,7 @@ class RunSession:
                     ),
                     **{
                         name: os.environ[name]
-                        for name in ("WANDER_DATABASE_URL", "HOME", "VIRTUAL_ENV")
+                        for name in ("WANDER_DATABASE_URL", "HOME", "VIRTUAL_ENV", *CREDENTIALS)
                         if name in os.environ
                     },
                 },
