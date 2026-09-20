@@ -111,6 +111,36 @@ USAGE
     "worldFile": "public/marble-clip-shot01-clean.spz" # optional, checked for existence
   }
 
+--------------------------------------------------------------------------------------------------
+WORLD-ONLY SHOTS
+--------------------------------------------------------------------------------------------------
+Some shots of a cut sequence legitimately have NO reconstructable person: a close-up where at most
+24 % of the body is ever inside the frame, or a stylised game character the pose model refuses. That
+candidate has a world and cameras and no `people.json` at all. Such a shot still belongs in the
+sequence -- its world, its window and its start pose are real -- so it is declared, never inferred:
+
+  {
+    "people": "none",                                 # the ONLY accepted value; absence means
+                                                      # "this shot has a cast", as before
+    "noPeopleReason": "at most 24% of the person is ever inside the frame",   # required, free text
+    "camerasJson": ".context/run/clip-shot03/pi3x/cameras.json",  # required: this shot's own solve
+    "placementJson": "...",                           # optional
+    "world": "/marble-clip-shot03-clean.spz",
+    "sourceStart": 8.5, "sourceEnd": 11.0
+  }
+
+A missing `people.json` on its own is an ERROR, not a world-only shot: silence there is how a failed
+package stage would be shipped as an artistic choice. `camerasJson` is reframed through
+scripts/sfm_frame.py into the same shape scripts/package_multiperson.py writes into a world
+directory (camera 0 at the origin, gravity on +y), because that is the frame fourd.html measures a
+shot's start pose in. The shot contributes its window, world, cameras and placement to `shots[]`,
+contributes no people, and still puts a terminator sample at its `sourceEnd` so its neighbours'
+casts cannot bleed across the cut. `sequence-report.json` lists it with its reason. A trim offset is
+neither needed nor guessed: a shot with no samples maps nothing onto the source clock.
+
+At least one shot must still have people. A package whose whole cast is empty has nothing to play,
+and fourd.html reads `primary` unconditionally (fourd.html:3234).
+
 Outputs, all inside `--out`: `people.json` (merged, source clock), `audio.json` + `audio/`,
 `<sNN-personid>/` per person (frames copied, or hardlinked with `--link`; `sequence.json`
 rewritten onto the source clock), `shots/NN/{cameras,placement}.json`, `sequence-report.json`.
@@ -129,9 +159,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from package_audio import wav_info  # noqa: E402
+from sfm_frame import camera0_reframe, describe, orthonormal  # noqa: E402
 
 MANIFEST_SCHEMA = "wander.people/1"
 SEQUENCE_SCHEMA = "wander.shot-sequence/1"
@@ -259,6 +292,99 @@ def read_shot_list(path: Path) -> list[dict]:
     return entries
 
 
+def resolve_path(base: Path, value, label: str, what: str) -> Path:
+    """A path from the shot list, taken relative to the list's own directory when it is relative."""
+    if not isinstance(value, str) or not value.strip():
+        fail(f"{label}: {what} must be a path")
+    path = Path(value)
+    if not path.is_absolute():
+        path = (base / path).resolve()
+    if not path.is_file():
+        fail(f"{label}: {what} {value} does not exist")
+    return path
+
+
+def read_people_declaration(entry: dict, label: str) -> str | None:
+    """`None` for an ordinary shot, or the reason this one legitimately has no cast.
+
+    The declaration is explicit on purpose. A shot with no `people.json` is normally a package stage
+    that failed, and inferring "this one just has nobody in it" from a missing file would ship that
+    failure silently as an artistic decision.
+    """
+    declared = entry.get("people")
+    if declared is None:
+        return None
+    if declared != "none":
+        fail(
+            f'{label}: people must be absent or the string "none"; got {declared!r}. A shot\'s cast '
+            f"comes from its candidate people.json, and the only thing this field can say is that "
+            f"there is no cast at all."
+        )
+    reason = entry.get("noPeopleReason")
+    if not isinstance(reason, str) or not reason.strip():
+        fail(
+            f'{label}: people "none" requires a noPeopleReason naming why this shot has no '
+            f'reconstructable person (for example "at most 24% of the person is ever inside the '
+            f'frame", or "stylised game character the pose model refuses"). The sequence report '
+            f"discloses it."
+        )
+    return reason.strip()
+
+
+def packaged_cameras(raw_path: Path, source_clip: Path, label: str) -> tuple[dict, str]:
+    """A shot's cameras.json in the shape the packagers put into a world directory.
+
+    scripts/package_multiperson.py:167-194 writes it for a shot that HAS people: every camera
+    re-expressed so camera 0 sits at the origin with gravity on +y (scripts/sfm_frame.py), which is
+    the frame fourd.html measures a shot's start pose in. A world-only shot never reaches that
+    packager, so its raw `.context/run/<name>/pi3x/cameras.json` gets the same one reframe here.
+    An already-packaged file carries `frameAlign` and is copied through untouched.
+    """
+    try:
+        doc = json.loads(raw_path.read_text())
+    except ValueError as error:
+        fail(f"{label}: {raw_path} is not readable JSON: {error}")
+    if not isinstance(doc, dict) or not isinstance(doc.get("cameras"), list) or not doc["cameras"]:
+        fail(f"{label}: {raw_path} has no non-empty `cameras` list")
+    for i, cam in enumerate(doc["cameras"]):
+        missing = [
+            key
+            for key in ("sourceIndex", "time", "camera_to_world", "source_intrinsics")
+            if cam.get(key) is None
+        ]
+        if missing:
+            fail(f"{label}: {raw_path} camera {i} is missing {', '.join(missing)}")
+    if "frameAlign" in doc:
+        return doc, "already packaged (frameAlign present); copied through"
+    rotation, translation, align = camera0_reframe(raw_path)
+    cameras = []
+    for cam in doc["cameras"]:
+        m = np.array(cam["camera_to_world"], float)
+        if m.shape != (4, 4):
+            fail(f"{label}: {raw_path} camera {cam['sourceIndex']} has no 4x4 camera_to_world")
+        levelled = np.eye(4)
+        levelled[:3, :3] = rotation @ orthonormal(m[:3, :3])
+        levelled[:3, 3] = rotation @ m[:3, 3] + translation
+        cameras.append(
+            dict(
+                sourceIndex=cam["sourceIndex"],
+                time=cam["time"],
+                camera_to_world=levelled.tolist(),
+                source_intrinsics=cam["source_intrinsics"],
+                source_image_size=cam.get("source_image_size"),
+            )
+        )
+    out = dict(
+        coordinates=f"OpenGL, {describe(align)}. Pi3X SfM of this shot, units = Pi3X normalized "
+        "(not metric). This shot reconstructs no person, so nothing else shares the frame.",
+        frameAlign=align,
+        source=str(raw_path),
+        sourceClip=str(source_clip),
+        cameras=cameras,
+    )
+    return out, f"reframed onto camera 0 from {raw_path} (scripts/sfm_frame.py)"
+
+
 def find_source_mapping(entry: dict, manifest: dict, base: Path) -> tuple[dict | None, str]:
     """The recorded mapping for this shot, and where it was found."""
     mapping = entry.get("sourceMapping")
@@ -369,20 +495,35 @@ def load_shots(entries: list[dict], list_path: Path, source: dict) -> list[dict]
     shots, previous = [], None
     for index, entry in enumerate(entries):
         label = f"shot {index}"
+        no_people_reason = read_people_declaration(entry, label)
         candidate = entry.get("candidateDir")
-        if not isinstance(candidate, str) or not candidate:
+        candidate_dir, people_path, manifest = None, None, None
+        if isinstance(candidate, str) and candidate:
+            candidate_dir = Path(candidate)
+            if not candidate_dir.is_absolute():
+                candidate_dir = (base / candidate_dir).resolve()
+            if not candidate_dir.is_dir():
+                fail(f"{label}: candidateDir {candidate} is not a directory")
+        elif no_people_reason is None:
             fail(f"{label}: candidateDir is required")
-        candidate_dir = Path(candidate)
-        if not candidate_dir.is_absolute():
-            candidate_dir = (base / candidate_dir).resolve()
-        if not candidate_dir.is_dir():
-            fail(f"{label}: candidateDir {candidate} is not a directory")
-        people_path = candidate_dir / "people.json"
-        if not people_path.is_file():
-            fail(f"{label}: {people_path} does not exist")
-        manifest = json.loads(people_path.read_text())
-        if not isinstance(manifest, dict):
-            fail(f"{label}: {people_path} is not a JSON object")
+        if no_people_reason is None:
+            people_path = candidate_dir / "people.json"
+            if not people_path.is_file():
+                fail(
+                    f"{label}: {people_path} does not exist. A shot that legitimately has no "
+                    f'reconstructable person must say so: set "people": "none" with a '
+                    f'"noPeopleReason" and a "camerasJson". A missing manifest is otherwise a '
+                    f"package stage that did not finish."
+                )
+            manifest = json.loads(people_path.read_text())
+            if not isinstance(manifest, dict):
+                fail(f"{label}: {people_path} is not a JSON object")
+        elif candidate_dir is not None and (candidate_dir / "people.json").is_file():
+            fail(
+                f'{label}: declares people "none" but {candidate_dir / "people.json"} exists. '
+                f"Drop the declaration or point candidateDir elsewhere; this tool will not discard "
+                f"a cast that was reconstructed."
+            )
         world = entry.get("world")
         if not isinstance(world, str) or not world.strip():
             fail(f"{label}: world must be the viewer URL or id of this shot's spz")
@@ -397,11 +538,34 @@ def load_shots(entries: list[dict], list_path: Path, source: dict) -> list[dict]
         else:
             world_file = None
 
-        mapping, where = find_source_mapping(entry, manifest, base)
-        start, end = resolve_window(entry, mapping, where, label)
-        offset, offset_source, offset_measured = resolve_trim_offset(
-            entry, mapping, where, label, start
+        cameras_json = entry.get("camerasJson")
+        if no_people_reason is not None:
+            cameras_path = resolve_path(base, cameras_json, label, "camerasJson")
+        elif cameras_json is not None:
+            cameras_path = resolve_path(base, cameras_json, label, "camerasJson")
+        else:
+            cameras_path = None
+        placement_json = entry.get("placementJson")
+        placement_path = (
+            resolve_path(base, placement_json, label, "placementJson")
+            if placement_json is not None
+            else None
         )
+
+        mapping, where = find_source_mapping(entry, manifest or {}, base)
+        start, end = resolve_window(entry, mapping, where, label)
+        if no_people_reason is None:
+            offset, offset_source, offset_measured = resolve_trim_offset(
+                entry, mapping, where, label, start
+            )
+        else:
+            # A world-only shot maps no samples onto the source clock, so there is nothing for a
+            # trim offset to shift and nothing to derive one from. It is not guessed and not needed.
+            offset, offset_source, offset_measured = (
+                None,
+                "not applicable: a world-only shot maps no samples",
+                None,
+            )
         if end > clip_duration + TIME_EPS:
             fail(
                 f"{label}: sourceEnd {end} is past the source clip's {clip_duration:.3f} s "
@@ -413,19 +577,24 @@ def load_shots(entries: list[dict], list_path: Path, source: dict) -> list[dict]
                 f"{previous['sourceEnd']} s; shots must be ordered and must not overlap"
             )
 
-        local = check_local_timeline(manifest, f"{label} ({people_path})")
-        shift = start + offset
-        mapped = [canon(shift + t) for t in local]
-        if mapped[0] < canon(start) - TIME_EPS:
-            fail(
-                f"{label}: first sample maps to {mapped[0]} s, before sourceStart {start} s; the "
-                f"trim offset ({offset_source}) is wrong"
-            )
-        if mapped[-1] >= canon(end) - TIME_EPS:
-            fail(
-                f"{label}: last sample maps to {mapped[-1]} s, which is not before sourceEnd "
-                f"{end} s; the trim offset ({offset_source}) is wrong or the window is too short"
-            )
+        if no_people_reason is None:
+            local = check_local_timeline(manifest, f"{label} ({people_path})")
+            shift = start + offset
+            mapped = [canon(shift + t) for t in local]
+            local_duration = float(manifest["duration"])
+            mapped_end = canon(shift + local_duration)
+            if mapped[0] < canon(start) - TIME_EPS:
+                fail(
+                    f"{label}: first sample maps to {mapped[0]} s, before sourceStart {start} s; "
+                    f"the trim offset ({offset_source}) is wrong"
+                )
+            if mapped[-1] >= canon(end) - TIME_EPS:
+                fail(
+                    f"{label}: last sample maps to {mapped[-1]} s, which is not before sourceEnd "
+                    f"{end} s; the trim offset ({offset_source}) is wrong or the window is too short"
+                )
+        else:
+            local, mapped, shift, local_duration, mapped_end = [], [], None, None, None
         shot = dict(
             index=index,
             entry=entry,
@@ -433,6 +602,9 @@ def load_shots(entries: list[dict], list_path: Path, source: dict) -> list[dict]
             candidateName=candidate,
             manifest=manifest,
             peoplePath=people_path,
+            camerasPath=cameras_path,
+            placementPath=placement_path,
+            noPeopleReason=no_people_reason,
             world=world,
             worldFile=world_file,
             sourceStart=start,
@@ -442,10 +614,10 @@ def load_shots(entries: list[dict], list_path: Path, source: dict) -> list[dict]
             trimOffsetMeasured=offset_measured,
             sourceMappingFrom=where,
             localTimestamps=local,
-            localDuration=float(manifest["duration"]),
+            localDuration=local_duration,
             shift=shift,
             mapped=mapped,
-            mappedEnd=canon(shift + float(manifest["duration"])),
+            mappedEnd=mapped_end,
         )
         shots.append(shot)
         previous = shot
@@ -458,12 +630,20 @@ def build_grid(shots: list[dict], duration: float) -> tuple[list[float], dict[fl
     points: set[float] = set()
     for shot in shots:
         points.update(shot["mapped"])
+    if not points:
+        fail(
+            'no shot contributes a sample: every shot in this list declares people "none", so the '
+            "merged package would have no cast and no timeline. A sequence needs at least one shot "
+            "with a reconstructed person."
+        )
     limit = canon(duration)
     for shot in shots:
         end = canon(shot["sourceEnd"])
         # `timestamps[run[1] + 1] ?? duration` (src/person-visibility.ts:29) ends the last interval.
         # At the end of the clip `duration` already supplies exactly the right value; anywhere else
-        # the cut itself has to be on the grid, or the person bleeds into the next shot.
+        # the cut itself has to be on the grid, or the person bleeds into the next shot. A
+        # world-only shot contributes no samples of its own and still gets this terminator, so a
+        # neighbour's cast cannot run across it.
         if end < limit:
             points.add(end)
     grid = sorted(points)
@@ -573,22 +753,40 @@ def package(
     for shot in shots:
         prefix = f"s{shot['index']:02d}"
         candidate = shot["candidate"]
-        inputs[str(shot["peoplePath"])] = sha256_file(shot["peoplePath"])
+        if shot["peoplePath"] is not None:
+            inputs[str(shot["peoplePath"])] = sha256_file(shot["peoplePath"])
         shot_dir = out / "shots" / f"{shot['index']:02d}"
         shot_dir.mkdir(parents=True, exist_ok=True)
-        copied = {}
-        for name in ("cameras.json", "placement.json"):
-            src_file = candidate / name
-            if src_file.is_file():
-                shutil.copy2(src_file, shot_dir / name)
+        copied, cameras_from = {}, None
+        for name, explicit in (
+            ("cameras.json", shot["camerasPath"]),
+            ("placement.json", shot["placementPath"]),
+        ):
+            src_file = explicit or (candidate / name if candidate is not None else None)
+            if src_file is not None and src_file.is_file():
+                if name == "cameras.json" and explicit is not None:
+                    # An explicit camerasJson is a raw solve export: reframe it into the shape the
+                    # packagers put in a world directory before the viewer measures a pose from it.
+                    document, cameras_from = packaged_cameras(
+                        src_file, source, f"shot {shot['index']}"
+                    )
+                    (shot_dir / name).write_text(json.dumps(document, indent=1))
+                else:
+                    shutil.copy2(src_file, shot_dir / name)
                 inputs[str(src_file)] = sha256_file(src_file)
                 copied[name] = f"shots/{shot['index']:02d}/{name}"
             else:
                 copied[name] = None
         if copied["cameras.json"] is None:
-            fail(f"shot {shot['index']}: {candidate / 'cameras.json'} does not exist")
+            named = candidate / "cameras.json" if candidate is not None else "no cameras.json"
+            fail(
+                f"shot {shot['index']}: {named} does not exist. Every shot needs its own solve's "
+                f"cameras -- an ordinary one takes them from its candidate directory, a world-only "
+                f"one names them with camerasJson -- or the viewer has no frame to place this "
+                f"shot's start pose in."
+            )
 
-        roster = shot["manifest"].get("people")
+        roster = [] if shot["noPeopleReason"] is not None else shot["manifest"].get("people")
         if not isinstance(roster, list):
             fail(f"shot {shot['index']}: people.json has no `people` list")
         shot_people, linked_any = [], False
@@ -707,12 +905,16 @@ def package(
             )
             shot_people.append(merged_id)
 
-        primary = shot["manifest"].get("primary")
+        manifest_of = shot["manifest"] or {}
+        primary = manifest_of.get("primary")
         shot_primary = f"{prefix}-{primary}" if isinstance(primary, str) and primary else None
         if shot_primary is not None and shot_primary not in id_map:
             shot_primary = shot_people[0] if shot_people else None
-        first_index = index_of[shot["mapped"][0]]
-        last_index = index_of[shot["mapped"][-1]]
+        # A world-only shot has no samples of its own, so it names no range on the merged grid. Its
+        # window, world and cameras are the whole of what it contributes, plus its terminator.
+        sampled = bool(shot["mapped"])
+        first_index = index_of[shot["mapped"][0]] if sampled else None
+        last_index = index_of[shot["mapped"][-1]] if sampled else None
         shot_blocks.append(
             dict(
                 index=shot["index"],
@@ -722,20 +924,22 @@ def package(
                 sourceEnd=shot["sourceEnd"],
                 placement=copied["placement.json"],
                 cameras=copied["cameras.json"],
+                camerasFrom=cameras_from,
                 primary=shot_primary,
                 people=shot_people,
-                sampleRange=[first_index, last_index],
-                firstSampleSeconds=grid[first_index],
-                lastSampleSeconds=grid[last_index],
-                leadInSeconds=canon(grid[first_index] - shot["sourceStart"]),
+                noPeopleReason=shot["noPeopleReason"],
+                sampleRange=[first_index, last_index] if sampled else None,
+                firstSampleSeconds=grid[first_index] if sampled else None,
+                lastSampleSeconds=grid[last_index] if sampled else None,
+                leadInSeconds=canon(grid[first_index] - shot["sourceStart"]) if sampled else None,
                 trimOffsetSeconds=shot["trimOffsetSeconds"],
                 trimOffsetSource=shot["trimOffsetSource"],
                 trimOffsetMeasured=shot["trimOffsetMeasured"],
-                shiftSeconds=canon(shot["shift"]),
+                shiftSeconds=canon(shot["shift"]) if shot["shift"] is not None else None,
                 localDurationSeconds=shot["localDuration"],
-                sharedPlacement=shot["manifest"].get("sharedPlacement"),
-                sharedScale=shot["manifest"].get("sharedScale"),
-                floorFit=shot["manifest"].get("floorFit"),
+                sharedPlacement=manifest_of.get("sharedPlacement"),
+                sharedScale=manifest_of.get("sharedScale"),
+                floorFit=manifest_of.get("floorFit"),
                 linkedFrames=linked_any,
             )
         )
@@ -770,7 +974,7 @@ def package(
         schema=MANIFEST_SCHEMA,
         clip=str(source),
         sourceSha256=info["sha256"],
-        fps=shots[0]["manifest"].get("fps"),
+        fps=next((s["manifest"].get("fps") for s in shots if s["manifest"]), None),
         samples=len(grid),
         duration=duration,
         timestamps=grid,
@@ -786,10 +990,18 @@ def package(
             sourceDurationSeconds=duration,
             shotCount=len(shots),
             gaps=gaps,
+            shotsWithoutPeople=[
+                dict(index=block["index"], world=block["world"], reason=block["noPeopleReason"])
+                for block in shot_blocks
+                if block["noPeopleReason"] is not None
+            ],
             note="One package, several worlds. `shots` is ordered and non-overlapping; shot k is "
             "active for sourceStart <= t < sourceEnd. There is no top-level cameras.json or "
             "placement.json: the shots are separate solves and share no frame, so the viewer must "
-            "take both from the active shot. `timestamps`/`duration` are the ORIGINAL clip's clock.",
+            "take both from the active shot. `timestamps`/`duration` are the ORIGINAL clip's clock. "
+            "A shot with `noPeopleReason` reconstructs no person at all: it still swaps in its own "
+            "world, cameras and placement, and its start pose falls back to its first source "
+            "camera because there is no primary to look at.",
             perShotState=[
                 "worldUrl (fourd.html:1065)",
                 "floorY (fourd.html:1230, 1334-1342)",
@@ -885,16 +1097,20 @@ def package(
                 world=block["world"],
                 sourceStart=block["sourceStart"],
                 sourceEnd=block["sourceEnd"],
-                mappedInterval=[block["firstSampleSeconds"], block["lastSampleSeconds"]],
+                mappedInterval=[block["firstSampleSeconds"], block["lastSampleSeconds"]]
+                if block["sampleRange"]
+                else None,
                 sampleRange=block["sampleRange"],
                 peopleCount=len(block["people"]),
                 people=block["people"],
+                noPeopleReason=block["noPeopleReason"],
                 trimOffsetSeconds=block["trimOffsetSeconds"],
                 trimOffsetSource=block["trimOffsetSource"],
                 trimOffsetMeasured=block["trimOffsetMeasured"],
                 leadInSeconds=block["leadInSeconds"],
                 placement=block["placement"],
                 cameras=block["cameras"],
+                camerasFrom=block["camerasFrom"],
                 linkedFrames=block["linkedFrames"],
             )
             for block in shot_blocks
@@ -907,11 +1123,34 @@ def package(
             note="Gap seconds are source time no shot reconstructs. Disclose them as 'not "
             "reconstructed'; nothing in this package fills them.",
         ),
+        shotsWithoutPeople=[
+            dict(
+                index=block["index"],
+                world=block["world"],
+                sourceStart=block["sourceStart"],
+                sourceEnd=block["sourceEnd"],
+                reason=block["noPeopleReason"],
+                cameras=block["cameras"],
+            )
+            for block in shot_blocks
+            if block["noPeopleReason"] is not None
+        ],
         audio=audio_report,
         inputs=inputs,
     )
     (out / "sequence-report.json").write_text(json.dumps(report, indent=1))
     return report
+
+
+def describe_shot(shot: dict) -> str:
+    """One report line. A world-only shot has no cast and no offset, and says which it is."""
+    head = f"{shot['index']}: {shot['sourceStart']:.3f}-{shot['sourceEnd']:.3f} s {shot['world']}"
+    if shot["noPeopleReason"] is not None:
+        return f"{head} (NO PERSON: {shot['noPeopleReason']})"
+    return (
+        f"{head} ({shot['peopleCount']} people, offset {shot['trimOffsetSeconds']:.4f} s "
+        f"{'measured' if shot['trimOffsetMeasured'] else 'DERIVED'})"
+    )
 
 
 def main() -> int:
@@ -941,12 +1180,7 @@ def main() -> int:
                 samples=report["output"]["samples"],
                 duration=report["output"]["durationSeconds"],
                 people=report["output"]["peopleCount"],
-                shots=[
-                    f"{s['index']}: {s['sourceStart']:.3f}-{s['sourceEnd']:.3f} s "
-                    f"{s['world']} ({s['peopleCount']} people, offset {s['trimOffsetSeconds']:.4f} s "
-                    f"{'measured' if s['trimOffsetMeasured'] else 'DERIVED'})"
-                    for s in report["shots"]
-                ],
+                shots=[describe_shot(s) for s in report["shots"]],
                 gaps=[f"{g['startSeconds']:.3f}-{g['endSeconds']:.3f} s" for g in report["gaps"]],
                 audio=report["audio"],
             ),
@@ -957,6 +1191,11 @@ def main() -> int:
         print(
             f"NOT RECONSTRUCTED: {gap['startSeconds']:.3f}-{gap['endSeconds']:.3f} s "
             f"({gap['seconds']:.3f} s of the source clip)"
+        )
+    for shot in report["shotsWithoutPeople"]:
+        print(
+            f"NO PERSON: shot {shot['index']} {shot['sourceStart']:.3f}-{shot['sourceEnd']:.3f} s "
+            f"({shot['world']}) -- {shot['reason']}"
         )
     return 0
 
