@@ -31,7 +31,7 @@ export function createSceneSession({ renderer, template, initial, clips, createR
     const options = new URLSearchParams({ demo: id });
     for (const [key, value] of initial)
       if (
-        ['walk', 'audio', 'personsize', 'dpr'].includes(key) ||
+        ['walk', 'audio', 'personsize', 'dpr', 'interact', 'interactObject'].includes(key) ||
         key.startsWith('xr') ||
         key.startsWith('fake')
       )
