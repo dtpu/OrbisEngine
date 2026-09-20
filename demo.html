@@ -10,10 +10,10 @@
     />
     <style>
       :root {
-        --bg: #f6f6f8;
-        --surface: #f0f0f3;
-        --surface-2: #e9e9ed;
-        --line: #e2e1e6;
+        --bg: #f0f0f2;
+        --surface: #e8e8eb;
+        --surface-2: #e0e0e4;
+        --line: #dcdbe0;
         --line-2: #d3d2d8;
         --ink: #1e1d22;
         --ink-2: #4b4a52;
@@ -88,6 +88,36 @@
         grid-template-rows: 60px 1fr;
         grid-template-columns: var(--rail) 1fr;
         height: 100%;
+        transition: grid-template-columns 0.22s ease;
+      }
+      #shell.norail {
+        grid-template-columns: 0 1fr;
+      }
+      #shell.norail #rail {
+        visibility: hidden;
+        border-right-color: transparent;
+      }
+      .railbtn {
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        display: inline-flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 4px;
+        margin-right: -6px;
+        transition: background 0.15s;
+      }
+      .railbtn:hover {
+        background: var(--surface);
+      }
+      .railbtn span {
+        display: block;
+        width: 15px;
+        height: 1.5px;
+        background: var(--ink-2);
+        border-radius: 1px;
       }
 
       /* ---------------- header ---------------- */
@@ -149,11 +179,16 @@
         border-color: #fff3;
         color: #fff;
       }
+      .hbtn kbd {
+        background: var(--bg);
+      }
 
       /* ---------------- rail ---------------- */
       #rail {
         border-right: 1px solid var(--line);
         overflow-y: auto;
+        overflow-x: hidden;
+        min-width: 0;
         overscroll-behavior: contain;
         padding: 0 0 28px;
         scrollbar-width: thin;
@@ -180,7 +215,7 @@
       }
       .card {
         position: relative;
-        width: 100%;
+        width: var(--rail);
         text-align: left;
         display: grid;
         grid-template-columns: 84px 1fr;
@@ -314,8 +349,8 @@
         pointer-events: auto;
       }
       .panel {
-        background: #f7f7f8;
-        border: 1px solid #ffffff;
+        background: #f0f0f2;
+        border: 1px solid #f8f8f9;
         border-radius: 14px;
         color: var(--ink);
       }
@@ -335,78 +370,6 @@
         line-height: 1.45;
         color: var(--ink-2);
         margin-top: 4px;
-      }
-
-      /* notes */
-      #fact {
-        z-index: 7;
-        right: 24px;
-        top: 24px;
-        width: 340px;
-        max-height: calc(100% - 110px);
-        overflow-y: auto;
-        padding: 0;
-        scrollbar-width: thin;
-        scrollbar-color: var(--line-2) transparent;
-        transition:
-          opacity 0.2s,
-          transform 0.2s;
-      }
-      #fact.hid {
-        opacity: 0;
-        transform: translateY(-6px);
-        pointer-events: none;
-      }
-      #fact.hid > * {
-        pointer-events: none;
-      }
-      #fact section {
-        padding: 16px 20px 18px;
-        border-top: 1px solid var(--line);
-      }
-      #fact section:first-child {
-        border-top: 0;
-        padding-top: 20px;
-      }
-      #fact h2 {
-        font-size: 26px;
-        line-height: 1.1;
-      }
-      #fact .place {
-        margin-top: 8px;
-        font-size: 11.5px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        color: var(--mute);
-        font-variant-numeric: tabular-nums;
-      }
-      #fact p {
-        font-size: 13.5px;
-        line-height: 1.55;
-        color: var(--ink-2);
-      }
-      #fact .label + p,
-      #fact .label + ul {
-        margin-top: 8px;
-      }
-      #fact ul {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-      }
-      #fact li {
-        font-size: 13.5px;
-        line-height: 1.5;
-        color: var(--ink-2);
-        padding: 7px 0;
-        border-top: 1px solid var(--line);
-      }
-      #fact li:first-child {
-        border-top: 0;
-        padding-top: 0;
-      }
-      #fact li:last-child {
-        padding-bottom: 0;
       }
 
       /* edge of the filmed world */
@@ -632,6 +595,9 @@
   <body>
     <div id="shell">
       <header>
+        <button class="railbtn" id="railbtn" aria-label="Hide scene list" aria-expanded="true">
+          <span></span><span></span><span></span>
+        </button>
         <div class="wordmark">Wander</div>
         <div class="vrule"></div>
         <div class="tagline">
@@ -640,7 +606,6 @@
         </div>
         <div class="spacer"></div>
         <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
-        <button class="hbtn" id="facttoggle">Notes <kbd>?</kbd></button>
         <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
       </header>
 
@@ -665,26 +630,6 @@
         <div class="ov panel" id="srccap">
           <div class="label">Source clip</div>
           <div class="txt" id="srctxt"></div>
-        </div>
-
-        <div class="ov panel" id="fact">
-          <section>
-            <h2 id="ftitle"></h2>
-            <div class="place" id="fplace"></div>
-          </section>
-          <section><p id="flead"></p></section>
-          <section>
-            <div class="label">What the source shows</div>
-            <ul id="fproof"></ul>
-          </section>
-          <section>
-            <div class="label">Explore</div>
-            <p id="ffree"></p>
-          </section>
-          <section>
-            <div class="label">Limitations</div>
-            <p id="fcaveat"></p>
-          </section>
         </div>
 
         <div class="ov panel" id="edgelab">
@@ -1017,14 +962,6 @@
         for (const el of document.querySelectorAll('.card'))
           el.classList.toggle('on', el.dataset.id === id);
 
-        $('ftitle').textContent = c.title;
-        $('fplace').textContent = c.place;
-        $('flead').innerHTML = c.lead;
-        $('fproof').innerHTML = c.proof.map((p) => `<li></li>`).join('');
-        [...$('fproof').children].forEach((li, i) => (li.textContent = c.proof[i]));
-        $('ffree').textContent = c.free;
-        $('fcaveat').textContent = c.caveat;
-        $('facttoggle').firstChild.textContent = 'Notes ';
         $('srctxt').textContent = c.srctxt;
 
         $('play').disabled = true;
@@ -1105,13 +1042,6 @@
             lv.pause();
             lv.removeAttribute('src');
             lv.load();
-            if (w.objectWarnings?.length) {
-              $('facttoggle').firstChild.textContent = 'Notes · incomplete ';
-              const c = ALL.find((item) => item.id === current);
-              $('fcaveat').textContent =
-                'Some objects are unavailable in this replay. The rest of the scene is still shown. ' +
-                c.caveat;
-            }
             try {
               win.focus();
             } catch {}
@@ -1302,9 +1232,9 @@
       }
       requestAnimationFrame(edgeLoop);
 
-      /* ---------------- HUD + notes ---------------- */
+      /* ---------------- HUD + rail ---------------- */
       let hudOn = false,
-        factOn = true;
+        railOn = true;
       function toggleHud(v) {
         hudOn = v === undefined ? !hudOn : v;
         try {
@@ -1312,10 +1242,11 @@
         } catch {}
         $('hudbtn').classList.toggle('on', hudOn);
       }
-      function toggleFact(v) {
-        factOn = v === undefined ? !factOn : v;
-        $('fact').classList.toggle('hid', !factOn);
-        $('facttoggle').classList.toggle('on', factOn);
+      function toggleRail(v) {
+        railOn = v === undefined ? !railOn : v;
+        $('shell').classList.toggle('norail', !railOn);
+        $('railbtn').setAttribute('aria-expanded', String(railOn));
+        $('railbtn').setAttribute('aria-label', railOn ? 'Hide scene list' : 'Show scene list');
       }
       $('hudbtn').addEventListener('click', () => {
         toggleHud();
@@ -1323,12 +1254,7 @@
           frame.contentWindow.focus();
         } catch {}
       });
-      $('facttoggle').addEventListener('click', () => {
-        toggleFact();
-        try {
-          frame.contentWindow.focus();
-        } catch {}
-      });
+      $('railbtn').addEventListener('click', () => toggleRail());
 
       // Shortcuts have to be installed in both documents: once the judge clicks into the scene,
       // key events go to the iframe and never reach this page.
@@ -1443,9 +1369,9 @@
               toggleHud();
               return;
             }
-            if (e.key === '?' || e.code === 'Slash') {
+            if (e.code === 'BracketLeft') {
               e.preventDefault();
-              toggleFact();
+              toggleRail();
               return;
             }
             if (e.code === 'Escape') {
