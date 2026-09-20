@@ -199,6 +199,31 @@ def file_sha256(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def supplied_world_prompt(path: Path, clip: Path) -> dict:
+    """Validate an authored input description, without asserting any quality review."""
+    if path.stat().st_size > 65536:
+        raise ValueError("world prompt file exceeds 65536 bytes")
+    doc = json.loads(path.read_text())
+    fields = {"text_prompt", "sourceSha256", "author", "provenance"}
+    if not isinstance(doc, dict) or set(doc) != fields:
+        raise ValueError(f"world prompt file requires exactly {sorted(fields)}")
+    rec = {}
+    for field, limit in (("text_prompt", 10000), ("author", 500), ("provenance", 2000)):
+        value = doc[field]
+        if not isinstance(value, str) or not 1 <= len(value.strip()) <= limit or "\0" in value:
+            raise ValueError(
+                f"world prompt {field} must be a nonempty string of at most {limit} characters"
+            )
+        rec[field] = value.strip()
+    digest = doc["sourceSha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        raise ValueError("world prompt sourceSha256 must be a SHA-256 hex digest")
+    if digest.lower() != file_sha256(clip):
+        raise ValueError("world prompt sourceSha256 does not match selected clip bytes")
+    rec.update(sourceSha256=digest.lower(), origin="supplied", authorship="externally-authored")
+    return rec
+
+
 _print_lock = threading.Lock()
 
 
@@ -839,6 +864,19 @@ class Pipeline:
 
         A generated description is an input aid, not proof of geometry or reduced hallucination.
         """
+        supplied = getattr(self.a, "world_prompt_file", None)
+        if supplied:
+            rec = supplied_world_prompt(Path(supplied), self.clip)
+            self.prompt_json.write_text(json.dumps(rec, indent=2) + "\n")
+            self.state.record(
+                "world_prompt",
+                origin="supplied",
+                author=rec["author"],
+                provenance=rec["provenance"],
+                sourceSha256=rec["sourceSha256"],
+            )
+            say("   prompt: supplied externally authored source description (not a quality review)")
+            return
         run(
             [
                 PY,
@@ -2449,6 +2487,17 @@ class Pipeline:
         wanted = set(a.only.split(",")) if a.only else set(self.stages)
         if a.skip_finetune:
             wanted.discard("finetune")
+        supplied = getattr(a, "world_prompt_file", None)
+        if supplied and "world_prompt" in wanted:
+            # Admit this input before parallel paid stages can launch. Unrelated --only
+            # selections do not read the file. Revalidate again when copying the prompt.
+            rec = supplied_world_prompt(Path(supplied), self.clip)
+            if self.state.done("world_prompt") and (
+                not self.prompt_json.exists() or json.loads(self.prompt_json.read_text()) != rec
+            ):
+                raise ValueError(
+                    "supplied world prompt differs from cached prompt; use a new run name"
+                )
         if "verify" not in wanted and (
             "verify" in self.state.data["stages"] or "_verify" in self.state.data["stages"]
         ):
@@ -2789,6 +2838,11 @@ def main():
     ap.add_argument("--clip", required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--fps", type=float, default=12)
+    ap.add_argument(
+        "--world-prompt-file",
+        type=Path,
+        help="Authored JSON description with text_prompt, selected-clip sourceSha256, author and provenance",
+    )
     ap.add_argument(
         "--source-sha256",
         help="Canonical original source SHA-256 shared by reviewed aliases and trims",
