@@ -63,11 +63,57 @@ def person_gap_summary(gaps, count, minimum=MIN_PERSON_POINTS):
     )
 
 
-def similarity(src, dst):
+# A similarity needs three non-collinear points; below this the fit is describing sampling
+# noise rather than two views of the same scene, and its rotation is unconstrained about the
+# axis the points happen to lie on. It is a property of the estimator, not of any clip.
+MIN_SIMILARITY_POINTS = 12
+# Smallest principal spread of the source points, relative to their largest. A ratio under
+# this means the correspondences lie on a line or a plane-edge, where the SVD below either
+# fails to converge or returns a rotation the data never determined.
+MIN_SIMILARITY_SPREAD = 1e-6
+
+
+def similarity(src, dst, minimum=MIN_SIMILARITY_POINTS, spread=MIN_SIMILARITY_SPREAD):
+    """Trimmed similarity src -> dst, refusing inputs an SVD would crash or lie about.
+
+    The trimmed fit is unchanged: four rounds, each keeping the closest 75%. What is new is
+    that empty, non-finite and degenerate inputs raise a RuntimeError naming the counts
+    instead of reaching `np.linalg.svd`, which answers "SVD did not converge" to a matrix of
+    NaN and says nothing about the anchor set that was actually empty.
+    """
+    src = np.asarray(src, dtype=float).reshape(-1, 3)
+    dst = np.asarray(dst, dtype=float).reshape(-1, 3)
+    if len(src) != len(dst):
+        raise RuntimeError(f"Similarity needs paired points, got {len(src)} and {len(dst)}")
+    finite = np.isfinite(src).all(1) & np.isfinite(dst).all(1)
+    src, dst = src[finite], dst[finite]
+    if len(src) < minimum:
+        raise RuntimeError(
+            f"Only {len(src)} finite paired points for the anchor alignment "
+            f"({int(finite.size - finite.sum())} dropped as NaN or infinite); "
+            f"a similarity fit needs at least {minimum}"
+        )
+
     def fit(a, b):
+        if len(a) < minimum:
+            raise RuntimeError(f"Similarity fit left with {len(a)} points, needs {minimum}")
         ma, mb = a.mean(0), b.mean(0)
         aa, bb = a - ma, b - mb
-        U, S, V = np.linalg.svd(bb.T @ aa / len(a))
+        moments = np.linalg.eigvalsh(aa.T @ aa / len(a))
+        if not np.isfinite(moments).all() or moments[-1] <= 0:
+            raise RuntimeError("Anchor correspondences have no finite spread to align")
+        if moments[0] <= spread * moments[-1]:
+            raise RuntimeError(
+                f"Anchor correspondences are degenerate: principal spreads "
+                f"{moments[0]:.3e}/{moments[-1]:.3e} put them on a line or a point, "
+                "which does not determine a rotation"
+            )
+        try:
+            U, S, V = np.linalg.svd(bb.T @ aa / len(a))
+        except np.linalg.LinAlgError as error:
+            raise RuntimeError(
+                f"Anchor alignment SVD failed on {len(a)} points: {error}"
+            ) from error
         D = np.eye(3)
         D[2, 2] = np.linalg.det(U @ V)
         R = U @ D @ V
@@ -78,8 +124,243 @@ def similarity(src, dst):
     for _ in range(4):
         s, R, t = fit(src[keep], dst[keep])
         error = np.linalg.norm(src @ R.T * s + t - dst, axis=1)
-        keep = error <= np.percentile(error, 75)
+        trimmed = error <= np.percentile(error, 75)
+        # Trimming past the estimator's own minimum would hand `fit` a set too small to
+        # constrain it; stop trimming instead of failing on the clip's last few matches.
+        if trimmed.sum() < minimum:
+            break
+        keep = trimmed
     return s, R, t, float(np.sqrt(np.mean(error[keep] ** 2)))
+
+
+# --- confidence, people and anchor selection ------------------------------------------------
+# Pi3X's per-pixel confidence is the sigmoid of a head that is not calibrated across content.
+# Measured on this stage's own saved anchor predictions (8 views each, .context/run/*/pi3x):
+#   solved cleanly: img5594 max 0.91 / 91% of pixels over 0.3, img5593 0.91, hp-fly-s63 0.63,
+#                   movie-s26 0.57
+#   failed:         game-s1 max 0.48, creed-v1 0.44, movie-s17 0.40, soccer-s1 0.32
+# soccer-s1 never crosses 0.3 in seven of its eight anchors, so `conf > 0.3` produced an empty
+# `valid`, and no clip in the failing set crosses the 0.5 the anchor matches asked for, so every
+# anchor's match set was empty and the alignment SVD was handed a NaN matrix. The cut therefore
+# has to be a RANK inside each view, with the old absolute cut kept wherever the view is
+# confident enough to satisfy it, so nothing changes for the clips that already solve.
+CONF_ABSOLUTE = 0.3
+# Share of a view that must clear CONF_ABSOLUTE for the absolute cut to describe that view.
+# Every anchor of the four solved clips that carried the fit is far above this; the starved
+# views are at zero.
+CONF_MIN_FRACTION = 0.2
+# Fallback cut: keep the more confident 40% of the view. Enough surface for a person cloud and
+# an intrinsic fit, while still dropping the half of the map the model is least sure of.
+CONF_QUANTILE = 0.6
+# Under this, the model is not reporting geometry at all, only the floor of its own sigmoid.
+CONF_FLOOR = 0.02
+
+CONF_MODE_ABSOLUTE = "absolute"
+CONF_MODE_RANK = "per-view-rank"
+
+
+def confidence_threshold(
+    conf,
+    absolute=CONF_ABSOLUTE,
+    min_fraction=CONF_MIN_FRACTION,
+    quantile=CONF_QUANTILE,
+    floor=CONF_FLOOR,
+):
+    """(threshold, mode) for one view's confidence map.
+
+    The absolute cut when this view actually has that much confident surface, otherwise the
+    view's own quantile, never below `floor`. Returning the mode keeps the run's metadata
+    honest about which of the two a frame was measured under.
+    """
+    conf = np.asarray(conf, dtype=float)
+    finite = conf[np.isfinite(conf)]
+    if finite.size == 0:
+        return float(floor), CONF_MODE_RANK
+    if float((finite > absolute).mean()) >= min_fraction:
+        return float(absolute), CONF_MODE_ABSOLUTE
+    return max(float(floor), float(np.quantile(finite, quantile))), CONF_MODE_RANK
+
+
+# Semantic person share of the anchor views, averaged, above which "person" is describing a
+# crowd rather than the subjects. Measured on the same saved anchors: soccer-s1 0.355 (a
+# stadium: the terraces are class 12 wall to wall), movie-s17 0.408 and creed-v1 0.361 (ringside
+# crowd), against game-s1 0.061, img5594 0.104, movie-s26 0.125 and hp-fly-s63 0.149. Excluding
+# a crowd from the static scene erases the stadium -- on soccer-s1 anchor 3 the semantic mask
+# takes 51.7% of the view and leaves 122707 static pixels where the foreground-instance mask
+# leaves 176547 -- and exporting it as the person ply makes the terraces "the person".
+CROWD_PERSON_FRACTION = 0.25
+
+MASK_SEMANTIC = "semantic-person"
+MASK_FOREGROUND = "foreground-instances"
+
+
+def mask_mode(person_fractions, threshold=CROWD_PERSON_FRACTION):
+    """(mode, mean fraction) -- which people mask this clip's solve should use throughout.
+
+    One decision per clip rather than per view, so the pixels excluded from the static scene
+    and the pixels exported as the person come from the same question all the way through the
+    run; the mode and the measured fraction are recorded in the solve metadata.
+    """
+    fractions = np.asarray(list(person_fractions), dtype=float)
+    mean = float(fractions.mean()) if fractions.size else 0.0
+    return (MASK_FOREGROUND if mean > threshold else MASK_SEMANTIC), mean
+
+
+# Points sampled from each anchor for the similarity fit (unchanged).
+ANCHOR_MATCH_TARGET = 1500
+# Fewer usable static pixels than this in a view and its share of the fit is noise, so the
+# anchor is dropped and recorded rather than contributing a handful of points.
+ANCHOR_MATCH_MIN = 200
+# The target is drawn at random from this many times the target's most confident static pixels,
+# not from the top of the ranking directly: the most confident pixels of a view cluster on one
+# well-textured surface, and a similarity fitted to one surface is barely constrained.
+ANCHOR_MATCH_POOL = 4
+# When most of the anchor views clear the absolute cut on their own, the fit is made from
+# those alone, so a clip that already solves keeps the anchor set it always had and the rank
+# fallback only ever rescues a clip that had none. Below this share the absolutely-confident
+# views are too few to align on -- creed-v1 has two of eight, and they are adjacent -- so the
+# clip is aligned on everything usable instead.
+ABSOLUTE_ANCHOR_MAJORITY = 0.5
+# An anchor whose selected pixels are this much less confident than the best anchor's is a view
+# the model could not relate to the others -- on game-s1 anchor 7 sits at 0.157 against 0.406,
+# on soccer-s1 anchor 7 at 0.049 against 0.242 -- and aligning to it drags the whole batch.
+ANCHOR_RELATIVE_CONF = 0.4
+# What the fit needs left over once starved anchors are dropped.
+MIN_USABLE_ANCHORS = 2
+MIN_TOTAL_MATCHES = 600
+# Alignment residual a batch may leave against the anchor prediction, as a fraction of the
+# clip's median anchor depth. A batch that registers this badly is not the same reconstruction
+# of the same moment, whatever its scale factor says.
+MAX_ALIGNMENT_RESIDUAL = 0.25
+
+
+def anchor_matches(
+    conf,
+    static,
+    rng=None,
+    preferred=None,
+    target=ANCHOR_MATCH_TARGET,
+    minimum=ANCHOR_MATCH_MIN,
+    pool=ANCHOR_MATCH_POOL,
+    relative=ANCHOR_RELATIVE_CONF,
+    floor=CONF_FLOOR,
+    min_anchors=MIN_USABLE_ANCHORS,
+    min_total=MIN_TOTAL_MATCHES,
+    majority=ABSOLUTE_ANCHOR_MAJORITY,
+):
+    """Which pixel of each anchor view the batch alignment matches on.
+
+    `conf` (A,H,W) and `static` (A,H,W) bool -- the pixels of each anchor that are scene rather
+    than person. `preferred` (A,) bool names the views that cleared the absolute confidence cut
+    on their own. Returns (kept, records): `kept` is a list of (anchor index, flat pixel indices)
+    for the views that can carry the fit, `records` one dict per view for the metadata. A view
+    with too few static pixels, or one the model is far less sure of than the best view, is
+    dropped and named; only a clip where too little survives raises, and the error carries the
+    counts rather than reaching the SVD as an empty array.
+    """
+    conf = np.asarray(conf, dtype=float)
+    static = np.asarray(static, dtype=bool)
+    rng = np.random.default_rng(13) if rng is None else rng
+    picks, records = [], []
+    for j in range(len(conf)):
+        flat_conf = conf[j].reshape(-1)
+        candidates = np.flatnonzero(static[j].reshape(-1) & np.isfinite(flat_conf))
+        record = dict(anchor=int(j), staticPixels=int(candidates.size), matches=0, strength=0.0)
+        if candidates.size < minimum:
+            record["dropped"] = f"only {candidates.size} static pixels, needs {minimum}"
+            picks.append(None)
+            records.append(record)
+            continue
+        ranked = candidates[np.argsort(flat_conf[candidates], kind="stable")][::-1]
+        top = ranked[: max(minimum, min(len(ranked), pool * target))]
+        chosen = rng.choice(top, min(target, len(top)), replace=False) if len(top) > target else top
+        record["matches"] = int(len(chosen))
+        record["strength"] = float(np.median(flat_conf[top[: min(len(top), target)]]))
+        picks.append(np.asarray(chosen, dtype=np.int64))
+        records.append(record)
+    strengths = [r["strength"] for r, p in zip(records, picks) if p is not None]
+    best = max(strengths) if strengths else 0.0
+    cut = max(float(floor), float(relative) * best)
+    kept = []
+    for j, (pick, record) in enumerate(zip(picks, records)):
+        if pick is None:
+            continue
+        if record["strength"] < cut:
+            record["dropped"] = (
+                f"confidence {record['strength']:.3f} is under {cut:.3f}, "
+                f"{relative:.0%} of the best anchor's {best:.3f}: this view shares no "
+                "confident content with the others"
+            )
+            continue
+        kept.append((j, pick))
+    if preferred is not None:
+        confident = [(j, pick) for j, pick in kept if bool(np.asarray(preferred)[j])]
+        enough = sum(len(pick) for _, pick in confident)
+        if (
+            len(confident) >= max(min_anchors, math.ceil(majority * len(kept)))
+            and enough >= min_total
+        ):
+            for j, _ in kept:
+                if not bool(np.asarray(preferred)[j]):
+                    records[j]["dropped"] = (
+                        f"{len(confident)} of {len(kept)} usable anchors clear the absolute "
+                        "confidence cut, so the fit is made from those alone"
+                    )
+            kept = confident
+    total = sum(len(pick) for _, pick in kept)
+    if len(kept) < min_anchors or total < min_total:
+        raise RuntimeError(
+            f"Anchor alignment has {len(kept)} usable anchor view(s) of {len(conf)} and "
+            f"{total} matched points; it needs {min_anchors} views and {min_total} points. "
+            "Per view: "
+            + "; ".join(
+                f"{r['anchor']}: {r['staticPixels']} static, {r['matches']} matched, "
+                f"confidence {r['strength']:.3f}"
+                + (f" -- dropped ({r['dropped']})" if "dropped" in r else "")
+                for r in records
+            )
+        )
+    return kept, records
+
+
+# Largest camera baseline between any two anchors, as a multiple of the clip's median anchor
+# depth. Pi3X relates views by content, so anchors that never see the same surface produce a
+# joint prediction whose frames are not in one another's coordinates at all, and every batch is
+# then aligned to a fiction. Measured across the same saved anchors: every clip that solved is
+# at or under 1.04 (hp-fly-s63 0.01, img5594 0.68, movie-s26 1.04) and the two crowded failures
+# are at 1.37 and 1.50, while game-s1 -- 22 s of third-person traversal across several areas --
+# is at 11.44, with 3.9x and 5.6x between consecutive anchors. 3.0 sits above every clip this
+# stage has solved or could have solved and well below a traversal.
+ANCHOR_SPREAD_LIMIT = 3.0
+
+
+def anchor_spread(poses, depths, limit=ANCHOR_SPREAD_LIMIT):
+    """(spread, median depth) for the anchor set, refusing a clip whose anchors do not overlap.
+
+    `depths` is each anchor's median depth in its own camera. The error names the measurement
+    and the remedy, because no confidence or mask change can recover views that share no
+    content: the clip has to be cut to a window that a single anchor set can span.
+    """
+    centres = np.asarray(poses, dtype=float)[:, :3, 3]
+    finite = np.asarray(depths, dtype=float)
+    finite = finite[np.isfinite(finite) & (finite > 0)]
+    if len(centres) < 2 or finite.size == 0:
+        raise RuntimeError(
+            f"Anchor geometry is unusable: {len(centres)} anchor pose(s) and "
+            f"{finite.size} anchor(s) with a positive median depth"
+        )
+    depth = float(np.median(finite))
+    gaps = np.linalg.norm(centres[:, None, :] - centres[None, :, :], axis=-1)
+    spread = float(np.max(gaps) / depth)
+    if spread > limit:
+        raise RuntimeError(
+            f"The anchor views span {spread:.1f} scene depths (largest baseline "
+            f"{float(np.max(gaps)):.2f} against a median depth of {depth:.2f}); above "
+            f"{limit:.1f} they share too little content for one shared reference frame. "
+            "This clip traverses further than a single solve can anchor: select a shorter "
+            "segment and solve it on its own."
+        )
+    return spread, depth
 
 
 def viewer_camera(
@@ -513,8 +794,14 @@ def main():
     # Kept out of module scope so the pure gap helpers above import under plain numpy.
     import cv2
     from PIL import Image
-    from wander_worker.masks import people_masks
+    from wander_worker.masks import foreground_people_masks, people_masks
     from wander_worker.ply import write_point_ply, home_distance
+
+    def solve_people_masks(images, mode, dilate_px):
+        """The people mask this run decided on, for the static exclusion and the person export."""
+        if mode == MASK_FOREGROUND:
+            return foreground_people_masks(images, dilate_px=dilate_px)
+        return people_masks(images, dilate_px=dilate_px)
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
@@ -628,13 +915,22 @@ def main():
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             r = model(imgs=imgs)
         confidence = torch.sigmoid(r["conf"][0, ..., 0])
-        valid = confidence > 0.3
+        conf_np = confidence.float().cpu().numpy()
+        # One cut per view, absolute where the view can carry it. A single fixed cut selects
+        # every pixel of a bright handheld clip and not one pixel of a broadcast crowd.
+        cuts = [confidence_threshold(view) for view in conf_np]
+        thresholds = torch.as_tensor(
+            [cut for cut, _ in cuts], device=confidence.device, dtype=confidence.dtype
+        )
+        valid = confidence > thresholds[:, None, None]
         edge = depth_normal_edge(r["local_points"], rtol=0.03, mask=valid[None])[0]
         result = dict(
             points=r["points"][0].float().cpu().numpy(),
             poses=r["camera_poses"][0].float().cpu().numpy(),
             rays=r["rays"][0].float().cpu().numpy(),
-            conf=confidence.float().cpu().numpy(),
+            conf=conf_np,
+            conf_threshold=np.array([cut for cut, _ in cuts], float),
+            conf_mode=np.array([mode for _, mode in cuts]),
             valid=(valid & ~edge).cpu().numpy(),
             rgb=(imgs[0].permute(0, 2, 3, 1).float().cpu().numpy() * 255).astype("uint8"),
         )
@@ -644,30 +940,74 @@ def main():
 
     anchors = np.unique(np.linspace(0, N - 1, min(a.anchors, N)).round().astype(int)).tolist()
     basefile = out / "anchors.npz"
-    if basefile.exists():
-        base = dict(np.load(basefile))
-    else:
+    # A cached prediction from before this stage measured its own confidence cuts and chose a
+    # people mask does not carry what the alignment now reads, and re-deriving it would mean
+    # guessing which cut produced its `valid`. Predict again instead.
+    needed = ("conf_threshold", "conf_mode", "static_people", "people_mask_mode")
+    base = dict(np.load(basefile)) if basefile.exists() else None
+    if base is not None and any(key not in base for key in needed):
+        print("cached anchors predate the adaptive anchor selection; predicting again", flush=True)
+        base = None
+    if base is None:
         base = predict(anchors)
-        base["people"] = people_masks(base["rgb"], dilate_px=2)
+        semantic = people_masks(base["rgb"], dilate_px=2)
+        people_mode, person_fraction = mask_mode(view.mean() for view in semantic)
+        base["people"] = semantic
+        base["static_people"] = (
+            foreground_people_masks(base["rgb"], dilate_px=2)
+            if people_mode == MASK_FOREGROUND
+            else semantic
+        )
+        base["people_mask_mode"] = np.array(people_mode)
+        base["semantic_person_fraction"] = np.array(person_fraction)
         np.savez_compressed(basefile, **base)
+    people_mode = str(base["people_mask_mode"])
+    person_fraction = float(base["semantic_person_fraction"])
+    print(
+        f"people mask for this solve: {people_mode} (semantic person fraction "
+        f"{person_fraction:.3f} over the anchors, crowd above {CROWD_PERSON_FRACTION})",
+        flush=True,
+    )
     inv = np.linalg.inv(base["poses"][0])
     R0, t00 = inv[:3, :3], inv[:3, 3]
     flip = np.array([1.0, -1.0, -1.0])
+    static = base["valid"] & ~base["static_people"] & np.isfinite(base["points"]).all(-1)
+    depths = []
+    for j in range(len(anchors)):
+        inv_j = np.linalg.inv(base["poses"][j])
+        away = (base["points"][j] @ inv_j[:3, :3].T + inv_j[:3, 3])[..., 2]
+        ahead = away[static[j] & (away > 0)]
+        depths.append(float(np.median(ahead)) if ahead.size else np.nan)
+    spread, anchor_depth = anchor_spread(base["poses"], depths)
+    print(f"anchor spread {spread:.2f} scene depths (median depth {anchor_depth:.2f})", flush=True)
     zz = (base["points"][0] @ R0.T + t00)[..., 2]
-    good = base["valid"][0] & (~base["people"][0]) & (zz > 0)
-    scale = 3 / np.median(zz[good]) if good.any() else np.nan
+    good = static[0] & (zz > 0)
+    scale = 3 / np.median(zz[good]) if int(good.sum()) >= ANCHOR_MATCH_MIN else np.nan
     if not np.isfinite(scale) or scale <= 0:
         # A genuine solve failure: the anchor view has no confident scene geometry in
         # front of the camera at all. Distinct from a frame with nobody in it.
-        raise RuntimeError(f"No valid static scene points in anchor view 0 ({int(good.sum())})")
-    rng = np.random.default_rng(13)
-    matches = []
-    for j in range(len(anchors)):
-        good = base["valid"][j] & (~base["people"][j]) & (base["conf"][j] > 0.5)
-        idx = np.flatnonzero(good)
-        matches.append(rng.choice(idx, min(1500, len(idx)), replace=False))
+        raise RuntimeError(
+            f"No valid static scene points in anchor view 0 ({int(good.sum())} of "
+            f"{int(static[0].sum())} static pixels lie in front of the camera; this stage "
+            f"needs {ANCHOR_MATCH_MIN}), under the {str(base['conf_mode'][0])} confidence cut "
+            f"{float(base['conf_threshold'][0]):.3f} and the {people_mode} people mask"
+        )
+    usable, anchor_records = anchor_matches(
+        base["conf"],
+        static,
+        preferred=np.array([str(mode) == CONF_MODE_ABSOLUTE for mode in base["conf_mode"]]),
+    )
+    for record in anchor_records:
+        if "dropped" in record:
+            print(f"anchor view {record['anchor']} dropped: {record['dropped']}", flush=True)
+    print(
+        f"{len(usable)} of {len(anchors)} anchor views carry the alignment, "
+        f"{sum(len(pick) for _, pick in usable)} matched points",
+        flush=True,
+    )
     cams = [None] * N
     log = []
+    conf_modes = []
     point_counts = []
     gaps = []
     intrinsic_gaps = []
@@ -680,15 +1020,27 @@ def main():
         print("Pi3X batch", lo, "/", N, "views", len(ids), flush=True)
         p = predict(ids)
         src = np.concatenate(
-            [p["points"][ids.index(ai)].reshape(-1, 3)[matches[j]] for j, ai in enumerate(anchors)]
+            [p["points"][ids.index(anchors[j])].reshape(-1, 3)[pick] for j, pick in usable]
         )
-        dst = np.concatenate(
-            [base["points"][j].reshape(-1, 3)[matches[j]] for j in range(len(anchors))]
-        )
+        dst = np.concatenate([base["points"][j].reshape(-1, 3)[pick] for j, pick in usable])
         s, R, t, rms = similarity(src, dst)
-        print("alignment", float(s), rms, flush=True)
+        print("alignment", float(s), rms, f"({len(src)} matched points)", flush=True)
         if not np.isfinite(rms) or not 0.1 < s < 10:
-            raise RuntimeError("Invalid anchor alignment")
+            raise RuntimeError(
+                f"Invalid anchor alignment at batch {lo}: scale {float(s):.4g}, residual {rms} "
+                f"over {len(src)} matched points from {len(usable)} anchor view(s)"
+            )
+        if rms > MAX_ALIGNMENT_RESIDUAL * anchor_depth:
+            # The anchors registered, but not onto each other: at this residual the batch's
+            # copy of an anchor view is a different reconstruction of that moment, which is
+            # what happens when the anchor set spans content no single prediction can relate.
+            raise RuntimeError(
+                f"Anchor alignment residual {rms:.3f} at batch {lo} is "
+                f"{rms / anchor_depth:.0%} of the {anchor_depth:.2f} median anchor depth, over "
+                f"the {MAX_ALIGNMENT_RESIDUAL:.0%} this stage accepts; the batch and the anchor "
+                "prediction do not agree on the same scene. Select a shorter segment."
+            )
+        conf_modes.extend(str(p["conf_mode"][ids.index(i)]) for i in chunk)
         np.savez_compressed(
             camera_dir / f"batch_{lo:03d}.npz",
             sample_ids=ids,
@@ -703,7 +1055,7 @@ def main():
         )
         # Full-resolution masks preserve limbs; resize to the actual Pi3X pixel grid.
         full = np.stack([np.asarray(Image.open(files[i])) for i in ids])
-        pm = people_masks(full, dilate_px=1)
+        pm = solve_people_masks(full, people_mode, 1)
         H, W = p["rgb"].shape[1:3]
         pm = np.stack(
             [cv2.resize(m.astype("uint8"), (W, H), interpolation=cv2.INTER_NEAREST) > 0 for m in pm]
@@ -834,6 +1186,34 @@ def main():
         gpu=torch.cuda.get_device_name(),
         torch=torch.__version__,
         anchors=anchors,
+        anchorsUsed=[anchors[j] for j, _ in usable],
+        anchorSelection=anchor_records,
+        anchorMatchPoints=int(sum(len(pick) for _, pick in usable)),
+        anchorSpreadDepths=spread,
+        anchorMedianDepth=anchor_depth,
+        maxAnchorSpreadDepths=ANCHOR_SPREAD_LIMIT,
+        peopleMaskMode=people_mode,
+        semanticPersonFraction=person_fraction,
+        crowdPersonFraction=CROWD_PERSON_FRACTION,
+        peopleMaskNote=(
+            "`peopleMaskMode` is the mask this solve excluded from the static scene AND "
+            f"exported as the person. `{MASK_SEMANTIC}` is every person-coloured pixel; "
+            f"`{MASK_FOREGROUND}` is Mask R-CNN's reconstructable subjects, chosen when the "
+            "semantic person share of the anchor views exceeds `crowdPersonFraction`, because "
+            "a stadium crowd is neither scene to exclude nor a person to export."
+        ),
+        anchorConfidenceThresholds=[float(x) for x in base["conf_threshold"]],
+        anchorConfidenceModes=[str(x) for x in base["conf_mode"]],
+        frameConfidenceModes=conf_modes,
+        frameRankConfidenceCount=sum(1 for mode in conf_modes if mode == CONF_MODE_RANK),
+        confidenceNote=(
+            f"Pi3X confidence is not calibrated across content, so each view's cut is "
+            f"`{CONF_MODE_ABSOLUTE}` ({CONF_ABSOLUTE}) where at least "
+            f"{CONF_MIN_FRACTION:.0%} of the view clears it and `{CONF_MODE_RANK}` (the view's "
+            f"own {CONF_QUANTILE:.0%} quantile, floored at {CONF_FLOOR}) where it does not. "
+            "A rank-mode frame's geometry is the most confident part of a map the model was "
+            "unsure of throughout, not confident geometry."
+        ),
         batch=a.batch,
         pointCounts=point_counts,
         note="Each source frame reconstructed with shared static anchors. >=12 independent frames/sec; single observed-facing surface, not complete human volume.",
