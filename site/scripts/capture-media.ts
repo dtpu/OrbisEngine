@@ -348,33 +348,30 @@ try {
 
   // Viewer features, 4:3 loops of five seconds.
   if (want('viewer', 'viewer/walk.mp4')) {
-    const { page, frame, info } = await openScene(browser, 'elevator', true, [960, 720]);
-    // Start a little behind the recorded start (the two people stand right in front of it) and
-    // walk forward with the runtime's own collision step at its walking speed, so the loop shows
-    // exactly where a visitor can go and where the people stop them.
-    const start = offset(info, 0, -1.2);
+    // The stair climb: from the recorded start, walk forward with the runtime's own collision
+    // step at its walking speed. The floor logic lifts the visitor up the treads, so the loop
+    // shows exactly where a visitor can go (the elevator and lobby starts are boxed in by their
+    // people and railings and barely move).
+    const { page, frame, info } = await openScene(browser, 'stairs2', true, [960, 720]);
     let last = 0;
     await sequence(frame, 'viewer/walk.mp4', 10, 5, async (s) => {
       const dt = s - last;
       last = s;
-      const pos = (await frame.evaluate(
-        ({ start, dt, first }) => {
-          const w = window.wander;
-          if (first) w.camera.position.set(start[0], start[1], start[2]);
-          const dir = new w.THREE.Vector3();
-          w.camera.getWorldDirection(dir);
-          dir.y = 0;
-          dir.normalize().multiplyScalar(w.walk!.speed * dt);
-          return w.walk!.advance(w.camera.position, dir, dt).toArray();
-        },
-        { start, dt, first: s === 0 },
-      )) as Vec;
-      return { t: 2 + s, pos, look: s === 0 ? info.homeLook : undefined };
+      const pos = (await frame.evaluate((dt) => {
+        const w = window.wander;
+        const dir = new w.THREE.Vector3();
+        w.camera.getWorldDirection(dir);
+        dir.y = 0;
+        dir.normalize().multiplyScalar(w.walk!.speed * dt);
+        return w.walk!.advance(w.camera.position, dir, dt).toArray();
+      }, dt)) as Vec;
+      return { t: Math.min(s, info.dur - 0.05), pos, look: s === 0 ? info.homeLook : undefined };
     });
     const end = (await frame.evaluate(() => window.wander.camera.position.toArray())) as Vec;
-    const walked = Math.hypot(end[0] - start[0], end[2] - start[2]) / info.stature;
+    const walked = Math.hypot(end[0] - info.home[0], end[2] - info.home[2]) / info.stature;
+    const climbed = (end[1] - info.home[1]) / info.stature;
     measurements.push(
-      `walk loop: ${walked.toFixed(2)} body-heights forward from ${describe(info, start)}`,
+      `walk loop (stairs2): ${walked.toFixed(2)} body-heights forward, ${climbed.toFixed(2)} up`,
     );
     console.log(`  ${measurements[measurements.length - 1]}`);
     await page.close();
