@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.journal import Journal, RunProjection
-from orchestrator.steps import STEPS, suggested_order
+from orchestrator.steps import SAME_AS, STEPS, suggested_order
 
 RUN_FILE = "run.json"
 LOG_DIR = "logs"
@@ -135,10 +135,18 @@ def step_environment(context: RunContext) -> dict[str, str]:
 
 
 def command_step(context: RunContext, args: argparse.Namespace) -> int:
+    """Start a step. By default it runs on its own and this returns at once.
+
+    A step can take ten minutes on a GPU, and an agent that sits watching one is an agent
+    holding a session open to do nothing. So the work is detached and journalled by the child
+    that runs it: start it, stop your turn, and you will be given another when it lands.
+    """
+    if not args.wait:
+        return detach(context, args)
     step = args.step
     journal = context.journal()
-    number = journal.attempt_number(step)
-    attempt = f"{context.run_id}:{step}:{number}"
+    number = args.number or journal.attempt_number(step)
+    attempt = args.attempt or f"{context.run_id}:{step}:{number}"
     command = run_clip_command(context, step, args.rest)
     described = STEPS.get(step)
 
@@ -146,16 +154,19 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"{step}.{number}.log"
 
-    journal.append(
-        "step.started",
-        step=step,
-        attempt=attempt,
-        number=number,
-        command=command,
-        parameters=parse_flags(args.rest),
-        paid=bool(described and described.paid),
-    )
-    print(f"$ {shlex.join(command)}", flush=True)
+    if not args.attempt:
+        # A detached step's start is written by whoever detached it, so the run records the
+        # step as under way the moment it is asked for rather than once the child gets going.
+        journal.append(
+            "step.started",
+            step=step,
+            attempt=attempt,
+            number=number,
+            command=command,
+            parameters=parse_flags(args.rest),
+            paid=bool(described and described.paid),
+            log=str(log.relative_to(context.run_dir)),
+        )
     started = time.monotonic()
     status, error = "succeeded", None
     try:
@@ -169,15 +180,14 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             )
             for line in process.stdout:  # type: ignore[union-attr]
                 handle.write(line)
-                sys.stdout.buffer.write(line)
-                sys.stdout.flush()
+                handle.flush()
+                if args.stream:
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.flush()
             code = process.wait()
         if code != 0:
             status, error = "failed", f"exited {code}"
-    except KeyboardInterrupt:
-        status, error = "blocked", "interrupted"
-        raise
-    except Exception as caught:  # noqa: BLE001 - the journal must say what happened
+    except BaseException as caught:  # noqa: BLE001 - the journal must say what happened
         status, error = "failed", f"{type(caught).__name__}: {caught}"
     finally:
         journal.append(
@@ -189,12 +199,66 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             seconds=round(time.monotonic() - started, 1),
             log=str(log.relative_to(context.run_dir)),
         )
-    print(
-        f"{step} {status} in {time.monotonic() - started:.0f}s; log at {log.name}",
-        file=sys.stderr,
-        flush=True,
-    )
     return 0 if status == "succeeded" else 1
+
+
+def detach(context: RunContext, args: argparse.Namespace) -> int:
+    """Hand the step to a child that outlives this command, and say where to watch it."""
+    if os.environ.get("WANDER_STEP_CHILD"):
+        raise SystemExit("a detached step tried to detach again; refusing to spawn")
+    journal = context.journal()
+    number = journal.attempt_number(args.step)
+    attempt = f"{context.run_id}:{args.step}:{number}"
+    log = Path(LOG_DIR) / f"{args.step}.{number}.log"
+    described = STEPS.get(args.step)
+    journal.append(
+        "step.started",
+        step=args.step,
+        attempt=attempt,
+        number=number,
+        command=run_clip_command(context, args.step, args.rest),
+        parameters=parse_flags(args.rest),
+        paid=bool(described and described.paid),
+        log=str(log),
+    )
+    # The flags go before the step name: `rest` is a REMAINDER, so anything after the name is
+    # swallowed as a flag for run_clip.py. Putting --wait after it meant the child never saw
+    # it, detached again, and spawned for ever.
+    command = [
+        sys.executable,
+        "-m",
+        "orchestrator.cli",
+        "step",
+        "--wait",
+        "--number",
+        str(number),
+        "--attempt",
+        attempt,
+        args.step,
+        *args.rest,
+    ]
+    subprocess.Popen(
+        command,
+        cwd=context.repository,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(context.repository),
+            "WANDER_STEP_CHILD": "1",
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    described = STEPS.get(args.step)
+    print(
+        f"{args.step} started"
+        + ("  (this one costs money)" if described and described.paid else "")
+    )
+    print(f"  log      {log}   `wander log {args.step}` once it has written some")
+    print("  you do not have to wait for it: end your turn, and you will be given another")
+    print("  when it finishes. `wander ready` will show what it unblocked.")
+    return 0
 
 
 def parse_flags(rest: list[str]) -> dict[str, Any]:
@@ -214,6 +278,129 @@ def parse_flags(rest: list[str]) -> dict[str, Any]:
             flags[name] = True
             index += 1
     return flags
+
+
+def completed(context: RunContext) -> set[str]:
+    """Steps the run directory says are finished.
+
+    run_clip.py records each stage in state.json as it completes, so this is what the pipeline
+    itself believes rather than what the journal remembers. The two differ when a stage was run
+    outside `wander step`, when a run directory was recovered from somewhere else, or when a
+    step half-finished: the directory is the thing later stages actually read, so it wins.
+    """
+    done: set[str] = set()
+    try:
+        stages = json.loads((context.run_dir / "state.json").read_text()).get("stages") or {}
+    except (OSError, ValueError):
+        stages = {}
+    for name, record in stages.items():
+        if name.startswith("_"):
+            continue  # run_clip's own bookkeeping, not a stage
+        if isinstance(record, dict) and record.get("status") == "ok":
+            done.add(name)
+    done |= Journal(context.run_dir).done()
+    return {name for step in done for name in (step, SAME_AS.get(step, step))}
+
+
+def waiting_on(step: str, done: set[str]) -> list[str]:
+    """What this step usually wants finished that is not."""
+    described = STEPS.get(step)
+    if described is None:
+        return []
+    return [need for need in described.after if need not in done]
+
+
+def command_ready(context: RunContext, args: argparse.Namespace) -> int:
+    done = completed(context)
+    journal = context.journal()
+    ready, blocked = [], []
+    for name in suggested_order():
+        if name in done:
+            continue
+        (blocked if waiting_on(name, done) else ready).append(name)
+    print("ready to run now:")
+    if not ready:
+        print("  (nothing — everything is either done or waiting on something)")
+    for name in ready:
+        step = STEPS[name]
+        last = journal.last_status(name)
+        mark = "  PAID" if step.paid else ""
+        again = f"  (last run: {last})" if last else ""
+        print(f"  {name:<16}{mark:<7}{step.summary}{again}")
+    if args.all and blocked:
+        print("\nwaiting on something:")
+        for name in blocked:
+            print(f"  {name:<16} wants {', '.join(waiting_on(name, done))}")
+    if done:
+        print(f"\ndone: {', '.join(sorted(done & set(STEPS)))}")
+    print(
+        "\nThis is what the run directory says, and it is advice, not a gate: run something "
+        "else if you have a reason to."
+    )
+    return 0
+
+
+def command_show(context: RunContext, args: argparse.Namespace) -> int:
+    name = args.step
+    step = STEPS.get(name)
+    if step is None:
+        print(f"no step called {name}; `wander ready` lists them", file=sys.stderr)
+        return 1
+    done = completed(context)
+    journal = context.journal()
+    print(f"{name} — {step.summary}")
+    print(f"  writes     {step.writes}")
+    if step.paid:
+        print("  costs      money, every time it runs")
+    if step.caution:
+        print(f"  careful    {step.caution}")
+    outstanding = waiting_on(name, done)
+    print(f"  wants      {', '.join(step.after) or 'nothing'}")
+    print(f"  waiting on {', '.join(outstanding) if outstanding else 'nothing — it can run now'}")
+    properties = (step.parameters or {}).get("properties") or {}
+    if properties:
+        print("  flags      (it is already running at these)")
+        for knob in sorted(properties):
+            rule = properties[knob]
+            default = repr(rule["default"]) if "default" in rule else "unset"
+            print(
+                f"    --{knob.replace('_', '-'):<16} = {default:<10} {rule.get('description', '')}"
+            )
+    attempts = [
+        entry
+        for entry in journal.entries()
+        if entry.kind == "step.finished" and entry.data.get("step") == name
+    ]
+    if attempts:
+        print("  attempts")
+        for entry in attempts:
+            data = entry.data
+            detail = f" :: {data['error']}" if data.get("error") else ""
+            print(
+                f"    {entry.at[11:19]} {data.get('status')} in {data.get('seconds')}s"
+                f"  log {data.get('log', '-')}{detail}"
+            )
+    return 0
+
+
+def command_log(context: RunContext, args: argparse.Namespace) -> int:
+    """The log from a step's last run, for reading what it actually said."""
+    entries = [
+        entry
+        for entry in context.journal().entries()
+        if entry.kind == "step.finished" and entry.data.get("step") == args.step
+    ]
+    if not entries or not entries[-1].data.get("log"):
+        print(f"{args.step} has not run here yet", file=sys.stderr)
+        return 1
+    path = context.run_dir / entries[-1].data["log"]
+    if not path.is_file():
+        print(f"{path} is gone", file=sys.stderr)
+        return 1
+    lines = path.read_text(errors="replace").splitlines()
+    for line in lines[-args.tail :]:
+        print(line)
+    return 0
 
 
 def command_note(context: RunContext, args: argparse.Namespace) -> int:
@@ -272,6 +459,14 @@ def build_parser() -> argparse.ArgumentParser:
     step = commands.add_parser("step", help="run a pipeline step and record it")
     step.add_argument("step", help="the step to run; `wander status` lists them")
     step.add_argument(
+        "--wait",
+        action="store_true",
+        help="run it here and block until it finishes, instead of leaving it to run",
+    )
+    step.add_argument("--stream", action="store_true", help="with --wait, echo the log as it goes")
+    step.add_argument("--number", type=int, help=argparse.SUPPRESS)
+    step.add_argument("--attempt", help=argparse.SUPPRESS)
+    step.add_argument(
         "rest",
         nargs=argparse.REMAINDER,
         help="extra flags passed straight to run_clip.py, such as --dilate 28",
@@ -298,6 +493,19 @@ def build_parser() -> argparse.ArgumentParser:
     finish.add_argument("status", choices=("succeeded", "failed", "blocked"))
     finish.add_argument("summary")
     finish.set_defaults(handler=command_finish)
+
+    ready = commands.add_parser("ready", help="what can run right now")
+    ready.add_argument("--all", action="store_true", help="also show what is waiting, and on what")
+    ready.set_defaults(handler=command_ready)
+
+    show = commands.add_parser("show", help="one step in detail: flags, prerequisites, attempts")
+    show.add_argument("step")
+    show.set_defaults(handler=command_show)
+
+    log = commands.add_parser("log", help="the log from a step's last run")
+    log.add_argument("step")
+    log.add_argument("--tail", type=int, default=60)
+    log.set_defaults(handler=command_log)
 
     status = commands.add_parser("status", help="what has been done and what is left")
     status.add_argument("--tail", type=int, default=8, help="recent journal lines to show")

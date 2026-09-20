@@ -103,6 +103,7 @@ TEXT_FLAGS = {"--experiment", "--mask-backend", "--alignment", "--depth-roi", "-
 INPUT_FLAGS = {
     "--image",
     "--cameras",
+    "--masks-in",
     "--depth-reference",
     "--prepared",
     "--canonical",
