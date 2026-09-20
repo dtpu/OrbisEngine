@@ -87,8 +87,8 @@ def world_half(marble: str):
         deps["clean_multi"] = []
     if marble == "none":
         return stages, deps, None
-    # Write a source-grounded description before generation. All input modes receive it;
-    # image modes also request disable_recaption. Captioning does not prove pixels are ignored.
+    # Write a source-grounded description before generation. Image modes and prompted video request
+    # disable_recaption; this records intent, not proof that the provider retained the supplied text.
     stages.append("world_prompt")
     deps["world_prompt"] = []
     stages.append("review")
@@ -900,14 +900,14 @@ class Pipeline:
             raise SkipStage(
                 "no measured multi-image decision for this clip; use --marble image/video"
             )
-        # --only indexes the DECODED (post --fps) sequence; the chosen frames are source indices.
-        report = self.ctx / "clean.json"
-        if report.exists():
-            idx = json.loads(report.read_text())["indices"]
-            only = ",".join(str(idx.index(f)) for f in rec["frames"])
-        else:
-            step = self.info["fps"] / self.a.fps
-            only = ",".join(str(int(round(f / step))) for f in rec["frames"])
+        selection = self.multi_source_selection(rec)
+        receipt = self.ctx / "clean-multi-selection.json"
+        if receipt.exists() and json.loads(receipt.read_text()) != selection:
+            raise RuntimeError(
+                "Cleaned selection changed; retain the old receipt and use a new run"
+            )
+        receipt.write_text(json.dumps(selection, indent=2))
+        only = ",".join(str(frame["frameIndex"]) for frame in selection["frames"])
         out = self.ctx / "clean-multi"
         self.paid_run(
             "clean_multi",
@@ -928,14 +928,74 @@ class Pipeline:
             self.ctx / "clean_multi.log",
         )
 
-    def marble_multi(self):
-        rec = json.loads(self.mode_json.read_text())
-        frames = sorted(self.ctx.joinpath("clean-multi").glob("f_*.png"))
-        if len(frames) != len(rec["frames"]):
+    def multi_source_selection(self, rec):
+        """Bind selected camera labels to actual source frames before any cleaning spend."""
+        sys.path.insert(0, str(ROOT / "worker"))
+        from wander_worker.source_timing import match_camera_selection, resample_source
+
+        camera_path = self.ctx / "pi3x" / "cameras.json"
+        if not camera_path.exists() or not rec.get("frames"):
             raise RuntimeError(
-                f"{len(frames)} cleaned frames for {len(rec['frames'])} chosen views"
+                "Multi-image cleaning requires measured cameras and selected source frames"
             )
-        images = [f"{p}:{az}" for p, az in zip(frames, rec["azimuth"])]
+        camera_doc = json.loads(camera_path.read_text())
+        source_hash = file_sha256(self.clip)
+        camera_source_hash = camera_doc.get("sourceSha256")
+        sequence_path = camera_path.with_name("sequence.json")
+        sequence_hash = None
+        if not camera_source_hash and sequence_path.exists():
+            camera_source_hash = json.loads(sequence_path.read_text()).get("sourceSha256")
+            sequence_hash = file_sha256(sequence_path)
+        if camera_source_hash != source_hash:
+            raise RuntimeError("Camera solve is not bound to the current source SHA256")
+        _, provenance = resample_source(self.clip, self.a.fps)
+        frames = match_camera_selection(provenance, camera_doc["cameras"], rec["frames"])
+        return {
+            "schema": "wander.clean-camera-selection/1",
+            "sourceSha256": source_hash,
+            "sourceTimeBase": provenance["sourceTimeBase"],
+            "requestedFps": self.a.fps,
+            "camerasSha256": file_sha256(camera_path),
+            "cameraSequenceSha256": sequence_hash,
+            "frames": frames,
+            "correspondence": "source labels validated; camera geometry remains estimated",
+        }
+
+    def marble_multi(self):
+        if self.a.reuse_world or self.marble_saved_operation("multi"):
+            # Fetching or polling an existing world consumes no new cleaned inputs.
+            return self.marble_world("multi", None, "multi")
+        rec = json.loads(self.mode_json.read_text())
+        selection = self.multi_source_selection(rec)
+        receipt = self.ctx / "clean-multi-selection.json"
+        if not receipt.exists() or json.loads(receipt.read_text()) != selection:
+            raise RuntimeError(
+                "Missing or changed source/camera selection receipt; retain existing outputs"
+            )
+        report = json.loads((self.ctx / "clean-multi.json").read_text())
+        if report.get("error") or report.get("sourceSha256") != selection["sourceSha256"]:
+            raise RuntimeError("Cleaned frames are not bound to the current source")
+        provenance = report.get("sourceProvenance", {})
+        if (
+            provenance.get("schema") != "wander.source-frame-provenance/1"
+            or provenance.get("sourceSha256") != selection["sourceSha256"]
+            or provenance.get("sourceTimeBase") != selection["sourceTimeBase"]
+            or provenance.get("requestedFps") != selection["requestedFps"]
+        ):
+            raise RuntimeError("Cleaned source timebase or FPS does not match selected cameras")
+        kept = report.get("keptFrameProvenance", [])
+        if len(kept) != len(selection["frames"]) or len(rec["azimuth"]) != len(kept):
+            raise RuntimeError("Cleaned frame count does not match selected camera views")
+        images = []
+        for frame, observed, azimuth in zip(selection["frames"], kept, rec["azimuth"], strict=True):
+            if any(observed.get(key) != value for key, value in frame.items()):
+                raise RuntimeError(
+                    "Cleaned frame source PTS/ordinal does not match selected camera"
+                )
+            path = self.ctx / "clean-multi" / f"f_{frame['frameIndex']:04d}.png"
+            if not path.exists() or file_sha256(path) != observed.get("cleanedImageSha256"):
+                raise RuntimeError("Cleaned image bytes do not match the source-bound report")
+            images.append(f"{path}:{azimuth}")
         self.marble_world(
             "multi",
             None,

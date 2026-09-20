@@ -4,7 +4,8 @@ This file is durable: rules that hold for every session. Do not edit it or recor
 Read `README.md` for context and commands.
 Before changing an area, read its doc: `docs/audio.md`, `docs/objects.md`, or `docs/shared-assets.md`.
 Check `docs/known-limits.md` before trying a new approach.
-When running unattended, also follow `docs/overnight/RULES.md` and `docs/overnight/TONIGHT.md`.
+When running unattended, also follow `docs/unattended-runs.md` and the run brief it describes.
+Judge candidates and cap retries per `docs/quality-rubric.md`.
 
 ## Never
 
