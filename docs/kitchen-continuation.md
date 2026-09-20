@@ -364,3 +364,20 @@ The current picker selects this version. Review and preview are under
 `/reviews/kitchen-continuation/room-access/`. Earlier `room-context` and observed-room assets
 remain available. Geometry evidence is under `.context/evidence/kitchen-wall-repair/`; route,
 floor and collision evidence is under `.context/evidence/kitchen-room-coverage/walk-repair/`.
+
+The rebuilt preview contains 609 newly captured frames across 50.730 seconds, with one cook and
+one pan visible at every sample. All 2,380 original AAC packet hashes, timestamps, durations and
+priming data remain exact, and full decoding passes. Preview SHA-256 is
+`fc74d6c344c2a83e948e3380d643bf53812b16fd11eaedb9d020c3e682e70866`.
+The live picker also passed the keyboard route and advancing playback. The accepted gym regression
+retained 213 person frames, two dumbbells, three colliders, four blocked bench approaches and
+stable finite seat support. The collision/support unit suite has 19 passing tests; build and
+format checks pass. `scripts/test-walk-support-browser.ts` accepts a private scene fixture for
+repeatable routes and map probes without adding clip constants to the runtime.
+
+Viewer/archive snapshot `870f901a-462f-4f13-9c01-b839cb0ceb5f` publishes this repair to
+`wander-shared-797639045717`. All eight new/updated viewer files passed remote SHA-256/size and
+fresh-download checks. All 16,956 unaffected viewer paths and all 29,022 previous archive entries
+remain identical. Publication reported no exclusions. Evidence is archived under
+`evidence/kitchen-room-access-v1/`; the local hash report is
+`.context/evidence/kitchen-wall-repair/publication-verification.json`.
