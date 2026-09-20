@@ -10,12 +10,15 @@ failure modes:
   iouAligned   after the 2D shift that maximises overlap -- pose/shape only
 """
 
-import argparse, json
+import argparse, json, sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 from plyfile import PlyData
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sequence_frames import index_of_source  # noqa: E402
 
 FLIP = np.diag([1.0, -1.0, -1.0])
 
@@ -94,15 +97,17 @@ def audit(world, masks_path, limit=None, subsample=30000):
     world = Path(world)
     cams = json.loads((world / "cameras.json").read_text())["cameras"]
     seq = json.loads((world / "person" / "sequence.json").read_text())
-    src = list(seq["sourceIndices"])
+    # The person's own samples, matched EXACTLY. A track that starts at sample 22 or skips samples
+    # has no frame for the other source frames, and the nearest one is a different moment.
+    at = index_of_source(seq)
     gt, hw = load_masks(masks_path)
     rows = []
-    cand = [c for c in cams if c["sourceIndex"] in gt]
+    cand = [c for c in cams if c["sourceIndex"] in gt and c["sourceIndex"] in at]
     if limit and len(cand) > limit:
         cand = [cand[i] for i in np.linspace(0, len(cand) - 1, limit).round().astype(int)]
     for c in cand:
         fi = c["sourceIndex"]
-        k = int(np.argmin(np.abs(np.array(src) - fi)))
+        k = at[fi]
         v = PlyData.read(world / "person" / seq["frames"][k])["vertex"].data
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sc = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
