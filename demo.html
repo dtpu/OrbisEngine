@@ -182,6 +182,68 @@
       .hbtn kbd {
         background: var(--bg);
       }
+      .hbtn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .hmenu {
+        position: relative;
+      }
+      .pop {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 10px);
+        z-index: 30;
+        width: 280px;
+        padding: 12px 16px 16px;
+        background: #fff;
+        border: 1px solid var(--line-2);
+        border-radius: 14px;
+        box-shadow: 0 10px 30px #1e1d2214;
+      }
+      .pop[hidden] {
+        display: none;
+      }
+      .pophead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .popclose {
+        width: 28px;
+        height: 28px;
+        margin-right: -6px;
+        border-radius: 999px;
+        font-size: 17px;
+        line-height: 1;
+        color: var(--ink-2);
+        transition: background 0.15s;
+      }
+      .popclose:hover {
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .keys {
+        margin: 0;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 9px 14px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .keys dt {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-weight: 600;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      .keys dd {
+        margin: 0;
+        color: var(--mute);
+      }
 
       /* ---------------- rail ---------------- */
       #rail {
@@ -357,23 +419,6 @@
         color: var(--ink);
       }
 
-      /* source-clip caption. The viewer's own PIP is repositioned into this shell's layout
-   (position:fixed there = anchored to this stage), so nothing is decoded twice. */
-      #srccap {
-        left: 24px;
-        bottom: 250px;
-        width: 300px;
-        padding: 12px 14px 13px;
-        opacity: 0;
-        transition: opacity 0.2s;
-      }
-      #srccap .txt {
-        font-size: 13px;
-        line-height: 1.45;
-        color: var(--ink-2);
-        margin-top: 4px;
-      }
-
       /* edge of the filmed world */
       #edgelab {
         left: 50%;
@@ -438,20 +483,6 @@
         height: 22px;
         background: var(--line-2);
         margin: 0 6px;
-      }
-      .keys {
-        display: flex;
-        gap: 18px;
-        font-size: 12.5px;
-        color: var(--mute);
-        padding: 0 4px;
-      }
-      .keys b {
-        font-weight: 600;
-        color: var(--ink-2);
-      }
-      .keys kbd + kbd {
-        margin-left: 2px;
       }
       .minibtn {
         display: inline-flex;
@@ -557,8 +588,7 @@
         background: #000;
       }
 
-      /* Narrow viewports: keep Play, Source clip and Reset reachable by shrinking the rail and
-         dropping the key hints before the bar outgrows the stage. */
+      /* Narrow viewports: shrink the rail and let the bar wrap so its actions stay reachable. */
       @media (max-width: 1280px) {
         :root {
           --rail: 260px;
@@ -568,14 +598,6 @@
         }
         .ctitle {
           font-size: 18px;
-        }
-      }
-      @media (max-width: 1100px) {
-        .keys {
-          display: none;
-        }
-        .keys + .sep {
-          display: none;
         }
       }
       @media (max-width: 860px) {
@@ -642,8 +664,39 @@
         </div>
         <div class="spacer"></div>
         <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
+        <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
         <button class="hbtn" id="questviewbtn">Quest view</button>
-        <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
+        <div class="hmenu">
+          <button class="hbtn" id="helpbtn" aria-expanded="false" aria-controls="helppop">
+            Controls
+          </button>
+          <div class="pop" id="helppop" role="dialog" aria-label="Controls" hidden>
+            <div class="pophead">
+              <span class="label">Controls</span>
+              <button class="popclose" id="helpclose" aria-label="Close controls">×</button>
+            </div>
+            <dl class="keys">
+              <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
+              <dd>walk</dd>
+              <dt>drag</dt>
+              <dd>look around</dd>
+              <dt>scroll</dt>
+              <dd>move in and out</dd>
+              <dt><kbd>Shift</kbd></dt>
+              <dd>faster</dd>
+              <dt><kbd>Enter</kbd></dt>
+              <dd>play / pause</dd>
+              <dt><kbd>V</kbd></dt>
+              <dd>source clip</dd>
+              <dt><kbd>R</kbd></dt>
+              <dd>reset view</dd>
+              <dt><kbd>1</kbd>–<kbd>5</kbd></dt>
+              <dd>choose a scene</dd>
+              <dt><kbd>[</kbd></dt>
+              <dd>scene list</dd>
+            </dl>
+          </div>
+        </div>
       </header>
 
       <nav id="rail">
@@ -664,11 +717,6 @@
           title="Wander viewer"
         ></iframe>
 
-        <div class="ov panel" id="srccap">
-          <div class="label">Source clip</div>
-          <div class="txt" id="srctxt"></div>
-        </div>
-
         <div class="ov panel" id="edgelab">
           <b>Edge of what was filmed.</b> Let go and it eases you back.
           <span><kbd>R</kbd> resets the view</span>
@@ -677,16 +725,8 @@
         <div class="ov panel" id="bar">
           <button id="play" disabled><span id="playlabel">Play camera move</span></button>
           <div class="sep"></div>
-          <div class="keys">
-            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <b>walk</b></span>
-            <span><b>drag</b> to look</span>
-            <span><b>scroll</b> in/out</span>
-            <span><kbd>Shift</kbd> <b>faster</b></span>
-            <span><kbd>Enter</kbd> <b>play/pause</b></span>
-          </div>
-          <div class="sep"></div>
-          <button class="minibtn" id="srcbtn">Source clip <kbd>V</kbd></button>
-          <button class="minibtn" id="resetbtn">Reset <kbd>R</kbd></button>
+          <button class="minibtn" id="srcbtn">Source clip</button>
+          <button class="minibtn" id="resetbtn">Reset</button>
         </div>
 
         <div class="ov" id="loading">
@@ -1005,8 +1045,6 @@
         for (const el of document.querySelectorAll('.card'))
           el.classList.toggle('on', el.dataset.id === id);
 
-        $('srctxt').textContent = c.srctxt;
-
         $('play').disabled = true;
         setPlayLabel(false);
         driving.clear();
@@ -1121,19 +1159,22 @@
         s.id = 'wander-demo-chrome';
         s.textContent = `
     #hud{display:none!important}
-    #walk-map{left:20px!important;right:auto!important;top:20px!important}
+    #walk-map{display:none!important}
+    #audio-controls{display:none!important}
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#f7f7f8;color:#1e1d22;
       border:1px solid #fff;border-radius:12px;padding:11px 13px;font-size:11px}
     #hint{display:none!important}
-    #audio-credit{bottom:100px!important}
+    #audio-credit{right:16px!important;bottom:24px!important;padding:6px 10px!important;border-radius:999px!important;
+      background:#f0f0f2f2!important;color:#4b4a52!important;border:1px solid #f8f8f9;font:11.5px system-ui!important}
+    #audio-credit a{color:#1e1d22!important}
     #pip{left:24px!important;right:auto!important;bottom:86px!important;width:300px!important;
       border:0!important;border-radius:12px;outline:1px solid #ffffff;background:#000}
     #pip.hidden{display:none}
     body.wd-hud #pip{bottom:86px!important}
     #xrBtn{top:20px!important;left:50%!important;right:auto!important;bottom:auto!important;
-      transform:translateX(-50%)!important;min-height:44px!important;padding:10px 16px!important;
-      border-radius:9px!important;background:#e8c07a!important;color:#17130a!important;
-      font-weight:600!important;box-shadow:0 8px 24px #0008}
+      transform:translateX(-50%)!important;min-height:38px!important;padding:0 18px!important;
+      border:0!important;border-radius:999px!important;background:#2a292f!important;color:#fff!important;
+      font:600 13.5px system-ui,sans-serif!important;box-shadow:none!important}
   `;
         doc.head.appendChild(s);
         if (hudOn) doc.body.classList.add('wd-hud');
@@ -1201,28 +1242,6 @@
         }
       }, 120);
 
-      // The viewer's inset keeps its own aspect ratio (tos31 is 1920x800, the phone clips are 16:9),
-      // so the caption is measured against it rather than given a fixed offset.
-      function placeCaption() {
-        let pip;
-        try {
-          pip = frame.contentWindow.document.getElementById('pip');
-        } catch {
-          return;
-        }
-        const cap = $('srccap');
-        if (!pip || pip.classList.contains('hidden') || !pip.getBoundingClientRect().height) {
-          cap.style.opacity = '0';
-          return;
-        }
-        cap.style.opacity = '1';
-        const st = $('stage').getBoundingClientRect(),
-          pr = pip.getBoundingClientRect();
-        cap.style.bottom = Math.round(st.bottom - pr.top + 8) + 'px';
-      }
-      setInterval(placeCaption, 400);
-      addEventListener('resize', placeCaption);
-
       /* ---------------- edge of the filmed world ----------------
    The viewer's soft boundary lets driven motion coast to a stop at a hard limit where its fade has
    taken the frame to black. Measured on all five stops: any held Shift+key is there within 5-10 s,
@@ -1288,7 +1307,6 @@
         try {
           frame.contentWindow.document.body.classList.toggle('wd-hud', hudOn);
         } catch {}
-        $('hudbtn').classList.toggle('on', hudOn);
       }
       function toggleRail(v) {
         railOn = v === undefined ? !railOn : v;
@@ -1296,13 +1314,67 @@
         $('railbtn').setAttribute('aria-expanded', String(railOn));
         $('railbtn').setAttribute('aria-label', railOn ? 'Hide scene list' : 'Show scene list');
       }
-      $('hudbtn').addEventListener('click', () => {
-        toggleHud();
+      $('railbtn').addEventListener('click', () => toggleRail());
+
+      /* ---------------- sound ----------------
+   The viewer's own sound buttons are hidden by dress(); this header button drives its audio through
+   the window.wander API and mirrors its state. */
+      const soundBtn = $('soundbtn');
+      soundBtn.addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        const st = w.audioState;
+        if (st.muted || !st.unlocked) {
+          w.setMuted(false);
+          void w.unlockAudio();
+        } else w.setMuted(true);
         try {
           frame.contentWindow.focus();
         } catch {}
       });
-      $('railbtn').addEventListener('click', () => toggleRail());
+      setInterval(() => {
+        let st = null;
+        try {
+          st = ready ? (api()?.audioState ?? null) : null;
+        } catch {}
+        if (!st) {
+          soundBtn.disabled = true;
+          soundBtn.classList.remove('on');
+          soundBtn.textContent = 'Sound';
+          return;
+        }
+        const unavailable = st.hasAudio === false && !st.loading;
+        const on = !st.muted && st.unlocked;
+        soundBtn.disabled = unavailable;
+        soundBtn.classList.toggle('on', on);
+        soundBtn.setAttribute('aria-pressed', String(on));
+        soundBtn.textContent = st.loading
+          ? 'Loading sound…'
+          : unavailable
+            ? 'No sound'
+            : on
+              ? 'Sound on'
+              : 'Sound off';
+      }, 300);
+
+      /* ---------------- controls popover ---------------- */
+      const helpBtn = $('helpbtn'),
+        helpPop = $('helppop');
+      function setHelp(open) {
+        helpPop.hidden = !open;
+        helpBtn.setAttribute('aria-expanded', String(open));
+        helpBtn.classList.toggle('on', open);
+      }
+      helpBtn.addEventListener('click', () => setHelp(helpPop.hidden));
+      $('helpclose').addEventListener('click', () => {
+        setHelp(false);
+        helpBtn.focus();
+      });
+      document.addEventListener('pointerdown', (e) => {
+        if (!helpPop.hidden && !e.target.closest?.('.hmenu')) setHelp(false);
+      });
+      // A click into the viewer iframe never reaches this document, but it does blur the window.
+      addEventListener('blur', () => setHelp(false));
 
       // Shortcuts have to be installed in both documents: once the judge clicks into the scene,
       // key events go to the iframe and never reach this page.
@@ -1426,6 +1498,7 @@
               return;
             }
             if (e.code === 'Escape') {
+              setHelp(false);
               closeReel();
               return;
             }
