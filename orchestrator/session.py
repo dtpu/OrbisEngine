@@ -169,6 +169,8 @@ class SessionOutcome:
     waiting: str | None
     steps_run: int
     error: str | None = None
+    # Steps started and not yet finished when the turn ended.
+    running: int = 0
 
     @property
     def wants_another_turn(self) -> bool:
@@ -257,11 +259,19 @@ class RunSession:
             error = outcome.result.error
         elif outcome.result.status == "stalled":
             error = outcome.result.error
+        started = {}
+        for entry in after.entries():
+            step = entry.data.get("step")
+            if entry.kind == "step.started" and step:
+                started[step] = True
+            elif entry.kind == "step.finished" and step:
+                started.pop(step, None)
         return SessionOutcome(
             finished=after.finished(),
             waiting=after.unanswered(),
             steps_run=len([e for e in after.entries() if e.kind == "step.started"]) - before,
             error=error,
+            running=len(started),
         )
 
     def work(self, turns: int = 12) -> SessionOutcome:
@@ -277,6 +287,10 @@ class RunSession:
             if not outcome.wants_another_turn:
                 return outcome
             if outcome.steps_run == 0:
+                if outcome.running:
+                    # Work is in flight; the agent was right to stop, and the journal moving
+                    # is what brings it back. Saying nothing keeps the history readable.
+                    return outcome
                 self.journal().append(
                     "note",
                     text="the agent took a turn without running a step or deciding anything",
