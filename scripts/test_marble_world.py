@@ -138,6 +138,21 @@ class MarbleContracts(unittest.TestCase):
             "[fixture] op operation-1 submitted", (self.directory / "shared-ops.txt").read_text()
         )
 
+    def test_submit_only_persists_operation_without_polling_or_fetching(self):
+        self.invoke(
+            "video",
+            "submit-only",
+            self.mp4,
+            "--prompt",
+            "empty room",
+        )
+        self.generated()
+        self.assertFalse(any("/operations/" in request[1] for request in self.requests))
+        self.assertFalse(any("/worlds/" in request[1] for request in self.requests))
+        receipt = json.loads((self.directory / "fixture-generation.json").read_text())
+        self.assertEqual(receipt["status"], "submitted")
+        self.assertEqual(receipt["operation_id"], "operation-1")
+
     def test_multi_payload_prompt_override_azimuth_and_jpeg_upload(self):
         prompt = self.root / "prompt.json"
         prompt.write_text(json.dumps({"text_prompt": "reviewed prompt"}))

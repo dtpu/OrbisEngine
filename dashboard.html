@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Wander Pipeline</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to pipeline</a>
+    <div class="shell">
+      <header class="topbar">
+        <a class="brand" href="/dashboard.html" aria-label="Wander pipeline dashboard">
+          <span class="brand__mark" aria-hidden="true"></span>
+          <span>Wander</span>
+          <span class="brand__section">Pipeline</span>
+        </a>
+        <div id="connection" class="connection connection--connecting" role="status">
+          connecting
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="Pipeline runs">
+        <div class="sidebar__heading">
+          <h2>Runs</h2>
+          <span class="eyebrow">Live operations</span>
+        </div>
+        <nav id="run-list" class="run-list">
+          <p class="empty">Loading runs…</p>
+        </nav>
+      </aside>
+
+      <main id="workspace" class="workspace" tabindex="-1">
+        <section class="run-header" aria-labelledby="run-title">
+          <div>
+            <p class="eyebrow">Reconstruction pipeline</p>
+            <h1 id="run-title">Pipeline dashboard</h1>
+            <div id="run-meta" class="run-meta"></div>
+          </div>
+          <div id="budget" class="budget" aria-label="Run budget"></div>
+        </section>
+
+        <div id="notice" class="notice" role="alert" hidden></div>
+
+        <section class="panel graph-panel" aria-labelledby="graph-title">
+          <div class="panel__heading">
+            <div>
+              <p class="eyebrow">Execution graph</p>
+              <h2 id="graph-title">Stages</h2>
+            </div>
+            <div id="actions" class="actions" aria-label="Run and stage actions"></div>
+          </div>
+          <div id="dag" class="dag" aria-label="Pipeline dependency graph">
+            <p class="empty">Select a run.</p>
+          </div>
+        </section>
+
+        <div class="inspection-grid">
+          <section id="attempts" class="panel attempts" aria-label="Stage attempts">
+            <p class="empty">Select a stage.</p>
+          </section>
+          <section id="attempt-detail" class="panel detail" aria-label="Attempt details">
+            <p class="empty">Select an attempt to inspect logs and artifacts.</p>
+          </section>
+        </div>
+
+        <form id="message-form" class="message-form">
+          <label for="message">
+            <span>Message operator agent</span>
+            <span class="muted">Sent to the selected run and stage</span>
+          </label>
+          <div class="message-form__row">
+            <textarea
+              id="message"
+              name="message"
+              rows="2"
+              maxlength="4000"
+              required
+              placeholder="Add context, answer a question, or give an instruction…"
+            ></textarea>
+            <button type="submit">Send</button>
+          </div>
+        </form>
+      </main>
+    </div>
+    <script type="module" src="/src/dashboard/main.ts"></script>
+  </body>
+</html>

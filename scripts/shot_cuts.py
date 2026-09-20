@@ -503,7 +503,10 @@ def teleport_check(pi3x: Path) -> dict:
     cj = pi3x / "cameras.json"
     if not cj.exists():
         return dict(ok=None, reason=f"{cj} does not exist; the solve wrote no cameras")
-    cams = sorted(json.loads(cj.read_text())["cameras"], key=lambda c: c.get("time", 0.0))
+    # A frame whose subject could not be reconstructed records no camera, so the list may have
+    # gaps. Those are absences, not positions: drop them rather than testing a step across one.
+    recorded = [camera for camera in json.loads(cj.read_text())["cameras"] if camera]
+    cams = sorted(recorded, key=lambda c: c.get("time", 0.0))
     if len(cams) < 4:
         return dict(ok=None, reason=f"only {len(cams)} cameras; nothing to test")
     P = np.array([c["position"] for c in cams], float)
