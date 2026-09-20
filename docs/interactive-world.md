@@ -59,9 +59,10 @@ dimensions and clamped to 0.09–0.12 body-heights tall for visibility, with a n
 leaves the glove visible. The locator stays upright when the bottle rotates. It does not replace measured
 positions or enlarge the measured wall collider. The separate floor clearance encloses the
 replacement bottle in any orientation. The source bottle returns on replay.
-Loose bottles rest on invisible interaction support 0.25 body-heights above the sampled floor,
-placing them roughly at knee level for easy pickup. This is an intentional gameplay height offset,
-not a new measurement of the room's floor.
+Loose bottles rest on invisible interaction support 0.5 body-heights above the sampled floor,
+placing them roughly at waist level for easy pickup. This is an intentional gameplay height offset,
+not a new measurement of the room's floor. Pickup checks use the real floor so recorded bottle poses
+below that elevated support remain reachable.
 
 Coarse occupied floor cells can extend above their measured surface. A descending bottle sweeps to
 the first blocking boundary near known floor and settles there; side walls and ceilings still bounce
@@ -143,7 +144,7 @@ source-audio pause, controller X replay, a grip and short throw into the assiste
 automatic smooth whole-body facing, reset of the facing transform, and paused VR re-entry.
 The expanded range, locator, rotated controller grip alignment, and recorded/proxy bottle visibility
 passed in the actual viewer; screenshots were reviewed with the held bottle clear of the source
-actor. The final focused interaction suite contains 95 passing tests. A comparison against the
+actor. The final focused interaction suite contains 96 passing tests. A comparison against the
 source footage confirmed the basic held-pose target; this is not a precise new wrist reconstruction.
 The ordinary viewer still loops when the experiment is absent. Focused tests, existing XR/audio/
 collision regressions, TypeScript/build, and repository formatting were checked separately.
