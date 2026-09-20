@@ -20,7 +20,7 @@ from pathlib import Path
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.journal import Journal
 from orchestrator.session import RunSession
-from orchestrator.steps import STEPS, planned_steps
+from orchestrator.steps import STEPS, base_step, people_steps, planned_steps
 
 RUN_FILE = "run.json"
 
@@ -185,8 +185,14 @@ def open_run(
         # Show the plan before anything has run, so a new run is not an empty page. These are
         # a suggestion: the agent may run something else, and the journal adds a row when it
         # does.
-        for step in planned_steps(options or {}):
-            described = STEPS[step]
+        # Seed the plan in the names this run's graph will use. How many people there are is
+        # not known until tracking runs, but the shape is known now: a run that asked for the
+        # multiperson graph gets `person_prep_00` even with one actor, and seeding the
+        # single-person name leaves a row that can never run sitting beside the one that does.
+        settings = options or {}
+        many = bool(settings.get("all_people")) or int(settings.get("people") or 1) > 1
+        for step in people_steps(planned_steps(settings), 1, multiperson=many):
+            described = STEPS[base_step(step)]
             repository.ensure_node(
                 run_id=run_id,
                 node_id=step,

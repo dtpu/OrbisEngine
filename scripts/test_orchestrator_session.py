@@ -109,13 +109,37 @@ class RunThroughTests(unittest.TestCase):
         )
 
     def open(self, **options) -> Path:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from orchestrator.contracts import Run
+        from orchestrator.database import Base
+        from orchestrator.repository import PipelineRepository
+
+        engine = create_engine(f"sqlite:///{self.root / 'meta.db'}")
+        Base.metadata.create_all(engine)
+        self.repository = PipelineRepository(sessionmaker(engine, expire_on_commit=False))
+        self.repository.create_run_row(
+            Run(
+                id="run-1",
+                graph_version="wander.agent-run/1",
+                code_revision="test-revision",
+                source_sha256="a" * 64,
+                source_artifact_id="artifact:source",
+                created_by="tests",
+            )
+        )
         return open_run(
             self.runs,
             run_id="run-1",
             name="demo",
             source=self.clip,
             options=options or {"marble": "none"},
+            repository=self.repository,
         )
+
+    def repository_rows(self, run_dir: Path):
+        return [(n["id"],) for n in self.repository.run_summary("run-1")["nodes"]]
 
     def test_the_agent_runs_a_step_and_the_run_records_it(self):
         run_dir = self.open()
@@ -228,6 +252,19 @@ class RunThroughTests(unittest.TestCase):
         self.assertIn("not a reason to wait", skill)
         self.assertIn("codex exec", skill, "the looking is delegated, not waited on")
         self.assertIn("never wrap a command in a timeout", skill, "no babysitting")
+
+    def test_a_multiperson_run_is_planned_in_the_names_it_will_use(self):
+        """Seeding the single-person names leaves rows that can never run.
+
+        A run that asked for the multiperson graph runs `person_prep_00` even with one actor,
+        so the dashboard showed `person_prep` queued for ever beside the `_00` row that did
+        the work. The count is not known when a run opens; the shape is.
+        """
+        run_dir = self.open(marble="none", people=16, all_people=True)
+        planned = {name for (name,) in self.repository_rows(run_dir)}
+        self.assertIn("person_prep_00", planned)
+        self.assertNotIn("person_prep", planned)
+        self.assertIn("package_people", planned)
 
     def test_every_planned_step_is_one_the_catalogue_describes(self):
         from orchestrator.steps import planned_steps
