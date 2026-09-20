@@ -505,6 +505,20 @@ STEPS: dict[str, Step] = {
 }
 
 
+# Stages run_clip.py names once per person when a run asks for more than one.
+PER_PERSON = ("person_prep", "lhm_frozen", "lhm_motion")
+
+
+def base_step(name: str) -> str:
+    """The catalogue entry behind a per-person stage name: person_prep_00 -> person_prep."""
+    head, _, tail = name.rpartition("_")
+    return head if tail.isdigit() and head in PER_PERSON else name
+
+
+def for_person(name: str, index: int) -> str:
+    return f"{name}_{index:02d}"
+
+
 def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
     """The steps this run probably wants, in an order that holds together.
 
@@ -516,8 +530,8 @@ def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
         options = RunOptions()
     elif isinstance(options, dict):
         options = RunOptions.model_validate(options)
-    wanted = ["pi3x", "frame_align", "tracks", "person_prep", "lhm_frozen", "lhm_motion"]
     many = options.all_people or options.people > 1
+    wanted = ["pi3x", "frame_align", "tracks", *PER_PERSON]
     wanted.append("package_people" if many else "package")
     if options.marble == "none":
         wanted.insert(0, "clean")
@@ -529,6 +543,26 @@ def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
     if options.objects:
         wanted.append("objects")
     return suggested_order([name for name in dict.fromkeys(wanted) if name in STEPS])
+
+
+def people_steps(names: list[str], people: int, *, multiperson: bool) -> list[str]:
+    """The plan with its per-person stages named once per person.
+
+    run_clip.py calls them `person_prep_00`, `lhm_frozen_00` and so on whenever the run asked
+    for the multiperson graph -- including when tracking then finds a single person, which is
+    why the count and the shape are separate arguments. The catalogue describes them by their
+    base name; how many there really are is only known once tracking has run.
+    """
+    if not multiperson:
+        return list(names)
+    people = max(1, people)
+    expanded: list[str] = []
+    for name in names:
+        if name in PER_PERSON:
+            expanded.extend(for_person(name, index) for index in range(people))
+        else:
+            expanded.append(name)
+    return expanded
 
 
 # The many-person packager stands in for the single-person one: a step that wants "package"
