@@ -264,7 +264,7 @@ const checks: Check[] = [
         const hrefs = await page.$$eval('section#cta a', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
-        if (!hrefs.includes('/demo.html') || !hrefs.includes('https://github.com/dtpu/htn2026'))
+        if (!hrefs.includes('/demo.html') || !hrefs.includes('https://github.com/dtpu/OrbisEngine'))
           throw new Error(`cta links: ${hrefs.join(', ')}`);
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
