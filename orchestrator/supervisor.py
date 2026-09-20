@@ -52,17 +52,25 @@ def runs_needing_work(root: Path) -> list[Path]:
     return pending
 
 
-def due(run_dir: Path, pushed: dict[str, float], push_after: float) -> bool:
-    """Whether to give this run another agent, having already given it one.
+def due(run_dir: Path, pushed: dict[str, tuple[float, int]], push_after: float) -> bool:
+    """Whether to give this run another agent.
 
-    A session that ends without deciding anything would otherwise be started again
-    immediately, and an agent that has just decided it has nothing to do will decide that
-    again straight away -- a spin that costs a model call every pass. Waiting instead means a
-    run that is stuck still gets a fresh agent on a known cadence, which is what eventually
-    shifts it: a new session reads the journal rather than the conversation that gave up.
+    Two things wake a run. Something happened -- a step it left running finished, an operator
+    answered -- which is a new line in the journal and means there is now something to react
+    to. Or the timer: a run that has gone quiet gets a fresh agent anyway, because a new
+    session reads the journal rather than the conversation that gave up, and that is what
+    eventually shifts something stuck.
+
+    Without the first, an agent that correctly started a ten-minute step and ended its turn
+    would sit until the timer. Without the second, a run whose agent simply stopped would sit
+    for ever.
     """
     last = pushed.get(str(run_dir))
-    return last is None or (time.monotonic() - last) >= push_after
+    if last is None:
+        return True
+    when, seen = last
+    happened = len(Journal(run_dir).entries())
+    return happened != seen or (time.monotonic() - when) >= push_after
 
 
 def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> str:
