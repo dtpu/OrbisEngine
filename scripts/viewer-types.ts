@@ -15,8 +15,13 @@ export interface WalkDiagnostics {
   stature: number;
   stepUp: number;
   grid: WalkGridSummary | null;
-  cellAt(x: number, z: number): { floor: number; dist: number; inside: boolean };
-  blockedAt(x: number, z: number): boolean | 0 | 1;
+  cellAt(
+    x: number,
+    z: number,
+    maximumSupport?: number,
+  ): { floor: number; dist: number; inside: boolean };
+  blockedAt(x: number, z: number, floor?: number): number;
+  advance(from: THREE.Vector3, delta: THREE.Vector3, dt: number): THREE.Vector3;
 }
 export interface ViewerDiagnostics {
   ready: boolean;
@@ -41,7 +46,12 @@ export interface ViewerDiagnostics {
 declare global {
   interface Window {
     wander: ViewerDiagnostics;
-    __fakeXR: { frames: number[] };
+    __fakeXR: {
+      frames: number[];
+      head: { x: number; y: number; z: number; yaw: number; pitch: number };
+      axes: { left: number[]; right: number[] };
+      buttons: { left: number[]; right: number[] };
+    };
     __xr: unknown;
   }
 }
