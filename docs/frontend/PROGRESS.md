@@ -2,7 +2,7 @@
 
 Branch: `devin/landing` (integration PR into `main`: https://github.com/dtpu/htn2026/pull/2). Section work
 landed as stacked PRs (#4–#8, #11, #12) into `devin/landing`; the demo-shell redesign (#9) merged to `main`
-separately. See `SPEC.md` and `PLAN.md` in this directory.
+separately, with its review follow-ups in #13 (stacked on `devin/landing`). See `SPEC.md` and `PLAN.md` in this directory.
 
 | Unit                         | Owns                                                             | Status                       | PR                                             |
 | ---------------------------- | ---------------------------------------------------------------- | ---------------------------- | ---------------------------------------------- |
