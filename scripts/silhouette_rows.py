@@ -180,6 +180,7 @@ if __name__ == "__main__":
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from place_solve import person_frames, measure_floor
+    from sequence_frames import read_sequence, source_indices
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", type=Path, required=True, help="public/worlds/<clip>-4d")
@@ -204,10 +205,20 @@ if __name__ == "__main__":
         s: (by_src[si], a.scale, pos0) for s, si in enumerate(man["sourceIndices"]) if si in by_src
     }
     coef = [float(x) for x in a.floor_coef.split(",")] if a.floor_coef else None
+    solve_sample = {si: s for s, si in enumerate(man["sourceIndices"])}
     for p in man["people"]:
         seq = a.world / p["sequence"]
         fr = list(person_frames(seq))
-        samples = [man["sourceIndices"].index(si) for si in p["sourceIndices"]]
+        # This person's own samples, from their own manifest: a track need not start at sample 0 or
+        # cover every solved sample, so the frame list is the authority for what exists.
+        own = source_indices(read_sequence(seq), seq)
+        missing = [si for si in own if si not in solve_sample]
+        if missing:
+            sys.exit(
+                f"{p['id']}: source frames {missing[:5]} are in {seq} but not in the manifest's "
+                f"sourceIndices; the person and the solve are not the same run"
+            )
+        samples = [solve_sample[si] for si in own]
         frames_world = [op * a.scale + pos0 for op, _ in fr]
         feet = measure_floor(fr, a.scale, pos0, coef or [0, 0, 0])
         feet_world = np.array([[r["x"], r["y"], r["z"]] for r in feet])
