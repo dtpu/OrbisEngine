@@ -290,7 +290,7 @@ describe('BottleScene real-physics interaction integration', () => {
   });
 
   test('initial voice needs a visible, nearby, unobstructed person within 1.8 body-heights', () => {
-    const { runtime, people, frame, rotation, setBlocked } = fixture(0.5);
+    const { runtime, people, frame, rotation, setBlocked, host } = fixture(0.5);
     people[0].group.position.set(0, 0, -1.2);
     people[1].group.position.set(4, 0, -4);
     frame();
@@ -310,8 +310,11 @@ describe('BottleScene real-physics interaction integration', () => {
     expect(speechStarted(runtime)).toBe(false);
     rotation.identity();
     frame();
+    expect(host.playing()).toBe(true);
     expect(speechStarted(runtime)).toBe(true);
     expect(runtime.snapshot().activePersonId).toBe('thrower');
+    expect(host.playing()).toBe(false);
+    expect(runtime.snapshot().lastEvent).toBe('speech');
   });
 
   test('continuing speech permits looking away to 2.52 body-heights and can switch to a clearly addressed person', () => {

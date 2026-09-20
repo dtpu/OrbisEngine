@@ -26,6 +26,17 @@ type Options = {
 type ToolCall = Parameters<OpenAIRealtimeWebRTC['sendFunctionCallOutput']>[0];
 type ClientEvent = Parameters<OpenAIRealtimeWebRTC['sendEvent']>[0];
 
+function providerErrorCode(event: unknown): string | null {
+  // RealtimeSession forwards the transport's `{ type: 'error', error: rawEvent }` envelope.
+  // Keep this deliberately narrow so arbitrary SDK, auth, quota, or transport failures stay fatal.
+  if (!event || typeof event !== 'object' || (event as { type?: unknown }).type !== 'error')
+    return null;
+  const raw = (event as { error?: unknown }).error;
+  if (!raw || typeof raw !== 'object' || (raw as { type?: unknown }).type !== 'error') return null;
+  const code = (raw as { error?: { code?: unknown } }).error?.code;
+  return typeof code === 'string' && /^[a-z0-9_]{1,96}$/.test(code) ? code : null;
+}
+
 /** SDK tool continuations must pass the same local gate as microphone turns. */
 class SceneVoiceTransport extends OpenAIRealtimeWebRTC {
   allowResponse = () => false;
@@ -113,6 +124,7 @@ export class BottleAgentClient {
   private settleConnection: (() => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private responseTimer: ReturnType<typeof setTimeout> | null = null;
+  private providerErrorCode: string | null = null;
 
   constructor(private readonly options: Options) {}
 
@@ -120,9 +132,15 @@ export class BottleAgentClient {
     return this.ready;
   }
 
+  /** A code-only provider diagnostic; provider messages and credentials are never retained. */
+  get lastProviderErrorCode() {
+    return this.providerErrorCode;
+  }
+
   async connect(): Promise<void> {
     const pendingReaction = this.pendingReaction;
     this.disconnect();
+    this.providerErrorCode = null;
     this.pendingReaction = pendingReaction && !this.playing;
     const generation = this.generation;
     const current = () => generation === this.generation;
@@ -287,6 +305,11 @@ export class BottleAgentClient {
         });
         session.on('error', (event) => {
           if (!current()) return;
+          const code = providerErrorCode(event);
+          if (code) this.providerErrorCode = code;
+          if (this.ready && code === 'response_cancel_not_active') {
+            return;
+          }
           this.fail(
             this.ready
               ? 'Voice connection failed. Re-enter VR to retry.'
