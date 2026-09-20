@@ -1,0 +1,12 @@
+.context
+.git
+.venv
+assets
+node_modules
+public
+share
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
