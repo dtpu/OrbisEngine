@@ -2,6 +2,7 @@
 
 import hashlib
 import sys
+import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -23,19 +24,38 @@ TOKEN = "test-token-with-at-least-24-characters"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
-class Workflows:
-    def __init__(self):
+class Runs:
+    """Runs are directories; opening one is making it. Nothing is scheduled."""
+
+    def __init__(self, root, repository=None):
+        self.root = Path(root)
+        self.repository = repository
         self.started = []
-        self.signals = []
+        self.paused = {}
 
-    async def start(self, request):
-        self.started.append(request)
+    def open(self, *, run_id, name, source, options, source_artifact_id=None):
+        from orchestrator.supervisor import open_run
 
-    async def signal(self, run_id, name, value=None):
-        self.signals.append((run_id, name, value))
+        self.started.append(run_id)
+        return open_run(
+            self.root,
+            run_id=run_id,
+            name=name,
+            source=source,
+            options=options,
+            repository=self.repository,
+            source_artifact_id=source_artifact_id,
+        )
 
-    async def state(self, run_id):
-        return {"runId": run_id, "paused": False}
+    def journal(self, run_id):
+        from orchestrator.journal import Journal
+
+        run_dir = self.root / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return Journal(run_dir)
+
+    def pause(self, run_id, paused):
+        self.paused[run_id] = paused
 
 
 class SourceStore:
@@ -55,13 +75,15 @@ class ApiTests(unittest.TestCase):
         )
         Base.metadata.create_all(self.engine)
         self.addCleanup(self.engine.dispose)
+        self.root = Path(tempfile.mkdtemp(prefix="wander-api-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
         sessions = sessionmaker(self.engine, expire_on_commit=False)
         self.repository = PipelineRepository(sessions)
-        self.workflows = Workflows()
+        self.runs = Runs(self.root / "runs", self.repository)
         self.source_store = SourceStore()
         app = create_app(
             self.repository,
-            self.workflows,
+            self.runs,
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
             self.source_store,
         )
@@ -87,10 +109,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(unauthorized.status_code, 401)
         response = self.create_run()
         self.assertEqual(response.json()["id"], "run-1")
-        self.assertEqual(len(self.workflows.started), 1)
+        self.assertEqual(len(self.runs.started), 1)
         summary = self.client.get("/api/pipeline/runs/run-1", headers=AUTH)
         self.assertEqual(summary.status_code, 200)
-        self.assertEqual(summary.json()["live"]["runId"], "run-1")
+        self.assertEqual(summary.json()["live"]["source"], "journal")
         self.assertTrue(summary.json()["nodes"])
         listing = self.client.get("/api/pipeline", headers=AUTH)
         self.assertEqual([run["id"] for run in listing.json()["runs"]], ["run-1"])
@@ -109,10 +131,13 @@ class ApiTests(unittest.TestCase):
             json={"node_id": "clean", "rationale": "Wait for operator"},
         )
         self.assertEqual(command.status_code, 202)
+        # What an operator says is a line in the run's journal, which the agent reads at
+        # the start of its next turn; pausing is a marker the supervisor honours.
         self.assertEqual(
-            [(name) for _, name, _ in self.workflows.signals],
-            ["operator_message", "pause"],
+            [e.data.get("text") for e in self.runs.journal("run-1").entries()],
+            ["Inspect the left edge"],
         )
+        self.assertIs(self.runs.paused["run-1"], True)
         events = self.repository.events_after("run-1", 0)
         self.assertEqual([event.sequence for event in events], list(range(1, len(events) + 1)))
         resumed = self.repository.events_after("run-1", events[0].sequence)
@@ -170,7 +195,7 @@ class ArtifactReadTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="wander-artifacts-"))
         app = create_app(
             self.repository,
-            Workflows(),
+            Runs(self.root / "runs"),
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
             FilesystemSourceStore(self.root),
             artifact_reader=FilesystemArtifactReader(self.root),
@@ -331,7 +356,7 @@ class ReviewSidebarTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="wander-workspace-"))
         app = create_app(
             self.repository,
-            Workflows(),
+            Runs(self.root / "runs"),
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
             review_workspace_root=self.root,
         )

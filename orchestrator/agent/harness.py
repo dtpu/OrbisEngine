@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from orchestrator.agent.contracts import AgentResult, AgentTaskPacket
-from orchestrator.agent.tools import CALL_ADAPTER, AgentToolCall
 from orchestrator.workspace import atomic_json
 
 DECISION_FILE = "decision.json"
@@ -198,8 +197,8 @@ def read_session(transcript: Path) -> str | None:
 @dataclass(frozen=True)
 class HarnessOutcome:
     result: AgentResult
-    decision: AgentToolCall | None
-    decision_error: str | None
+    decision: None = None
+    decision_error: str | None = None
     # The session this run used, so the next review of the same run can continue it.
     session: str | None = None
 
@@ -214,7 +213,7 @@ class HarnessAgent:
 
     def run(
         self,
-        packet: AgentTaskPacket,
+        packet: AgentTaskPacket | None,
         workspace: Path,
         instructions: str,
         session: str | None = None,
@@ -235,7 +234,8 @@ class HarnessAgent:
         transcript = workspace / TRANSCRIPT_FILE
         decision_path = workspace / DECISION_FILE
         prompt_path = workspace / PROMPT_FILE
-        atomic_json(packet_path, packet.model_dump(mode="json"))
+        if packet is not None:
+            atomic_json(packet_path, packet.model_dump(mode="json"))
         instructions_path.write_text(instructions)
         decision_path.unlink(missing_ok=True)
         environment = {key: os.environ[key] for key in self.policy.passthrough if key in os.environ}
@@ -291,7 +291,9 @@ class HarnessAgent:
                 )
                 if resumable and nudges <= self.policy.idle_nudges and budget > POLL_SECONDS:
                     prompt = NUDGE.format(
-                        minutes=quiet, decision=DECISION_FILE, node_id=packet.node_id
+                        minutes=quiet,
+                        decision=DECISION_FILE,
+                        node_id=packet.node_id if packet else "this run",
                     )
                     mode = "ab"
                     continue
@@ -318,8 +320,7 @@ class HarnessAgent:
             response_path=str(decision_path) if decision_path.exists() else None,
             error=None if status == "completed" else f"agent exited {code}",
         )
-        decision, decision_error = self._read_decision(decision_path, packet)
-        return HarnessOutcome(result, decision, decision_error, read_session(transcript) or session)
+        return HarnessOutcome(result, None, None, read_session(transcript) or session)
 
     def _spawn(
         self,
@@ -368,26 +369,6 @@ class HarnessAgent:
                 if self.policy.idle_seconds and now - quiet_since > self.policy.idle_seconds:
                     _halt(process)
                     raise Stalled()
-
-    @staticmethod
-    def _read_decision(
-        path: Path, packet: AgentTaskPacket
-    ) -> tuple[AgentToolCall | None, str | None]:
-        if not path.is_file():
-            return None, f"agent wrote no {DECISION_FILE}"
-        try:
-            raw = json.loads(path.read_text())
-        except (OSError, ValueError) as error:
-            return None, f"{DECISION_FILE} is not valid JSON: {error}"
-        try:
-            call = CALL_ADAPTER.validate_python(raw)
-        except Exception as error:
-            return None, f"{DECISION_FILE} does not match a permitted decision: {error}"
-        if call.tool not in packet.permitted_tools:
-            return None, f"decision {call.tool!r} is not permitted for this review"
-        if getattr(call, "node_id", packet.node_id) != packet.node_id:
-            return None, "decision names a different stage than the one under review"
-        return call, None
 
 
 def _halt(process: subprocess.Popen) -> None:
