@@ -34,8 +34,6 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from sequence_frames import index_of_source, read_sequence  # noqa: E402
-
 PY = sys.executable
 
 IOU_MIN, AREA_LO, AREA_HI, MIN_FRAMES = 0.75, 0.85, 1.15, 8
@@ -122,12 +120,7 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
         cams = {
             c["sourceIndex"]: c for c in json.loads((wd / "cameras.json").read_text())["cameras"]
         }
-        seqs = {p["id"]: read_sequence(wd / p["sequence"]) for p in man["people"]}
-        at = {p["id"]: index_of_source(seqs[p["id"]], wd / p["sequence"]) for p in man["people"]}
-        # The SHARED offsetUnits table is indexed by the solve's own samples (place_solve writes its
-        # `sourceIndices` beside it), not by any one person's frame list. Two people whose tracks
-        # start at different samples do not share a row number, so look the row up by source frame.
-        shared_at = {int(si): i for i, si in enumerate(placement.get("sourceIndices") or [])}
+        seqs = {p["id"]: json.loads((wd / p["sequence"]).read_text()) for p in man["people"]}
         ratios, overlaps = [], []
         scale = placement["registrationScale"]
         for sample in (
@@ -145,25 +138,15 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
                 pid = person["id"]
                 seq = seqs[pid]
                 mask = masks.get(person["track"], {}).get(sample)
-                k = at[pid].get(src)
-                if k is None or mask is None:
+                if src not in seq["sourceIndices"] or mask is None:
                     continue
-                frame = (wd / person["sequence"]).parent / seq["frames"][k]
-                if not frame.is_file():
-                    continue
-                v = read_ply(frame)
+                k = seq["sourceIndices"].index(src)
+                v = read_ply((wd / person["sequence"]).parent / seq["frames"][k])
                 xyz = np.column_stack([v["x"], v["y"], v["z"]])
                 sizes = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
                 pp = placement["perPerson"][pid]
                 size = pp.get("sizeScale", 1)
-                own = pp.get("offsetUnits")
-                if own is not None:  # per-person table: indexed by THIS person's sequence
-                    offset = own[k]
-                else:
-                    row = shared_at.get(src, k if not shared_at else None)
-                    if row is None or row >= len(placement["offsetUnits"]):
-                        continue
-                    offset = placement["offsetUnits"][row]
+                offset = pp.get("offsetUnits", placement["offsetUnits"])[k]
                 xyz = (
                     xyz * size
                     + (np.array(placement["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
@@ -192,7 +175,7 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
             inSample=True,
             method="all tracked people, applied placement; CPU splat approximation; verify in live viewer",
         )
-    seq = read_sequence(wd / "person" / "sequence.json")
+    seq = json.loads((wd / "person" / "sequence.json").read_text())
     src = seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")
     rows = motion_audit.audit_world(wd, src, n)
     if len(rows) < MIN_FRAMES:
