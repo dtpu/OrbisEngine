@@ -5,6 +5,14 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { Quaternion, Vector3 } from 'three';
 
+type BodySample = {
+  visible: boolean;
+  moving: boolean;
+  steps: number;
+  feet: { left: number[]; right: number[] };
+  torso: number[];
+  torsoRotation: number[];
+};
 type Sample = {
   time: number;
   yaw: number;
@@ -13,6 +21,7 @@ type Sample = {
   localEye: number[];
   separation: number;
   vignette: boolean;
+  body: BodySample;
 };
 const out = '.context/evidence/quest-debug';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -80,6 +89,9 @@ try {
               new w.THREE.Vector3().setFromMatrixPosition(eye.matrixWorld),
             );
             const forward = new w.THREE.Vector3(0, 0, -1).applyQuaternion(rig.quaternion);
+            const body = (window.__xr as { body: Omit<BodySample, 'torso' | 'torsoRotation'> })
+              .body;
+            const torso = rig.getObjectByName('avatar-body-torso')!;
             const vignette = w.camera.children.find((child) => {
               const material = (child as import('three').Mesh).material;
               return (
@@ -96,8 +108,22 @@ try {
               localEye: eyes[0].quaternion.toArray(),
               separation: positions[0].distanceTo(positions[1]),
               vignette: vignette?.visible ?? false,
+              // The avatar uses reference-space coordinates under the rig. Copy the mutable
+              // diagnostics now so later frames cannot overwrite evidence of foot movement.
+              body: {
+                visible: body.visible,
+                moving: body.moving,
+                steps: body.steps,
+                feet: { left: [...body.feet.left], right: [...body.feet.right] },
+                torso: torso.position.toArray(),
+                torsoRotation: torso.quaternion.toArray(),
+              },
             });
             if (samples.length === count) {
+              // Release at the last observed render, before Node checks the samples. Otherwise
+              // unobserved held-input frames can advance yaw before the release assertion.
+              window.__fakeXR.axes.right = [0, 0, 0, 0];
+              window.__fakeXR.axes.left = [0, 0, 0, 0];
               renderer.render = original;
               resolve(samples);
             }
@@ -125,6 +151,25 @@ try {
       assert.equal(sample.vignette, false, 'smooth turn must not blink');
     }
   }
+  function fixedBody(samples: Sample[], baseline: Sample) {
+    assert.equal(baseline.body.visible, true, 'stationary avatar is visible');
+    assert.equal(baseline.body.moving, false, 'stationary avatar starts with planted feet');
+    for (const sample of samples) {
+      assert.equal(sample.body.visible, true, 'turning keeps the avatar visible');
+      assert.equal(sample.body.moving, false, 'turning must not fabricate walking motion');
+      assert.equal(sample.body.steps, baseline.body.steps, 'turning must not fabricate steps');
+      for (const side of ['left', 'right'] as const)
+        sample.body.feet[side].forEach((value, i) =>
+          close(value, baseline.body.feet[side][i], `${side} foot stays planted relative to rig`),
+        );
+      sample.body.torso.forEach((value, i) =>
+        close(value, baseline.body.torso[i], 'torso stays stationary relative to rig'),
+      );
+      sample.body.torsoRotation.forEach((value, i) =>
+        close(value, baseline.body.torsoRotation[i], 'torso keeps tracked local orientation'),
+      );
+    }
+  }
   await open();
   assert.deepEqual(
     await page.evaluate(() => {
@@ -134,6 +179,7 @@ try {
     ['smooth', 90],
   );
   const baseline = (await collect(0))[0];
+  records.baseline = [baseline];
   await page.screenshot({ path: `${out}/turning-before.png` });
   for (const [name, stick] of [
     ['full-right', 1],
@@ -147,11 +193,16 @@ try {
       Math.abs(stick) <= 0.15 ? 0 : (Math.sign(stick) * (Math.abs(stick) - 0.15)) / 0.85;
     rate(samples, (-Math.PI / 2) * analog);
     fixedHead(samples, baseline);
+    // The nonzero tracked X/Z offset makes turnAroundHead translate the rig origin.
+    // That pivot compensation must not become artificial walking in the avatar.
+    fixedBody(samples, baseline);
     const stopped = await collect(0);
+    records[`${name}-released`] = stopped;
     stopped.forEach((sample) =>
       close(angle(sample.yaw, samples.at(-1)!.yaw), 0, 'neutral stops immediately'),
     );
     fixedHead(stopped, baseline);
+    fixedBody(stopped, baseline);
   }
   await page.screenshot({ path: `${out}/turning-after.png` });
   // On the first movement frame velocity starts from zero, so its direction must match
@@ -209,7 +260,7 @@ try {
   assert.deepEqual(errors, []);
   await writeFile(`${out}/turning-measurements.json`, JSON.stringify(records, null, 2));
   console.log(
-    'XR turning passed: analog rate, both directions, immediate stop, head pivot, tracked pose, stereo, no blink, same-frame walking, re-entry, disabled turns, legacy snap.',
+    'XR turning passed: analog rate, both directions, immediate stop, head pivot, stationary avatar and planted feet, tracked pose, stereo, no blink, same-frame walking, re-entry, disabled turns, legacy snap.',
   );
 } finally {
   await browser.close();
