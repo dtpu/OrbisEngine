@@ -3,6 +3,7 @@ import Card from '../components/Card';
 import VideoLoop from '../components/VideoLoop';
 import { Eyebrow, H2 } from '../components/Heading';
 import { scenes } from '../content/scenes';
+import { demoSceneUrl } from '../content/links';
 import styles from './Gallery.module.css';
 
 export default function Gallery() {
@@ -18,7 +19,7 @@ export default function Gallery() {
       </header>
       <ul className={styles.grid}>
         {scenes.map((scene) => {
-          const href = `/demo.html?scene=${scene.id}`;
+          const href = demoSceneUrl(scene.id);
           return (
             <li key={scene.id} className={styles.item}>
               <Card
