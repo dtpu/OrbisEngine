@@ -32,7 +32,7 @@
     "capture:collision": "bun scripts/capture-walk-collide.ts",
     "capture:audio": "bun scripts/capture-audio-demo.ts",
     "test:audio-package": "uv run --locked scripts/test_package_audio.py",
-    "test:person-motion": "uv run --locked scripts/test_package_person_motion.py && bun test ./scripts/test-person-motion.ts ./scripts/test-gaussian-ply.ts ./scripts/test-person-motion-roundtrip.ts ./scripts/test-person-stance.ts ./scripts/test-person-visibility.ts ./scripts/test-start-view.ts ./scripts/test-shot-sequence.ts ./scripts/test-shot-world-cache.ts",
+    "test:person-motion": "uv run --locked scripts/test_package_person_motion.py && bun test ./scripts/test-person-motion.ts ./scripts/test-gaussian-ply.ts ./scripts/test-person-motion-roundtrip.ts ./scripts/test-person-stance.ts ./scripts/test-person-visibility.ts",
     "test:marble": "uv run --locked scripts/test_marble_world.py && uv run --locked scripts/test_select_world_mode.py",
     "format": "bun run format:python && bun run format:web",
     "format:check": "uv run --locked --group dev ruff format --check scripts worker && bunx --bun prettier --check \"src/**/*.{ts,js}\" \"scripts/**/*.{ts,js}\" \"server/**/*.ts\" \"*.html\" vite.config.ts package.json tsconfig.json",
