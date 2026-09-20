@@ -9,7 +9,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from types import SimpleNamespace
+
 from orchestrator.activities import stage as stage_module
+from orchestrator.activities.adapters import default_adapters
 from orchestrator.activities.stage import CommandAdapter, StageActivityRunner, StageExecution
 from orchestrator.artifacts import LocalCAS
 from orchestrator.workflows.run import StageActivityInput
@@ -134,6 +137,58 @@ class ActivityTests(unittest.TestCase):
     def test_reporting_liveness_outside_an_activity_is_harmless(self):
         """The runner is also called by the tests and the resume script, with no Temporal."""
         stage_module.beat()
+
+    def test_tracking_reports_one_branch_per_person_it_kept(self):
+        """The graph only grows a person chain for a branch this list names.
+
+        While it was empty nothing downstream of tracking existed: no person was prepared,
+        reconstructed, animated or packaged, and the run finished "succeeded" holding a
+        generated room with nobody in it.
+        """
+        adapter = default_adapters()["track_people"]
+        request = self.request("track_people")
+        name = adapter.legacy_name(
+            SimpleNamespace(request=SimpleNamespace(run_id=request.run_id, node_id=request.node_id))
+        )
+        attempt = self.root / "attempt"
+        tracks = attempt / "outputs" / "runs" / name / "tracks"
+        (tracks / "track_00").mkdir(parents=True)
+        (tracks / "track_02").mkdir(parents=True)
+        (tracks / "track_00" / "motion.json").write_text("{}")
+        (tracks / "tracks.json").write_text(
+            json.dumps({"trackCount": 3, "tracks": [{"track": 0}, {"track": 1}, {"track": 2}]})
+        )
+        context = SimpleNamespace(
+            request=request, attempt=SimpleNamespace(outputs=attempt / "outputs")
+        )
+        self.assertEqual(
+            adapter.branches(context),
+            [{"key": "00", "relative_path": f"outputs/runs/{name}/tracks/track_00/motion.json"}],
+            "a track without a motion file must not be named; only track 00 wrote one",
+        )
+
+    def test_a_stage_missing_its_credential_is_blocked_not_run(self):
+        """Running it anyway gets whatever message the script happens to print.
+
+        A Marble poll of an already-generated world failed with "set WLT_API_KEY" and exit 1,
+        and read as a failed stage rather than a worker that is missing configuration.
+        """
+        marker = self.root / "ran"
+        adapter = CommandAdapter(
+            lambda context: StageExecution(
+                command=(
+                    sys.executable,
+                    "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).touch()",
+                ),
+                cwd=context.repository,
+                credentials=("WANDER_KEY_THAT_IS_NOT_SET",),
+            )
+        )
+        result = self.runner(adapter).execute(self.request(), "attempt-1")
+        self.assertEqual(result.status, "blocked")
+        self.assertIn("WANDER_KEY_THAT_IS_NOT_SET", result.error)
+        self.assertFalse(marker.exists(), "the stage ran without the credential it declared")
 
     def test_missing_adapter_blocks_without_starting_attempt(self):
         result = self.runner(CommandAdapter(lambda context: None)).execute(

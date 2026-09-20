@@ -175,6 +175,29 @@ class StageActivityRunner:
         inputs = self._hydrate_inputs(attempt, request.selected_inputs)
         context = AdapterContext(request, attempt, inputs, self.repository)
         execution = adapter.build(context)
+        absent = [name for name in execution.credentials if name not in os.environ]
+        if absent:
+            # A stage names the credentials it needs, and a worker without one cannot do the
+            # work. Running the command anyway gets an exit code and a message from whatever
+            # script happened to look first -- a marble poll of an already-generated world
+            # failed with "set WLT_API_KEY" and read as a failed stage. Blocked is what this
+            # is: nothing is wrong with the attempt, the worker is missing configuration, and
+            # the stage runs as it stands once that is fixed.
+            error = "worker is missing " + ", ".join(absent)
+            attempt.finalize(
+                {"status": "blocked", "error": error, "command": list(execution.command)}
+            )
+            manifest = freeze_attempt(attempt, self.store, status="blocked")
+            self._publish(workspace, manifest)
+            result = StageActivityResult(
+                node_id=request.node_id,
+                attempt_id=attempt_id,
+                status="blocked",
+                error=error,
+            )
+            if self.attempt_ledger:
+                self.attempt_ledger.finished(request, result, manifest)
+            return result
         paid = bool(request.definition.get("retry", {}).get("paid"))
         try:
             claim_id = (
