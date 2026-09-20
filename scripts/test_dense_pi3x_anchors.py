@@ -298,6 +298,15 @@ class SimilarityGuards(unittest.TestCase):
             similarity(line, line * 2.0)
         self.assertIn("degenerate", str(caught.exception))
 
+    def test_a_plane_of_correspondences_still_fits(self):
+        rng = np.random.default_rng(3)
+        plane = np.c_[rng.uniform(-2, 2, (100, 2)), np.zeros(100)]
+        s, R, t, rms = similarity(plane, plane * 2.0 + [1.0, 2.0, 3.0])
+        self.assertAlmostEqual(s, 2.0, places=9)
+        np.testing.assert_allclose(R, np.eye(3), atol=1e-9)
+        np.testing.assert_allclose(t, [1.0, 2.0, 3.0], atol=1e-9)
+        self.assertLess(rms, 1e-9)
+
     def test_a_single_repeated_point_raises(self):
         point = np.tile([1.0, 2.0, 3.0], (300, 1))
         with self.assertRaises(RuntimeError) as caught:
