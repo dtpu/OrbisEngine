@@ -104,6 +104,23 @@ export const CLIPS: SceneClip[] = [
     srctxt: 'Original 50.73-second kitchen recording, preserving audio and timing.',
     sceneManifest: '/reviews/gym-kitchen/selected-scenes/kitchen-repair.json',
   },
+  {
+    id: 'img5594-video-baseline',
+    title: 'Two friends outside the venue',
+    place: 'Engineering building plaza · phone · 11 s',
+    src: '/clips/img5594-video-baseline/playback-original-audio.mp4',
+    poster: 1,
+    sub: 'Two friends outside an engineering building',
+    free: 'Explore near the recorded path and compare with the source',
+    lead: 'Two friends replay their recorded motion in a generated reconstruction of the engineering building plaza.',
+    proof: [
+      'The source clip shows two friends outside the venue',
+      'Compare their motion and the building entrance with the recording',
+    ],
+    caveat:
+      'The brown-hoodie friend’s backpack is missing and the building sign is garbled. Unseen areas and appearance are invented; reconstructed geometry can differ from the source.',
+    srctxt: 'One 11-second phone clip of two friends outside an engineering building.',
+  },
 ];
 
 export const ALL = CLIPS;
