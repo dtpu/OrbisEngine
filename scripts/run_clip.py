@@ -523,7 +523,21 @@ class Pipeline:
             json.loads(ident.read_text()).get("failedTracks") or []
         ):
             raise SkipStage(f"track {track['track']} failed the identity audit (changed person)")
+        unresolved = self.unresolved_people().get(str(idx))
+        if unresolved:
+            raise SkipStage(f"track {track['track']} is unresolved: {unresolved}")
         return track
+
+    # A person the footage cannot support (never fully in frame, no detector instance under the
+    # track) is a disclosed gap in the cast, not a reason to withhold everyone else.
+    UNPREPARABLE = (
+        "no sample of this track can be prepared",
+        "no Mask R-CNN person overlaps the track box",
+    )
+
+    def unresolved_people(self):
+        path = self.ctx / "unresolved-people.json"
+        return json.loads(path.read_text()) if path.is_file() else {}
 
     # ---- stages -------------------------------------------------------------
     def clean_first(self):
@@ -1265,6 +1279,27 @@ class Pipeline:
             )
             return
         self.track_or_skip(idx)
+        log = self.ctx / f"person_prep_{idx:02d}.log"
+        try:
+            self.prepare_track(idx, log)
+        except RuntimeError:
+            text = log.read_text(errors="replace") if log.is_file() else ""
+            reason = next(
+                (
+                    line.strip()
+                    for line in text.splitlines()
+                    if any(marker in line for marker in self.UNPREPARABLE)
+                ),
+                None,
+            )
+            if reason is None:
+                raise
+            unresolved = self.unresolved_people()
+            unresolved[str(idx)] = reason[:400]
+            (self.ctx / "unresolved-people.json").write_text(json.dumps(unresolved, indent=1))
+            raise SkipStage(f"track slot {idx} cannot be prepared: {reason[:200]}") from None
+
+    def prepare_track(self, idx, log):
         run(
             [
                 PY,
@@ -1281,7 +1316,7 @@ class Pipeline:
                 "--out",
                 str(self.ctx / f"prepared-{idx:02d}"),
             ],
-            self.ctx / f"person_prep_{idx:02d}.log",
+            log,
         )
 
     def recover_lhm(self, dest, mode, log):
