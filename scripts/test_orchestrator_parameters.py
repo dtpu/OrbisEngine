@@ -11,6 +11,7 @@ told to the agent in ``task.json``, so both are checked against the scripts them
 """
 
 import ast
+import json
 import re
 import shutil
 import sys
@@ -200,6 +201,35 @@ class GraphShapeTests(unittest.TestCase):
                 command = self.command(executor, node_id)
                 self.assertEqual(command[command.index("--only") + 1], legacy)
                 self.assertEqual("--people" in command, multiperson)
+
+    def test_a_per_person_stage_satisfies_the_legacy_graph_by_its_own_names(self):
+        """run_clip.py checks its dependencies before it runs anything.
+
+        The orchestrator's nodes are per person -- `person_prep:00` -- and the legacy graph
+        calls that stage `person_prep`, so it refused with "dependency did not finish:
+        ['person_prep']" after the paid stage had already been queued behind it.
+        """
+        adapter = default_adapters()["lhm_frozen"]
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        definition = stage_registry()["lhm_frozen"].model_dump(mode="json")
+        definition["inputs"]["prepared_person"]["stage_id"] = "person_prep:00"
+        context = SimpleNamespace(
+            request=SimpleNamespace(
+                run_id="run-1",
+                node_id="lhm_frozen:00",
+                definition=definition,
+                parameters={},
+                options={},
+            ),
+            attempt=SimpleNamespace(outputs=root),
+            repository=Path("."),
+            inputs={"source": (root / "source.mp4",)},
+        )
+        adapter.build(context)
+        state = json.loads(next((root / "runs").glob("*/state.json")).read_text())
+        self.assertIn("person_prep", state["stages"])
+        self.assertNotIn("person_prep:00", state["stages"])
 
     def test_every_legacy_stage_declares_the_clip_its_command_opens(self):
         """run_clip.py requires --clip and probes it before reaching the stage asked for.
