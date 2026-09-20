@@ -26,6 +26,7 @@ wander ready [--all]        # what can run now; --all also shows what is blocked
 wander show <step>          # what a step is for, its flags and their current values, its history
 wander step <step> [flags]  # start a step; returns at once
 wander step <step> --wait   # run it here and block, for something you know is quick
+                            # (--wait reads the same before or after the step name)
 wander log <step> [--tail]  # what its last run actually said
 wander note "..."           # write something down for the next session
 wander ask "..."            # something only an operator can decide; then end your turn
