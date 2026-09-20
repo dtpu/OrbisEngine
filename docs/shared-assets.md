@@ -51,7 +51,9 @@ URL invalidate browser copies. The server caches this digest by file identity (d
 and nanosecond modification/change times); unchanged files need no repeated hashing or download.
 
 Vite serves these optional files through `/api/prepared-world/v1/`. The viewer uses the original
-world if a prepared entry is missing, incompatible, or corrupt. Add `xrworldcache=0` to compare
+world if a prepared entry is missing, incompatible, or corrupt. The same cache is used for
+the optional `bg` and `bg2` static background layers; prepare their asset paths alongside the room.
+Add `xrworldcache=0` to compare
 the original loading path. Prepared files are larger than compressed SPZ sources (typically about
 three times larger for the current scenes), trading initial transfer size for less headset CPU
 work; subsequent visits can reuse the browser's disk cache. This shortcut requires the strong

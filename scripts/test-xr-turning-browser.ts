@@ -24,6 +24,7 @@ type Sample = {
   body: BodySample;
 };
 const out = '.context/evidence/quest-debug';
+const base = process.env.XR_TEST_URL || 'http://127.0.0.1:5399';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const records: Record<string, Sample[]> = {};
 const close = (a: number, b: number, label: string, tolerance = 0.0002) =>
@@ -36,7 +37,7 @@ try {
   // This avoids testing unrelated work from another checkout serving the shared dev port.
   if (process.env.XR_TEST_DIST) {
     const dist = path.resolve(process.env.XR_TEST_DIST);
-    await page.route('http://127.0.0.1:5399/fourd.html?*', (route) =>
+    await page.route(`${base}/fourd.html?*`, (route) =>
       route.fulfill({
         path: path.join(dist, 'fourd.html'),
         contentType: 'text/html',
@@ -46,7 +47,7 @@ try {
         },
       }),
     );
-    await page.route('http://127.0.0.1:5399/assets/*', (route) =>
+    await page.route(`${base}/assets/*`, (route) =>
       route.fulfill({
         path: path.join(dist, 'assets', path.basename(new URL(route.request().url()).pathname)),
       }),
@@ -57,7 +58,7 @@ try {
   await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
   async function open(options = '') {
     await page.goto(
-      `http://127.0.0.1:5399/fourd.html?demo=stairs2&xr=1&fakexr=1&xrmove=smooth&clamp=0&fakew=384&fakeh=384&xradapt=0${options}`,
+      `${base}/fourd.html?demo=stairs2&xr=1&fakexr=1&xrmove=smooth&clamp=0&fakew=384&fakeh=384&xradapt=0&xrview=0${options}`,
       { waitUntil: 'load', timeout: 120000 },
     );
     await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });
@@ -205,8 +206,7 @@ try {
     fixedBody(stopped, baseline);
   }
   await page.screenshot({ path: `${out}/turning-after.png` });
-  // On the first movement frame velocity starts from zero, so its direction must match
-  // the newly turned head, independent of the translation acceleration constant.
+  // Walking uses this frame's new heading, including the first frame of a turn.
   const beforeWalk = (await collect(0)).at(-1)!;
   const walking = await collect(1, -1, 1);
   const delta = new Vector3()
@@ -226,7 +226,23 @@ try {
     'walking follows this frame turning',
     0.00001,
   );
-  await collect(0);
+  const stoppedWalking = await collect(0);
+  fixedHead(stoppedWalking, walking[0]);
+  const upm = await page.evaluate(() => window.wander.upm);
+  for (const stick of [-1, 0.5, 1]) {
+    const samples = await collect(0, stick);
+    const speed = 1.4 * upm * ((Math.abs(stick) - 0.2) / 0.8);
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1],
+        b = samples[i];
+      const distance = Math.hypot(b.head[0] - a.head[0], b.head[2] - a.head[2]);
+      close(distance / ((b.time - a.time) / 1000), speed, 'stick speed has no ramp', 0.03);
+    }
+    records[`walk-${stick}`] = samples;
+    const released = await collect(0);
+    fixedHead(released, samples.at(-1)!);
+    records[`walk-${stick}-released`] = released;
+  }
   await page.evaluate(async () => {
     await window.wander.spark.renderer.xr.getSession()!.end();
   });

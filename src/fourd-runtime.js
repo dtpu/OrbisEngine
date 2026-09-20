@@ -6,6 +6,8 @@ import { validateBakedTrack } from '/src/object-track.ts';
 import { loadMotionOrPlys, verifySha256 } from '/src/person-motion.ts';
 import { parseGaussianPly } from '/src/gaussian-ply.ts';
 import { loadPreparedWorld } from '/src/prepared-world-loader.ts';
+import { sceneUsesLod } from '/src/xr/render-policy.ts';
+import { createAnimationCadence } from '/src/xr/animation-cadence.ts';
 import { createStanceResolver } from '/src/person-stance.ts';
 import { personVisibility } from '/src/person-visibility.ts';
 import { countGridFootprintContacts } from '/src/walk-collision.ts';
@@ -951,7 +953,7 @@ export async function createFourD({ search, renderer, root, scope }) {
   const camera = new THREE.PerspectiveCamera(num('fov', 65), innerWidth / innerHeight, 0.01, 500);
   const bakedOn = !!q.get('bakedweights');
   const obsOn = !!q.get('obs') && num('obsfade', 0) > 0; // ?obsfade=0 (the default) = the world ships exactly as before
-  const lodOn = q.get('lod') === '1' || (q.get('lod') !== '0' && !bakedOn && !obsOn); // the CPU colour blend needs the plain packed array, so no LoD there unless forced
+  const lodOn = sceneUsesLod(q);
   const spark = new SparkRenderer({
     renderer,
     preBlurAmount: 0.3,
@@ -984,25 +986,28 @@ export async function createFourD({ search, renderer, root, scope }) {
     ))
   )
     worldUrl = q.get('worldfallback'); // the dev server answers 200 + index.html for a missing file
+  async function loadStaticWorld(url) {
+    const packed =
+      lodOn && q.get('xrworldcache') !== '0' ? await loadPreparedWorld(url, fetch) : null;
+    const encoding = packed?.splatEncoding;
+    const mesh = packed
+      ? new SplatMesh({ packedSplats: packed, splatEncoding: encoding })
+      : new SplatMesh({ url, lod: lodOn });
+    await mesh.initialized;
+    // Spark installs defaults even on an empty LoD root. Keep the source encoding.
+    if (packed) packed.splatEncoding = encoding;
+    return { mesh, prepared: !!packed };
+  }
   stage('world', noWorld ? 'no world: people only…' : `loading world ${worldUrl}…`);
-  const preparedWorld =
-    !noWorld && lodOn && q.get('xrworldcache') !== '0'
-      ? await loadPreparedWorld(worldUrl, fetch)
-      : null;
-  const preparedEncoding = preparedWorld?.splatEncoding;
+  const loadedWorld = noWorld ? null : await loadStaticWorld(worldUrl);
   const world = noWorld
     ? new SplatMesh({
         packedSplats: new PackedSplats({ packedArray: new Uint32Array(4), numSplats: 1 }),
       })
-    : preparedWorld
-      ? new SplatMesh({ packedSplats: preparedWorld, splatEncoding: preparedWorld.splatEncoding })
-      : new SplatMesh({ url: worldUrl, lod: lodOn });
+    : loadedWorld.mesh;
   await world.initialized;
-  // Spark's packed-data constructor installs defaults even on an empty LoD root.
-  // Preserve the source representation, including an intentionally absent encoding.
-  if (preparedWorld) preparedWorld.splatEncoding = preparedEncoding;
   stages.worldReady = performance.now() / 1000;
-  stages.worldPrepared = !!preparedWorld;
+  stages.worldPrepared = !!loadedWorld?.prepared;
   scene.add(world);
   // ?bakedweights=url&bakedbase=url&bakedmin=: colour = mix(base, world, smoothstep(bakedmin, 1, w)) per splat
   if (bakedOn && !lodOn) {
@@ -1375,7 +1380,9 @@ export async function createFourD({ search, renderer, root, scope }) {
   // path (soft edge = fade width) so it only shows where the reconstruction has nothing
   let bg = null;
   if (q.get('bg')) {
-    bg = new SplatMesh({ url: q.get('bg'), lod: lodOn });
+    const loaded = await loadStaticWorld(q.get('bg'));
+    bg = loaded.mesh;
+    stages.backgroundPrepared = loaded.prepared;
     if (q.get('bgup') !== 'y') bg.rotation.x = Math.PI;
     bg.scale.setScalar(num('bgscale', 1));
     bg.renderOrder = -1;
@@ -1406,7 +1413,9 @@ export async function createFourD({ search, renderer, root, scope }) {
   let bg2 = null,
     bg2fade = null;
   if (q.get('bg2')) {
-    bg2 = new SplatMesh({ url: q.get('bg2'), lod: lodOn });
+    const loaded = await loadStaticWorld(q.get('bg2'));
+    bg2 = loaded.mesh;
+    stages.secondBackgroundPrepared = loaded.prepared;
     const pv = vec('bg2pos', [0, 0, 0]),
       qv = (q.get('bg2quat') || '0,0,0,1').split(',').map(Number);
     const holder = new THREE.Group();
@@ -4516,6 +4525,7 @@ export async function createFourD({ search, renderer, root, scope }) {
     fpsT = 0,
     fpsNow = 0;
   const stats = { fps: 0, frames: 0, interpMs: 0 };
+  const animationDue = createAnimationCadence(num('xranimfps', 36));
   const animate = () => {
     if (!scope.active || scope.disposed) return;
     const now = performance.now(),
@@ -4623,7 +4633,10 @@ export async function createFourD({ search, renderer, root, scope }) {
           interaction?.ended();
         }
       }
-      applyTime();
+      // Video/audio keep their original clock. Only the expensive recorded geometry update is
+      // capped in XR; tracked poses, joystick input and rendering still run on every XR frame.
+      // Explicit setTime/setFrame calls bypass this gate so seeks remain immediate.
+      if (animationDue(now, renderer.xr.isPresenting)) applyTime();
     }
     if (possess) possessApply(dt);
     const ce = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
