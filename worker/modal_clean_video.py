@@ -9,8 +9,14 @@ itself is uploaded and decoded remotely, so no frame dumps cross the wire.
       --out .context/clips/bedroom-clean.mp4 \
       --frame0 .context/own/bedroom/clean-f0.png --dilate 40 --bottom-extra 80
 
+--people-mask selects which people the pass removes. `semantic` (the default) is the SegFormer
+person class, unchanged. `foreground` keeps only the Mask R-CNN instances big enough to come back
+as avatars and completes them from the semantic map, so a stadium crowd in the stands stays in the
+plate instead of being inpainted into a grey smear (wander_worker.masks.foreground_people_masks).
+
 Weights live in the wander-clean-video-cache volume (big-lama.pt staged once with `uv run --locked modal volume put`,
-SegFormer downloaded into the HF cache on the first run), so a run never re-downloads them.
+SegFormer and Mask R-CNN downloaded into the HF and torch caches on the first run), so a run never
+re-downloads them.
 """
 
 from __future__ import annotations
@@ -21,12 +27,15 @@ import modal
 
 HERE = Path(__file__).resolve().parent
 LAMA_PT = "/cache/lama/big-lama.pt"
+SEMANTIC, FOREGROUND = "semantic", "foreground"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "libgl1", "libglib2.0-0")
     .uv_pip_install(
         "torch==2.5.1",
+        # the Mask R-CNN behind --people-mask foreground; 0.20.1 is torchvision's torch==2.5.1 pin
+        "torchvision==0.20.1",
         "numpy==1.26.4",
         "pillow==10.4.0",
         "opencv-python-headless==4.11.0.86",
@@ -77,6 +86,7 @@ def clean(
     masks_npz: bytes = b"",
     moved: bool = False,
     max_added_frac: float = 0.05,
+    people_mask: str = SEMANTIC,
 ) -> dict:
     """Returns the clean mp4, frame 0, a masks archive and the source indices of the kept frames.
 
@@ -87,6 +97,10 @@ def clean(
     moved: inpaint everything that MOVED, not just the person - the plate is what the static
     trainer sees, and a cast shadow, a carried object or a passer-by is as wrong in it as the
     person is. Off by default: every existing caller keeps the person mask it has always had.
+
+    people_mask: SEMANTIC (default, the SegFormer person class, byte for byte what this pass has
+    always removed) or FOREGROUND (only the people big enough to be reconstructed, so a distant
+    crowd stays in the plate). The report records the mode, its thresholds and its instance counts.
     """
     import hashlib
     import io
@@ -101,6 +115,12 @@ def clean(
     from PIL import Image
     from wander_worker.source_timing import resample_source, select_provenance
 
+    if people_mask not in (SEMANTIC, FOREGROUND):
+        raise ValueError(f"people_mask must be {SEMANTIC!r} or {FOREGROUND!r}: {people_mask!r}")
+    if moved and people_mask != SEMANTIC:
+        # moved_content_masks builds on the semantic person layer; silently dropping one of the
+        # two flags would hand the trainer a plate nobody asked for
+        raise ValueError(f"moved masks and people_mask={people_mask!r} cannot be combined")
     t0 = time.time()
     root = Path(tempfile.mkdtemp(prefix="cleanvid-"))
     src, work = root / "input.mp4", root / "frames"
@@ -109,6 +129,7 @@ def clean(
     W, H = width, height
     error, timings, result = None, {}, {}
     moved_stats = None
+    foreground_stats, mask_thresholds = None, None
     out_mp4 = out_png = masks_out = b""
     frames_tar = b""
     try:
@@ -150,6 +171,26 @@ def clean(
                 :, :H, :W
             ].astype(bool)
             timings["masks"] = time.time() - t
+        elif people_mask == FOREGROUND:
+            # the detector only looks at the frames being inpainted, like the semantic path
+            from wander_worker.masks import (
+                FOREGROUND_GROWTH_BOX_FRAC,
+                FOREGROUND_MAX_GROWTH_FRAC,
+                FOREGROUND_MIN_HEIGHT_FRAC,
+                FOREGROUND_SCORE,
+                foreground_people_masks,
+            )
+
+            foreground_stats = []
+            masks[need] = foreground_people_masks(
+                imgs[need], dilate_px=dilate, batch_size=mask_batch, stats=foreground_stats
+            )
+            mask_thresholds = dict(
+                minHeightFrac=FOREGROUND_MIN_HEIGHT_FRAC,
+                score=FOREGROUND_SCORE,
+                growthBoxFrac=FOREGROUND_GROWTH_BOX_FRAC,
+                maxGrowthFrac=FOREGROUND_MAX_GROWTH_FRAC,
+            )
         else:
             masks[need] = people_masks(imgs[need], dilate_px=dilate, batch_size=mask_batch)
         for j in need if not masks_npz else []:
@@ -169,11 +210,21 @@ def clean(
             )
         timings["masks"] = time.time() - t
         covered = int(masks[need].reshape(len(need), -1).any(1).sum())
+        selected = sum(s["selected"] for s in foreground_stats) if foreground_stats else None
+        rejected_small = (
+            sum(s["rejectedSmall"] for s in foreground_stats) if foreground_stats else None
+        )
         print(
             f"masks: people {masks[need].mean() * 100:.2f}% of pixels, {covered}/{len(need)} frames "
             f"({timings['masks']:.0f}s)",
             flush=True,
         )
+        if foreground_stats is not None:
+            print(
+                f"  {people_mask} masks: {selected} instances selected, {rejected_small} rejected "
+                f"below {mask_thresholds['minHeightFrac']} of frame height",
+                flush=True,
+            )
 
         t = time.time()
         import torch
@@ -265,6 +316,11 @@ def clean(
             outputVideoSha256=hashlib.sha256(out_mp4).hexdigest() if out_mp4 else None,
             moved=moved,
             movedStats=moved_stats,
+            peopleMask=people_mask,
+            peopleMaskThresholds=mask_thresholds,
+            foregroundSelected=selected,
+            foregroundRejectedSmall=rejected_small,
+            foregroundStats=foreground_stats,
             fps=fps,
             width=W,
             height=H,
@@ -296,19 +352,26 @@ def clean(
 
 @app.function(image=image, cpu=2, memory=8192, timeout=900, volumes={"/cache": cache})
 def stage_weights() -> dict:
-    """Pull SegFormer into the volume's HF cache and check big-lama.pt is staged."""
+    """Pull SegFormer and Mask R-CNN into the volume's caches and check big-lama.pt is staged."""
     import os
 
+    from torchvision.models.detection import (
+        maskrcnn_resnet50_fpn_v2,
+        MaskRCNN_ResNet50_FPN_V2_Weights,
+    )
     from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
     from wander_worker.masks import MODEL_ID
 
     AutoImageProcessor.from_pretrained(MODEL_ID)
     SegformerForSemanticSegmentation.from_pretrained(MODEL_ID)
+    # TORCH_HOME is /cache/torch, so the detector lands in the volume and downloads once
+    maskrcnn_resnet50_fpn_v2(weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT)
     cache.commit()
     return dict(
         lama=os.path.exists(LAMA_PT),
         lamaBytes=os.path.getsize(LAMA_PT) if os.path.exists(LAMA_PT) else 0,
         segformer=MODEL_ID,
+        maskrcnn=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT.url,
     )
 
 
@@ -332,11 +395,14 @@ def main(
     masks_in: str = "",
     moved_mask: bool = False,
     max_added_frac: float = 0.05,
+    people_mask: str = SEMANTIC,
 ):
     import io
     import json
     import tarfile
 
+    if people_mask not in (SEMANTIC, FOREGROUND):
+        raise SystemExit(f"--people-mask must be {SEMANTIC} or {FOREGROUND}, not {people_mask!r}")
     r = clean.remote(
         Path(clip).read_bytes(),
         fps=fps,
@@ -353,6 +419,7 @@ def main(
         masks_npz=Path(masks_in).read_bytes() if masks_in else b"",
         moved=moved_mask,
         max_added_frac=max_added_frac,
+        people_mask=people_mask,
     )
     rep = r["report"]
     if out and r["mp4"]:
@@ -377,7 +444,14 @@ def main(
             {
                 k: v
                 for k, v in rep.items()
-                if k not in ("indices", "movedStats", "sourceProvenance", "keptFrameProvenance")
+                if k
+                not in (
+                    "indices",
+                    "movedStats",
+                    "foregroundStats",
+                    "sourceProvenance",
+                    "keptFrameProvenance",
+                )
             },
             indent=2,
         )
