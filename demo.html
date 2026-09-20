@@ -984,7 +984,8 @@
         if (WALK) options.set('walk', '1');
         const outer = new URLSearchParams(location.search);
         for (const [key, value] of outer)
-          if (key === 'audio' || key.startsWith('xr')) options.set(key, value);
+          if (key === 'audio' || key === 'personsize' || key.startsWith('xr'))
+            options.set(key, value);
         api()?.play(false);
         frame.src = `/fourd.html?${options}`;
         outer.set('clip', c.id);
@@ -1086,6 +1087,10 @@
       border:0!important;border-radius:12px;outline:1px solid #ffffff;background:#000}
     #pip.hidden{display:none}
     body.wd-hud #pip{bottom:86px!important}
+    #xrBtn{top:20px!important;left:50%!important;right:auto!important;bottom:auto!important;
+      transform:translateX(-50%)!important;min-height:44px!important;padding:10px 16px!important;
+      border-radius:9px!important;background:#e8c07a!important;color:#17130a!important;
+      font-weight:600!important;box-shadow:0 8px 24px #0008}
   `;
         doc.head.appendChild(s);
         if (hudOn) doc.body.classList.add('wd-hud');
