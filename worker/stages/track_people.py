@@ -30,6 +30,21 @@ from PIL import Image
 HIST_BINS = 6  # per channel, so 216 bins per body half
 
 
+# Share of sampled frames that must have a camera before the solve is judged to describe a
+# different video rather than merely having gaps.
+MINIMUM_CAMERA_COVERAGE = 0.5
+
+# Share of sampled frames that must actually decode before the source is called unusable.
+MINIMUM_DECODED_FRAMES = 0.5
+
+
+def decoded_span_usable(decoded: int, requested: int, floor=MINIMUM_DECODED_FRAMES) -> bool:
+    """Whether enough of the requested span decoded to track from."""
+    if requested == 0:
+        return False
+    return decoded / requested >= floor
+
+
 def sample_indices(video, fps_out, start=0.0, stop=None):
     """The decode schedule lhm_animate.py uses; every stage must agree on it exactly."""
     cap = cv2.VideoCapture(video)
@@ -172,11 +187,25 @@ def main():
     indices, times, src_fps, count, duration = sample_indices(a.video, a.fps)
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
-    if cameras and (
-        len(cameras) != len(indices)
-        or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))
-    ):
-        raise ValueError("Camera records must correspond exactly to sampled source indices")
+    # Cameras are matched by the source frame they describe, not by position. The solve records
+    # no camera for a frame whose subject it could not reconstruct, and it may cover a shorter
+    # span than this schedule if the container overstated its frame count. Both leave gaps that
+    # are absences, not disagreement; only a wholesale mismatch means the schedules differ.
+    camera_by_source = {}
+    if cameras:
+        camera_by_source = {int(c["sourceIndex"]): c for c in cameras if c}
+        covered = sum(1 for i in indices if int(i) in camera_by_source)
+        if covered < len(indices) * MINIMUM_CAMERA_COVERAGE:
+            raise ValueError(
+                f"Camera records cover only {covered} of {len(indices)} sampled source frames; "
+                "the solve and this schedule do not describe the same video"
+            )
+        if covered < len(indices):
+            print(
+                f"{len(indices) - covered} sampled frames have no camera and will be tracked "
+                "without one",
+                flush=True,
+            )
 
     rcnn = None
     if not a.no_maskrcnn:
@@ -201,15 +230,29 @@ def main():
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
         ok, bgr = cap.read()
         if not ok:
-            raise RuntimeError(f"Unable to decode source frame {index}")
+            # Container metadata routinely overstates frame count, so the requested tail can be
+            # undecodable even though the file is sound. Track the span that exists rather than
+            # discarding every frame already tracked.
+            if not decoded_span_usable(sample, len(indices)):
+                raise RuntimeError(
+                    f"Unable to decode source frame {index}: only {sample} of {len(indices)} "
+                    "sampled frames are readable"
+                )
+            print(
+                f"decode stopped at source frame {index} ({sample} of {len(indices)} sampled)",
+                flush=True,
+            )
+            indices, times = indices[:sample], times[:sample]
+            break
         raw = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         h, w = raw.shape[:2]
         diag = float(np.hypot(w, h))
         padded, ow, oh = estimator.img_center_padding(raw)
         tensor, annotation = estimator._preprocess(padded)
         pl, pt, factor, _, _ = annotation
-        if cameras:
-            source_K = np.array(cameras[sample]["source_intrinsics"])
+        frame_camera = camera_by_source.get(int(index)) if cameras else None
+        if frame_camera is not None:
+            source_K = np.array(frame_camera["source_intrinsics"])
             K = torch.tensor(
                 np.array([[factor, 0, factor * ow + pl], [0, factor, factor * oh + pt], [0, 0, 1]])
                 @ source_K,

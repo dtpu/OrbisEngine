@@ -22,7 +22,7 @@ the cache coordinate convention. This required no new inference.
 OpenGL frame. It checks source hashes, camera/time correspondence, coordinate consistency, mask shape,
 finite positive-depth points and bounded radii. Explicit source-bound track rectangles and anchor
 selection can exclude missed people and inconsistent fixture states. No empty regions are filled.
-Run `uv run --locked scripts/test_package_static_anchors.py` for the four geometry/mask regressions.
+Run `uv run --locked scripts/tests/test_package_static_anchors.py` for the four geometry/mask regressions.
 
 The initial eight-anchor result contains missed-person ghosts and inconsistent open/closed fridge
 states. It is quarantined as evidence. The conservative candidate uses six closed-fridge anchors,
