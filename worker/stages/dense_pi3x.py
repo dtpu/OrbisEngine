@@ -334,12 +334,12 @@ def anchor_matches(
 ANCHOR_SPREAD_LIMIT = 3.0
 
 
-def anchor_spread(poses, depths, limit=ANCHOR_SPREAD_LIMIT):
-    """(spread, median depth) for the anchor set, refusing a clip whose anchors do not overlap.
+def measure_spread(poses, depths):
+    """(spread, median depth) for an anchor set, with no limit applied.
 
-    `depths` is each anchor's median depth in its own camera. The error names the measurement
-    and the remedy, because no confidence or mask change can recover views that share no
-    content: the clip has to be cut to a window that a single anchor set can span.
+    `depths` is each anchor's median depth in its own camera. Separated from the refusal below
+    because the spread is now also a *decision*: under the limit one global anchor set can carry
+    the clip, over it the clip is solved as a chain of shorter windows instead of being refused.
     """
     centres = np.asarray(poses, dtype=float)[:, :3, 3]
     finite = np.asarray(depths, dtype=float)
@@ -351,8 +351,21 @@ def anchor_spread(poses, depths, limit=ANCHOR_SPREAD_LIMIT):
         )
     depth = float(np.median(finite))
     gaps = np.linalg.norm(centres[:, None, :] - centres[None, :, :], axis=-1)
-    spread = float(np.max(gaps) / depth)
+    return float(np.max(gaps) / depth), depth
+
+
+def anchor_spread(poses, depths, limit=ANCHOR_SPREAD_LIMIT):
+    """(spread, median depth) for the anchor set, refusing a set whose anchors do not overlap.
+
+    The error names the measurement and the remedy, because no confidence or mask change can
+    recover views that share no content: that span has to be cut to a window a single anchor set
+    can carry. The stage now cuts it automatically (`plan_windows`); this stays the guard each
+    individual window is still held to.
+    """
+    spread, depth = measure_spread(poses, depths)
     if spread > limit:
+        centres = np.asarray(poses, dtype=float)[:, :3, 3]
+        gaps = np.linalg.norm(centres[:, None, :] - centres[None, :, :], axis=-1)
         raise RuntimeError(
             f"The anchor views span {spread:.1f} scene depths (largest baseline "
             f"{float(np.max(gaps)):.2f} against a median depth of {depth:.2f}); above "
@@ -361,6 +374,372 @@ def anchor_spread(poses, depths, limit=ANCHOR_SPREAD_LIMIT):
             "segment and solve it on its own."
         )
     return spread, depth
+
+
+# --- chained alignment ----------------------------------------------------------------------
+# One global anchor set requires every anchor to be co-visible, which a travelling camera -- a
+# chase down a causeway, a runner up a long flight of steps -- never is. Over the spread limit the
+# clip is split into overlapping windows that each pass `anchor_spread` on their own, solved like
+# small global solves, and registered to one another on the frames they share.
+ALIGNMENT_GLOBAL = "global"
+ALIGNMENT_CHAINED = "chained"
+
+# What `anchors.npz` holds, so a resumed run can tell the survey prediction (the global anchor set
+# that decided the mode) from the base-frame prediction (window 0's anchors) that replaces it in a
+# chained solve. A file written before this existed is a global anchor set by construction.
+ANCHOR_ROLE_GLOBAL = "global"
+ANCHOR_ROLE_WINDOW = "chain-window-0"
+
+# Share of ANCHOR_SPREAD_LIMIT a window is *planned* to spend. The plan comes from the survey
+# prediction, whose baselines relate views that are not co-visible and so are an estimate, not a
+# measurement; and it is measured as travelled path length, which is at least the largest baseline
+# and equals it only for a straight run. 0.6 leaves room for both errors, and every window's own
+# spread is measured afterwards anyway, so the cost of being wrong here is a re-prediction and not
+# a bad solve. On game-run's surveyed 3.68-depth path this cuts 3 windows; on game-s1's 18.8, 11.
+CHAIN_TARGET_SPREAD = 0.6
+# A window that measures under this share of the limit left most of its budget unused -- the
+# survey over-estimated its travel -- so it is grown once and measured again. The product wants
+# segments as long as possible, and an unused budget is a window boundary, a link and its drift
+# that the clip did not need.
+CHAIN_GROW_SPREAD = 0.5
+# Most a single grow may multiply a window's length by. A window whose measured spread is a tenth
+# of the limit is not evidence that six times its length is co-visible; it is evidence the camera
+# was still for that second.
+CHAIN_MAX_GROW = 2.0
+# Anchor predictions one window may spend settling its length. One is the normal case; the rest
+# pay for a shrink after an over-budget measurement and for the single grow.
+CHAIN_WINDOW_ATTEMPTS = 3
+# Frames two consecutive windows share. One shared frame is already enough geometry -- a dense
+# depth map of one view spans the scene in all three axes -- so this is redundancy against a
+# shared frame that is blurred, nearly all person, or looking at a blank wall, and it averages the
+# link over a third of a second of camera motion at this stage's minimum 12 fps. Each shared frame
+# is predicted twice, once per window, which is the whole extra inference cost of a link.
+CHAIN_OVERLAP_SAMPLES = 4
+# Shortest window, one second at the minimum rate. Below this a window's own anchors are nearly
+# the same view, so it measures a tiny spread and contributes a link and its drift while adding
+# almost no independent geometry. A camera that cannot hold co-visibility for one second is not
+# something this stage can chain, and says so.
+CHAIN_MIN_WINDOW = 12
+# A link is a similarity fitted to two predictions of the same frames, so it is held to the same
+# residual the batch alignments are held to, measured against the same thing: the median depth of
+# the shared frames. Not separately calibrated -- there is no GPU run of a chained solve to
+# calibrate it on -- and deliberately not tightened past a limit this stage has measured.
+MAX_LINK_RESIDUAL = MAX_ALIGNMENT_RESIDUAL
+# The shared frames' median depth, measured in each window's own prediction and brought to a
+# common frame by the link's scale, is the same physical distance twice. Each Pi3X prediction
+# chooses its own arbitrary scale, so the link's raw scale says nothing; this ratio is the
+# scale-free version of it and has to be near 1. 1.25 allows the depth medians of the two
+# predictions to disagree by a quarter, which is the sort of disagreement two honest predictions
+# of the same frames produce; a factor-of-two ratio is a link that matched the wrong surface.
+LINK_DEPTH_RATIO_BAND = 1.25
+# The link is fitted to scene points, so how well it also carries the shared frames' CAMERA
+# centres from one window to the other is an independent check on the same data. Held to the same
+# measured residual limit for the same reason as MAX_LINK_RESIDUAL.
+MAX_LINK_CAMERA_RESIDUAL = MAX_ALIGNMENT_RESIDUAL
+
+
+def travel_profile(poses, samples, depth, count):
+    """Cumulative camera path length, in scene depths, at every sample of the clip.
+
+    Built from the survey prediction -- the global anchor set -- by walking its camera centres in
+    order and interpolating between the samples they sit on. Those centres relate views that are
+    not co-visible, so this is an estimate of where the camera went and not a measurement of it;
+    it is used only to propose window lengths, each of which is then measured on its own.
+    """
+    centres = np.asarray(poses, dtype=float)[:, :3, 3]
+    samples = np.asarray(samples, dtype=float)
+    if len(centres) != len(samples) or len(centres) < 2:
+        raise RuntimeError(
+            f"The travel profile needs a pose per anchor sample, got {len(centres)} and "
+            f"{len(samples)}"
+        )
+    depth = float(depth)
+    if not np.isfinite(depth) or depth <= 0:
+        raise RuntimeError(f"The travel profile needs a positive scene depth, got {depth}")
+    walked = np.concatenate(
+        [[0.0], np.cumsum(np.linalg.norm(np.diff(centres, axis=0), axis=1) / depth)]
+    )
+    return np.interp(np.arange(int(count), dtype=float), samples, walked)
+
+
+def next_window(
+    profile,
+    first,
+    last,
+    budget,
+    overlap=CHAIN_OVERLAP_SAMPLES,
+    minimum=CHAIN_MIN_WINDOW,
+):
+    """The end sample of the window starting at `first`, on the surveyed travel budget."""
+    profile = np.asarray(profile, dtype=float)
+    first, last, minimum, overlap = int(first), int(last), int(minimum), int(overlap)
+    if first >= last:
+        return last
+    over = np.flatnonzero(profile[first : last + 1] - profile[first] > float(budget))
+    end = last if over.size == 0 else first + int(over[0]) - 1
+    end = min(last, max(end, first + minimum - 1))
+    # A tail too short to be a window of its own is absorbed into this one rather than left to
+    # become a one-frame window whose anchors are one view.
+    if end < last and last - (end - overlap + 1) + 1 < minimum:
+        end = last
+    return int(end)
+
+
+def plan_windows(
+    profile,
+    count,
+    limit=ANCHOR_SPREAD_LIMIT,
+    fraction=CHAIN_TARGET_SPREAD,
+    overlap=CHAIN_OVERLAP_SAMPLES,
+    minimum=CHAIN_MIN_WINDOW,
+):
+    """Overlapping inclusive [first, last] sample windows for a chained solve.
+
+    The plan the survey proposes, before any window has been predicted. The runtime walks it one
+    window at a time and re-plans from the same function whenever a measured window turns out
+    shorter or longer than its proposal, so this is also what the planner would choose.
+    """
+    count = int(count)
+    if count < int(minimum):
+        raise RuntimeError(
+            f"A chained solve needs at least {int(minimum)} samples to fill one window, got {count}"
+        )
+    if int(overlap) < 2 or int(overlap) + 2 > int(minimum):
+        raise RuntimeError(
+            f"A {int(overlap)}-sample overlap does not fit inside a {int(minimum)}-sample window"
+        )
+    budget = float(fraction) * float(limit)
+    windows, first = [], 0
+    while True:
+        end = next_window(profile, first, count - 1, budget, overlap, minimum)
+        windows.append((int(first), int(end)))
+        if end >= count - 1:
+            return windows
+        following = end - int(overlap) + 1
+        if following <= first:
+            raise RuntimeError(
+                f"Window planning made no progress at sample {first}: a window of "
+                f"{end - first + 1} sample(s) cannot carry a {int(overlap)}-sample overlap"
+            )
+        first = following
+
+
+def adapt_window(
+    first,
+    end,
+    spread,
+    last,
+    limit=ANCHOR_SPREAD_LIMIT,
+    fraction=CHAIN_TARGET_SPREAD,
+    grow=CHAIN_GROW_SPREAD,
+    cap=CHAIN_MAX_GROW,
+    minimum=CHAIN_MIN_WINDOW,
+):
+    """(action, end) once a proposed window's own anchor spread has been measured.
+
+    The measurement outranks the survey that proposed the length: it is made from an anchor set
+    that IS co-visible, and it is the spread every batch of this window will be aligned against.
+    `shrink` scales the window down by how far over the limit it came in, `grow` doubles back on a
+    survey that over-estimated the travel, `fail` is a window already at its floor length that
+    still does not hold together.
+    """
+    first, end, last, minimum = int(first), int(end), int(last), int(minimum)
+    spread, limit = float(spread), float(limit)
+    length = end - first + 1
+    floor = min(minimum, last - first + 1)
+    if not np.isfinite(spread) or spread > limit:
+        if not np.isfinite(spread):
+            return "fail", end
+        shrunk = min(end - 1, first + max(floor, int(length * fraction * limit / spread)) - 1)
+        if shrunk < first + floor - 1:
+            return "fail", end
+        return "shrink", int(shrunk)
+    if end < last and spread < grow * limit:
+        factor = min(float(cap), fraction * limit / max(spread, 1e-6))
+        grown = min(last, first + int(math.ceil(length * factor)) - 1)
+        if grown > end:
+            return "grow", int(grown)
+    return "accept", end
+
+
+def compose_similarity(outer, inner):
+    """The single similarity that applies `inner` and then `outer`."""
+    outer_scale, outer_rotation, outer_translation = outer
+    inner_scale, inner_rotation, inner_translation = inner
+    outer_rotation = np.asarray(outer_rotation, dtype=float)
+    return (
+        float(outer_scale) * float(inner_scale),
+        outer_rotation @ np.asarray(inner_rotation, dtype=float),
+        float(outer_scale) * outer_rotation @ np.asarray(inner_translation, dtype=float)
+        + np.asarray(outer_translation, dtype=float),
+    )
+
+
+def identity_similarity():
+    """The transform a window 0 needs: its own prediction already defines the base frame."""
+    return (1.0, np.eye(3), np.zeros(3))
+
+
+def apply_similarity(transform, points):
+    """`points` moved by a (scale, rotation, translation) triple, in the caller's dtype."""
+    scale, rotation, translation = transform
+    return np.asarray(points) @ np.asarray(rotation, dtype=float).T * float(scale) + np.asarray(
+        translation, dtype=float
+    )
+
+
+def chain_transforms(links):
+    """Every window's transform into window 0's frame, composed from the per-link fits."""
+    transforms = [identity_similarity()]
+    for link in links:
+        transforms.append(compose_similarity(transforms[-1], link))
+    return transforms
+
+
+def link_quality(
+    index,
+    samples,
+    points,
+    rms,
+    scale,
+    depth_previous,
+    depth_current,
+    camera_rms,
+    remaining_path=0.0,
+    residual=MAX_LINK_RESIDUAL,
+    band=LINK_DEPTH_RATIO_BAND,
+    camera=MAX_LINK_CAMERA_RESIDUAL,
+):
+    """One window-to-window registration, measured and judged.
+
+    `rms` and `camera_rms` are in the previous window's units, so both are reported against
+    `depth_previous`. `depth_previous` and `depth_current` are the median depth of the SAME shared
+    frames as each window's own prediction measured it, which makes `scale * depth_current /
+    depth_previous` one physical distance compared across two predictions: it has to be near 1
+    whatever arbitrary scale either prediction chose, while the raw `scale` on its own says
+    nothing at all.
+    """
+    depth_previous, depth_current = float(depth_previous), float(depth_current)
+    rms, camera_rms, scale = float(rms), float(camera_rms), float(scale)
+    usable = np.isfinite(depth_previous) and depth_previous > 0
+    ratio = scale * depth_current / depth_previous if usable else float("nan")
+    record = dict(
+        link=int(index),
+        sharedSamples=[int(i) for i in samples],
+        points=int(points),
+        rms=rms,
+        rmsDepths=rms / depth_previous if usable else float("nan"),
+        scale=scale,
+        depthRatio=ratio,
+        depthPrevious=depth_previous,
+        depthCurrent=depth_current,
+        cameraRms=camera_rms,
+        cameraRmsDepths=camera_rms / depth_previous if usable else float("nan"),
+        remainingPathDepths=float(remaining_path),
+    )
+    failures = []
+    if not usable:
+        failures.append(f"the shared frames have no positive median depth ({depth_previous})")
+    if not np.isfinite(record["rmsDepths"]) or record["rmsDepths"] > float(residual):
+        failures.append(
+            f"alignment residual {record['rmsDepths']:.0%} of the {depth_previous:.2f} shared "
+            f"depth, over the {float(residual):.0%} this stage accepts"
+        )
+    if not np.isfinite(ratio) or not (1 / float(band)) <= ratio <= float(band):
+        failures.append(
+            f"the shared frames measure {depth_current:.2f} deep in this window and "
+            f"{depth_previous:.2f} in the previous one, a ratio of {ratio:.2f} after the link's "
+            f"scale, outside 1/{float(band):g}..{float(band):g}"
+        )
+    if not np.isfinite(record["cameraRmsDepths"]) or record["cameraRmsDepths"] > float(camera):
+        failures.append(
+            f"the shared frames' camera centres land {record['cameraRmsDepths']:.0%} of a scene "
+            f"depth apart, over the {float(camera):.0%} this stage accepts"
+        )
+    record["ok"] = not failures
+    record["failures"] = failures
+    return record
+
+
+def drift_bound(links):
+    """How far the far end of the chain may have walked away from window 0's frame.
+
+    Each link leaves a registration residual, and it leaves it as both a position error and a
+    rotation error of roughly the same size in radians -- the points it was fitted to sit about
+    one scene depth away -- which the rest of the chain then levers over however far the camera
+    still travels. Both terms are in scene depths. This is a first-order bound from the residuals
+    the links actually measured, not an observation of drift: nothing here sees the far end of the
+    clip and window 0's scene at the same time, so a chained solve cannot close its own loop.
+    """
+    residual = 0.0
+    bound = 0.0
+    for link in links:
+        value = float(link.get("rmsDepths", float("nan")))
+        if not np.isfinite(value):
+            continue
+        residual += value
+        bound += value * (1.0 + float(link.get("remainingPathDepths", 0.0)))
+    return dict(
+        links=len(links),
+        residualDepths=residual,
+        boundDepths=bound,
+        note=(
+            "Accumulated per-link registration residual, in scene depths, plus each link's "
+            "rotation error levered over the path still to come. A first-order bound computed "
+            "from the measured link residuals; the chain never observes both ends of the clip at "
+            "once and so cannot measure its own drift."
+        ),
+    )
+
+
+def localise_break(windows, links):
+    """Which link broke the chain, and the longest prefix and suffix of windows that registered.
+
+    `links[k]` registers window k+1 onto window k and carries `ok`: True, False, or None for a
+    link the run never reached. A trim suggestion is only honest over links that were measured, so
+    an unattempted link ends a run exactly as a failed one does and is reported separately.
+    """
+    ranges = [(int(first), int(last)) for first, last in windows]
+    status = [link.get("ok") for link in links]
+    if len(status) != len(ranges) - 1:
+        raise RuntimeError(
+            f"{len(ranges)} window(s) need {len(ranges) - 1} links, got {len(status)}"
+        )
+
+    def span(first_window, last_window):
+        return dict(
+            windows=[int(first_window), int(last_window)],
+            firstSample=ranges[first_window][0],
+            lastSample=ranges[last_window][1],
+            samples=ranges[last_window][1] - ranges[first_window][0] + 1,
+        )
+
+    prefix = 0
+    while prefix < len(status) and status[prefix] is True:
+        prefix += 1
+    suffix = len(ranges) - 1
+    while suffix > 0 and status[suffix - 1] is True:
+        suffix -= 1
+    judged = [link for link in links if link.get("ok") is False]
+    if not judged:
+        judged = [link for link in links if link.get("ok") is True]
+    weakest = None
+    if judged:
+        weakest = max(
+            judged,
+            key=lambda link: (
+                float(link["rmsDepths"]) if np.isfinite(link.get("rmsDepths", np.nan)) else np.inf
+            ),
+        )
+    return dict(
+        ok=all(state is True for state in status),
+        windows=len(ranges),
+        weakestLink=weakest,
+        failedLinks=[k for k, state in enumerate(status) if state is False],
+        unattemptedLinks=[k for k, state in enumerate(status) if state is None],
+        registeredPrefix=span(0, prefix),
+        registeredSuffix=span(suffix, len(ranges) - 1),
+    )
 
 
 def viewer_camera(
@@ -940,6 +1319,7 @@ def main():
 
     anchors = np.unique(np.linspace(0, N - 1, min(a.anchors, N)).round().astype(int)).tolist()
     basefile = out / "anchors.npz"
+    surveyfile = out / "anchor-survey.json"
     # A cached prediction from before this stage measured its own confidence cuts and chose a
     # people mask does not carry what the alignment now reads, and re-deriving it would mean
     # guessing which cut produced its `valid`. Predict again instead.
@@ -947,6 +1327,12 @@ def main():
     base = dict(np.load(basefile)) if basefile.exists() else None
     if base is not None and any(key not in base for key in needed):
         print("cached anchors predate the adaptive anchor selection; predicting again", flush=True)
+        base = None
+    if base is not None and str(base.get("anchor_role", ANCHOR_ROLE_GLOBAL)) != ANCHOR_ROLE_GLOBAL:
+        # A chained run leaves its base window in anchors.npz, because that is the prediction the
+        # world scale below is measured in. That file is not the survey, so the survey is made
+        # again; a file written before this key existed is a survey by construction.
+        print("cached anchors are a chained base window; predicting the survey again", flush=True)
         base = None
     if base is None:
         base = predict(anchors)
@@ -960,6 +1346,8 @@ def main():
         )
         base["people_mask_mode"] = np.array(people_mode)
         base["semantic_person_fraction"] = np.array(person_fraction)
+        base["anchor_role"] = np.array(ANCHOR_ROLE_GLOBAL)
+        base["anchor_samples"] = np.array(anchors, dtype=np.int64)
         np.savez_compressed(basefile, **base)
     people_mode = str(base["people_mask_mode"])
     person_fraction = float(base["semantic_person_fraction"])
@@ -968,43 +1356,265 @@ def main():
         f"{person_fraction:.3f} over the anchors, crowd above {CROWD_PERSON_FRACTION})",
         flush=True,
     )
-    inv = np.linalg.inv(base["poses"][0])
-    R0, t00 = inv[:3, :3], inv[:3, 3]
     flip = np.array([1.0, -1.0, -1.0])
-    static = base["valid"] & ~base["static_people"] & np.isfinite(base["points"]).all(-1)
-    depths = []
-    for j in range(len(anchors)):
-        inv_j = np.linalg.inv(base["poses"][j])
-        away = (base["points"][j] @ inv_j[:3, :3].T + inv_j[:3, 3])[..., 2]
-        ahead = away[static[j] & (away > 0)]
-        depths.append(float(np.median(ahead)) if ahead.size else np.nan)
-    spread, anchor_depth = anchor_spread(base["poses"], depths)
-    print(f"anchor spread {spread:.2f} scene depths (median depth {anchor_depth:.2f})", flush=True)
-    zz = (base["points"][0] @ R0.T + t00)[..., 2]
-    good = static[0] & (zz > 0)
-    scale = 3 / np.median(zz[good]) if int(good.sum()) >= ANCHOR_MATCH_MIN else np.nan
-    if not np.isfinite(scale) or scale <= 0:
-        # A genuine solve failure: the anchor view has no confident scene geometry in
-        # front of the camera at all. Distinct from a frame with nobody in it.
-        raise RuntimeError(
-            f"No valid static scene points in anchor view 0 ({int(good.sum())} of "
-            f"{int(static[0].sum())} static pixels lie in front of the camera; this stage "
-            f"needs {ANCHOR_MATCH_MIN}), under the {str(base['conf_mode'][0])} confidence cut "
-            f"{float(base['conf_threshold'][0]):.3f} and the {people_mode} people mask"
+
+    def static_pixels(prediction):
+        """The pixels of each view that are scene rather than person, and really predicted."""
+        return (
+            prediction["valid"]
+            & ~prediction["static_people"]
+            & np.isfinite(prediction["points"]).all(-1)
         )
-    usable, anchor_records = anchor_matches(
-        base["conf"],
-        static,
-        preferred=np.array([str(mode) == CONF_MODE_ABSOLUTE for mode in base["conf_mode"]]),
+
+    def anchor_depths(prediction, static):
+        """Each view's median depth in its own camera, over the static pixels in front of it."""
+        measured = []
+        for j in range(len(prediction["poses"])):
+            inv_j = np.linalg.inv(prediction["poses"][j])
+            away = (prediction["points"][j] @ inv_j[:3, :3].T + inv_j[:3, 3])[..., 2]
+            ahead = away[static[j] & (away > 0)]
+            measured.append(float(np.median(ahead)) if ahead.size else np.nan)
+        return measured
+
+    survey_static = static_pixels(base)
+    survey_depths = anchor_depths(base, survey_static)
+    spread, anchor_depth = measure_spread(base["poses"], survey_depths)
+    print(f"anchor spread {spread:.2f} scene depths (median depth {anchor_depth:.2f})", flush=True)
+    # The spread is now a decision rather than a refusal. Under the limit one global anchor set
+    # spans the clip and the solve below is exactly the solve this stage has always run. Over it,
+    # the clip travels further than any single anchor set can relate, and it is solved as a chain
+    # of overlapping windows that each pass the same limit on their own.
+    mode = ALIGNMENT_GLOBAL if spread <= ANCHOR_SPREAD_LIMIT else ALIGNMENT_CHAINED
+    profile = travel_profile(base["poses"], anchors, anchor_depth, N)
+    planned = [(0, N - 1)] if mode == ALIGNMENT_GLOBAL else plan_windows(profile, N)
+    surveyfile.write_text(
+        json.dumps(
+            dict(
+                alignmentMode=mode,
+                surveyAnchors=anchors,
+                surveySpreadDepths=spread,
+                surveyMedianDepth=anchor_depth,
+                surveyAnchorDepths=survey_depths,
+                surveyedPathDepths=float(profile[-1]),
+                maxAnchorSpreadDepths=ANCHOR_SPREAD_LIMIT,
+                chainTargetSpreadFraction=CHAIN_TARGET_SPREAD,
+                chainOverlapSamples=CHAIN_OVERLAP_SAMPLES,
+                chainMinWindowSamples=CHAIN_MIN_WINDOW,
+                plannedWindows=[[int(first), int(last)] for first, last in planned],
+                travelProfileDepths=[float(walked) for walked in profile],
+                surveyNote=(
+                    "The survey is the one global anchor set, predicted once. Its camera centres "
+                    "relate views that need not be co-visible, so `travelProfileDepths` is an "
+                    "estimate of where the camera went, used only to propose window lengths; "
+                    "every window's own anchor spread is measured afterwards and overrides it."
+                ),
+            ),
+            indent=2,
+        )
     )
-    for record in anchor_records:
-        if "dropped" in record:
-            print(f"anchor view {record['anchor']} dropped: {record['dropped']}", flush=True)
-    print(
-        f"{len(usable)} of {len(anchors)} anchor views carry the alignment, "
-        f"{sum(len(pick) for _, pick in usable)} matched points",
-        flush=True,
-    )
+    if mode == ALIGNMENT_CHAINED:
+        if a.batch < CHAIN_OVERLAP_SAMPLES:
+            raise RuntimeError(
+                f"A chained solve joins windows on {CHAIN_OVERLAP_SAMPLES} shared frames, which "
+                f"have to reach the next window's first batch; --batch {a.batch} is too small"
+            )
+        print(
+            f"anchor spread is over the {ANCHOR_SPREAD_LIMIT:.1f} limit, so this clip is solved "
+            f"as a chain: surveyed camera path {float(profile[-1]):.2f} scene depths over {N} "
+            f"samples, planned as {len(planned)} window(s) sharing {CHAIN_OVERLAP_SAMPLES} "
+            "frame(s) at each join -- " + ", ".join(f"{first}-{last}" for first, last in planned),
+            flush=True,
+        )
+        # The survey has done its work -- it chose the mode, the people mask and the plan -- and
+        # every window predicts its own anchors, so its maps do not stay in memory beside them.
+        del base, survey_static, survey_depths
+        gc.collect()
+
+    def window_anchors(first, last):
+        """One window's own anchor set: predicted, masked and measured like a global one."""
+        ids = np.unique(
+            np.linspace(first, last, min(a.anchors, last - first + 1)).round().astype(int)
+        ).tolist()
+        prediction = predict(ids)
+        prediction["static_people"] = solve_people_masks(prediction["rgb"], people_mode, 2)
+        static = static_pixels(prediction)
+        depths = anchor_depths(prediction, static)
+        window_spread, depth = measure_spread(prediction["poses"], depths)
+        return dict(
+            first=int(first),
+            last=int(last),
+            samples=ids,
+            prediction=prediction,
+            static=static,
+            depths=depths,
+            spread=window_spread,
+            depth=depth,
+        )
+
+    def settle_window(first, budget):
+        """Grow or shrink the proposed window until its own anchors are co-visible.
+
+        The survey proposes a length; this measures it. A window that comes in over the limit is
+        shrunk by how far over it came, one that leaves most of its budget unused is grown once,
+        and whichever acceptable window reached furthest is the one that gets solved.
+        """
+        end = next_window(profile, first, N - 1, budget)
+        best, tried = None, []
+        for _ in range(CHAIN_WINDOW_ATTEMPTS):
+            got = window_anchors(first, end)
+            tried.append(dict(first=int(first), last=int(end), spread=float(got["spread"])))
+            print(
+                f"window {first}-{end}: anchor spread {got['spread']:.2f} scene depths "
+                f"(median depth {got['depth']:.2f})",
+                flush=True,
+            )
+            action, following = adapt_window(first, end, got["spread"], N - 1)
+            if got["spread"] <= ANCHOR_SPREAD_LIMIT and (best is None or end > best["last"]):
+                best = got
+            elif best is not None:
+                # A length that already worked is worth more than another attempt at one that
+                # did not, and the batches only ever align against an accepted window.
+                break
+            if action in ("accept", "fail"):
+                break
+            print(f"window {first}-{end}: {action} to {first}-{following}", flush=True)
+            end = following
+        if best is None:
+            raise RuntimeError(
+                f"No window starting at sample {first} (t={times[first]:.3f}s) holds together: "
+                + "; ".join(
+                    f"{attempt['first']}-{attempt['last']} spans {attempt['spread']:.1f} scene "
+                    "depths"
+                    for attempt in tried
+                )
+                + f". Above {ANCHOR_SPREAD_LIMIT:.1f} the views of one window share too little "
+                f"content to align on, and this stage will not go below {CHAIN_MIN_WINDOW} "
+                "samples. The camera crosses the scene faster than one second of footage can "
+                "span, which no chaining can fix: this segment cannot be solved at this rate."
+            )
+        best["attempts"] = tried
+        return best
+
+    def link_source(p, ids, pm, transform, samples):
+        """The shared frames' confident static pixels and points, in this window's own frame.
+
+        `anchor_matches` picks the pixels, because the shared frames ARE an anchor set: they
+        simply happen to be frames the next window predicts again rather than frames this window
+        predicts twice. Only the picked pixels are carried over, so a link costs a few thousand
+        points per frame instead of a depth map.
+        """
+        rows = [ids.index(i) for i in samples]
+        static = p["valid"][rows] & ~pm[rows] & np.isfinite(p["points"][rows]).all(-1)
+        kept, _ = anchor_matches(p["conf"][rows], static)
+        carried = []
+        for k, pick in kept:
+            row = rows[k]
+            points = np.asarray(
+                apply_similarity(transform, p["points"][row].reshape(-1, 3)[pick]), dtype=float
+            )
+            centre = np.asarray(apply_similarity(transform, p["poses"][row][:3, 3]), dtype=float)
+            carried.append(
+                dict(
+                    sample=int(samples[k]),
+                    pixels=np.asarray(pick, dtype=np.int64),
+                    points=points,
+                    centre=centre,
+                    depth=float(np.median(np.linalg.norm(points - centre, axis=1))),
+                )
+            )
+        return carried
+
+    def register_link(incoming, p, ids, pm, transform, index, remaining):
+        """Fit this window onto the previous one from the frames they both predicted.
+
+        One physical frame predicted twice gives exact pixel-for-pixel 3D correspondences on the
+        pixels the previous window already judged confident and static, so a link needs no
+        matching and no descriptors; `anchor_matches` and `similarity` carry the same guards they
+        carry for an anchor set. The shared frames' camera centres are deliberately left out of
+        the fit, which leaves them free to check it afterwards.
+        """
+        src, dst, here, there, depth_here, depth_there, shared, dropped = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        for frame in incoming["frames"]:
+            i = frame["sample"]
+            if i not in ids:
+                dropped.append(f"{i} was not predicted again")
+                continue
+            j = ids.index(i)
+            alive = (p["valid"][j] & ~pm[j] & np.isfinite(p["points"][j]).all(-1)).reshape(-1)[
+                frame["pixels"]
+            ]
+            if int(alive.sum()) < ANCHOR_MATCH_MIN:
+                dropped.append(f"{i} kept {int(alive.sum())} of {alive.size} shared pixels")
+                continue
+            mine = np.asarray(
+                apply_similarity(transform, p["points"][j].reshape(-1, 3)[frame["pixels"][alive]]),
+                dtype=float,
+            )
+            centre = np.asarray(apply_similarity(transform, p["poses"][j][:3, 3]), dtype=float)
+            src.append(mine)
+            dst.append(frame["points"][alive])
+            here.append(centre)
+            there.append(frame["centre"])
+            depth_here.append(float(np.median(np.linalg.norm(mine - centre, axis=1))))
+            depth_there.append(frame["depth"])
+            shared.append(i)
+        if len(src) < MIN_USABLE_ANCHORS:
+            raise RuntimeError(
+                f"only {len(src)} of the {len(incoming['frames'])} shared frame(s) survived in "
+                f"both windows, and a link needs {MIN_USABLE_ANCHORS}"
+                + (f" ({'; '.join(dropped)})" if dropped else "")
+            )
+        scale_link, rotation_link, offset_link, rms = similarity(
+            np.concatenate(src), np.concatenate(dst)
+        )
+        moved = apply_similarity(
+            (scale_link, rotation_link, offset_link), np.asarray(here, dtype=float)
+        )
+        camera_rms = float(
+            np.sqrt(np.mean(np.sum((moved - np.asarray(there, dtype=float)) ** 2, axis=1)))
+        )
+        record = link_quality(
+            index,
+            shared,
+            sum(len(points) for points in src),
+            rms,
+            scale_link,
+            float(np.median(depth_there)),
+            float(np.median(depth_here)),
+            camera_rms,
+            remaining_path=remaining,
+        )
+        record["droppedSharedFrames"] = dropped
+        return (scale_link, rotation_link, offset_link), record
+
+    def chain_break(solved, fitted_links):
+        """Why the chain broke, and the sample ranges an orchestrator can trim to."""
+        found = localise_break(solved, fitted_links)
+        weakest = found["weakestLink"] or {}
+        prefix = found["registeredPrefix"]
+        tail = solved[-1][0]
+        return (
+            f"Chained alignment broke at link {weakest.get('link', len(fitted_links) - 1)}, which "
+            f"joins window {len(fitted_links) - 1} to window {len(fitted_links)} on shared "
+            f"samples {weakest.get('sharedSamples', [])}: "
+            + "; ".join(weakest.get("failures", ["the link could not be fitted at all"]))
+            + f". The chain did register samples {prefix['firstSample']}-{prefix['lastSample']} "
+            f"(t={times[prefix['firstSample']]:.3f}-{times[prefix['lastSample']]:.3f}s, "
+            f"{prefix['samples']} of {N} samples over window(s) {prefix['windows'][0]}-"
+            f"{prefix['windows'][1]}), so re-running on that range keeps the part that solved. "
+            f"Samples {tail}-{N - 1} (t={times[tail]:.3f}-{times[N - 1]:.3f}s) were never "
+            "registered to it and would have to be solved as a separate segment."
+        )
+
     cams = [None] * N
     log = []
     conf_modes = []
@@ -1014,122 +1624,327 @@ def main():
     home, home_frame = None, None
     camera_dir = out / "camera-batches"
     camera_dir.mkdir(exist_ok=True)
-    for lo in range(0, N, a.batch):
-        chunk = list(range(lo, min(N, lo + a.batch)))
-        ids = sorted(set(anchors + chunk))
-        print("Pi3X batch", lo, "/", N, "views", len(ids), flush=True)
-        p = predict(ids)
-        src = np.concatenate(
-            [p["points"][ids.index(anchors[j])].reshape(-1, 3)[pick] for j, pick in usable]
-        )
-        dst = np.concatenate([base["points"][j].reshape(-1, 3)[pick] for j, pick in usable])
-        s, R, t, rms = similarity(src, dst)
-        print("alignment", float(s), rms, f"({len(src)} matched points)", flush=True)
-        if not np.isfinite(rms) or not 0.1 < s < 10:
-            raise RuntimeError(
-                f"Invalid anchor alignment at batch {lo}: scale {float(s):.4g}, residual {rms} "
-                f"over {len(src)} matched points from {len(usable)} anchor view(s)"
+    window_records, links, solved = [], [], []
+    budget = CHAIN_TARGET_SPREAD * ANCHOR_SPREAD_LIMIT
+    to_base = identity_similarity()
+    handover = None
+    R0, t00, scale = None, None, np.nan
+    first, index = 0, 0
+    while True:
+        if mode == ALIGNMENT_GLOBAL:
+            window = dict(
+                first=0,
+                last=N - 1,
+                samples=anchors,
+                prediction=base,
+                static=survey_static,
+                depths=survey_depths,
+                spread=spread,
+                depth=anchor_depth,
+                attempts=[],
             )
-        if rms > MAX_ALIGNMENT_RESIDUAL * anchor_depth:
-            # The anchors registered, but not onto each other: at this residual the batch's
-            # copy of an anchor view is a different reconstruction of that moment, which is
-            # what happens when the anchor set spans content no single prediction can relate.
-            raise RuntimeError(
-                f"Anchor alignment residual {rms:.3f} at batch {lo} is "
-                f"{rms / anchor_depth:.0%} of the {anchor_depth:.2f} median anchor depth, over "
-                f"the {MAX_ALIGNMENT_RESIDUAL:.0%} this stage accepts; the batch and the anchor "
-                "prediction do not agree on the same scene. Select a shorter segment."
+        else:
+            window = settle_window(first, budget)
+        wfirst, wlast = window["first"], window["last"]
+        wanchors, wpred, wdepth = window["samples"], window["prediction"], window["depth"]
+        owned = wfirst if index == 0 else wfirst + CHAIN_OVERLAP_SAMPLES
+        solved.append((wfirst, wlast))
+        if index == 0:
+            # The base frame: camera 0 at the origin, world scale and gravity levelling from this
+            # window's view 0, exactly as the global solve takes them from its anchor view 0.
+            inv = np.linalg.inv(wpred["poses"][0])
+            R0, t00 = inv[:3, :3], inv[:3, 3]
+            zz = (wpred["points"][0] @ R0.T + t00)[..., 2]
+            good = window["static"][0] & (zz > 0)
+            scale = 3 / np.median(zz[good]) if int(good.sum()) >= ANCHOR_MATCH_MIN else np.nan
+            if not np.isfinite(scale) or scale <= 0:
+                # A genuine solve failure: the anchor view has no confident scene geometry in
+                # front of the camera at all. Distinct from a frame with nobody in it.
+                raise RuntimeError(
+                    f"No valid static scene points in anchor view 0 ({int(good.sum())} of "
+                    f"{int(window['static'][0].sum())} static pixels lie in front of the camera; "
+                    f"this stage needs {ANCHOR_MATCH_MIN}), under the "
+                    f"{str(wpred['conf_mode'][0])} confidence cut "
+                    f"{float(wpred['conf_threshold'][0]):.3f} and the {people_mode} people mask"
+                )
+            if mode == ALIGNMENT_CHAINED:
+                # anchors.npz is whichever prediction the base frame is measured in, so a chained
+                # solve stores window 0's there: `scripts/shot_cuts.py --poses` reads its view 0
+                # for the scene's own depth and has to read the prediction the world scale above
+                # came from. The survey stays in anchor-survey.json.
+                stored = dict(wpred)
+                stored["people"] = people_masks(wpred["rgb"], dilate_px=2)
+                stored["people_mask_mode"] = np.array(people_mode)
+                stored["semantic_person_fraction"] = np.array(person_fraction)
+                stored["anchor_role"] = np.array(ANCHOR_ROLE_WINDOW)
+                stored["anchor_samples"] = np.array(wanchors, dtype=np.int64)
+                np.savez_compressed(basefile, **stored)
+                del stored
+        usable, anchor_records = anchor_matches(
+            wpred["conf"],
+            window["static"],
+            preferred=np.array([str(cut) == CONF_MODE_ABSOLUTE for cut in wpred["conf_mode"]]),
+        )
+        for record in anchor_records:
+            if "dropped" in record:
+                print(f"anchor view {record['anchor']} dropped: {record['dropped']}", flush=True)
+        print(
+            f"{len(usable)} of {len(wanchors)} anchor views carry the alignment, "
+            f"{sum(len(pick) for _, pick in usable)} matched points",
+            flush=True,
+        )
+        share = [] if wlast >= N - 1 else list(range(wlast - CHAIN_OVERLAP_SAMPLES + 1, wlast + 1))
+        incoming, handover = handover, None
+        window_to_base = to_base
+        for lo in range(wfirst, wlast + 1, a.batch):
+            chunk = list(range(lo, min(wlast + 1, lo + a.batch)))
+            ids = sorted(set(wanchors + chunk))
+            print("Pi3X batch", lo, "/", N, "views", len(ids), flush=True)
+            p = predict(ids)
+            src = np.concatenate(
+                [p["points"][ids.index(wanchors[j])].reshape(-1, 3)[pick] for j, pick in usable]
             )
-        conf_modes.extend(str(p["conf_mode"][ids.index(i)]) for i in chunk)
-        np.savez_compressed(
-            camera_dir / f"batch_{lo:03d}.npz",
-            sample_ids=ids,
-            source_indices=indices[ids],
-            raw_opencv_camera_to_world=p["poses"],
-            batch_rotation=R,
-            batch_translation=t,
-            batch_scale=s,
-            reference_rotation=R0,
-            reference_translation=t00,
-            world_scale=scale,
-        )
-        # Full-resolution masks preserve limbs; resize to the actual Pi3X pixel grid.
-        full = np.stack([np.asarray(Image.open(files[i])) for i in ids])
-        pm = solve_people_masks(full, people_mode, 1)
-        H, W = p["rgb"].shape[1:3]
-        pm = np.stack(
-            [cv2.resize(m.astype("uint8"), (W, H), interpolation=cv2.INTER_NEAREST) > 0 for m in pm]
-        )
-        for i in chunk:
-            j = ids.index(i)
-            valid = p["valid"][j] & pm[j] & np.isfinite(p["points"][j]).all(-1)
-            xyz = p["points"][j][valid] @ R.T * s + t
-            col = p["rgb"][j][valid]
-            xyz = (xyz @ R0.T + t00) * scale * flip
-            present = person_present(len(xyz))
-            if present:
-                write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
-            else:
-                # Nobody in this frame. The camera below is still a measured pose, so the
-                # solve continues; only the person ply is withheld. A header-only ply would
-                # read as "person depth present" to the readers that check for these files,
-                # so the gap is a missing file plus an explicit record.
-                (out / f"frame_{i:03d}.ply").unlink(missing_ok=True)
-                gaps.append(person_gap(i, indices[i], times[i], len(xyz)))
-                print(f"no person at {times[i]:.3f}s ({len(xyz)} points)", flush=True)
-            point_counts.append(len(xyz))
-            camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)
-            try:
-                optics = fit_ray_intrinsics(p["rays"][j], p["valid"][j], source_size)
-                optics["intrinsicsSource"] = "fit"
-            except ValueError as error:
-                # One frame's rays are not the clip's camera. A dark, blurred or transition
-                # frame can starve the fit; the pose is still measured, so the frame is
-                # recorded here and filled from the clip median once every batch has run.
-                optics = dict(intrinsicsSource="clip-median")
-                intrinsic_gaps.append(
-                    dict(
-                        sample=int(i),
-                        sourceIndex=int(indices[i]),
-                        time=float(times[i]),
-                        reason=str(error),
+            dst = np.concatenate([wpred["points"][j].reshape(-1, 3)[pick] for j, pick in usable])
+            s, R, t, rms = similarity(src, dst)
+            print("alignment", float(s), rms, f"({len(src)} matched points)", flush=True)
+            if not np.isfinite(rms) or not 0.1 < s < 10:
+                raise RuntimeError(
+                    f"Invalid anchor alignment at batch {lo}: scale {float(s):.4g}, residual {rms} "
+                    f"over {len(src)} matched points from {len(usable)} anchor view(s)"
+                )
+            if rms > MAX_ALIGNMENT_RESIDUAL * wdepth:
+                # The anchors registered, but not onto each other: at this residual the batch's
+                # copy of an anchor view is a different reconstruction of that moment, which is
+                # what happens when the anchor set spans content no single prediction can relate.
+                raise RuntimeError(
+                    f"Anchor alignment residual {rms:.3f} at batch {lo} is "
+                    f"{rms / wdepth:.0%} of the {wdepth:.2f} median anchor depth, over "
+                    f"the {MAX_ALIGNMENT_RESIDUAL:.0%} this stage accepts; the batch and the "
+                    "anchor prediction do not agree on the same scene. Select a shorter segment."
+                )
+            # Full-resolution masks preserve limbs; resize to the actual Pi3X pixel grid.
+            full = np.stack([np.asarray(Image.open(files[i])) for i in ids])
+            pm = solve_people_masks(full, people_mode, 1)
+            H, W = p["rgb"].shape[1:3]
+            pm = np.stack(
+                [
+                    cv2.resize(m.astype("uint8"), (W, H), interpolation=cv2.INTER_NEAREST) > 0
+                    for m in pm
+                ]
+            )
+            if incoming is not None:
+                try:
+                    joint, record = register_link(
+                        incoming,
+                        p,
+                        ids,
+                        pm,
+                        (s, R, t),
+                        len(links),
+                        float(profile[-1] - profile[wfirst]),
                     )
+                except RuntimeError as error:
+                    joint, record = (
+                        None,
+                        dict(
+                            link=len(links),
+                            sharedSamples=[frame["sample"] for frame in incoming["frames"]],
+                            ok=False,
+                            failures=[str(error)],
+                        ),
+                    )
+                links.append(record)
+                incoming = None
+                if not record["ok"]:
+                    raise RuntimeError(chain_break(solved, links))
+                window_to_base = compose_similarity(to_base, joint)
+                print(
+                    f"link {record['link']} joins window {index - 1} to {index} on samples "
+                    f"{record['sharedSamples']}: residual {record['rmsDepths']:.1%} of a scene "
+                    f"depth, camera centres {record['cameraRmsDepths']:.1%}, depth ratio "
+                    f"{record['depthRatio']:.3f} ({record['points']} points)",
+                    flush=True,
                 )
-                print(f"no intrinsic fit at {times[i]:.3f}s ({error})", flush=True)
-            cams[i] = dict(
-                position=camera[:3, 3].tolist(),
-                time=float(times[i]),
-                sourceIndex=int(indices[i]),
-                camera_to_world=camera.tolist(),
-                world_to_camera=np.linalg.inv(camera).tolist(),
-                **optics,
+            composed = compose_similarity(window_to_base, (s, R, t))
+            outgoing = [i for i in share if i in chunk]
+            if outgoing:
+                try:
+                    carried = link_source(p, ids, pm, (s, R, t), outgoing)
+                except RuntimeError as error:
+                    # `anchor_matches` refusing these frames is the same refusal it makes of an
+                    # anchor set, and it means the same thing: nothing confident and static to
+                    # register on. The window still finishes; the chain stops after it, named.
+                    print(f"shared frames {outgoing} carry no link: {error}", flush=True)
+                    carried = []
+                handover = handover or dict(frames=[], window=index)
+                handover["frames"].extend(carried)
+            conf_modes.extend(str(p["conf_mode"][ids.index(i)]) for i in chunk if i >= owned)
+            np.savez_compressed(
+                camera_dir
+                / (
+                    f"batch_{lo:03d}.npz"
+                    if mode == ALIGNMENT_GLOBAL
+                    else f"batch_w{index:02d}_{lo:03d}.npz"
+                ),
+                sample_ids=ids,
+                source_indices=indices[ids],
+                raw_opencv_camera_to_world=p["poses"],
+                batch_rotation=composed[1],
+                batch_translation=composed[2],
+                batch_scale=composed[0],
+                reference_rotation=R0,
+                reference_translation=t00,
+                world_scale=scale,
+                alignment_mode=mode,
+                window=index,
+                window_first_sample=wfirst,
+                window_last_sample=wlast,
+                window_scale=window_to_base[0],
+                window_rotation=window_to_base[1],
+                window_translation=window_to_base[2],
+                local_scale=s,
+                local_rotation=R,
+                local_translation=t,
             )
-            if i == 0:
-                np.savez_compressed(
-                    out / "source-camera-0.npz",
-                    rays=p["rays"][j],
-                    rgb=p["rgb"][j],
-                    valid=p["valid"][j],
-                    camera_to_world=camera,
+            for i in chunk:
+                if i < owned:
+                    # A shared frame, already exported by the window this one registers onto.
+                    # It is predicted again only to carry the link.
+                    continue
+                j = ids.index(i)
+                valid = p["valid"][j] & pm[j] & np.isfinite(p["points"][j]).all(-1)
+                xyz = apply_similarity(composed, p["points"][j][valid])
+                col = p["rgb"][j][valid]
+                xyz = (xyz @ R0.T + t00) * scale * flip
+                present = person_present(len(xyz))
+                if present:
+                    write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
+                else:
+                    # Nobody in this frame. The camera below is still a measured pose, so the
+                    # solve continues; only the person ply is withheld. A header-only ply would
+                    # read as "person depth present" to the readers that check for these files,
+                    # so the gap is a missing file plus an explicit record.
+                    (out / f"frame_{i:03d}.ply").unlink(missing_ok=True)
+                    gaps.append(person_gap(i, indices[i], times[i], len(xyz)))
+                    print(f"no person at {times[i]:.3f}s ({len(xyz)} points)", flush=True)
+                point_counts.append(len(xyz))
+                camera = viewer_camera(p["poses"][j], *composed, R0, t00, scale)
+                try:
+                    optics = fit_ray_intrinsics(p["rays"][j], p["valid"][j], source_size)
+                    optics["intrinsicsSource"] = "fit"
+                except ValueError as error:
+                    # One frame's rays are not the clip's camera. A dark, blurred or transition
+                    # frame can starve the fit; the pose is still measured, so the frame is
+                    # recorded here and filled from the clip median once every batch has run.
+                    optics = dict(intrinsicsSource="clip-median")
+                    intrinsic_gaps.append(
+                        dict(
+                            sample=int(i),
+                            sourceIndex=int(indices[i]),
+                            time=float(times[i]),
+                            reason=str(error),
+                        )
+                    )
+                    print(f"no intrinsic fit at {times[i]:.3f}s ({error})", flush=True)
+                cams[i] = dict(
+                    position=camera[:3, 3].tolist(),
+                    time=float(times[i]),
+                    sourceIndex=int(indices[i]),
+                    camera_to_world=camera.tolist(),
+                    world_to_camera=np.linalg.inv(camera).tolist(),
+                    **optics,
                 )
-            if present and home is None:
-                # Frame 0 when it has a person, as before; the first frame that does
-                # otherwise, because a clip may open before anyone walks in.
-                home, home_frame = home_distance(xyz), i
-        log.append(
+                if i == 0:
+                    np.savez_compressed(
+                        out / "source-camera-0.npz",
+                        rays=p["rays"][j],
+                        rgb=p["rgb"][j],
+                        valid=p["valid"][j],
+                        camera_to_world=camera,
+                    )
+                if present and home is None:
+                    # Frame 0 when it has a person, as before; the first frame that does
+                    # otherwise, because a clip may open before anyone walks in.
+                    home, home_frame = home_distance(xyz), i
+            log.append(
+                dict(
+                    first=lo,
+                    frames=len(chunk),
+                    scale=float(s),
+                    rotation=R.tolist(),
+                    translation=t.tolist(),
+                    rms=rms,
+                    window=index,
+                    windowFirstSample=wfirst,
+                    windowLastSample=wlast,
+                    exported=sum(1 for i in chunk if i >= owned),
+                    windowScale=float(window_to_base[0]),
+                    windowRotation=np.asarray(window_to_base[1]).tolist(),
+                    windowTranslation=np.asarray(window_to_base[2]).tolist(),
+                )
+            )
+            (out / "alignment-batches.json").write_text(json.dumps(log, indent=2))
+            del p, pm, full
+            gc.collect()
+            torch.cuda.empty_cache()
+        window_records.append(
             dict(
-                first=lo,
-                frames=len(chunk),
-                scale=float(s),
-                rotation=R.tolist(),
-                translation=t.tolist(),
-                rms=rms,
+                window=index,
+                firstSample=int(wfirst),
+                lastSample=int(wlast),
+                ownedFirstSample=int(owned),
+                ownedLastSample=int(wlast),
+                firstTime=float(times[wfirst]),
+                lastTime=float(times[wlast]),
+                anchors=[int(i) for i in wanchors],
+                anchorSpreadDepths=float(window["spread"]),
+                anchorMedianDepth=float(wdepth),
+                anchorsUsed=[int(wanchors[j]) for j, _ in usable],
+                anchorMatchPoints=int(sum(len(pick) for _, pick in usable)),
+                anchorSelection=anchor_records,
+                anchorConfidenceThresholds=[float(cut) for cut in wpred["conf_threshold"]],
+                anchorConfidenceModes=[str(cut) for cut in wpred["conf_mode"]],
+                lengthAttempts=window["attempts"],
+                scale=float(window_to_base[0]),
+                rotation=np.asarray(window_to_base[1]).tolist(),
+                translation=np.asarray(window_to_base[2]).tolist(),
             )
         )
-        (out / "alignment-batches.json").write_text(json.dumps(log, indent=2))
-        del p, pm, full
+        to_base = window_to_base
+        del window, wpred
         gc.collect()
-        torch.cuda.empty_cache()
+        if wlast >= N - 1:
+            break
+        if not (handover and len(handover["frames"]) >= MIN_USABLE_ANCHORS):
+            raise RuntimeError(
+                f"Window {index} (samples {wfirst}-{wlast}) left "
+                f"{len(handover['frames']) if handover else 0} of its "
+                f"{CHAIN_OVERLAP_SAMPLES} shared frame(s) usable, and a link needs "
+                f"{MIN_USABLE_ANCHORS}; a chained solve cannot continue past it. Samples "
+                f"0-{wlast} (t={times[0]:.3f}-{times[wlast]:.3f}s) did solve and can be re-run "
+                "as their own segment."
+            )
+        following = wlast - CHAIN_OVERLAP_SAMPLES + 1
+        if following <= wfirst:
+            raise RuntimeError(
+                f"Window {index} is only {wlast - wfirst + 1} sample(s) long and cannot carry a "
+                f"{CHAIN_OVERLAP_SAMPLES}-sample overlap into the next window"
+            )
+        first, index = following, index + 1
+    unsolved = [i for i in range(N) if cams[i] is None]
+    if unsolved:
+        raise RuntimeError(
+            f"{len(unsolved)} sample(s) were never exported by any window: {unsolved[:8]}"
+        )
+    chain = localise_break([(w["firstSample"], w["lastSample"]) for w in window_records], links)
+    drift = drift_bound(links)
+    if mode == ALIGNMENT_CHAINED:
+        print(
+            f"chain closed: {len(window_records)} windows, {len(links)} link(s), worst link "
+            f"residual {max((link['rmsDepths'] for link in links), default=0.0):.1%} of a scene "
+            f"depth, accumulated drift bound {drift['boundDepths']:.2f} scene depths",
+            flush=True,
+        )
     fitted = [c for c in cams if c and c["intrinsicsSource"] == "fit"]
     fit_fraction = require_intrinsic_fits(len(fitted), N)
     if intrinsic_gaps:
@@ -1185,13 +2000,42 @@ def main():
         peakVRAMGB=torch.cuda.max_memory_allocated() / 1e9,
         gpu=torch.cuda.get_device_name(),
         torch=torch.__version__,
-        anchors=anchors,
-        anchorsUsed=[anchors[j] for j, _ in usable],
-        anchorSelection=anchor_records,
-        anchorMatchPoints=int(sum(len(pick) for _, pick in usable)),
-        anchorSpreadDepths=spread,
-        anchorMedianDepth=anchor_depth,
+        anchors=window_records[0]["anchors"],
+        anchorsUsed=window_records[0]["anchorsUsed"],
+        anchorSelection=window_records[0]["anchorSelection"],
+        anchorMatchPoints=window_records[0]["anchorMatchPoints"],
+        anchorSpreadDepths=window_records[0]["anchorSpreadDepths"],
+        anchorMedianDepth=window_records[0]["anchorMedianDepth"],
         maxAnchorSpreadDepths=ANCHOR_SPREAD_LIMIT,
+        alignmentMode=mode,
+        alignmentWindowCount=len(window_records),
+        alignmentWindows=window_records,
+        alignmentLinks=links,
+        chainDrift=drift,
+        chainBreakCheck=chain,
+        surveyAnchors=anchors,
+        surveySpreadDepths=spread,
+        surveyMedianDepth=anchor_depth,
+        surveyedPathDepths=float(profile[-1]),
+        chainOverlapSamples=CHAIN_OVERLAP_SAMPLES,
+        chainTargetSpreadFraction=CHAIN_TARGET_SPREAD,
+        chainMinWindowSamples=CHAIN_MIN_WINDOW,
+        maxLinkResidual=MAX_LINK_RESIDUAL,
+        maxLinkCameraResidual=MAX_LINK_CAMERA_RESIDUAL,
+        linkDepthRatioBand=LINK_DEPTH_RATIO_BAND,
+        alignmentNote=(
+            f"`{ALIGNMENT_GLOBAL}` is one anchor set shared by every batch, which needs all of "
+            f"its views to be co-visible. `{ALIGNMENT_CHAINED}` is used instead when those views "
+            f"span more than `maxAnchorSpreadDepths`: the clip is split into the overlapping "
+            "`alignmentWindows`, each solved exactly like a global solve against its own anchors, "
+            "and `alignmentLinks` registers each window onto the previous one with a similarity "
+            "fitted to the frames they both predicted. Every pose and point here is in window 0's "
+            "frame; the top-level `anchors*` fields describe that window, and `survey*` describes "
+            "the single global anchor set that chose the mode. A chained solve never sees both "
+            "ends of the clip at once, so `chainDrift` is a bound computed from the link "
+            "residuals and not an observation of drift, and each window's geometry is only as "
+            "related to window 0's as the links between them."
+        ),
         peopleMaskMode=people_mode,
         semanticPersonFraction=person_fraction,
         crowdPersonFraction=CROWD_PERSON_FRACTION,
@@ -1202,8 +2046,8 @@ def main():
             "semantic person share of the anchor views exceeds `crowdPersonFraction`, because "
             "a stadium crowd is neither scene to exclude nor a person to export."
         ),
-        anchorConfidenceThresholds=[float(x) for x in base["conf_threshold"]],
-        anchorConfidenceModes=[str(x) for x in base["conf_mode"]],
+        anchorConfidenceThresholds=window_records[0]["anchorConfidenceThresholds"],
+        anchorConfidenceModes=window_records[0]["anchorConfidenceModes"],
         frameConfidenceModes=conf_modes,
         frameRankConfidenceCount=sum(1 for mode in conf_modes if mode == CONF_MODE_RANK),
         confidenceNote=(
