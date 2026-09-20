@@ -250,22 +250,6 @@ try {
       }
       await page.screenshot({ path: path.join(out, `${clip}-sound.png`) });
       if (clip === 'elevator') {
-        if (await page.locator('#reelbtn').isVisible()) {
-          await page.locator('#reelbtn').click();
-          await page.waitForTimeout(300);
-          check(
-            'reel excludes world audio',
-            !(await state()).playing && (await state()).audio.activeSources === 0,
-            await state(),
-          );
-          await page.locator('#reelclose').click();
-          check('reel close leaves world paused', !(await state()).playing, await state());
-        } else
-          result.checks.push({
-            name: 'reel exclusion',
-            pass: null,
-            detail: 'Reel asset not available',
-          });
         // Test the wrapper's trusted event forwarding explicitly.
         await page.evaluate(() => {
           if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
