@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { BottlePhysics, type Vec3 } from './bottle-physics';
 import { ApproachDetector } from './approach';
-import { BottleAgentClient } from './bottle-agent-client';
+import { CharacterVoiceCast } from './character-voice-cast';
+import { characterVoice, type CharacterVoice } from './character-voice';
 import { BottleVisual } from './bottle-visual';
 import {
   nearestHeldTime,
@@ -72,7 +73,7 @@ export class BottleScene {
   readonly bottle: InteractionObject;
   readonly physics: BottlePhysics;
   private readonly approach: ApproachDetector;
-  private readonly client: BottleAgentClient;
+  private readonly client: CharacterVoiceCast;
   private readonly head = new THREE.Vector3();
   private readonly rotation = new THREE.Quaternion();
   private readonly tracks = new Map<string, HeadTrack>();
@@ -192,12 +193,20 @@ export class BottleScene {
     this.speaker.renderOrder = 1002;
     this.speaker.visible = false;
     host.scene.add(this.marker, this.speaker);
-    this.client = new BottleAgentClient({
+    this.client = new CharacterVoiceCast({
+      characters: host.people.map((person, index) => ({
+        sceneId: host.sceneId,
+        personId: person.id,
+        personLabel: person.label,
+        objectId: bottle.id,
+        voice: characterVoice(index),
+      })),
       identity: () => ({
         sceneId: host.sceneId,
         personId: this.active?.id ?? host.people[0].id,
         personLabel: this.active?.label ?? host.people[0].label,
         objectId: bottle.id,
+        voice: characterVoice(this.active ? host.people.indexOf(this.active) : 0),
       }),
       status: (message) => {
         this.voiceStatus = message;
@@ -206,7 +215,7 @@ export class BottleScene {
         this.speaking = value;
       },
       action: (name, args) => this.agentAction(name, args),
-      speechStarted: () => this.onSpeech(),
+      speechStarted: (voice) => this.onSpeech(voice),
       expired: () => {
         if (this.voiceRequested && this.xrActive && this.xrVisible && !document.hidden)
           this.startVoice(false);
@@ -397,7 +406,7 @@ export class BottleScene {
     return true;
   }
 
-  private onSpeech(): boolean {
+  private onSpeech(voice?: CharacterVoice): boolean {
     if (!this.xrActive || this.muted || this.disposed) return false;
     const addressed = this.choosePerson();
     let person = this.interrupted ? this.active : addressed;
@@ -411,6 +420,7 @@ export class BottleScene {
         person = addressed;
     }
     if (!person || !person.group.visible || !this.anchor(person)) return false;
+    if (voice && characterVoice(this.host.people.indexOf(person)) !== voice) return false;
     if (!this.canAddress(person, this.interrupted && person === this.active)) return false;
     if (!this.interrupted || person !== this.active) return this.interrupt('speech', person.id);
     return true;
@@ -853,14 +863,15 @@ export class BottleScene {
           : 'bystander';
     const index = Math.max(0, this.host.people.indexOf(person));
     const styles = [
-      'deadpan, skeptical, and hard to impress; short dry comebacks, understated competitive streak, never a cheerleader',
-      'cocky and competitive; quick banter, casually challenges the visitor, talks a little trash and can take it back',
-      'blunt and impatient with nonsense; sharp observations, independent opinions, reluctant respect when earned',
+      'laid-back and dry; short observations, subtle humor, easygoing delivery',
+      'relaxed and playful; friendly banter, quietly confident, never overhyped',
+      'calm and direct; thoughtful observations, understated opinions',
     ];
     return {
       id: person.id,
       label: person.label,
       role,
+      voice: characterVoice(index),
       style: styles[index % styles.length],
       activity:
         role === 'bystander'

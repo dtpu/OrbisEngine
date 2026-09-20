@@ -101,12 +101,20 @@ the selected anchor; the original clip only supplies its recorded mix, not isola
 speech.
 
 The shared voice prompt speaks in first person as the selected fictional character, using their
-manifest role, current activity, and an invented per-person conversational style: deadpan skeptic,
-cocky competitor, or blunt observer. They can disagree, tease, and give dry comebacks rather than
-constantly praise or pitch activities. Replies are short ordinary dialogue without assistant
-introductions or action narration. Direct questions about whether the
+manifest role, current activity, and an invented per-person conversational style: laid-back and dry,
+relaxed and playful, or calm and direct. Replies normally use one casual sentence of about 8–18 words,
+with understated delivery and no assistant introductions or action narration. Direct questions about whether the
 character is real receive a truthful answer. The prompt does not invent actual identities or
 recorded memories and cannot grant actions beyond the local viewer's tools.
+
+The first two cast members use the Ash and Echo preset voices respectively; larger casts cycle
+the same pair by manifest order. These are invented voices, not imitations of the recorded speakers.
+The original soundtrack is unchanged. Realtime cannot change a voice after a connection has spoken,
+so a two-person cast opens two voice connections on Enter VR. Both receive microphone input, but
+only the locally addressed character accepts a turn, speaks, or performs a permitted action. This
+preserves the first utterance when looking toward the other character and keeps each voice's history
+when switching back. It uses two input streams while active. Muting affects both, and hiding/exiting
+VR or a connection failure stops both captures. A single-person scene uses one connection.
 
 ## Local voice setup
 
@@ -117,8 +125,8 @@ short-lived provider client secret on a same-origin local request and the browse
 SDK with that secret. A static build has no middleware and therefore cannot mint voice sessions.
 
 The server limits and validates local session requests and supplies only the selected scene/person/
-object identifiers. Each provider connection lasts at most three minutes and answers are short.
-Normal expiration renews the connection while VR remains active and visible, using the current
+object identifiers and an allowlisted voice preset. Each provider connection lasts at most three minutes
+and answers are short. Normal expiration renews the voice pair while VR remains active and visible, using the current
 scene state; prior conversation history is not carried across connections. Hiding VR stops capture and pauses the
 recording. Returning to visible VR reconnects a previously healthy connection without restarting
 the clip. A `response_cancel_not_active` race during an established connection does not close the
@@ -134,6 +142,7 @@ Run `bun run test:interaction` for ownership, collision, approach, metadata, cre
 scene integration checks. `bun run test:interaction-browser` exercises the real elevator viewer
 with synthetic headset/controller input. When another checkout serves the shared media, build
 first and set `VIEWER_BUILD_DIR=dist` to serve this build through the browser test's route handler.
+`VIEWER_URL` selects another local asset server (default `http://127.0.0.1:5399`).
 No provider calls occur by default. `WANDER_TEST_LIVE_VOICE=1` explicitly enables a short paid voice
 smoke test and requires `OPENAI_API_KEY` in that test process's environment.
 With that opt-in, `WANDER_TEST_VOICE_WAV=/path/to/owned-speech.wav` injects a local speech fixture
