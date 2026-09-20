@@ -190,7 +190,15 @@ MARBLE_POLL_PARAMETERS = tunables(
     ),
 )
 TRACK_PARAMETERS = tunables(
-    fps=knob("number", 12, "frames per second the clip is tracked at", minimum=1, maximum=60),
+    fps=knob(
+        "number",
+        12,
+        "frames per second the clip is tracked at; the frame indices in the tracks are counted "
+        "at this rate, so moving it away from the rate the clip was cleaned at puts the people "
+        "on a different timeline from the world",
+        minimum=1,
+        maximum=60,
+    ),
     det_thresh=knob(
         "number",
         0.15,
