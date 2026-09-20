@@ -380,47 +380,6 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     note(summary());
   });
 
-  // ---- a shot sequence swapping the world under us ---------------------------------------------------
-  // fourd.html emits `worldchange` when a merged shot package cuts to the next shot's world (see the
-  // shot-sequence block in fourd.html: applyShotState). Everything this module measured ONCE from
-  // `wander` is stale at that moment, so re-read the two that would otherwise be unsafe - the ground
-  // the head stands on and the boundary a teleport is refused outside of - and, outside a session,
-  // the home pose the desktop camera has already jumped to.
-  //
-  // DELIBERATELY NOT REFRESHED here, and each one is a TODO rather than a silent omission. None of
-  // them can strand or float the user; they are comfort and accuracy, not safety:
-  //   - src/xr/fourd-xr.ts:159 `upm` and with it :190 rig.scale, :409 SPEED, :410 EYE, :199 marker.
-  //     A shot solved at a different body scale should rescale the rig and hold the head still the
-  //     way snapTurn does (src/xr/fourd-xr.ts:617-637 keeps the head fixed through a rotation);
-  //     until then a sequence whose shots disagree on scale walks at the first shot's speed.
-  //   - src/xr/avatar-body.ts:1 the one-shot `size` calibration, for the same reason.
-  //   - src/xr/fourd-xr.ts:239 `onLeash` / wander.pathPts: ?path= is one URL-level path for the whole
-  //     package, so it does not move per shot today.
-  //   - src/xr/fourd-xr.ts:154 the LoD budget, which is a frame-rate control and not per world.
-  // fourd.html's own per-world state (walk grid, colliders, floor map, clamp box) is read through
-  // live bindings, so `wander.walk.advance` and `wander.walk.floor` follow the swap on their own.
-  const worldChange = () => {
-    box.getCenter(boxC);
-    box
-      .getSize(boxH)
-      .multiplyScalar(0.5)
-      .max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
-    const floor = wander.walk?.floor ?? wander.floorY;
-    if (Number.isFinite(floor)) {
-      // keep the head the same height above the floor it now stands on, never under it
-      if (renderer.xr.isPresenting) rig.position.y += floor - groundFloor;
-      groundFloor = floor;
-      report.groundFloor = groundFloor;
-    }
-    if (!renderer.xr.isPresenting) {
-      home.copy(camera.position);
-      homeQ.copy(camera.quaternion);
-      homeYaw = yawOf(homeQ);
-    }
-    report.worldChanges = ((report.worldChanges as number | undefined) ?? 0) + 1;
-  };
-  addEventListener('worldchange', worldChange);
-
   // ---- controllers -----------------------------------------------------------------------------------
   const controllers = [0, 1].map((i) => {
     const grip = renderer.xr.getController(i);
