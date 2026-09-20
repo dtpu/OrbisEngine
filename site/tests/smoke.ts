@@ -162,7 +162,7 @@ const checks: Check[] = [
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const count = await page.$$eval('section#gallery article', (els) => els.length);
         if (count !== 9) throw new Error(`expected 9 gallery cards, got ${count}`);
-        const links = await page.$$eval('section#gallery a[href^="/demo.html?scene="]', (els) =>
+        const links = await page.$$eval('section#gallery a[href^="/demo.html?clip="]', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
         if (links.length < 9) throw new Error(`expected viewer links, got ${links.length}`);
