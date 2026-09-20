@@ -59,6 +59,8 @@ dimensions and clamped to 0.09–0.12 body-heights tall for visibility, with a n
 leaves the glove visible. The locator stays upright when the bottle rotates. It does not replace measured
 positions or enlarge the measured wall collider. The separate floor clearance encloses the
 replacement bottle in any orientation. The source bottle returns on replay.
+Resting support includes an additional 0.03 body-heights of visual clearance above the sampled
+floor to keep the bottle visible where that collision surface sits below the rendered floor.
 
 Coarse occupied floor cells can extend above their measured surface. A descending bottle sweeps to
 the first blocking boundary near known floor and settles there; side walls and ceilings still bounce
