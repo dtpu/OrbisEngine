@@ -6,6 +6,7 @@ import path from 'node:path';
 import { chromium, type Frame } from 'playwright-core';
 import type { ViewerDiagnostics } from './viewer-types.ts';
 type SupportViewer = Omit<ViewerDiagnostics, 'walk'> & {
+  params: Record<string, string>;
   walk: {
     floor: number;
     canStand(x: number, z: number): boolean;
@@ -19,6 +20,7 @@ interface Fixture {
   waypoints: [number, number][];
   probes: { x: number; z: number; placeable: boolean; blocked: boolean }[];
   time?: number;
+  expectedParams?: Record<string, string>;
   blockedApproach?: { target: [number, number]; maxTravel: number };
 }
 const config = process.env.WALK_TEST_CONFIG;
@@ -65,6 +67,11 @@ try {
   await viewer.waitForFunction(() => Reflect.get(window, 'wander')?.ready, null, {
     timeout: 180000,
   });
+  const params = await viewer.evaluate(
+    () => (Reflect.get(window, 'wander') as unknown as SupportViewer).params,
+  );
+  for (const [key, value] of Object.entries(fixture.expectedParams || {}))
+    assert.equal(params[key], value, `The viewer must load the intended ${key}`);
   await viewer.evaluate((time) => {
     const w = Reflect.get(window, 'wander') as unknown as SupportViewer;
     w.play(false);
