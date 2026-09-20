@@ -231,6 +231,16 @@ def apply_activity_result(graph: RunGraph, result: StageActivityResult) -> None:
         )
         branches = tuple(BranchArtifact(**branch) for branch in result.branches)
         if result.node_id == "tracks":
+            if not branches:
+                # Everything after this stage is per-person, so a clip with nobody usable in
+                # it has no run left. Stopping here for a person says that; carrying on would
+                # finish "succeeded" holding a generated room and no one inside it.
+                graph.set_status(
+                    result.node_id,
+                    NodeStatus.BLOCKED,
+                    "tracking kept no usable person; nothing downstream can be built",
+                )
+                return
             graph.expand_people(branches)
         elif result.node_id == "object_detect":
             graph.expand_objects(branches)
