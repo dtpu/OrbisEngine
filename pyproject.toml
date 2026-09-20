@@ -26,6 +26,14 @@ inference = [
     "huggingface-hub",
     "safetensors",
 ]
+# Optional CPU source separation for scripts/separate_audio.py. Base installs stay unchanged;
+# torch is repeated here so the CPU-wheel source below applies to this group as well.
+# demucs pins torch<2.3 on Intel macOS, which cannot meet the pinned torch above, so the
+# separator is declared only for the Linux CPU authoring hosts it is measured on.
+audio = [
+    "demucs>=4.1,<5; sys_platform == 'linux'",
+    "torch>=2.6,<3; sys_platform == 'linux'",
+]
 
 [tool.uv]
 package = false

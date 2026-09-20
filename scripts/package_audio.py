@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Package supplied, reviewed dialogue stems; never separate audio or infer speakers."""
+"""Package reviewed dialogue tracks. This tool never separates audio or infers who is speaking.
+
+Inputs are either supplied isolated stems (--config) or a scripts/separate_audio.py output
+directory (--separation), whose voice track is a *model estimate* and therefore needs the
+operator's --voice-reviewed-by attestation, recorded in the manifest, before anything is written.
+"""
 
 import argparse
 import hashlib
@@ -39,13 +44,59 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def prepare(config_path, world, reviewed=False, check=False):
+def separation_config(
+    separation,
+    person_id,
+    anchor_file,
+    sequence_file=None,
+    offset_body_heights=None,
+    attributed_by=None,
+    voice_id="voice",
+    bed_id="bed",
+):
+    """Build the usual track configuration from a scripts/separate_audio.py output directory.
+
+    The separated voice is a model estimate, so its provenance says so. `reviewed` is set here
+    only because the caller passed the operator attestation flag; nothing in the tool decides it.
+    """
+    separation = Path(separation).resolve()
+    receipt_path = separation / "receipt.json"
+    if not receipt_path.is_file():
+        fail("Separation directory needs the receipt.json written beside voice.wav and bed.wav")
+    receipt = json.loads(receipt_path.read_text())
+    if receipt.get("schema") != "wander.audio-separation/1":
+        fail("Unrecognised separation receipt schema")
+    provenance = receipt.get("provenance")
+    if not isinstance(provenance, str) or not provenance:
+        fail("Separation receipt must carry a provenance string")
+    if attributed_by:
+        provenance = f"{provenance};attributed-by:{attributed_by}"
+    voice = {
+        "id": voice_id,
+        "kind": "dialogue",
+        "file": receipt["outputs"]["voice"]["file"],
+        "personId": person_id,
+        "reviewed": True,
+        "provenance": provenance,
+        "anchorFile": str(Path(anchor_file).resolve()),
+        "offsetBodyHeights": offset_body_heights or [0, 0, 0],
+    }
+    if sequence_file:
+        voice["sequenceFile"] = str(Path(sequence_file).resolve())
+    bed = {"id": bed_id, "kind": "ambience", "file": receipt["outputs"]["bed"]["file"]}
+    return {"personIds": [person_id], "tracks": [voice, bed]}, separation, receipt
+
+
+def prepare(config_path, world, reviewed=False, check=False, config=None, reviewed_by=None):
     if not reviewed:
         fail(
             "Human review required: pass --reviewed only after checking identities, all words/overlap, head alignment, and the complete replacement mix"
         )
     config_path, world = Path(config_path).resolve(), Path(world).resolve()
-    config = json.loads(config_path.read_text())
+    # A supplied dict resolves its relative files against config_path as a directory.
+    base = config_path if config is not None else config_path.parent
+    if config is None:
+        config = json.loads(config_path.read_text())
     if not isinstance(config, dict):
         fail("Configuration must be a JSON object")
     manifest_path = world / "audio.json"
@@ -104,7 +155,7 @@ def prepare(config_path, world, reviewed=False, check=False):
         kind = track.get("kind")
         if kind not in ("dialogue", "ambience"):
             fail("Track kind must be dialogue or ambience")
-        path = (config_path.parent / track["file"]).resolve()
+        path = (base / track["file"]).resolve()
         info = wav_info(path, mono=kind == "dialogue")
         if (
             info["sampleRate"] != fallback_info["sampleRate"]
@@ -131,11 +182,11 @@ def prepare(config_path, world, reviewed=False, check=False):
             ):
                 fail(f"{ident}: needs a reviewed, distinct personId from personIds")
             identities.add(person)
-            anchor = json.loads((config_path.parent / track["anchorFile"]).read_text())
+            anchor = json.loads((base / track["anchorFile"]).read_text())
             positions = anchor.get("positions", anchor.get("eyes"))
             times = anchor.get("times")
             if times is None and track.get("sequenceFile"):
-                sequence = json.loads((config_path.parent / track["sequenceFile"]).read_text())
+                sequence = json.loads((base / track["sequenceFile"]).read_text())
                 times = sequence.get("timestamps")
             if (
                 not isinstance(positions, list)
@@ -204,6 +255,7 @@ def prepare(config_path, world, reviewed=False, check=False):
         "review": {
             "method": "explicit-human-review",
             "scope": "speaker identity, complete mix, overlaps, timing, head coordinates",
+            **({"reviewedBy": reviewed_by} if reviewed_by else {}),
         },
     }
     if check:
@@ -241,19 +293,78 @@ def prepare(config_path, world, reviewed=False, check=False):
     return packaged
 
 
+def triple(text):
+    values = [float(v) for v in text.split(",")]
+    if len(values) != 3:
+        return fail("--offset-body-heights needs three comma-separated numbers")
+    return values
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path, help="Supplied-stem configuration file")
+    source.add_argument(
+        "--separation",
+        type=Path,
+        help="scripts/separate_audio.py output directory (voice.wav, bed.wav, receipt.json)",
+    )
     parser.add_argument("--world", required=True, type=Path)
+    parser.add_argument("--person-id", help="With --separation: the viewer person ID to anchor to")
+    parser.add_argument(
+        "--anchor-file", type=Path, help="With --separation: that person's head.json"
+    )
+    parser.add_argument(
+        "--sequence-file",
+        type=Path,
+        help="With --separation: that person's sequence.json, when head.json carries no times",
+    )
+    parser.add_argument("--offset-body-heights", type=triple, help="Local XYZ, e.g. 0,0.05,0.08")
+    parser.add_argument(
+        "--attributed-by",
+        help="How the voice was attributed to this person, recorded in the track provenance",
+    )
     parser.add_argument(
         "--reviewed",
         action="store_true",
         help="Explicitly attest human review of identity, timing, anchors and complete replacement mix",
     )
+    parser.add_argument(
+        "--voice-reviewed-by",
+        metavar="NAME",
+        help="Operator attesting, after listening, that a separated voice estimate is correctly "
+        "attributed and complete. Required with --separation; the tool never asserts review itself",
+    )
     parser.add_argument("--check", action="store_true", help="Validate without writing")
     args = parser.parse_args()
+    config, base = None, args.config
     try:
-        manifest = prepare(args.config, args.world, args.reviewed, args.check)
+        if args.separation:
+            if not args.person_id or not args.anchor_file:
+                fail("--separation needs --person-id and --anchor-file")
+            if not args.voice_reviewed_by:
+                fail(
+                    "A separated voice is a model estimate: pass --voice-reviewed-by NAME only "
+                    "after listening to the voice, the bed and the complete replacement mix"
+                )
+            config, base, _ = separation_config(
+                args.separation,
+                args.person_id,
+                args.anchor_file,
+                args.sequence_file,
+                args.offset_body_heights,
+                args.attributed_by,
+            )
+        elif args.voice_reviewed_by:
+            fail("--voice-reviewed-by applies to --separation; use --reviewed with --config")
+        manifest = prepare(
+            base,
+            args.world,
+            args.reviewed or bool(args.voice_reviewed_by),
+            args.check,
+            config=config,
+            reviewed_by=args.voice_reviewed_by,
+        )
     except (ValueError, KeyError, OSError, EOFError, wave.Error) as error:
         parser.exit(2, f"Audio package rejected: {error}\n")
     print(
@@ -263,7 +374,11 @@ def main():
                 "tracks": len(manifest["tracks"]),
                 "manifest": str(args.world / "audio.json"),
                 "defaultMode": "original",
-                "note": "Prepared for spatial audition; no separation or identity inference performed",
+                "reviewedBy": args.voice_reviewed_by,
+                "provenance": [
+                    t.get("provenance") for t in manifest["tracks"] if "provenance" in t
+                ],
+                "note": "Prepared for spatial audition; this tool performs no separation or identity inference",
             }
         )
     )
