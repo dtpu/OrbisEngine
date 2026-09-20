@@ -4,6 +4,37 @@ This is a proposal, not an implemented feature. The first experiment is to enter
 scene, select a person, and have a conversation grounded in that scene. A later experiment adds
 one movable prop and lets the character respond to changes the viewer actually made.
 
+## First implementation goal
+
+Make the existing bottle-tossing scene react to a visitor: approaching can prompt a greeting,
+catching interrupts the recorded exchange, a character converses and faces the visitor, and a
+return throw can be accepted at an assisted catch target. Reset restores recorded playback.
+This scope uses the current recorded bodies; exporting a controllable skeleton is a later task.
+
+The scene script is a small state machine. Seed its throw and handoff timing and participants
+from the existing object manifest. New dialogue and reactions are generated. The viewer owns
+the bottle state and executes validated actions; the agent receives actual events and chooses
+what to say or which supported action to request. Proximity greetings require an explicitly
+started conversation and a cooldown so walking around does not trigger repeated introductions.
+
+Implement and review these stages in order:
+
+1. **Interrupt and reset:** opt-in scene entry, desktop and XR selection, grab/hold/release,
+   recorded-motion ownership, and a reliable reset. Validate the exact bottle scene visually.
+2. **Throw and return:** bounded simulated throws, supported floor/wall contacts, an explicit
+   assisted catch region near a recorded receiving pose, misses, and pickup after a miss.
+3. **Conversation:** explicit voice/text connection, scene/event context, proximity and bottle
+   reactions, transcripts, cancellation, and cleanup. No connection starts merely on page load.
+4. **Facing and actions:** whole-body turning around the character's position, a return marker,
+   and guarded requests to resume the recorded exchange only when bottle state allows it.
+5. **Acceptance:** demonstrate approach, catch, conversation, successful return, miss, reset,
+   and scene exit. Check real provider/audio behavior and physical headset behavior separately
+   from offline and simulated XR tests. Document any checks that cannot be performed.
+
+Natural reaching, independent head/eye movement, lip sync, and new walking animation are outside
+this first implementation. Initial engineering scaffolding exists locally for bottle physics
+and the agent connection; it is not yet integrated or a demonstrated viewer feature.
+
 ## Feasibility in the current viewer
 
 | Interaction                                                 | Assessment                     | Main work                                                                                   |
