@@ -31,7 +31,7 @@ export default function Gallery() {
                   <VideoLoop
                     src={scene.wander}
                     poster={scene.poster}
-                    label={`${scene.title} — Wander loop`}
+                    label={`${scene.title} — Orbis Engine loop`}
                     className={styles.video}
                   />
                 }

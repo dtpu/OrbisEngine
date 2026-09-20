@@ -8,7 +8,7 @@ export default function Limits() {
     <Section id="limits">
       <div className={styles.wrap}>
         <Eyebrow>Limits</Eyebrow>
-        <H2 className={styles.title}>What Wander can&rsquo;t do yet.</H2>
+        <H2 className={styles.title}>What Orbis Engine can&rsquo;t do yet.</H2>
         <p className={styles.lede}>We&rsquo;d rather you find out here than in the viewer.</p>
         <ul className={styles.list}>
           {limits.map((limit) => (

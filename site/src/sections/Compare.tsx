@@ -57,12 +57,12 @@ export default function Compare() {
               after={
                 <img
                   src={`/media/${scene.id}/render.jpg`}
-                  alt="Wander render"
+                  alt="Orbis Engine render"
                   onError={hideBroken}
                 />
               }
               beforeLabel="Recorded"
-              afterLabel="Wander"
+              afterLabel="Orbis Engine"
             />
             <p className={styles.caption}>{scene.caption}</p>
           </li>
