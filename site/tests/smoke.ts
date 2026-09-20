@@ -134,6 +134,27 @@ const checks: Check[] = [
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
+  {
+    name: 'hero: copy, CTAs and two labeled loops',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const h1 = await page.textContent('section#hero h1');
+        if (h1?.trim() !== 'Step inside a video.') throw new Error(`hero h1: ${h1}`);
+        for (const href of ['/demo.html', '#how-it-works']) {
+          if (!(await page.$(`section#hero a[href="${href}"]`)))
+            throw new Error(`hero missing CTA ${href}`);
+        }
+        const videos = await page.$$('section#hero video');
+        if (videos.length !== 2) throw new Error(`hero has ${videos.length} videos, want 2`);
+        const labels = await page.$$eval('section#hero figcaption', (els) =>
+          els.map((e) => e.textContent?.trim()),
+        );
+        if (labels.join(',') !== 'Recorded,Wander') throw new Error(`hero labels: ${labels}`);
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
