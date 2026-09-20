@@ -167,6 +167,38 @@ class ActivityTests(unittest.TestCase):
             "a track without a motion file must not be named; only track 00 wrote one",
         )
 
+    def test_a_stage_writes_its_progress_as_it_goes(self):
+        """Python buffers stdout to a file, so a stage printed nothing until it exited.
+
+        A stage working hard and a stage hung on a dead socket then looked identical in the
+        log, which is the one thing the log is read for.
+        """
+        adapter = CommandAdapter(
+            lambda context: StageExecution(
+                command=(
+                    sys.executable,
+                    "-c",
+                    "import time; print('scoring frame 1'); time.sleep(0.6)",
+                ),
+                cwd=context.repository,
+            )
+        )
+        runner = self.runner(adapter)
+        seen = []
+        original = stage_module.beat
+        attempt = self.root / "runs/run-1/attempts/example/attempt-1/stdout.log"
+        stage_module.beat = lambda: seen.append(attempt.read_text() if attempt.exists() else "")
+        self.addCleanup(setattr, stage_module, "beat", original)
+        interval = stage_module.HEARTBEAT_SECONDS
+        stage_module.HEARTBEAT_SECONDS = 0.2
+        self.addCleanup(setattr, stage_module, "HEARTBEAT_SECONDS", interval)
+
+        self.assertEqual(runner.execute(self.request(), "attempt-1").status, "succeeded")
+        self.assertTrue(
+            any("scoring frame 1" in text for text in seen),
+            "the stage's output only arrived after it exited",
+        )
+
     def test_a_stage_missing_its_credential_is_blocked_not_run(self):
         """Running it anyway gets whatever message the script happens to print.
 
