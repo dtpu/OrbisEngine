@@ -111,7 +111,7 @@ Anchors need `positions` (or `eyes`) and matching `times`: at least two samples,
 ```sh
 uv run --locked scripts/package_audio.py --config .context/dialogue/config.json --world public/worlds/example-4d --reviewed --check
 uv run --locked scripts/package_audio.py --config .context/dialogue/config.json --world public/worlds/example-4d --reviewed
-uv run --locked scripts/test_package_audio.py
+uv run --locked scripts/tests/test_package_audio.py
 ```
 
 Only pass `--reviewed` after listening to each speaker and the complete sum, checking overlapping speech, all words and tails, speaker-to-person identity, visible motion timing, and head-anchor alignment. The command refuses to write without this human-review gate. Validation failures preserve the existing manifest. Success copies exact PCM assets and normalized head sidecars into a content-addressed `audio-reviewed/` directory and atomically updates `audio.json`, retaining its original audio fallback and source provenance. It defaults to **original** mode for comparison; select spatial dialogue in the viewer to audition the reviewed package. No source media is synthesized, no model is downloaded, and no service or GPU job is launched. Publication remains a separate authorized step through shared assets.

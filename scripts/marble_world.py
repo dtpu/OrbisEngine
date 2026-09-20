@@ -460,7 +460,7 @@ def upload(a, path, identity):
     return asset_id
 
 
-def submit(a):
+def submit(a, poll_after=True):
     if recover_submission(a):
         return
     if a.spz and Path(a.spz).exists():
@@ -543,7 +543,8 @@ def submit(a):
     log(a, f"op {operation_id} submitted ({detail})")
     if a.input_type == "multi":
         log(a, f"prompt: {prompt}")
-    poll(a, operation_id)
+    if poll_after:
+        poll(a, operation_id)
 
 
 def parser():
@@ -553,7 +554,7 @@ def parser():
     modes = root.add_subparsers(dest="input_type", required=True)
     for input_type in ("image", "multi", "video"):
         ap = modes.add_parser(input_type)
-        ap.add_argument("mode", choices=["submit", "poll", "fetch"])
+        ap.add_argument("mode", choices=["submit", "submit-only", "poll", "fetch"])
         ap.add_argument(
             "target",
             nargs="?",
@@ -579,11 +580,13 @@ def parser():
 def main(argv=None):
     ap = parser()
     a = ap.parse_args(argv)
-    if a.interval < 0 or (a.mode != "submit" and not a.target):
+    if a.interval < 0 or (a.mode not in {"submit", "submit-only"} and not a.target):
         ap.error("poll/fetch require an existing ID; interval must be nonnegative")
     try:
         if a.mode == "submit":
             submit(a)
+        elif a.mode == "submit-only":
+            submit(a, poll_after=False)
         elif a.mode == "poll":
             poll(a, a.target)
         else:
