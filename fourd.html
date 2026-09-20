@@ -137,6 +137,7 @@
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import { createStanceResolver } from '/src/person-stance.ts';
   import { personVisibility } from '/src/person-visibility.ts';
+  import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
   import {
     parseStaticColliders,
     highestSupport,
@@ -1690,6 +1691,7 @@
   // One person: its own frames, its own interpolated mesh, its own feet/stance/lock/shadow. The world
   // scale and floor arrive later through place(), because they are shared across the cast.
   async function makePerson(seqUrl, meta) {
+    const personSize = parsePersonSize(q.get('personsize'));
     const seq = await (await fetch(seqUrl)).json();
     const base = seqUrl.slice(0, seqUrl.lastIndexOf('/') + 1);
     const fps = num('fps', seq.fps || 12);
@@ -1728,6 +1730,7 @@
       loadError: null,
       settled: false,
       motionFallback: null,
+      personSize,
     };
     people.push(P);
     status();
@@ -1952,7 +1955,7 @@
         ? [cy / d, cx / d, cz / d, upY(cx / d, cy / d, cz / d)]
         : [low, cx / d, cz / d, low];
     }
-    if (feetOn) measureFeet(0);
+    if (feetOn || (interp && personSize !== 1)) measureFeet(0);
     if (rotFixRow && keys[0]) {
       // stature along the WORLD's up, from frame 0's own opaque splats
       let lo = Infinity,
@@ -1977,6 +1980,53 @@
       nativePerM = 1,
       mPerNative = 1,
       basePos = new THREE.Vector3();
+    // Preserve registration separately: visual sizing must not redefine the world/headset ruler.
+    const registeredScale = new THREE.Vector3(1, 1, 1);
+    const sizePosition = new THREE.Vector3();
+    const sizeAnchor = new THREE.Vector3();
+    const discreteAnchors = new Array(nF);
+    let placementSample = null;
+    // Rebuild from canonical registration, including while paused. The current animation's
+    // foot correction and visual size are derived values, never authoring inputs.
+    function refreshPlacement() {
+      person.position.copy(basePos);
+      person.scale.copy(registeredScale);
+      const { i, j, u, tt } = placementSample || { i: 0, j: 0, u: 0, tt: 0 };
+      if (interp && placementSample) applyFeet(i, j, u, tt);
+      applySize(i, j, u);
+      person.updateMatrixWorld(true);
+    }
+    function setRegistration({ position, rotation, scale }) {
+      if (position) basePos.copy(position);
+      if (rotation) person.rotation.copy(rotation);
+      if (scale) registeredScale.copy(scale);
+      refreshPlacement();
+    }
+    function applySize(i, j, u) {
+      if (personSize === 1) return;
+      if (interp) {
+        measureFeet(i);
+        measureFeet(j);
+        const a = feet[i],
+          b = feet[j] || a;
+        if (!a) return;
+        sizeAnchor.set(
+          a[1] + (b[1] - a[1]) * u,
+          a[0] + (b[0] - a[0]) * u,
+          a[2] + (b[2] - a[2]) * u,
+        );
+      } else {
+        // Discrete PLYs do not retain CPU centre arrays; use each frame's own bottom-centre.
+        if (!discreteAnchors[i]) {
+          const bounds = meshes[i].getBoundingBox();
+          discreteAnchors[i] = bounds.getCenter(new THREE.Vector3());
+          discreteAnchors[i].y = bounds.min.y;
+        }
+        sizeAnchor.copy(discreteAnchors[i]);
+      }
+      sizePosition.copy(person.position);
+      applyPersonSizeAtAnchor(person, sizePosition, registeredScale, sizeAnchor, personSize);
+    }
     // stance lock: while the low cluster stays put (< 3 cm/keyframe) subtract its drift, decay in swing
     const resolveStance = createStanceResolver((k) => {
       measureFeet(k);
@@ -2279,6 +2329,7 @@
       person.scale.setScalar(
         scale0 * (tf.scale ?? 1) * (placement?.perPerson?.[meta.id]?.sizeScale ?? 1),
       );
+      registeredScale.copy(person.scale);
       person.rotation.set(
         THREE.MathUtils.degToRad(rot0[0]),
         THREE.MathUtils.degToRad(rot0[1]),
@@ -2318,7 +2369,8 @@
         shadow.renderOrder = 1;
         scene.add(shadow);
       }
-      Object.assign(P, { scale0, upm, nativePerM, mPerNative, basePos });
+      Object.assign(P, { scale0, upm, nativePerM, mPerNative, basePos, registeredScale });
+      refreshPlacement();
     }
     // a person exists only during their own samples; outside them the whole group is hidden rather
     // than frozen on a last pose (a no-op for a track that covers the clip)
@@ -2344,6 +2396,8 @@
         if (meshes[P.frame]) meshes[P.frame].visible = false;
         P.frame = i;
         meshes[P.frame].visible = true;
+        placementSample = { i, j: i, u: 0, tt };
+        refreshPlacement();
         return 0;
       }
       const j = (i + 1) % nF;
@@ -2352,7 +2406,8 @@
       if (!A) return 0;
       if (!B) u = 0;
       P.frame = i;
-      applyFeet(i, j, u, tt);
+      placementSample = { i, j, u, tt };
+      refreshPlacement();
       const t0 = performance.now(),
         v = 1 - u;
       for (let s = 0; s < nS; s++) {
@@ -2395,7 +2450,8 @@
     function standingHeight() {
       if (!keys?.[0] || !word0) {
         const h =
-          Number(meta.bodyHeightUnits ?? seq.bodyHeightUnits ?? bodyH) * Math.abs(person.scale.y);
+          Number(meta.bodyHeightUnits ?? seq.bodyHeightUnits ?? bodyH) *
+          Math.abs(registeredScale.y);
         return Number.isFinite(h) && h > 0 ? h : NaN;
       }
       const trim = THREE.MathUtils.clamp(num('walkheighttrim', 0.01), 0, 0.1);
@@ -2406,7 +2462,7 @@
       for (let i = 0; i < nS; i++)
         if (word0[i] >>> 24 > opacity) {
           v.set(A[i * 7], A[i * 7 + 1], A[i * 7 + 2])
-            .multiply(person.scale)
+            .multiply(registeredScale)
             .applyQuaternion(person.quaternion);
           if (Number.isFinite(v.y)) ys.push(v.y);
         }
@@ -2433,6 +2489,7 @@
       measureFeet,
       allLoaded,
       standingHeight,
+      setRegistration,
     });
     // live, because the foot lock and the shadow are built after this returns
     Object.defineProperties(P, {
@@ -3042,7 +3099,7 @@
     video,
     dur,
     people,
-    () => (primary.bodyH || bodyH) * primary.group.scale.x,
+    () => (primary.bodyH || bodyH) * primary.registeredScale.x,
   );
   const audioPackage =
     q.get('audio') ||
@@ -3146,16 +3203,12 @@
   const homeCast = people.map((p) => ({
     p,
     base: p.basePos.clone(),
-    pos: p.group.position.clone(),
     rot: p.group.rotation.clone(),
-    scale: p.group.scale.clone(),
+    scale: p.registeredScale.clone(),
   }));
   const castHome = () => {
     for (const h of homeCast) {
-      h.p.basePos.copy(h.base);
-      h.p.group.position.copy(h.pos);
-      h.p.group.rotation.copy(h.rot);
-      h.p.group.scale.copy(h.scale);
+      h.p.setRegistration({ position: h.base, rotation: h.rot, scale: h.scale });
     }
   };
   if (demo) document.getElementById('hint').style.display = '';
@@ -3237,7 +3290,8 @@
   const WALK_UP = new THREE.Vector3(0, 1, 0);
   // Collision grids were calibrated to the existing primary-body ruler. Keep that ruler stable
   // while correcting the camera height, so stairs and collision bands do not change with eye level.
-  const collisionStature = Number.isFinite(bodyH) && bodyH > 0 ? bodyH * person.scale.x : NaN;
+  const collisionStature =
+    Number.isFinite(bodyH) && bodyH > 0 ? bodyH * primary.registeredScale.x : NaN;
   const walkHeights = people
     .map((p) => ({ id: p.id, height: p.standingHeight() }))
     .filter((p) => Number.isFinite(p.height) && p.height > 0);
@@ -3628,21 +3682,21 @@
   // known floor than it stands (so a start pose off the grid can walk in, and nothing walks out into
   // the void); never more blocked than it already is (so a start pose inside grid noise can always
   // slide out); never up more than one stair
-  function walkCan(x, z, from) {
+  function walkCan(x, z, from, floor = walkFloor, supported = walkHasSupport) {
     if (!walkGrid && !staticColliders.length) return true;
-    const c = walkCell(x, z);
-    if (Number.isFinite(c.floor) && c.floor > walkFloor + WALK_STEP_UP) return false;
+    const c = walkCell(x, z, floor + WALK_STEP_UP);
+    if (Number.isFinite(c.floor) && c.floor > floor + WALK_STEP_UP) return false;
     // Only follow a floor that settling can reach; unknown/deep void cells keep
     // the current height, as they did before explicit colliders were available.
-    const reachableDrop = walkHasSupport ? WALK_STEP_DOWN : WALK_FOLLOW_DROP;
+    const reachableDrop = supported ? WALK_STEP_DOWN : WALK_FOLLOW_DROP;
     const targetFloor =
-      staticColliders.length && Number.isFinite(c.floor) && c.floor >= walkFloor - reachableDrop
+      staticColliders.length && Number.isFinite(c.floor) && c.floor >= floor - reachableDrop
         ? c.floor
-        : walkFloor;
+        : floor;
     if (
       capsuleSweepBlocked(
         staticColliders,
-        new THREE.Vector3(from.x, walkFloor, from.z),
+        new THREE.Vector3(from.x, floor, from.z),
         new THREE.Vector3(x, targetFloor, z),
         walkerHeight,
         walkerRadius,
@@ -3654,15 +3708,44 @@
     if (b > 0 && b > from.blocked) return false;
     return true;
   }
-  function walkMove(d) {
+  function walkMove(d, p = camera.position, floor = walkFloor, supported = walkHasSupport) {
     // d in the floor plane; slide along the free axis when the full step is refused
-    const p = camera.position,
-      from = { x: p.x, z: p.z, blocked: walkBlocked(p.x, p.z), dist: walkCell(p.x, p.z).dist };
-    if (walkCan(p.x + d.x, p.z + d.z, from)) {
+    const from = {
+      x: p.x,
+      z: p.z,
+      blocked: walkBlocked(p.x, p.z, floor),
+      dist: walkCell(p.x, p.z, floor + WALK_STEP_UP).dist,
+    };
+    if (walkCan(p.x + d.x, p.z + d.z, from, floor, supported)) {
       p.x += d.x;
       p.z += d.z;
-    } else if (d.x && walkCan(p.x + d.x, p.z, from)) p.x += d.x;
-    else if (d.z && walkCan(p.x, p.z + d.z, from)) p.z += d.z;
+    } else if (d.x && walkCan(p.x + d.x, p.z, from, floor, supported)) p.x += d.x;
+    else if (d.z && walkCan(p.x, p.z + d.z, from, floor, supported)) p.z += d.z;
+  }
+  // XR moves its rig, not the desktop camera. Reuse the same collision checks with an explicit
+  // foot position, leaving desktop floor state and the runtime's tracked head pose untouched.
+  function walkAdvance(from, delta, dt) {
+    const next = from.clone();
+    // Subdivide long frames so a joystick step cannot jump over a thin occupied column.
+    const count = Math.max(1, Math.ceil(Math.hypot(delta.x, delta.z) / (0.05 * upm)));
+    const step = delta.clone().multiplyScalar(1 / count);
+    for (let i = 0; i < count; i++) {
+      walkMove(step, next, next.y, true);
+      const f = walkCell(next.x, next.z, next.y + WALK_STEP_UP).floor;
+      if (
+        Number.isFinite(f) &&
+        f <= next.y + WALK_STEP_UP &&
+        f >= next.y - WALK_STEP_DOWN &&
+        !walkBlocked(next.x, next.z, f)
+      ) {
+        const dy = f - next.y;
+        next.y +=
+          dy < 0
+            ? Math.max(dy, (-WALK_FALL_MPS * upm * dt) / count)
+            : dy * Math.min(1, dt / count / WALK_RISE_S);
+      }
+    }
+    return next;
   }
   function walkSettle(dt) {
     // eye = floor + eye height; rises ease over WALK_RISE_S, falls at WALK_FALL_MPS
@@ -4230,7 +4313,7 @@
     );
   }
   function walkStand(x, z) {
-    if (!walkOn || possess || !walkCanStand(x, z)) return false;
+    if (!walkOn || possess || renderer.xr.isPresenting || !walkCanStand(x, z)) return false;
     walkFloor = walkCell(x, z, Infinity).floor;
     walkHasSupport = true;
     reel = null;
@@ -4274,12 +4357,7 @@
   // the cast shares one world, so a manual nudge moves everybody and keeps their relative placement
   const nudgeAll = (dx, dy, dz) => {
     for (const p of people) {
-      p.basePos.x += dx;
-      p.basePos.y += dy;
-      p.basePos.z += dz;
-      p.group.position.x += dx;
-      p.group.position.y += dy;
-      p.group.position.z += dz;
+      p.setRegistration({ position: p.basePos.clone().add(new THREE.Vector3(dx, dy, dz)) });
     }
   };
   addEventListener('keydown', (e) => {
@@ -4310,14 +4388,16 @@
     switch (e.code) {
       case 'KeyR':
         reel = null;
-        camera.position.copy(home);
-        prevPos.copy(home);
-        edge = edgeAt(home);
-        applyEdgeFade();
-        camera.quaternion.copy(homeQ);
+        if (!renderer.xr.isPresenting) {
+          camera.position.copy(home);
+          prevPos.copy(home);
+          edge = edgeAt(home);
+          applyEdgeFade();
+          camera.quaternion.copy(homeQ);
+          walkFloor = walkHomeFloor;
+          walkHasSupport = false;
+        }
         castHome();
-        walkFloor = walkHomeFloor;
-        walkHasSupport = false;
         if (possess) possess.look.yaw = possess.look.pitch = 0;
         break;
       case 'KeyI':
@@ -4339,16 +4419,26 @@
         nudgeAll(0, nudge.pos * big * 0.5, 0);
         break;
       case 'BracketLeft':
-        for (const p of people) p.group.rotation.y -= THREE.MathUtils.degToRad(nudge.yaw * big);
+        for (const p of people) {
+          const rotation = p.group.rotation.clone();
+          rotation.y -= THREE.MathUtils.degToRad(nudge.yaw * big);
+          p.setRegistration({ rotation });
+        }
         break;
       case 'BracketRight':
-        for (const p of people) p.group.rotation.y += THREE.MathUtils.degToRad(nudge.yaw * big);
+        for (const p of people) {
+          const rotation = p.group.rotation.clone();
+          rotation.y += THREE.MathUtils.degToRad(nudge.yaw * big);
+          p.setRegistration({ rotation });
+        }
         break;
       case 'Minus':
-        for (const p of people) p.group.scale.multiplyScalar(1 / nudge.scale);
+        for (const p of people)
+          p.setRegistration({ scale: p.registeredScale.clone().multiplyScalar(1 / nudge.scale) });
         break;
       case 'Equal':
-        for (const p of people) p.group.scale.multiplyScalar(nudge.scale);
+        for (const p of people)
+          p.setRegistration({ scale: p.registeredScale.clone().multiplyScalar(nudge.scale) });
         break;
       case 'Enter':
       case 'NumpadEnter':
@@ -4441,8 +4531,9 @@
     }
     stats.frames++;
     stats.interpMs = interpMs;
-    if (possess) {
-      /* no translation: the camera is placed from his head after this frame's time step, below */
+    if (renderer.xr.isPresenting || possess) {
+      // XR owns the tracked camera and rig. Its local pose must never update desktop floor state.
+      // Possession places the camera from the recorded person's head below.
     } else if (walkOn) {
       const k = (...c) => (c.some((x) => keysDown.has(x)) ? 1 : 0);
       const d = new THREE.Vector3(
@@ -4480,7 +4571,7 @@
         );
       }
     }
-    if (reel && !reel.frozen && !possess) {
+    if (reel && !reel.frozen && !possess && !renderer.xr.isPresenting) {
       reel.t += dt;
       if (reel.t >= REEL) reel = null;
       else {
@@ -4491,7 +4582,7 @@
         reelApply(reel.t);
       }
     }
-    if (!possess) clampCamera();
+    if (!possess && !renderer.xr.isPresenting) clampCamera();
     applyEdgeFade();
     if (proj) proj.update(t);
     if (bg2) {
@@ -4669,6 +4760,7 @@
           blockedAt: walkBlocked,
           canStand: walkCanStand,
           stand: walkStand,
+          advance: walkAdvance,
           map: walkMap,
         }
       : null,
@@ -4705,21 +4797,20 @@
     setTransform({ pos, rot, scale }) {
       // the whole cast: one world, one scale
       for (const p of people) {
-        if (pos) {
-          p.basePos.set(...pos);
-          p.group.position.set(...pos);
-        }
-        if (rot) p.group.rotation.set(...rot.map(THREE.MathUtils.degToRad), 'YXZ');
-        if (scale) p.group.scale.setScalar(scale);
+        p.setRegistration({
+          position: pos && new THREE.Vector3(...pos),
+          rotation: rot && new THREE.Euler(...rot.map(THREE.MathUtils.degToRad), 'YXZ'),
+          scale: scale && new THREE.Vector3().setScalar(scale),
+        });
       }
     },
     getTransform() {
       return {
-        pos: person.position.toArray(),
+        pos: primary.basePos.toArray(),
         rot: [person.rotation.x, person.rotation.y, person.rotation.z].map(
           THREE.MathUtils.radToDeg,
         ),
-        scale: person.scale.x,
+        scale: primary.registeredScale.x,
       };
     },
     url() {
@@ -4755,6 +4846,9 @@
     }
     return audioRender(sc, cam);
   };
+  // Entering VR is an explicit playback action, including after a previous session paused on exit.
+  // Resume once here so an intentional pause during the session remains respected.
+  renderer.xr.addEventListener('sessionstart', () => play(true));
   renderer.xr.addEventListener('sessionend', () => play(false));
 
   // ?xr=1: WebXR mode (src/xr/fourd-xr.ts) - enter-VR button, rig locomotion, the soft boundary as a
