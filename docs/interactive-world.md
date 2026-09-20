@@ -68,6 +68,30 @@ answer, and walking away and back does not silently switch the active character.
 microphone, and speaking cues plus audible feedback; the experience must not require reading a
 conversation. Internal speech events may be used by the connection without becoming a chat UI.
 
+### Deliberately close approach
+
+The approach zone is a small sensor, not a physical collider or a room-wide pause trigger.
+As initial tuning values, require the visitor's head projected onto the floor to be within
+0.30 scene body-heights of the character's current torso axis, facing generally toward them,
+for about 0.4 seconds. Require departure beyond 0.45 body-heights before a fresh approach can
+re-arm. These are proposed interaction settings, not measured geometry or accepted headset
+values. Store them as general configuration and tune them against the real scene in VR.
+
+Sample the final headset world pose after both physical movement and locomotion. Use a reviewed
+moving character anchor where available; otherwise validate an approximate anchor derived from
+the current visible body frame. The person's group origin and the viewer's combined cast centre
+are not reliable per-character proximity anchors. Reject hidden people, incompatible vertical
+positions, and paths blocked by known collision geometry. At initial entry or replay, do not
+fire merely because the visitor already occupies the zone; arm after leaving it. Require visitor
+approach rather than a recorded character passing a stationary observer.
+
+Grabbing is independent of this dwell: grip near the visible bottle should interrupt immediately,
+even when the visitor's head is outside a person's approach zone. Validate controller-to-bottle
+reach and known occlusion, and check motion between frames so a fast bottle is not missed solely
+because it crossed the hand between samples. Directed speech is another independent trigger once
+the microphone is enabled. Resolve a simultaneous valid grab before an approach greeting so the
+agent receives the actual bottle owner in its first context update.
+
 Seed the scene script from the manifest's recorded participants, held spans, and flights. This
 provides the original exchange's timing and roles, not a complete inferred personality or a fixed
 dialogue. During interaction, process actual events in this order:
@@ -86,6 +110,14 @@ dialogue. During interaction, process actual events in this order:
    leaves. A late response must not act on a newer scene state. Keep conversation history across
    a replay/reset but explicitly tell the agent what physical state changed.
 
+The transition captures the recording time, character poses, bottle pose, and current owner in
+one local state change. If a proximity or voice interruption occurs during a recorded flight,
+transfer the bottle's current position and sampled velocity into local physics instead of leaving
+it suspended in the air. If it is held by a character, retain that attachment until a valid grab.
+A valid visitor grab takes precedence and attaches it to that hand. Derive these states from the
+manifest, not clip-specific times. This recorded-flight handoff still needs implementation;
+the existing local physics scaffold currently covers grabbing and release from the visitor.
+
 An assisted return succeeds only when the simulated bottle reaches an available receiving
 region with a clear path. Otherwise it continues its flight or lands for pickup. The agent cannot
 declare a successful catch, teleport the bottle, start playback, or issue unsupported walking or
@@ -101,6 +133,15 @@ has stopped. While conversing, speaking over an answer interrupts it. A VR mic c
 mutes/unmutes input, and ending the conversation or leaving the scene releases the microphone
 and connection. Connection failure leaves local movement, interruption, and bottle interaction
 working, with a retry cue and no keyboard requirement.
+
+For the voice prototype, prepare the connection after explicit microphone activation and gate
+automatic answers until a valid interaction supplies the active character and scene state.
+OpenAI's [conversation controls](https://developers.openai.com/api/docs/guides/realtime-conversations#keep-vad-but-disable-automatic-responses)
+allow speech detection with automatic responses disabled. Speech activity alone does not prove
+that the visitor addressed a character; combine it with target eligibility and headset audio
+validation. Keep the connection bounded with timeout and idle cleanup, and report disconnection
+without affecting local physics. The current scaffold's automatic responses, typed-input path,
+and `resume_recording` tool need revision before integration to match this plan.
 
 ## Manual replay while staying in VR
 
