@@ -10,14 +10,17 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from orchestrator.activities.adapters import default_adapters
 from orchestrator.artifacts import (
     LocalCAS,
     ManifestResolver,
     UploadOutbox,
+    assign_roles,
     freeze_attempt,
     generate_preview,
     sha256_file,
 )
+from orchestrator.stages.registry import stage_registry
 from orchestrator.workspace import RunWorkspace
 
 
@@ -163,6 +166,88 @@ class WorkspaceArtifactTests(unittest.TestCase):
         hydrated = resolver.hydrate(artifact.artifact_id, self.root / "inputs/cameras")
         self.assertEqual(hydrated.name, "cameras.json")
         self.assertEqual(hydrated.read_bytes(), cameras.read_bytes())
+
+
+class BundleRoleTests(unittest.TestCase):
+    """A directory of files is one role, and every file in it has to carry that role.
+
+    `PurePath.match` treats `**` as one segment and anchors from the right, so the bundle
+    patterns matched nothing while the QA validator's `Path.glob` matched everything. The
+    outputs passed QA and were frozen as `attempt_file`, and the next stage asked for the
+    role and got nothing.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def write(self, *relatives):
+        for relative in relatives:
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(relative)
+
+    def test_every_file_in_a_bundle_carries_the_bundle_role(self):
+        self.write(
+            "outputs/prepared-person/mask.png",
+            "outputs/prepared-person/prepared.json",
+            "outputs/prepared-person/scores/frame-scores.json",
+            "outputs/unrelated.txt",
+        )
+        assigned = assign_roles(self.root, {"outputs/prepared-person/**/*": "prepared_person"})
+        self.assertEqual(
+            sorted(assigned),
+            [
+                "outputs/prepared-person/mask.png",
+                "outputs/prepared-person/prepared.json",
+                "outputs/prepared-person/scores/frame-scores.json",
+            ],
+        )
+        self.assertEqual(set(assigned.values()), {"prepared_person"})
+
+    def test_a_named_file_keeps_its_own_role_inside_a_bundle(self):
+        self.write(
+            "outputs/lhm-frozen/model.ply",
+            "outputs/lhm-frozen/recovery-receipt.json",
+        )
+        assigned = assign_roles(
+            self.root,
+            {
+                "outputs/lhm-frozen/**/*": "canonical_person",
+                "outputs/lhm-frozen/recovery-receipt.json": "recovery_receipt",
+            },
+        )
+        self.assertEqual(assigned["outputs/lhm-frozen/recovery-receipt.json"], "recovery_receipt")
+        self.assertEqual(assigned["outputs/lhm-frozen/model.ply"], "canonical_person")
+
+    def test_a_pattern_only_matches_from_the_top_of_the_attempt(self):
+        """`path.match` matched from the right, so a stray copy took the role too."""
+        self.write("outputs/crops/a.png", "inputs/outputs/crops/b.png")
+        assigned = assign_roles(self.root, {"outputs/crops/*.png": "object_crops"})
+        self.assertEqual(list(assigned), ["outputs/crops/a.png"])
+
+
+class DeclaredBundleTests(unittest.TestCase):
+    def test_a_role_globbed_as_a_bundle_is_declared_as_many(self):
+        """Otherwise QA rejects the stage: "produced 4 files, expected one"."""
+        for executor, adapter in default_adapters().items():
+            patterns = getattr(adapter, "output_roles", None)
+            if not patterns:
+                continue
+            many = {
+                role for pattern, role in patterns.items() if "*" in pattern.replace("{name}", "")
+            }
+            for stage in stage_registry().values():
+                if stage.executor != executor:
+                    continue
+                for name, contract in stage.outputs.items():
+                    if contract.role in many:
+                        with self.subTest(stage=stage.id, output=name):
+                            self.assertTrue(
+                                contract.multiple,
+                                f"{stage.id}.{name} is globbed as many files but declared as one",
+                            )
 
 
 if __name__ == "__main__":
