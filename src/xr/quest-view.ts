@@ -324,6 +324,7 @@ export function createQuestView(renderer: WebGLRenderer, clip: string) {
   renderer.xr.addEventListener('sessionstart', start);
   renderer.xr.addEventListener('sessionend', stop);
   window.addEventListener('pagehide', stop);
+  if (renderer.xr.isPresenting) start();
   return {
     state,
     afterRender() {

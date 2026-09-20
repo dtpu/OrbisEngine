@@ -143,6 +143,7 @@ export class FourDAudio {
     private duration: number,
     private people: Person[],
     private bodyHeight: () => number,
+    container: HTMLElement = document.body,
   ) {
     this.button = document.createElement('button');
     this.modeButton = document.createElement('button');
@@ -169,7 +170,7 @@ export class FourDAudio {
     this.credit.hidden = true;
     this.credit.style.cssText =
       'position:fixed;right:16px;bottom:18px;z-index:30;max-width:70vw;padding:5px 8px;border-radius:5px;background:#111d;color:#ddd;font:11px system-ui';
-    document.body.append(controls, this.credit);
+    container.append(controls, this.credit);
     for (const event of ['pause', 'seeking', 'waiting', 'ended', 'ratechange', 'emptied']) {
       const fn = () => this.invalidate();
       video.addEventListener(event, fn);

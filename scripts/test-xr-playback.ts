@@ -4,13 +4,14 @@ import { chromium } from 'playwright-core';
 import type {} from './viewer-types.ts';
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const base = process.env.XR_TEST_URL || 'http://127.0.0.1:5399';
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
   await page.goto(
-    'http://127.0.0.1:5399/fourd.html?demo=stairs2&xr=1&fakexr=1&pause=1&fakew=256&fakeh=256&xradapt=0',
+    `${base}/fourd.html?demo=stairs2&xr=1&fakexr=1&pause=1&fakew=256&fakeh=256&xradapt=0`,
     { waitUntil: 'load', timeout: 120000 },
   );
   await page.waitForFunction(
