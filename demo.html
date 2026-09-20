@@ -804,7 +804,7 @@
 
       function select(id) {
         const c = ALL.find((x) => x.id === id);
-        if (!c || (c.id === current && !loadFailed) || frame.contentWindow?.__loadingScene) return;
+        if (!c || (c.id === current && !loadFailed)) return;
         const loadScene = api()?.loadScene;
         beginLoad(c);
         const options = new URLSearchParams({ demo: c.id });
@@ -813,11 +813,15 @@
         for (const [key, value] of outer)
           if (key === 'audio' || key === 'personsize' || key.startsWith('xr'))
             options.set(key, value);
-        api()?.play(false);
         if (loadScene) {
-          void loadScene(c.id).catch((error) => failLoad(error.message));
+          // Session events report only the latest request. An older rejected promise
+          // must not overwrite the loading/error UI of the user's next selection.
+          void loadScene(c.id).catch(() => {});
           watchScene(frame.contentWindow);
-        } else frame.src = `/fourd.html?${options}`;
+        } else {
+          api()?.play(false);
+          frame.src = `/fourd.html?${options}`;
+        }
         outer.set('clip', c.id);
         if (WALK) outer.set('walk', '1');
         history.replaceState(null, '', `?${outer}`);
