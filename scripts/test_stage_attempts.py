@@ -4,17 +4,27 @@ import json
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_clip
-from stage_attempts import CODE_FILES, StageAttempts, command_identity
+from stage_attempts import (
+    CODE_FILES,
+    MAX_DISTINCT_WINDOWS,
+    StageAttempts,
+    command_identity,
+    normalized_window,
+    same_work_unit,
+)
 
 SOURCE = "a" * 64
 
 
-class StageAttemptTests(unittest.TestCase):
+class LedgerFixture:
+    """Temporary ledger and claim helpers shared by the accounting tests."""
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -23,11 +33,19 @@ class StageAttemptTests(unittest.TestCase):
         self.log = self.root / "worker.log"
         self.log.write_text("saved provider evidence\n")
 
-    def begin(self, operation="pi3x", number=0, hypothesis=None, candidate="candidate-a"):
+    def begin(
+        self,
+        operation="pi3x",
+        number=0,
+        hypothesis=None,
+        candidate="candidate-a",
+        window=None,
+        source=SOURCE,
+    ):
         return self.ledger.begin(
-            SOURCE,
+            source,
             operation,
-            parameters={"setting": number},
+            parameters={"setting": number, "sourceSelection": window},
             code_version={"worker.py": "code-v1"},
             hypothesis=hypothesis,
             candidate=candidate,
@@ -38,6 +56,8 @@ class StageAttemptTests(unittest.TestCase):
     def finish(self, attempt, status="failed"):
         self.ledger.finish(attempt["id"], status=status, evidence=[self.log])
 
+
+class StageAttemptTests(LedgerFixture, unittest.TestCase):
     def test_aliases_share_cap_and_candidate_rename_does_not_make_a_retry_new(self):
         first = self.begin("clean", 1)
         self.finish(first)
@@ -227,6 +247,199 @@ class StageAttemptTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(ValueError, "source aliases"):
                     self.begin()
+
+
+class SourceWindowTests(LedgerFixture, unittest.TestCase):
+    """Distinct shot windows of one source are distinct work, not retries of each other."""
+
+    shots = tuple({"start": index * 4.0, "end": index * 4.0 + 3.5} for index in range(8))
+
+    def test_window_normalization_and_work_unit_rules(self):
+        self.assertIsNone(normalized_window(None))
+        self.assertIsNone(normalized_window({"start": 1.0, "end": None}))
+        self.assertEqual(normalized_window({"start": 1.0004, "end": 2.0006}), (1.0, 2.001))
+        self.assertEqual(normalized_window({"start": 1, "end": 2}), (1.0, 2.0))
+        for bad in ({"start": 0.0, "end": float("inf")}, {"start": "0", "end": "1"}, [0, 1]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                normalized_window(bad)
+        with self.assertRaisesRegex(ValueError, "end before it starts"):
+            normalized_window({"start": 5.0, "end": 4.0})
+        cases = [
+            (None, None, True),
+            (None, (2.0, 3.0), True),  # the whole source covers every window
+            ((0.0, 10.0), (0.0, 10.0), True),
+            ((0.0, 10.0), (1.0, 10.5), True),  # 9.0s of a 9.5s window
+            ((0.0, 10.0), (4.0, 14.0), True),  # 60% of the shorter window
+            ((0.0, 10.0), (6.0, 16.0), False),  # 40% of the shorter window
+            ((0.0, 10.0), (5.0, 15.0), False),  # exactly half is not "more than half"
+            ((0.0, 10.0), (10.0, 20.0), False),  # neighbouring shots share only a boundary
+            ((4.0, 4.0), (0.0, 10.0), True),  # an instant inside a window
+            ((4.0, 4.0), (5.0, 10.0), False),
+        ]
+        for first, second, expected in cases:
+            with self.subTest(first=first, second=second):
+                self.assertIs(same_work_unit(first, second), expected)
+                self.assertIs(same_work_unit(second, first), expected)
+
+    def test_each_shot_window_gets_its_own_first_attempt(self):
+        for index, window in enumerate(self.shots):
+            with self.subTest(shot=index):
+                attempt = self.begin(number=index, window=window, candidate=f"shot-{index:02d}")
+                self.assertFalse(attempt["claim"]["hypothesisExplicit"])
+                self.assertEqual(attempt["claim"]["windowNumber"], 1)
+                self.assertEqual(attempt["claim"]["number"], index + 1)
+                self.finish(attempt)
+        saved = json.loads(self.ledger.path.read_text())
+        self.assertEqual(len(saved["attempts"]), len(self.shots))
+
+    def test_fourth_attempt_on_one_window_is_refused(self):
+        window = self.shots[3]
+        for index in range(3):
+            attempt = self.begin(
+                number=index,
+                window=window,
+                hypothesis=None if index == 0 else f"Idea {index}",
+                candidate=f"try-{index}",
+            )
+            self.assertEqual(attempt["claim"]["windowNumber"], index + 1)
+            self.finish(attempt)
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin(number=9, window=window, hypothesis="A fourth idea")
+        # A different shot of the same source is unaffected by the exhausted window.
+        other = self.begin(number=9, window=self.shots[4], candidate="other-shot")
+        self.assertEqual(other["claim"]["windowNumber"], 1)
+
+    def test_retry_on_one_window_still_needs_a_new_hypothesis_and_identity(self):
+        window = self.shots[0]
+        self.finish(self.begin(number=1, window=window))
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin(number=2, window=window, candidate="renamed")
+        with self.assertRaisesRegex(ValueError, "parameters or code"):
+            self.begin(number=1, window=window, hypothesis="A real new idea")
+        second = self.begin(number=2, window=window, hypothesis="A real new idea")
+        self.finish(second)
+        with self.assertRaisesRegex(ValueError, "new hypothesis"):
+            self.begin(number=3, window=window, hypothesis="  A REAL   NEW IDEA ")
+
+    def test_pending_window_blocks_itself_but_not_another_shot(self):
+        pending = self.begin(number=1, window=self.shots[0])
+        with self.assertRaisesRegex(ValueError, "evidence reconciliation"):
+            self.begin(number=2, window=self.shots[0], hypothesis="Change overlap")
+        second = self.begin(number=2, window=self.shots[1], candidate="shot-01")
+        self.ledger.finish(second["id"], status="unknown", evidence=[self.log])
+        with self.assertRaisesRegex(ValueError, "evidence reconciliation"):
+            self.begin(number=3, window=self.shots[1], hypothesis="Change batch size")
+        evidence = self.root / "provider-result.json"
+        evidence.write_text('{"observed":"failed"}')
+        self.ledger.reconcile(
+            pending["id"], status="failed", evidence=evidence, reason="provider showed failure"
+        )
+        retry = self.begin(number=3, window=self.shots[0], hypothesis="Change overlap")
+        self.assertEqual(retry["claim"]["windowNumber"], 2)
+
+    def test_overlapping_or_float_noise_windows_are_the_same_work_unit(self):
+        self.finish(self.begin(number=1, window={"start": 0.0, "end": 10.0}))
+        # Nudging the boundaries by a few frames does not buy a fresh allowance.
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin(number=2, window={"start": 0.125, "end": 10.125}, candidate="nudged")
+        # Sub-millisecond noise on the same shot is the same window, not a new one.
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin(number=3, window={"start": 0.0000004, "end": 9.9999998}, candidate="noise")
+        # A whole-source claim covers the shot windows of that source.
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin(number=4, window=None, candidate="whole-source")
+        # Less than half of the shorter window is separate work.
+        separate = self.begin(number=5, window={"start": 6.0, "end": 16.0}, candidate="next-shot")
+        self.assertEqual(separate["claim"]["windowNumber"], 1)
+        self.assertEqual(separate["claim"]["number"], 2)
+
+    def test_distinct_window_cap_stops_a_runaway_shot_list(self):
+        for index in range(MAX_DISTINCT_WINDOWS):
+            window = {"start": index * 10.0, "end": index * 10.0 + 5.0}
+            self.finish(self.begin(number=index, window=window, candidate=f"shot-{index:02d}"))
+        with self.assertRaisesRegex(ValueError, "distinct windows"):
+            self.begin(number=99, window={"start": 1000.0, "end": 1005.0}, candidate="one-too-many")
+        # An already-claimed window still has its own remaining allowance.
+        again = self.begin(
+            number=99, window={"start": 0.0, "end": 5.0}, hypothesis="Retry the first shot"
+        )
+        self.assertEqual(again["claim"]["windowNumber"], 2)
+
+    def test_alias_shares_the_canonical_window_allowance_but_not_other_windows(self):
+        alias = "b" * 64
+        self.ledger.path.write_text(
+            json.dumps(
+                {
+                    "schema": "wander.pipeline-attempts/1",
+                    "sourceAliases": {alias: SOURCE},
+                    "attempts": [],
+                }
+            )
+        )
+        first = self.begin(number=1, window=self.shots[0], source=alias, candidate="alias-shot-0")
+        self.assertEqual(first["claim"]["sourceSha256"], SOURCE)
+        self.finish(first)
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin(number=2, window=self.shots[0], candidate="canonical-shot-0")
+        fresh = self.begin(number=2, window=self.shots[1], source=alias, candidate="alias-shot-1")
+        self.assertEqual(fresh["claim"]["windowNumber"], 1)
+        self.assertEqual(fresh["claim"]["submittedSourceSha256"], alias)
+        self.finish(fresh)
+        for index in (2, 3):
+            self.finish(
+                self.begin(
+                    number=index + 10,
+                    window=self.shots[0],
+                    hypothesis=f"Canonical idea {index}",
+                    candidate=f"canonical-{index}",
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin(
+                number=20,
+                window=self.shots[0],
+                source=alias,
+                hypothesis="Alias idea",
+                candidate="x",
+            )
+
+    def test_concurrent_claims_allow_one_pending_execution_per_window(self):
+        windows = self.shots[:3]
+        barrier = threading.Barrier(2 * len(windows))
+        attempts, errors = [], []
+        guard = threading.Lock()
+
+        def claim(index, window):
+            barrier.wait(timeout=10)
+            try:
+                attempt = self.begin(number=index, window=window, candidate=f"candidate-{index}")
+            except ValueError as error:
+                with guard:
+                    errors.append(str(error))
+            else:
+                with guard:
+                    attempts.append(attempt)
+
+        threads = [
+            threading.Thread(target=claim, args=(index * 2 + repeat, window))
+            for index, window in enumerate(windows)
+            for repeat in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(len(attempts), len(windows))
+        self.assertEqual(len(errors), len(windows))
+        self.assertTrue(all("evidence reconciliation" in error for error in errors))
+        claimed = {
+            tuple(sorted(item["claim"]["parameters"]["sourceSelection"].items()))
+            for item in attempts
+        }
+        self.assertEqual(len(claimed), len(windows))
+        self.assertEqual(self.ledger.path.read_text().count('"status": "pending"'), len(windows))
 
 
 class CommandIdentityTests(unittest.TestCase):
@@ -634,16 +847,27 @@ class PaidRunIntegrationTests(unittest.TestCase):
                     output.mkdir(exist_ok=True)
                 retained = output / "retained.ply" if directory else output
                 retained.write_bytes(b"previously paid output")
-                with (
-                    patch.object(
-                        self.pipeline,
-                        "world_mode",
-                        return_value={"mode": "multi-image", "frames": [0]},
-                    ),
-                    patch.object(run_clip, "run") as provider,
-                    self.assertRaisesRegex(run_clip.QualityStop, "retained"),
-                ):
-                    getattr(self.pipeline, method)()
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        patch.object(
+                            self.pipeline,
+                            "world_mode",
+                            return_value={"mode": "multi-image", "frames": [0]},
+                        )
+                    )
+                    if method == "clean_multi":
+                        # The fixture's cameras.json carries no sourceSha256, so stand in for the
+                        # real binding step; this subtest checks retained outputs, not timing.
+                        stack.enter_context(
+                            patch.object(
+                                self.pipeline,
+                                "multi_source_selection",
+                                return_value={"frames": [{"frameIndex": 0}]},
+                            )
+                        )
+                    provider = stack.enter_context(patch.object(run_clip, "run"))
+                    with self.assertRaisesRegex(run_clip.QualityStop, "retained"):
+                        getattr(self.pipeline, method)()
                 provider.assert_not_called()
                 self.assertEqual(retained.read_bytes(), b"previously paid output")
         self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())

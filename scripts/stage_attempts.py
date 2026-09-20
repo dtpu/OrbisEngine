@@ -1,6 +1,10 @@
 """Persistent allowance for runner-controlled paid Modal executions.
 
-The three-execution ceiling is per original source SHA and logical stage, across candidates.
+The three-execution ceiling is per original source SHA, logical stage, and source selection window,
+across candidates. A window is `parameters["sourceSelection"]` ({start, end} seconds, or null for the
+whole source): distinct shot windows of one source are distinct work, not retries of each other.
+Windows that overlap by more than half of the shorter one are one work unit, so nudged boundaries
+cannot buy a fresh allowance, and at most MAX_DISTINCT_WINDOWS windows exist per source and stage.
 Inpainting operations share one allowance; individual LHM track suffixes have separate allowances.
 This does not count direct experiment scripts, SSH fine-tuning, OpenAI, or Marble generation.
 The orchestrator must account for those separately. Costs here are evidence, not dollar budgets.
@@ -30,8 +34,52 @@ from pathlib import Path
 
 SCHEMA = "wander.pipeline-attempts/1"
 MAX_EXECUTIONS = 3
+MAX_DISTINCT_WINDOWS = 24
+WINDOW_DECIMALS = 3
+WINDOW_OVERLAP_SHARE = 0.5
 INITIAL_HYPOTHESIS = "Initial paid execution using the recorded source, parameters, and code."
 STATUSES = {"pending", "unknown", "completed", "failed"}
+
+
+def normalized_window(selection):
+    """Round a source selection to whole milliseconds; None means the whole source."""
+    if selection is None:
+        return None
+    if not isinstance(selection, dict):
+        raise ValueError("Paid source selection must be a {start, end} object or null")
+    start, end = selection.get("start"), selection.get("end")
+    if start is None or end is None:
+        # A half-specified window cannot be placed; account for it as the whole source.
+        return None
+    if any(type(value) not in (int, float) or not math.isfinite(value) for value in (start, end)):
+        raise ValueError("Paid source selection bounds must be finite numbers")
+    start = round(float(start), WINDOW_DECIMALS)
+    end = round(float(end), WINDOW_DECIMALS)
+    if end < start:
+        raise ValueError("Paid source selection must not end before it starts")
+    return (start, end)
+
+
+def same_work_unit(first, second):
+    """True when two normalized windows of one source and stage are the same unit of paid work."""
+    if first == second:
+        return True
+    if first is None or second is None:
+        # The whole source covers every window of that source.
+        return True
+    overlap = min(first[1], second[1]) - max(first[0], second[0])
+    shorter = min(first[1] - first[0], second[1] - second[0])
+    if shorter <= 0:
+        # An instant selection belongs to any window that contains it.
+        return overlap >= 0
+    return overlap > WINDOW_OVERLAP_SHARE * shorter
+
+
+def claim_window(claim):
+    parameters = claim.get("parameters")
+    return normalized_window(
+        parameters.get("sourceSelection") if isinstance(parameters, dict) else None
+    )
 
 
 def digest(value):
@@ -263,7 +311,7 @@ class StageAttempts:
             for alias, canonical in aliases.items()
         ):
             raise ValueError("Invalid paid-stage source aliases")
-        identifiers, counts, direct_claim_sources = set(), {}, set()
+        identifiers, counts, windows, direct_claim_sources = set(), {}, {}, set()
         for attempt in data["attempts"]:
             if not isinstance(attempt, dict):
                 raise ValueError("Malformed saved paid-stage attempt")
@@ -302,8 +350,24 @@ class StageAttempts:
                 direct_claim_sources.add(submitted)
             identifiers.add(attempt["id"])
             key = claim["sourceSha256"], claim["stage"]
+            try:
+                window = claim_window(claim)
+            except ValueError:
+                raise ValueError("Malformed saved paid-stage source selection") from None
+            # `number` stays the per source/stage ordinal that existing ledgers recorded;
+            # `windowNumber` is the newer per-window ordinal and is optional for those ledgers.
             counts[key] = counts.get(key, 0) + 1
-            if counts[key] > MAX_EXECUTIONS or claim.get("number") != counts[key]:
+            claimed = windows.setdefault(key, [])
+            window_number = sum(same_work_unit(window, earlier) for earlier in claimed) + 1
+            claimed.append(window)
+            if (
+                claim.get("number") != counts[key]
+                or window_number > MAX_EXECUTIONS
+                or (
+                    claim.get("windowNumber") is not None and claim["windowNumber"] != window_number
+                )
+                or len(set(claimed)) > MAX_DISTINCT_WINDOWS
+            ):
                 raise ValueError("Invalid saved paid-stage execution count")
         if direct_claim_sources.intersection(aliases):
             raise ValueError("Cannot alias a source hash that already owns paid-stage claims")
@@ -332,6 +396,7 @@ class StageAttempts:
             raise ValueError("Paid execution requires parameter and code identity")
         submitted_source = source_sha256
         stage = logical_stage(operation)
+        window = normalized_window(parameters.get("sourceSelection"))
         explicit = isinstance(hypothesis, str) and bool(hypothesis.strip())
         hypothesis = (
             hypothesis.strip() if explicit else f"{INITIAL_HYPOTHESIS} Workflow: {operation}."
@@ -339,15 +404,28 @@ class StageAttempts:
         fingerprint = digest({"parameters": parameters, "code": code_version})
         with self._locked() as data:
             source_sha256 = data.get("sourceAliases", {}).get(submitted_source, submitted_source)
-            prior = [
+            stage_prior = [
                 item
                 for item in data["attempts"]
                 if item["claim"]["sourceSha256"] == source_sha256
                 and item["claim"]["stage"] == stage
             ]
+            # Distinct shot windows of one source are distinct work; overlapping ones are not.
+            prior = [
+                item for item in stage_prior if same_work_unit(window, claim_window(item["claim"]))
+            ]
+            if not prior:
+                claimed = {claim_window(item["claim"]) for item in stage_prior}
+                if len(claimed) >= MAX_DISTINCT_WINDOWS:
+                    raise ValueError(
+                        "Paid-stage source windows exhausted "
+                        f"({MAX_DISTINCT_WINDOWS} distinct windows per original source/stage); "
+                        "review the selected shots before claiming another window"
+                    )
             if len(prior) >= MAX_EXECUTIONS:
                 raise ValueError(
-                    "Paid-stage execution allowance exhausted (three total per original source/stage)"
+                    "Paid-stage execution allowance exhausted "
+                    "(three total per original source/stage and source selection window)"
                 )
             if any(item["events"][-1]["status"] in {"pending", "unknown"} for item in prior):
                 raise ValueError(
@@ -373,7 +451,8 @@ class StageAttempts:
                     "submittedSourceSha256": submitted_source,
                     "stage": stage,
                     "operation": operation,
-                    "number": len(prior) + 1,
+                    "number": len(stage_prior) + 1,
+                    "windowNumber": len(prior) + 1,
                     "candidate": str(candidate),
                     "parameters": parameters,
                     "codeVersion": code_version,
