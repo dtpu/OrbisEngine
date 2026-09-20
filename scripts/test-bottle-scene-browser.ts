@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { chromium } from 'playwright-core';
 import type * as THREE from 'three';
 import type { BottleScene, InteractionPerson } from '../src/interaction/bottle-scene';
+import type { BottlePhysics, BottlePhysicsOptions } from '../src/interaction/bottle-physics';
 import type { ViewerDiagnostics } from './viewer-types';
 import { createBottleAgentMiddleware } from '../server/bottle-agent';
 
@@ -21,6 +22,9 @@ type VoiceProbeWindow = Window & { __voiceChecks: Array<Record<string, unknown>>
 const output = resolve('.context/evidence/bottle-agent');
 await mkdir(output, { recursive: true });
 const liveVoice = process.env.WANDER_TEST_LIVE_VOICE === '1';
+const speechFixture = process.env.WANDER_TEST_VOICE_WAV;
+if (speechFixture && !liveVoice)
+  throw new Error('A microphone fixture requires live voice opt-in.');
 if (liveVoice && !process.env.OPENAI_API_KEY) throw new Error('Live voice requires a server key.');
 const providerChecks: Array<{ status: number; code?: string; param?: string }> = [];
 // The default empty environment proves Enter VR remains usable when voice setup cannot mint a
@@ -67,6 +71,39 @@ const errors: string[] = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
   page.on('pageerror', (error) => errors.push(error.message));
+  if (speechFixture) {
+    const fixture = await readFile(speechFixture);
+    await page.route('**/__test-voice.wav', (route) =>
+      route.fulfill({ body: fixture, contentType: 'audio/wav' }),
+    );
+    await page.addInitScript(() => {
+      // Owned synthetic test speech only: feed the actual provider VAD through a controlled track.
+      navigator.mediaDevices.getUserMedia = async () => {
+        const context = new AudioContext();
+        const output = context.createMediaStreamDestination();
+        const silence = context.createConstantSource();
+        silence.offset.value = 0;
+        silence.connect(output);
+        silence.start();
+        await context.resume();
+        (window as unknown as { __speakForTest: () => Promise<void> }).__speakForTest =
+          async () => {
+            const buffer = await context.decodeAudioData(
+              await (await fetch('/__test-voice.wav')).arrayBuffer(),
+            );
+            const source = context.createBufferSource();
+            source.buffer = buffer;
+            source.connect(output);
+            const finished = new Promise<void>((resolve) => {
+              source.onended = () => resolve();
+            });
+            source.start();
+            await finished;
+          };
+        return output.stream;
+      };
+    });
+  }
   if (liveVoice) {
     await page.addInitScript(() => {
       const probe = window as unknown as VoiceProbeWindow;
@@ -84,6 +121,20 @@ try {
         }
         override createDataChannel(label: string, options?: RTCDataChannelInit) {
           const channel = super.createDataChannel(label, options);
+          const send = channel.send.bind(channel);
+          channel.send = ((data: string) => {
+            const event = JSON.parse(data);
+            if (
+              ['response.create', 'response.cancel', 'output_audio_buffer.clear'].includes(
+                event.type,
+              )
+            )
+              probe.__voiceChecks.push({
+                sent: event.type,
+                turn: event.response?.metadata?.wander_turn,
+              });
+            send(data);
+          }) as typeof channel.send;
           channel.addEventListener('message', (event) => {
             const data = JSON.parse(event.data);
             if (data.type === 'error')
@@ -92,8 +143,22 @@ try {
                 code: data.error?.code,
                 param: data.error?.param,
               });
-            else if (data.type.startsWith('session.') || data.type === 'response.done')
-              probe.__voiceChecks.push({ type: data.type });
+            else if (
+              data.type.startsWith('session.') ||
+              data.type.startsWith('input_audio_buffer.') ||
+              [
+                'response.created',
+                'response.done',
+                'output_audio_buffer.started',
+                'output_audio_buffer.stopped',
+              ].includes(data.type)
+            )
+              probe.__voiceChecks.push({
+                type: data.type,
+                status: data.response?.status,
+                id: data.item_id,
+                turn: data.response?.metadata?.wander_turn,
+              });
           });
           return channel;
         }
@@ -130,7 +195,7 @@ try {
               ? 'text/html'
               : 'application/octet-stream';
         await route.fulfill({ body: await readFile(file), contentType });
-      } else await route.continue();
+      } else await route.fallback();
     });
   }
   await page.route('**/api/bottle-agent/*', async (route) => {
@@ -196,6 +261,44 @@ try {
   assert.equal(initial.state.interrupted, false);
   assert.equal(initial.state.playing, true);
   assert.equal(initial.state.sceneId, 'elevator');
+  const floorDrops = await page.evaluate(() => {
+    const interaction = (window.wander as SceneDiagnostics).interaction as unknown as {
+      physics: { options: BottlePhysicsOptions; constructor: Function };
+    };
+    const options = interaction.physics.options;
+    const Physics = interaction.physics.constructor as new (
+      options: BottlePhysicsOptions,
+    ) => BottlePhysics;
+    return [
+      [0.7, -0.8],
+      [-0.1308783, -4.1531556],
+    ].map(([x, z]) => {
+      const floor = options.floorAt(x!, z!);
+      const physics = new Physics(options);
+      physics.startFlight([x!, 0.4, z!], [0, -options.maxSpeed, 0]);
+      let minimum = Infinity;
+      for (let i = 0; i < 720; i++) {
+        physics.step(1 / 72);
+        minimum = Math.min(minimum, physics.snapshot().position[1]);
+        if (physics.snapshot().mode === 'resting') break;
+      }
+      return {
+        floor,
+        minimum,
+        radius: options.floorRadius ?? options.radius,
+        state: physics.snapshot(),
+      };
+    });
+  });
+  for (const drop of floorDrops) {
+    assert.ok(drop.floor !== null && Number.isFinite(drop.floor), JSON.stringify(drop));
+    assert.equal(drop.state.mode, 'resting', JSON.stringify(drop));
+    assert.ok(drop.minimum >= drop.floor! + drop.radius - 1e-6, JSON.stringify(drop));
+  }
+  await writeFile(`${output}/floor-drops.json`, JSON.stringify(floorDrops, null, 2));
+  console.log(
+    'Fast drops settle above the reported sparse-floor locations using production scene callbacks',
+  );
   assert.equal(await page.evaluate(() => window.wander.video.loop), false);
   assert.equal(
     await page.evaluate(
@@ -387,6 +490,45 @@ try {
     });
   };
   await headAt(1.15);
+  if (speechFixture) {
+    await page.evaluate(() => window.wander.play(true));
+    for (let turn = 0; turn < 2; turn++) {
+      await armLiveAudio();
+      await page.evaluate(() =>
+        (window as unknown as { __speakForTest: () => Promise<void> }).__speakForTest(),
+      );
+      await page.waitForFunction(() => {
+        const state = (window.wander as SceneDiagnostics).interaction.snapshot();
+        return state.lastEvent === 'speech' && state.interrupted && !state.playing;
+      });
+      assert.equal(await page.evaluate(() => window.wander.video.paused), true);
+      const response = await measureLiveAudio();
+      const evidence = {
+        turn,
+        response,
+        state: await snapshot(),
+        events: await page.evaluate(() => (window as unknown as VoiceProbeWindow).__voiceChecks),
+      };
+      await writeFile(`${output}/live-speech-${turn + 1}.json`, JSON.stringify(evidence, null, 2));
+      assert.ok(
+        response?.completed && response.peak > 0.0001 && response.reply,
+        JSON.stringify(evidence),
+      );
+      assert.equal(
+        (await snapshot()).voiceConnected,
+        true,
+        'Voice must stay connected for subsequent speech',
+      );
+    }
+    console.log(
+      'Live microphone VAD pauses source playback and two consecutive utterances receive audible replies',
+    );
+    await page.evaluate(() => {
+      (window.wander as SceneDiagnostics).interaction.replay(false);
+      window.wander.setTime(2);
+    });
+    await headAt(1.15);
+  }
   await armLiveAudio();
   await page.evaluate(() => window.wander.play(true));
   await headAt(1.02);
@@ -632,27 +774,32 @@ try {
   );
   held = await snapshot();
   assert.equal(held.bottle.mode, 'held');
-  await page.evaluate((bottle) => {
-    const w = window.wander as SceneDiagnostics;
-    const rig = w.scene.getObjectByName('xr-rig')!;
-    const target = new w.THREE.Vector3(...bottle);
-    const origin = target
-      .clone()
-      .add(new w.THREE.Vector3(0, 0.2, 0.5).multiplyScalar(w.walk!.stature));
-    const facing = new w.THREE.Quaternion().setFromRotationMatrix(
-      new w.THREE.Matrix4().lookAt(origin, target, new w.THREE.Vector3(0, 1, 0)),
+  const lookAtBottle = async (bottle: number[], offset = [0, 0.2, 0.5]) =>
+    page.evaluate(
+      ({ bottle, offset }) => {
+        const w = window.wander as SceneDiagnostics;
+        const rig = w.scene.getObjectByName('xr-rig')!;
+        const target = new w.THREE.Vector3(...bottle);
+        const origin = target
+          .clone()
+          .add(new w.THREE.Vector3(...offset).multiplyScalar(w.walk!.stature));
+        const facing = new w.THREE.Quaternion().setFromRotationMatrix(
+          new w.THREE.Matrix4().lookAt(origin, target, new w.THREE.Vector3(0, 1, 0)),
+        );
+        facing.premultiply(rig.getWorldQuaternion(new w.THREE.Quaternion()).invert());
+        const euler = new w.THREE.Euler().setFromQuaternion(facing, 'YXZ');
+        const local = rig.worldToLocal(origin);
+        Object.assign(window.__fakeXR.head, {
+          x: local.x,
+          y: local.y,
+          z: local.z,
+          yaw: euler.y,
+          pitch: euler.x,
+        });
+      },
+      { bottle, offset },
     );
-    facing.premultiply(rig.getWorldQuaternion(new w.THREE.Quaternion()).invert());
-    const euler = new w.THREE.Euler().setFromQuaternion(facing, 'YXZ');
-    const local = rig.worldToLocal(origin);
-    Object.assign(window.__fakeXR.head, {
-      x: local.x,
-      y: local.y,
-      z: local.z,
-      yaw: euler.y,
-      pitch: euler.x,
-    });
-  }, held.bottle.position);
+  await lookAtBottle(held.bottle.position);
   await frames(4);
   await page.screenshot({ path: `${output}/held-xr.png` });
   const stature = initial.stature!;
@@ -671,6 +818,39 @@ try {
   assert.equal((await snapshot()).playing, false);
   assert.equal((await snapshot()).bottle.mode, 'returned');
   console.log('Exiting and re-entering VR preserves the interrupted scene');
+
+  await handAt((await snapshot()).bottle.position, true);
+  assert.equal((await snapshot()).bottle.mode, 'held');
+  const dropPosition = [0.7, 0.4, -0.8];
+  await handAt(dropPosition, true, 30);
+  await handAt(dropPosition, false);
+  await page.waitForFunction(
+    () => (window.wander as SceneDiagnostics).interaction.snapshot().bottle.mode === 'resting',
+  );
+  const resting = await snapshot();
+  assert.equal(resting.bottle.lost, false);
+  await lookAtBottle(resting.bottle.position, [0, 1, 1]);
+  await frames(6);
+  const floorClearance = await page.evaluate(() => {
+    const w = window.wander as SceneDiagnostics;
+    const proxy = w.scene.getObjectByName('interaction-bottle-proxy')!;
+    const [x, , z] = w.interaction.snapshot().bottle.position;
+    const options = (w.interaction.physics as unknown as { options: BottlePhysicsOptions }).options;
+    return {
+      floor: options.floorAt(x, z),
+      visibleBottom: new w.THREE.Box3().setFromObject(proxy).min.y,
+      visible: proxy.visible,
+    };
+  });
+  assert.equal(floorClearance.visible, true);
+  assert.ok(floorClearance.floor !== null);
+  assert.ok(floorClearance.visibleBottom >= floorClearance.floor! - 1e-6);
+  await writeFile(
+    `${output}/resting-bottle.json`,
+    JSON.stringify({ resting, floorClearance }, null, 2),
+  );
+  await page.screenshot({ path: `${output}/resting-xr.png` });
+  console.log('A controller-released bottle remains visible above the rendered floor support');
 
   // The same build must keep the established looping viewer outside the experiment.
   await page.evaluate(async () => window.wander.spark.renderer.xr.getSession()!.end());
