@@ -95,10 +95,14 @@ source footage confirmed the basic held-pose target; this is not a precise new w
 The ordinary viewer still loops when the experiment is absent. Focused tests, existing XR/audio/
 collision regressions, TypeScript/build, and repository formatting were checked separately.
 
-The live provider check created temporary credentials successfully, but the actual realtime call
-returned HTTP 429 `credit_balance_exhausted`. Generated speech and audible spatial routing therefore
-remain unverified until the server account has credits. SDK lifecycle/audio-gate checks use mocked
-transport. A connected Quest entered a real immersive session and microphone permission was
-granted; its provider handshake also returned HTTP 429. Controller comfort, hand tracking, echo
-rejection of the recorded soundtrack, perceived latency, and spatial sound still need headset
-testing. Browser screenshots and measurements stay in ignored `.context/evidence/bottle-agent/`.
+The first live provider check returned HTTP 429 `credit_balance_exhausted`. After switching the
+private local credential on 2026-09-20, the live browser test connected successfully and measured
+generated audio through the spatial output graph. The full live interaction browser check passed.
+SDK lifecycle/audio-gate unit checks use mocked transport.
+
+A connected Quest entered an earlier build in a real immersive session and granted microphone
+permission. The updated page is loaded there, but the headset was asleep during the new credential
+check. Successful generated speech has therefore been measured in the browser, not heard on the
+headset. Controller comfort, hand tracking, source-soundtrack echo rejection, perceived latency,
+and spatial sound still need headset testing. Screenshots and measurements stay in ignored
+`.context/evidence/bottle-agent/`.
