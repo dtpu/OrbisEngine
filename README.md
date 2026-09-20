@@ -9,8 +9,6 @@ pick up what they are holding.
 
 It works on phone clips and on movie shots. Built at Hack the North 2026.
 
-The code, env vars and package still use the project's first name, Wander.
-
 ## How it works
 
 ```mermaid
