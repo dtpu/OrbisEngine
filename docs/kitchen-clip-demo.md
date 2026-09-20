@@ -13,8 +13,8 @@ Obtain the team's read-only `.env.local` privately using the
 does not require Modal credentials or a new reconstruction run.
 
 - [Clip picker: kitchen selected](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
-- [Kitchen with repaired wall and aisle](http://127.0.0.1:5399/reviews/kitchen-continuation/room-access/index.html)
-- [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/room-access/preview.mp4)
+- [Kitchen with repaired fixtures](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/index.html)
+- [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/preview.mp4)
 - [Earlier kitchen repair notes](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
 - [Previous kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
 - [Accepted gym scene](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail)
@@ -33,7 +33,12 @@ seven selected source observations and has large missing surfaces, especially wh
 from the recorded camera path. Those black areas are absent geometry, not unfinished downloads
 or a detail setting.
 
-The current picker adds filtered surroundings from the existing generated kitchen. It restores
+The current picker includes the [fixture repair](kitchen-fixture-repair.md): a dense opaque
+freezer door, improved refrigerator-front texture, a source-timed microwave door, a small-pot lid
+track and fitted wall faces beside the refrigerator. Hidden surfaces and some motion are inferred;
+the carried bag and moving pitcher remain absent.
+
+The picker adds filtered surroundings from the existing generated kitchen. It restores
 much of the doorway, ceiling and adjacent room while preserving the observed cooking area,
 animation and object files. These surrounding surfaces and their appearance are inferred;
 they do not establish a source-accurate complete room. The previous version remains in

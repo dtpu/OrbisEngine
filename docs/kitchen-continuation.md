@@ -381,3 +381,13 @@ fresh-download checks. All 16,956 unaffected viewer paths and all 29,022 previou
 remain identical. Publication reported no exclusions. Evidence is archived under
 `evidence/kitchen-room-access-v1/`; the local hash report is
 `.context/evidence/kitchen-wall-repair/publication-verification.json`.
+
+## Appliance shells, microwave and small-pot lid
+
+The [fixture repair](kitchen-fixture-repair.md) replaces the perforated freezer face with an
+opaque shell, improves the refrigerator-front texture, adds bounded wall faces beside it and
+adds source-timed microwave-door and small-pot-lid tracks. Source observations, hidden surfaces,
+fit uncertainty and rejected bag work are documented there. Existing actor/camera/audio assets,
+the pan tracks, walking supports and accepted gym remain unchanged.
+No new paid operation was submitted. Review media is under
+`/reviews/kitchen-continuation/fixture-repair/`; older review versions remain available.
