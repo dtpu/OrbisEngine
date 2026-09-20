@@ -13,8 +13,10 @@ Obtain the team's read-only `.env.local` privately using the
 does not require Modal credentials or a new reconstruction run.
 
 - [Clip picker: kitchen selected](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
+- [Kitchen with inferred surroundings](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/index.html)
+- [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/preview.mp4)
 - [Kitchen scene and review](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
-- [Kitchen preview video](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
+- [Previous kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
 - [Accepted gym scene](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail)
 - [Gym preview video](http://127.0.0.1:5399/reviews/gym-repair/gym-contact-wip.mp4)
 
@@ -29,7 +31,15 @@ The kitchen animation covers the full 50.73-second recording with original audio
 samples. This is temporal coverage, **not a complete room reconstruction**. The static room uses
 seven selected source observations and has large missing surfaces, especially when walking away
 from the recorded camera path. Those black areas are absent geometry, not unfinished downloads
-or a detail setting. There is currently no validated complete kitchen walkthrough.
+or a detail setting.
+
+The current picker adds filtered surroundings from the existing generated kitchen. It restores
+much of the doorway, ceiling and adjacent room while preserving the observed cooking area,
+animation and object files. These surrounding surfaces and their appearance are inferred;
+they do not establish a source-accurate complete room. The previous version remains in
+**Spares and experiments** as **Kitchen · previous partial room** (`clip=kitchen-observed`).
+Walking retains the original observed floor and collision grid; the generated background does
+not add validated walking surfaces. See the [coverage repair](kitchen-continuation.md#inferred-surroundings-repair).
 
 James's final 50 samples reuse his early saved appearance; the 559 early samples
 are unchanged. The scene includes the inferred held pan, its handoff to the observed resting
