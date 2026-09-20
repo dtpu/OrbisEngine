@@ -3597,8 +3597,14 @@ export async function createFourD({ search, renderer, root, scope }) {
             solid: walkGrid.solid[k],
           };
     const support = highestSupport(staticColliders, x, z, maximumSupport, walkerRadius);
-    if (support !== undefined && (!Number.isFinite(cell.floor) || support > cell.floor))
-      cell.floor = support;
+    if (support !== undefined) {
+      if (!Number.isFinite(cell.floor) || support > cell.floor) cell.floor = support;
+      // Reviewed finite support can bridge a hole in the observed floor footprint. It must
+      // contribute to navigation as well as height; otherwise the grid edge is an invisible
+      // wall across the bridge. Occupancy, step limits and capsule sweeps still apply.
+      cell.inside = 1;
+      cell.dist = 0;
+    }
     return cell;
   }
   function interactionFloorAt(x, z) {
