@@ -14,11 +14,11 @@ with workflow.unsafe.imports_passed_through():
     from orchestrator.contracts import NodeStatus, StageKind
     from orchestrator.graph import (
         BranchArtifact,
-        GraphNode,
         RunGraph,
         ShotBranch,
         child_workflows_for_shots,
         instantiate_graph,
+        rebuild_expanded_node,
     )
     from orchestrator.stages import GraphOptions
 
@@ -319,10 +319,10 @@ def restore_state(
                 # against, however identical it looks. Hand over the plain fields and let the
                 # node build its own.
                 definition = definition.model_dump(mode="json")
-            node = GraphNode(
-                id=node_id,
-                stage_type=value.get("stage_type") or node_id,
-                definition=definition,
+            node = rebuild_expanded_node(
+                node_id,
+                value.get("stage_type") or node_id,
+                definition,
                 dependencies=tuple(value.get("dependencies") or ()),
                 parent_node_id=value.get("parent_node_id"),
                 branch_key=value.get("branch_key"),
