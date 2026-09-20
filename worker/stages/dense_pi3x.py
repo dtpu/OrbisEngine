@@ -18,7 +18,101 @@ from wander_worker.masks import people_masks
 from wander_worker.ply import write_point_ply, home_distance
 
 
+# A similarity transform in three dimensions is only determined by three independent
+# correspondences. Trimming below that leaves an unsolvable system whose SVD does not converge.
+MINIMUM_CORRESPONDENCES = 3
+
+# Confidence a reconstructed point needs before it anchors the shared frame.
+ANCHOR_CONFIDENCE = 0.5
+
+# Absolute confidence a point needs to count as reconstructed at all.
+VALID_CONFIDENCE = 0.3
+
+# When no point clears that bar, keep this share of each view's most confident points instead.
+VALID_FALLBACK_FRACTION = 0.2
+
+# Points a frame needs before its person is worth exporting.
+MINIMUM_PERSON_POINTS = 100
+
+# Share of frames that must reconstruct a person for the stage to be worth continuing with.
+MINIMUM_PERSON_FRAMES = 0.5
+
+# Share of requested frames that must actually decode before the source is called unusable.
+MINIMUM_DECODED_FRAMES = 0.5
+
+
+def decoded_span_usable(decoded: int, requested: int, floor=MINIMUM_DECODED_FRAMES) -> bool:
+    """Whether enough of the requested span decoded to reconstruct from.
+
+    Container metadata routinely overstates frame count, so the last requested frames can be
+    undecodable even though the file is fine. Losing a short tail is normal; losing most of the
+    clip means the source is broken and should be reported as such.
+    """
+    if requested == 0:
+        return False
+    return decoded / requested >= floor
+
+
+def person_frames_usable(reconstructed: int, skipped: int, floor=MINIMUM_PERSON_FRAMES) -> bool:
+    """Whether enough frames carry a person to be worth continuing with.
+
+    A single sparse frame is normal: a subject can be occluded, leave the shot, or sit too far
+    from camera to resolve. Aborting the stage on the first one throws away every frame that did
+    reconstruct. Judge the run as a whole instead.
+    """
+    total = reconstructed + skipped
+    if total == 0:
+        return False
+    return reconstructed / total >= floor
+
+
+def confidence_cutoff(confidence, threshold=VALID_CONFIDENCE, fraction=VALID_FALLBACK_FRACTION):
+    """The confidence a point must reach to count, for one view.
+
+    Low-texture, motion-blurred or wide broadcast footage can leave every point under the
+    absolute bar, which produced a reconstruction of nothing and an unreadable failure much
+    further down. Falling back to the view's own most confident points keeps a weak
+    reconstruction, which the alignment guard downstream can still reject on its merits.
+    """
+    finite = confidence[np.isfinite(confidence)]
+    if finite.size == 0:
+        return threshold, False
+    if (finite > threshold).any():
+        return threshold, False
+    return float(np.quantile(finite, 1.0 - fraction)), True
+
+
+def anchor_indices(*, valid, people, conf):
+    """Pick the points that tie one anchor view into the shared frame.
+
+    Static, confident, non-person geometry is what should carry the alignment. Footage that is
+    mostly people over low-texture ground can leave that set empty, and an empty set used to
+    travel silently into the solver. Relax instead, in order, and say which basis was used: a
+    weaker anchor that reports itself beats no reconstruction at all.
+    """
+    attempts = (
+        ("static", valid & (~people) & (conf > ANCHOR_CONFIDENCE)),
+        ("low-confidence static", valid & (~people)),
+        ("confident including people", valid & (conf > ANCHOR_CONFIDENCE)),
+        ("any valid", valid),
+    )
+    for basis, mask in attempts:
+        idx = np.flatnonzero(mask)
+        if len(idx) >= MINIMUM_CORRESPONDENCES:
+            return idx, basis
+    return np.flatnonzero(valid), "any valid"
+
+
 def similarity(src, dst):
+    """Fit scale, rotation and translation taking src onto dst, trimming outliers.
+
+    Short shots and sparse matches can leave very few usable correspondences, and depth can
+    produce non-finite points. Both used to reach ``np.linalg.svd`` as a degenerate or NaN
+    matrix, which fails as "SVD did not converge" and hides the real cause. Non-finite pairs are
+    dropped up front, and outlier trimming never shrinks the set below a solvable system: a
+    caller gets either a fit it can judge, or a message naming what was missing.
+    """
+
     def fit(a, b):
         ma, mb = a.mean(0), b.mean(0)
         aa, bb = a - ma, b - mb
@@ -29,11 +123,25 @@ def similarity(src, dst):
         s = np.sum(S * np.diag(D)) / np.mean(np.sum(aa * aa, 1))
         return s, R, mb - s * R @ ma
 
-    keep = np.ones(len(src), bool)
+    src, dst = np.asarray(src, float), np.asarray(dst, float)
+    if len(src) != len(dst):
+        raise ValueError(f"correspondences must pair up: {len(src)} source, {len(dst)} target")
+    finite = np.isfinite(src).all(1) & np.isfinite(dst).all(1)
+    if int(finite.sum()) < MINIMUM_CORRESPONDENCES:
+        raise ValueError(
+            f"anchor alignment needs at least {MINIMUM_CORRESPONDENCES} finite correspondences, "
+            f"got {int(finite.sum())} of {len(src)}"
+        )
+    keep = finite.copy()
+    s, R, t = fit(src[keep], dst[keep])
+    error = np.linalg.norm(src @ R.T * s + t - dst, axis=1)
     for _ in range(4):
+        candidate = finite & (error <= np.percentile(error[finite], 75))
+        if int(candidate.sum()) < MINIMUM_CORRESPONDENCES:
+            break
+        keep = candidate
         s, R, t = fit(src[keep], dst[keep])
         error = np.linalg.norm(src @ R.T * s + t - dst, axis=1)
-        keep = error <= np.percentile(error, 75)
     return s, R, t, float(np.sqrt(np.mean(error[keep] ** 2)))
 
 
@@ -118,18 +226,33 @@ def main():
         raise ValueError("Source frame rate below requested independent output density")
     times = indices / srcfps
     N = len(indices)
+    decoded = 0
     for i, idx in enumerate(indices):
         file = framesdir / f"f_{i:06d}.jpg"
         if file.exists():
+            decoded = i + 1
             continue
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, bgr = cap.read()
         if not ok:
-            raise RuntimeError(f"Decode failed: {idx}")
+            # The container claimed more frames than it holds. Keep the span that exists.
+            print(
+                f"decode stopped at source frame {idx} ({i} of {len(indices)} requested)",
+                flush=True,
+            )
+            break
         if bgr.shape[1] > 1024:
             bgr = cv2.resize(bgr, (1024, round(bgr.shape[0] * 1024 / bgr.shape[1])))
         cv2.imwrite(str(file), bgr, [cv2.IMWRITE_JPEG_QUALITY, 96])
+        decoded = i + 1
     cap.release()
+    if decoded < len(indices):
+        if not decoded_span_usable(decoded, len(indices)):
+            raise RuntimeError(
+                f"Decode failed: only {decoded} of {len(indices)} requested frames are readable"
+            )
+        indices, times = indices[:decoded], times[:decoded]
+        N = decoded
     files = sorted(framesdir.glob("f_*.jpg"))
     import torch
 
@@ -153,7 +276,18 @@ def main():
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             r = model(imgs=imgs)
         confidence = torch.sigmoid(r["conf"][0, ..., 0])
-        valid = confidence > 0.3
+        valid = confidence > VALID_CONFIDENCE
+        for j in range(valid.shape[0]):
+            if bool(valid[j].any()):
+                continue
+            cutoff, relaxed = confidence_cutoff(confidence[j].float().cpu().numpy())
+            if relaxed:
+                valid[j] = confidence[j] >= cutoff
+                print(
+                    f"view {ids[j]}: no point reached confidence {VALID_CONFIDENCE}; "
+                    f"keeping the top {VALID_FALLBACK_FRACTION:.0%} above {cutoff:.3f}",
+                    flush=True,
+                )
         edge = depth_normal_edge(r["local_points"], rtol=0.03, mask=valid[None])[0]
         result = dict(
             points=r["points"][0].float().cpu().numpy(),
@@ -184,12 +318,22 @@ def main():
     rng = np.random.default_rng(13)
     matches = []
     for j in range(len(anchors)):
-        good = base["valid"][j] & (~base["people"][j]) & (base["conf"][j] > 0.5)
-        idx = np.flatnonzero(good)
+        idx, basis = anchor_indices(
+            valid=base["valid"][j], people=base["people"][j], conf=base["conf"][j]
+        )
+        if len(idx) < MINIMUM_CORRESPONDENCES:
+            raise ValueError(
+                f"anchor {j} has no usable points: valid={int(base['valid'][j].sum())}, "
+                f"non-person={int((~base['people'][j]).sum())}, "
+                f"conf>{ANCHOR_CONFIDENCE}={int((base['conf'][j] > ANCHOR_CONFIDENCE).sum())}"
+            )
+        if basis != "static":
+            print(f"anchor {j}: falling back to {basis} points", flush=True)
         matches.append(rng.choice(idx, min(1500, len(idx)), replace=False))
     cams = [None] * N
     log = []
     point_counts = []
+    sparse_frames = []
     camera_dir = out / "camera-batches"
     camera_dir.mkdir(exist_ok=True)
     for lo in range(0, N, a.batch):
@@ -232,11 +376,22 @@ def main():
             xyz = p["points"][j][valid] @ R.T * s + t
             col = p["rgb"][j][valid]
             xyz = (xyz @ R0.T + t00) * scale * flip
-            if len(xyz) < 100:
-                raise RuntimeError(f"Person vanished at {times[i]}s ({len(xyz)} points)")
-            write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
-            point_counts.append(len(xyz))
-            camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)
+            sparse = len(xyz) < MINIMUM_PERSON_POINTS
+            if sparse:
+                # The subject could not be reconstructed here, so write no person cloud. The
+                # camera is solved from the view itself and does not depend on the subject, so
+                # it is still recorded: dropping it would leave a hole that every consumer of
+                # cameras.json has to reason about, including the anchors this solve is built on.
+                sparse_frames.append((float(times[i]), int(len(xyz))))
+                print(
+                    f"frame {i} at {times[i]:.3f}s: only {len(xyz)} person points, "
+                    "recording the camera without a person cloud",
+                    flush=True,
+                )
+            else:
+                write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
+                point_counts.append(len(xyz))
+            camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)  # solved per view
             cams[i] = dict(
                 position=camera[:3, 3].tolist(),
                 time=float(times[i]),
@@ -291,6 +446,19 @@ def main():
         note="Each source frame reconstructed with shared static anchors. >=12 independent frames/sec; single observed-facing surface, not complete human volume.",
     )
     (out / "sequence.json").write_text(json.dumps(meta, indent=2))
+    if not person_frames_usable(len(point_counts), len(sparse_frames)):
+        worst = ", ".join(f"{t:.2f}s={n}" for t, n in sparse_frames[:6])
+        raise RuntimeError(
+            f"Person reconstructed in only {len(point_counts)} of "
+            f"{len(point_counts) + len(sparse_frames)} frames "
+            f"(need {MINIMUM_PERSON_FRAMES:.0%}); sparse frames: {worst}"
+        )
+    if sparse_frames:
+        print(
+            f"{len(sparse_frames)} of {len(point_counts) + len(sparse_frames)} frames had too "
+            f"few person points and were skipped",
+            flush=True,
+        )
     (out / "cameras.json").write_text(
         json.dumps(
             dict(

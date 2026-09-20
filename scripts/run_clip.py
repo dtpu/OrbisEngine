@@ -49,6 +49,15 @@ LOCAL_ENV = {
     "MODAL_PROFILE": os.environ.get("MODAL_PROFILE", "dtpu"),
 }
 
+
+def runs_dir() -> Path:
+    return Path(os.environ.get("WANDER_RUNS_DIR", ROOT / ".context/run")).expanduser().resolve()
+
+
+def public_dir() -> Path:
+    return Path(os.environ.get("WANDER_PUBLIC_DIR", ROOT / "public")).expanduser().resolve()
+
+
 MARBLE_MODES = ("video", "image", "multi", "both", "none")
 # scale_fit gates on each sampled frame's depth-ratio MEDIAN (0.95-1.05) and on its p10/p90: the median
 # alone passed hpwide with p10 0.71 / p90 1.37 -- two modes, 0.7 and 1.15, from a 15 deg frame tilt,
@@ -324,13 +333,13 @@ class Pipeline:
         self.clip = Path(clip or a.clip).resolve()
         self.name = name or a.name
         self.shot = shot
-        self.ctx = ROOT / ".context" / "run" / self.name
+        self.ctx = runs_dir() / self.name
         self.ctx.mkdir(parents=True, exist_ok=True)
         for directory in (SHARE, CLIPS, MARBLE_DIR):
             directory.mkdir(parents=True, exist_ok=True)
         self.state = State(self.ctx / "state.json")
         self.info = probe(self.clip)
-        public = ROOT / "public"
+        public = public_dir()
         if not self.clip.is_relative_to(public):
             # Keep externally supplied source footage available to the shared viewer too.
             dest = public / "clips" / self.name / ("source" + self.clip.suffix.lower())
@@ -679,7 +688,7 @@ class Pipeline:
                     "--marble-dir",
                     str(MARBLE_DIR),
                     "--spz",
-                    f"public/marble-{self.name}-{suffix}.spz",
+                    str(public_dir() / f"marble-{self.name}-{suffix}.spz"),
                     "--thumb",
                     str(SHARE / f"{self.name}-{suffix}-thumb.png"),
                     *(extra or []),
@@ -729,7 +738,7 @@ class Pipeline:
                         "--marble-dir",
                         str(MARBLE_DIR),
                         "--spz",
-                        f"public/marble-{self.name}-{suffix}.spz",
+                        str(public_dir() / f"marble-{self.name}-{suffix}.spz"),
                         "--thumb",
                         str(SHARE / f"{self.name}-{suffix}-thumb.png"),
                     ],
@@ -749,7 +758,8 @@ class Pipeline:
             f"poll of operation {op_id} failed {self.a.poll_attempts} times. The world "
             f"is generated and paid for; recover it by hand with "
             f"`{Path(PY).name} scripts/marble_world.py {input_type} poll {op_id} --name {self.name}-{suffix} "
-            f"--marble-dir {MARBLE_DIR} --spz public/marble-{self.name}-{suffix}.spz`. "
+            f"--marble-dir {MARBLE_DIR} --spz "
+            f"{public_dir() / f'marble-{self.name}-{suffix}.spz'}`. "
             f"Last error: {last}"
         )
 
@@ -757,7 +767,7 @@ class Pipeline:
         """--reuse-world: adopt an existing world. No generation, no credits."""
         wid = self.a.reuse_world
         wj = MARBLE_DIR / f"{self.name}-{suffix}-world.json"
-        spz = ROOT / "public" / f"marble-{self.name}-{suffix}.spz"
+        spz = public_dir() / f"marble-{self.name}-{suffix}.spz"
         if wj.exists() and spz.exists() and json.loads(wj.read_text()).get("world_id") == wid:
             say(f"   reusing world {wid} already on disk ({spz.name}); no network, no credits")
             return
@@ -948,7 +958,7 @@ class Pipeline:
             raise QualityStop("blocked", "No finite positive fitted scale0; run scale_fit first")
         # verify_world renders with the viewer's own mapping (no re-anchoring), so it needs the
         # packaged, levelled cameras.json, not the raw Pi3X one
-        packaged = ROOT / "public" / "worlds" / f"{self.name}-4d" / "cameras.json"
+        packaged = public_dir() / "worlds" / f"{self.name}-4d" / "cameras.json"
         cameras = packaged if packaged.exists() else self.cameras()
         review = [
             getattr(self.a, field, None)
@@ -1361,7 +1371,7 @@ class Pipeline:
         )
 
     def package(self):
-        out = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        out = public_dir() / "worlds" / f"{self.name}-4d"
         shutil.rmtree(out, ignore_errors=True)
         run(
             [
@@ -1379,7 +1389,7 @@ class Pipeline:
         )
 
     def package_people(self):
-        out = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        out = public_dir() / "worlds" / f"{self.name}-4d"
         shutil.rmtree(out, ignore_errors=True)
         motions = []
         for i in range(self.people_limit):
@@ -1414,7 +1424,7 @@ class Pipeline:
         under gravity, and only an accepted flight is lifted, described from its own pixels, given a
         shape and packaged. A clip in which nothing is thrown reports that and passes.
         """
-        world = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        world = public_dir() / "worlds" / f"{self.name}-4d"
         if not (world / "people.json").exists() and not (world / "person").exists():
             raise RuntimeError("the people package has not run; objects live beside it")
         if not self.object_specs:
@@ -1784,11 +1794,12 @@ class Pipeline:
     # ---- world scale + fine-tune ------------------------------------------
     def world_spz(self) -> Path:
         for suffix in ("clean", "image", "multi"):
-            p = ROOT / "public" / f"marble-{self.name}-{suffix}.spz"
+            p = public_dir() / f"marble-{self.name}-{suffix}.spz"
             if p.exists():
                 return p
         raise RuntimeError(
-            f"no Marble world on disk for {self.name}: expected public/marble-{self.name}-clean.spz"
+            f"no Marble world on disk for {self.name}: expected "
+            f"{public_dir() / f'marble-{self.name}-clean.spz'}"
         )
 
     def cameras(self) -> Path:
@@ -1893,7 +1904,7 @@ class Pipeline:
         return rows, SHARE / f"{tag}-depth-ratio.png"
 
     def person_ply(self) -> Path:
-        p = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
+        p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if not p.exists():
             raise RuntimeError(f"{p} is missing; the package stage has not run")
         return p
@@ -2001,7 +2012,7 @@ class Pipeline:
         floor = self.placement().get("floor")
         if floor is None:
             raise RuntimeError("no implied floor: the package stage has not produced frame_000.ply")
-        wdir = ROOT / "public" / "worlds" / f"{self.name}-4d"
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
         out = wdir / "placement.json"
         cmd = [
             PY,
@@ -2113,7 +2124,7 @@ class Pipeline:
         s = (self.state.data["stages"].get("_scale") or {}).get("scale0")
         if s is None:
             raise RuntimeError("no fitted scale0: run the scale_fit stage first")
-        out = ROOT / "public" / f"marble-{self.name}-finetuned"
+        out = public_dir() / f"marble-{self.name}-finetuned"
         if Path(f"{out}.spz").exists() and "finetune" not in (self.a.force or ""):
             raise RuntimeError(f"{out}.spz already exists; pass --force finetune to redo it")
         export = self.ctx / "ft-export"
@@ -2261,7 +2272,7 @@ class Pipeline:
                     worldUrl=w.get("world_marble_url"),
                 )
             break
-        ply = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
+        ply = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if ply.exists():
             body, feet = body_stats(ply)
             out.update(bodyHeight=body, feetY=feet)
@@ -2313,10 +2324,10 @@ class Pipeline:
             f"marble-{self.name}-clean.spz",
             f"marble-{self.name}-image.spz",
         ):
-            if (ROOT / "public" / cand).exists():
+            if (public_dir() / cand).exists():
                 world = "/" + cand
                 break
-        manifest = ROOT / "public" / "worlds" / f"{self.name}-4d" / "people.json"
+        manifest = public_dir() / "worlds" / f"{self.name}-4d" / "people.json"
         people_arg = ""
         if manifest.exists():
             doc = json.loads(manifest.read_text())
@@ -2549,7 +2560,7 @@ def cut_check(a) -> dict:
     the shots and cannot change its mind about which one it picked half way through.
     """
     clip = Path(a.clip).resolve()
-    out = ROOT / ".context" / "run" / a.name / "cuts.json"
+    out = runs_dir() / a.name / "cuts.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     source_hash = hashlib.sha256()
     with clip.open("rb") as source:
@@ -2695,11 +2706,11 @@ def resolve_shots(a) -> list[tuple[str, Path, dict | None]]:
         )
         say(
             f"   --shot N processes a different one, --all-shots processes every shot separately, "
-            f"and every shot's score is in {ROOT / '.context/run' / a.name / 'cuts.json'}"
+            f"and every shot's score is in {runs_dir() / a.name / 'cuts.json'}"
         )
     plan = []
     for shot in chosen:
-        dest = ROOT / "public" / "clips" / f"{a.name}-shot{shot['index']:02d}.mp4"
+        dest = public_dir() / "clips" / f"{a.name}-shot{shot['index']:02d}.mp4"
         name = (
             a.name if len(chosen) == 1 and not a.all_shots else f"{a.name}-shot{shot['index']:02d}"
         )
@@ -2709,7 +2720,7 @@ def resolve_shots(a) -> list[tuple[str, Path, dict | None]]:
                     PY,
                     "scripts/shot_cuts.py",
                     "--report",
-                    str(ROOT / ".context" / "run" / a.name / "cuts.json"),
+                    str(runs_dir() / a.name / "cuts.json"),
                     "--trim",
                     str(shot["index"]),
                     "--out",
@@ -2728,6 +2739,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
     ap.add_argument("--name", required=True)
+    ap.add_argument(
+        "--orchestrated",
+        action="store_true",
+        help="submit the durable Temporal pipeline instead of using the legacy in-process runner",
+    )
+    ap.add_argument("--pipeline-api", default="http://127.0.0.1:8000")
+    ap.add_argument("--pipeline-token-env", default="WANDER_API_TOKEN")
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument(
         "--source-sha256",
@@ -2916,6 +2934,30 @@ def main():
         help="keep this run local; normally outputs are archived privately without viewer promotion",
     )
     a = ap.parse_args()
+    if a.orchestrated:
+        from run_pipeline import main as run_orchestrated
+
+        arguments = [
+            "--clip",
+            a.clip,
+            "--name",
+            a.name,
+            "--api",
+            a.pipeline_api,
+            "--token-env",
+            a.pipeline_token_env,
+            "--marble",
+            "none" if a.skip_marble else a.marble,
+            "--people",
+            str(a.people or (4 if a.all_people else 1)),
+        ]
+        if a.all_people:
+            arguments.append("--all-people")
+        if a.no_objects:
+            arguments.append("--no-objects")
+        if not a.skip_finetune and a.gpu_box:
+            arguments.append("--finetune")
+        raise SystemExit(run_orchestrated(arguments))
     if a.marble_key and os.environ.get(a.marble_key, "").startswith("-"):
         sys.exit("--marble-key takes the NAME of an env var, not a key")
     if a.shot is not None and a.all_shots:
