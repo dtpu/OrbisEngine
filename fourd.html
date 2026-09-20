@@ -138,6 +138,7 @@
   import { createStanceResolver } from '/src/person-stance.ts';
   import { personVisibility } from '/src/person-visibility.ts';
   import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
+  import { chooseStartPose, pointsExtent, robustExtent } from '/src/start-view.ts';
   import {
     parseStaticColliders,
     highestSupport,
@@ -1331,17 +1332,30 @@
   if (noWorld) wbox = new THREE.Box3(new THREE.Vector3(-8, -2.5, -14), new THREE.Vector3(8, 4, 6));
   const wc = wbox.getCenter(new THREE.Vector3());
   const wsize = wbox.getSize(new THREE.Vector3());
+  // A scene with no ?cam= has to be framed from measured geometry, and wbox is the wrong ruler for
+  // it: a few enormous sky/background splats make it tens of units wide, so the old
+  // centre + 0.55 x diagonal rule opened the world far outside the reconstructed room. Collect a
+  // sparse sample of splat centres here, while the measuring mesh is still loaded, and let
+  // src/start-view.ts take a robust extent from it. Every preset passes ?cam=, so none of this runs
+  // for them and their framing is untouched.
+  const needStartView = !q.get('cam');
+  const startSamples = needStartView && !noWorld ? [] : null;
   // floor estimate: low percentile of world-space splat centre y
-  if (Number.isNaN(floorY)) {
+  if (Number.isNaN(floorY) || startSamples) {
     const ys = [];
-    let i = 0;
+    let i = 0,
+      kept = 0;
     const v = new THREE.Vector3();
     measureMesh.forEachSplat((_, c) => {
-      if ((i++ & 15) === 0) ys.push(v.copy(c).applyMatrix4(measureMesh.matrixWorld).y);
+      if ((i++ & 15) === 0) {
+        ys.push(v.copy(c).applyMatrix4(measureMesh.matrixWorld).y);
+        if (startSamples && (kept++ & 3) === 0) startSamples.push([v.x, v.y, v.z]);
+      }
     });
     ys.sort((a, b) => a - b);
-    floorY = ys[Math.floor(ys.length * 0.03)] ?? wbox.min.y;
+    if (Number.isNaN(floorY)) floorY = ys[Math.floor(ys.length * 0.03)] ?? wbox.min.y;
   }
+  const splatExtent = startSamples?.length ? robustExtent(startSamples) : null;
   // ?feetmode=local (default) | flat | sfm. local: the world's own floor height under the feet,
   // from a coarse xz height map of the lowest opaque splats around the estimated floor (cached in
   // localStorage per world), so steps and ramps are followed; flat: frame-0 floor; sfm: no snap.
@@ -3188,10 +3202,75 @@
   applyTime();
 
   // ---- camera ----
+  // ?cam= is the fitted start pose, and every preset in DEMOS carries one, so those scenes take the
+  // first branch and open exactly where they always did. A scene with no fitted pose used to open at
+  // the raw world box's centre + 0.55 x its diagonal, which on a Marble world is tens of units from
+  // anything that was filmed - a white blob on black, and a first-time viewer sees "nothing".
+  // src/start-view.ts picks a measured pose instead: the first solved SOURCE camera (the place the
+  // phone stood when the clip began, carried into the world by the cast's own scale0/pos0 and the
+  // ?rotfix= rotation) stepped back a little and looking at the primary person at t = 0; failing
+  // that, the cast's own region; failing that, a robust percentile extent of the splat cloud.
+  const START_STEP_BACK_M = 0.6; // stand this far behind the phone's own pose, in metres
+  const START_MIN_M = 2.0, // framing distance floor and ceiling, in metres
+    START_MAX_M = 12.0;
+  const personWorldCentre = (p) => {
+    p.group.updateMatrixWorld(true);
+    return p.group.localToWorld(p.pbox.getCenter(new THREE.Vector3()));
+  };
+  // Reused per shot by the shot-sequence swap below: each shot is its own solve, with its own
+  // cameras.json, its own cast and its own placement.
+  function startPoseFor(camerasDoc, castScale, castOffset, members, unitsPerMetre) {
+    const u = Number.isFinite(unitsPerMetre) && unitsPerMetre > 0 ? unitsPerMetre : 1;
+    const centres = members.filter((p) => p?.pbox).map((p) => personWorldCentre(p));
+    const lead = centres[0];
+    return chooseStartPose({
+      cameras: camerasDoc,
+      placement: Number.isFinite(castScale)
+        ? {
+            scale: castScale,
+            offset: [castOffset[0], castOffset[1], castOffset[2]],
+            rotationXYZW: rotFix?.quaternionXYZW || null,
+          }
+        : null,
+      subject: lead ? [lead.x, lead.y, lead.z] : null,
+      peopleExtent: centres.length
+        ? pointsExtent(
+            centres.map((c) => [c.x, c.y, c.z]),
+            0.5 * u,
+          )
+        : null,
+      splatExtent,
+      boundingBox: { center: [wc.x, wc.y, wc.z], size: [wsize.x, wsize.y, wsize.z] },
+      stepBack: START_STEP_BACK_M * u,
+      minimumDistance: START_MIN_M * u,
+      maximumDistance: START_MAX_M * u,
+    });
+  }
+  // the cameras.json people.json names, in the same frame as the people (fetched only when the view
+  // has to be chosen, so a preset makes no extra request)
+  let camerasDoc = null;
+  if (needStartView && typeof manifest?.cameras === 'string' && manifest.cameras) {
+    const cu = /^(https?:|\/)/.test(manifest.cameras) ? manifest.cameras : mbase + manifest.cameras;
+    try {
+      const r = await fetch(cu);
+      if (r.ok) camerasDoc = await r.json();
+    } catch {
+      camerasDoc = null;
+    }
+  }
+  const startPose = needStartView
+    ? startPoseFor(camerasDoc, scale0, pos0, [primary, ...people.filter((p) => p !== primary)], upm)
+    : null;
   if (q.get('cam')) {
     const a = q.get('cam').split(',').map(Number);
     camera.position.set(a[0], a[1], a[2]);
     if (a.length >= 6) camera.lookAt(a[3], a[4], a[5]);
+  } else if (startPose) {
+    camera.position.set(...startPose.position);
+    camera.lookAt(...startPose.target);
+    console.log(
+      `start view: ${startPose.source} at ${startPose.position.map((v) => v.toFixed(3))} looking at ${startPose.target.map((v) => v.toFixed(3))}`,
+    );
   } else {
     camera.position.set(wc.x, wc.y, wc.z + wsize.length() * 0.55);
     camera.lookAt(wc);
