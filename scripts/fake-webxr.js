@@ -11,6 +11,7 @@
 //   ?fakexr=1            install it
 //   ?fakew= ?fakeh=      per-eye resolution (default 2064x2208, Quest 3 native)
 //   ?fakevfov=           vertical field of view in degrees (default 96, Quest 3's)
+//   ?fakefloor=0         deny local-floor to exercise the seated reference-space fallback
 //
 // window.__fakeXR is the driver: .head {x,y,z,yaw,pitch} in METRES of reference space, .axes.left/.right
 // as xr-standard thumbsticks, .frames the frame times the session has served.
@@ -228,7 +229,9 @@
       this.mode = mode;
       this.environmentBlendMode = 'opaque';
       this.visibilityState = 'visible';
-      this.enabledFeatures = (init?.optionalFeatures ?? []).filter((f) => f === 'local-floor');
+      this.enabledFeatures = (init?.optionalFeatures ?? []).filter(
+        (f) => f === 'local-floor' && P.get('fakefloor') !== '0',
+      );
       this.renderState = { baseLayer: null, depthNear: 0.1, depthFar: 1000, layers: undefined };
       this.inputSources = [source('left', -0.2), source('right', 0.2)];
       this._cbs = [];
