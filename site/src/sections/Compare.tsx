@@ -17,11 +17,13 @@ type CompareScene = { id: string; caption: string };
 const compareScenes: CompareScene[] = [
   {
     id: 'elevator',
-    caption: 'Elevator at 6.0 s, a bottle in the air. Viewpoint: OFFSET_ELEVATOR.',
+    caption:
+      'Elevator at 6.0 s, a bottle in the air. Viewpoint: 1.0 body-heights right and 0.6 forward of where the walk starts.',
   },
   {
     id: 'lobby',
-    caption: 'Lobby at 4.7 s, mid-wave. Viewpoint: OFFSET_LOBBY.',
+    caption:
+      'Lobby at 4.7 s, mid-wave. Viewpoint: 0.2 body-heights right and 1.2 behind where the walk starts.',
   },
   {
     id: 'gym',
