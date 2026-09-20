@@ -55,6 +55,29 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("person_prep:00", graph.nodes)
         self.assertIn("package_people", graph.nodes)
 
+    def test_tracking_that_kept_nobody_stops_the_run_for_a_person(self):
+        """Everything after tracking is per-person, so an empty result has no run left.
+
+        Carrying on finished "succeeded" holding a generated room and no one inside it, which
+        is worse than stopping: nothing says the people are missing.
+        """
+        graph = instantiate_graph(GraphOptions(marble="none", all_people=True, people=2))
+        graph.select_attempt("admission", "attempt:admission", outputs(graph, "admission"))
+        graph.select_attempt("pi3x", "attempt:pi3x", outputs(graph, "pi3x"))
+        apply_activity_result(
+            graph,
+            StageActivityResult(
+                node_id="tracks",
+                attempt_id="attempt:tracks",
+                status="succeeded",
+                artifacts=outputs(graph, "tracks"),
+                branches=[],
+            ),
+        )
+        self.assertEqual(graph.nodes["tracks"].status, NodeStatus.BLOCKED)
+        self.assertIn("no usable person", graph.nodes["tracks"].blocked_reason)
+        self.assertNotIn("person_prep:00", graph.nodes)
+
     def test_activity_failure_blocks_dependents_without_losing_error(self):
         graph = instantiate_graph(GraphOptions(marble="none"))
         apply_activity_result(
