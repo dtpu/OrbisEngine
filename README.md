@@ -2,6 +2,8 @@
 
 Anything ever filmed, in 4D.
 
+![Orbis Engine](docs/images/hero.jpg)
+
 Orbis turns an ordinary video into a 3D world you can walk around in. Put on a Quest, or use WASD
 in a browser, and you are standing in the room while the moment plays out around you as it was
 recorded, with the original sound. In one scene you can walk up to a person and talk to them, or
