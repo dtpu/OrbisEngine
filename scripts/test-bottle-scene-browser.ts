@@ -208,6 +208,28 @@ try {
   );
   const snapshot = () =>
     page.evaluate(() => (window.wander as SceneDiagnostics).interaction.snapshot());
+  const visualState = () =>
+    page.evaluate(() => {
+      const w = window.wander as SceneDiagnostics;
+      const scene = w.scene;
+      const interaction = w.interaction as unknown as {
+        bottle: { mesh: THREE.Object3D };
+      };
+      const group = scene.getObjectByName('bottle-interaction-visual')!;
+      const proxy = scene.getObjectByName('interaction-bottle-proxy')!;
+      const locator = scene.getObjectByName('interaction-bottle-locator')!;
+      return {
+        group: { present: !!group, visible: group?.visible },
+        proxy: {
+          present: !!proxy,
+          visible: proxy?.visible,
+          position: proxy?.getWorldPosition(new w.THREE.Vector3()).toArray(),
+          quaternion: proxy?.getWorldQuaternion(new w.THREE.Quaternion()).toArray(),
+        },
+        locator: { present: !!locator, visible: locator?.visible },
+        source: { visible: interaction.bottle.mesh.visible },
+      };
+    });
   await page.waitForFunction(
     (liveVoice) => {
       const state = (window.wander as SceneDiagnostics).interaction.snapshot();
@@ -296,6 +318,7 @@ try {
         analyzer,
         gain: internals.client.gain,
         completed: false,
+        reply: '',
         peak: 0,
         timer: 0,
       };
@@ -307,7 +330,29 @@ try {
           measurement.peak = Math.max(measurement.peak, Math.abs(sample));
       }, 20);
       internals.client.session.transport.on('*', (event) => {
-        if (event.type === 'response.done') measurement.completed = true;
+        if (
+          ['response.output_audio_transcript.done', 'response.audio_transcript.done'].includes(
+            String(event.type),
+          ) &&
+          typeof event.transcript === 'string'
+        )
+          measurement.reply += event.transcript;
+        if (event.type === 'response.done') {
+          const response = event.response as {
+            status?: string;
+            output?: Array<{ type?: string; content?: Array<{ transcript?: string }> }>;
+          };
+          measurement.completed ||=
+            response.status === 'completed' &&
+            !!response.output?.some((item) => item.type === 'message');
+          const reply =
+            response.output
+              ?.flatMap((item) => item.content ?? [])
+              .map((content) => content.transcript ?? '')
+              .filter(Boolean)
+              .join(' ') ?? '';
+          if (reply) measurement.reply = reply;
+        }
       });
       (window as unknown as { __liveVoiceAudio?: typeof measurement }).__liveVoiceAudio =
         measurement;
@@ -322,6 +367,7 @@ try {
             analyzer: AnalyserNode;
             gain: GainNode;
             completed: boolean;
+            reply: string;
             peak: number;
             timer: number;
           };
@@ -337,19 +383,19 @@ try {
       clearInterval(measurement.timer);
       measurement.gain.disconnect(measurement.analyzer);
       Reflect.deleteProperty(window, '__liveVoiceAudio');
-      return { completed: measurement.completed, peak: measurement.peak };
+      return { completed: measurement.completed, peak: measurement.peak, reply: measurement.reply };
     });
   };
-  await headAt(0.55);
+  await headAt(1.15);
   await armLiveAudio();
   await page.evaluate(() => window.wander.play(true));
-  await headAt(0.34);
+  await headAt(1.02);
   assert.equal(
     (await snapshot()).interrupted,
     false,
     'Passing outside the close zone must not pause',
   );
-  await headAt(0.2);
+  await headAt(0.88);
   await page.waitForFunction(
     () => (window.wander as SceneDiagnostics).interaction.snapshot().interrupted,
   );
@@ -359,6 +405,31 @@ try {
   assert.equal(approached.playing, false);
   assert.ok(approached.recordingTime > 2, 'Approach must interrupt an advancing recording');
   assert.equal(await page.evaluate(() => window.wander.video.paused), true);
+  const beforeAutomaticFacing = await page.evaluate(() => {
+    const w = window.wander as SceneDiagnostics;
+    const person = w.people.find(
+      (person) => person.id === w.interaction.snapshot().activePersonId,
+    )!;
+    return person.group.getWorldQuaternion(new w.THREE.Quaternion()).toArray();
+  });
+  await frames(30);
+  const automaticFacing = await page.evaluate(() => {
+    const w = window.wander as SceneDiagnostics;
+    const person = w.people.find(
+      (person) => person.id === w.interaction.snapshot().activePersonId,
+    )!;
+    const pivot = w.scene.getObjectByName(`interaction-facing-${person.id}`);
+    return {
+      pivot: !!pivot,
+      after: person.group.getWorldQuaternion(new w.THREE.Quaternion()).toArray(),
+    };
+  });
+  assert.equal(automaticFacing.pivot, true, 'Interruption must begin smooth local facing');
+  assert.notDeepEqual(
+    beforeAutomaticFacing,
+    automaticFacing.after,
+    'Automatic facing must advance while the visitor remains addressable',
+  );
   const facing = await page.evaluate(() => {
     const w = window.wander as SceneDiagnostics;
     const person = w.people.find(
@@ -372,10 +443,9 @@ try {
     return { before, after, response };
   });
   assert.equal(facing.response, 'Character turned toward visitor.');
-  assert.notDeepEqual(facing.before, facing.after);
   assert.equal((await snapshot()).playing, false, 'Facing must not resume the recording');
   await page.screenshot({ path: `${output}/approached-xr.png` });
-  console.log('Close approach interrupts playback; approved facing changes the paused body');
+  console.log('Close approach interrupts playback; smooth local facing follows the paused body');
 
   if (liveVoice) {
     assert.equal(
@@ -389,7 +459,10 @@ try {
     );
     const voice = await measureLiveAudio();
     await writeFile(`${output}/live-voice.json`, JSON.stringify(voice, null, 2));
-    assert.ok(voice && voice.completed && voice.peak > 0.0001, JSON.stringify(voice));
+    assert.ok(
+      voice && voice.completed && voice.peak > 0.0001 && voice.reply,
+      JSON.stringify(voice),
+    );
     console.log('Live provider: auto-started voice and generated audio through the spatial graph');
   } else {
     assert.equal((await snapshot()).voiceConnected, false);
@@ -418,6 +491,15 @@ try {
   assert.equal(replayed.epoch, beforeReplay.epoch + 1, 'Left X must replay once on press');
   assert.equal(replayed.playing, true);
   assert.ok(replayed.recordingTime < 1);
+  const restoredVisual = await visualState();
+  assert.deepEqual(restoredVisual.group, { present: true, visible: true });
+  assert.equal(
+    restoredVisual.source.visible,
+    true,
+    'Replay must restore the recorded bottle source',
+  );
+  assert.equal(restoredVisual.proxy.visible, false, 'Replay must hide the interaction proxy');
+  assert.equal(restoredVisual.locator.visible, true, 'Replay must restore the bottle locator');
   assert.equal(
     await page.evaluate(
       () =>
@@ -450,28 +532,106 @@ try {
     true,
   );
   await page.evaluate(() => window.wander.setTime(0.4));
-  const handAt = async (position: number[], squeeze: boolean, count = 3) => {
+  const beforeGripVisual = await visualState();
+  assert.deepEqual(beforeGripVisual.group, { present: true, visible: true });
+  assert.equal(
+    beforeGripVisual.locator.visible,
+    true,
+    'The loose bottle must have a visible locator',
+  );
+  assert.equal(
+    beforeGripVisual.proxy.visible,
+    false,
+    'The proxy is only for interrupted interaction',
+  );
+  const handAt = async (
+    position: number[],
+    squeeze: boolean,
+    count = 3,
+    rotation: [number, number, number, number] = [0, 0, 0, 1],
+  ) => {
     await page.evaluate(
-      ({ position, squeeze }) => {
+      ({ position, squeeze, rotation }) => {
         const w = window.wander as SceneDiagnostics;
         const rig = w.scene.getObjectByName('xr-rig')!;
         const point = rig.worldToLocal(new w.THREE.Vector3(...position));
         const source = (w.spark.renderer.xr.getSession() as SyntheticSession).inputSources[1];
         source.targetRaySpace._matrix = new Float32Array(
-          new w.THREE.Matrix4().makeTranslation(point.x, point.y, point.z).elements,
+          new w.THREE.Matrix4().compose(
+            point,
+            new w.THREE.Quaternion(...rotation),
+            new w.THREE.Vector3(1, 1, 1),
+          ).elements,
         );
         window.__fakeXR.buttons.right[1] = squeeze ? 1 : 0;
       },
-      { position, squeeze },
+      { position, squeeze, rotation },
     );
     await frames(count);
   };
   await frames(3);
-  await handAt((await snapshot()).bottle.position, true);
+  await handAt((await snapshot()).bottle.position, true, 3, [
+    Math.sin(Math.PI / 4),
+    0,
+    0,
+    Math.cos(Math.PI / 4),
+  ]);
   let held = await snapshot();
   assert.equal(held.bottle.mode, 'held', JSON.stringify(held));
   assert.equal(held.playing, false);
   assert.ok(held.returnTarget, 'Manifest must yield an available assisted return target');
+  const heldVisual = await page.evaluate(() => {
+    const w = window.wander as SceneDiagnostics;
+    const scene = w.scene;
+    const proxy = scene.getObjectByName('interaction-bottle-proxy')!;
+    const locator = scene.getObjectByName('interaction-bottle-locator')!;
+    const source = (w.interaction as unknown as { bottle: { mesh: THREE.Object3D } }).bottle.mesh;
+    const rig = scene.getObjectByName('xr-rig')!;
+    const input = (w.spark.renderer.xr.getSession() as SyntheticSession).inputSources[1];
+    const raw = new w.THREE.Matrix4().fromArray(input.targetRaySpace._matrix);
+    const rawPosition = new w.THREE.Vector3().setFromMatrixPosition(raw);
+    const rawRotation = new w.THREE.Quaternion().setFromRotationMatrix(raw);
+    const expected = rawPosition
+      .add(new w.THREE.Vector3(0, 0.012, -0.025).applyQuaternion(rawRotation))
+      .applyMatrix4(rig.matrixWorld);
+    return {
+      proxyVisible: proxy.visible,
+      locatorVisible: locator.visible,
+      sourceVisible: source.visible,
+      proxyPosition: proxy.getWorldPosition(new w.THREE.Vector3()).toArray(),
+      expectedPosition: expected.toArray(),
+      proxyQuaternion: proxy.getWorldQuaternion(new w.THREE.Quaternion()).toArray(),
+      gripQuaternion: w.spark.renderer.xr
+        .getControllerGrip(1)
+        .getWorldQuaternion(new w.THREE.Quaternion())
+        .toArray(),
+    };
+  });
+  assert.equal(heldVisual.proxyVisible, true, 'A held bottle must use the interaction proxy');
+  assert.equal(heldVisual.locatorVisible, false, 'The locator must hide while the bottle is held');
+  assert.equal(heldVisual.sourceVisible, false, 'The recorded source bottle must hide while held');
+  const distance = (a: number[], b: number[]) => Math.hypot(...a.map((value, i) => value - b[i]!));
+  assert.ok(
+    distance(heldVisual.proxyPosition, heldVisual.expectedPosition) < 0.004 * initial.upm,
+    JSON.stringify(heldVisual),
+  );
+  assert.ok(
+    Math.abs(
+      heldVisual.proxyQuaternion.reduce(
+        (dot, value, index) => dot + value * heldVisual.gripQuaternion[index]!,
+        0,
+      ),
+    ) > 0.999,
+    JSON.stringify(heldVisual),
+  );
+  // Bring the held bottle away from the recorded actor so the screenshot can assess the grip
+  // without the source person's hand covering it. The rotation assertion above covers tilting.
+  await handAt(
+    held.bottle.position.map((value, i) => value + [0.25, 0.2, 0.3][i]! * initial.stature!),
+    true,
+  );
+  held = await snapshot();
+  assert.equal(held.bottle.mode, 'held');
   await page.evaluate((bottle) => {
     const w = window.wander as SceneDiagnostics;
     const rig = w.scene.getObjectByName('xr-rig')!;
