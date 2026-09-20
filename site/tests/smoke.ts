@@ -155,6 +155,21 @@ const checks: Check[] = [
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
+  {
+    name: 'gallery renders 9 scene cards with viewer links',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const count = await page.$$eval('section#gallery article', (els) => els.length);
+        if (count !== 9) throw new Error(`expected 9 gallery cards, got ${count}`);
+        const links = await page.$$eval('section#gallery a[href^="/demo.html?clip="]', (els) =>
+          els.map((a) => a.getAttribute('href')),
+        );
+        if (links.length < 9) throw new Error(`expected viewer links, got ${links.length}`);
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
