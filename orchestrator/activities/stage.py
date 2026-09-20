@@ -229,6 +229,12 @@ class StageActivityRunner:
         environment = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
+            # Python buffers stdout when it is a file rather than a terminal, so a stage that
+            # prints its progress wrote nothing until it exited. A stage working hard and a
+            # stage hung on a dead socket then looked identical in the log, which is the one
+            # thing the log is read for. The liveness heartbeat has the same problem in
+            # reverse: it says the activity is alive without saying the work is.
+            "PYTHONUNBUFFERED": "1",
             **{name: os.environ[name] for name in execution.credentials if name in os.environ},
             **self.base_environment,
             **execution.environment,
