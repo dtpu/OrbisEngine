@@ -22,6 +22,11 @@ scene assets from private S3 and caches them on demand; credentials never enter 
 The shared migration is complete. Restart Vite to adopt a newly published snapshot. See
 [shared assets](docs/shared-assets.md) for credentials, publishing, and recovery.
 
+The picker contains five scenes: the two-person lift lobby, Tears of Steel shot 31, the waving
+lobby subject, Austin's accepted gym, and the latest kitchen fixture repair. Desktop and headset
+menus share this selection. Gym and kitchen load their reviewed asset manifests, including
+animated people, moving objects and walking colliders; their recorded limitations still apply.
+
 For an offline asset bundle shared by the author, extract its existing `public/` structure from
 the repository root and explicitly select local mode:
 
