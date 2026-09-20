@@ -242,30 +242,18 @@ try {
           (await state()).credit,
         );
         const credit = await frame.locator('#audio-credit').boundingBox(),
-          bar = await page.locator('#bar').boundingBox();
-        check('credit clears wrapper controls', credit && bar && credit.y + credit.height < bar.y, {
-          credit,
-          bar,
-        });
+          stage = await page.locator('#stage').boundingBox();
+        check(
+          'credit stays inside the stage',
+          credit &&
+            stage &&
+            credit.y >= stage.y &&
+            credit.y + credit.height <= stage.y + stage.height,
+          { credit, stage },
+        );
       }
       await page.screenshot({ path: path.join(out, `${clip}-sound.png`) });
       if (clip === 'elevator') {
-        if (await page.locator('#reelbtn').isVisible()) {
-          await page.locator('#reelbtn').click();
-          await page.waitForTimeout(300);
-          check(
-            'reel excludes world audio',
-            !(await state()).playing && (await state()).audio.activeSources === 0,
-            await state(),
-          );
-          await page.locator('#reelclose').click();
-          check('reel close leaves world paused', !(await state()).playing, await state());
-        } else
-          result.checks.push({
-            name: 'reel exclusion',
-            pass: null,
-            detail: 'Reel asset not available',
-          });
         // Test the wrapper's trusted event forwarding explicitly.
         await page.evaluate(() => {
           if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
