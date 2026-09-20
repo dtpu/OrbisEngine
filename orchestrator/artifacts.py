@@ -17,7 +17,7 @@ from botocore.exceptions import ClientError
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from orchestrator.workspace import AttemptWorkspace, atomic_json, safe_id
+from orchestrator.workspace import AttemptWorkspace, atomic_json, is_output_file, safe_id
 
 
 def sha256_file(path: Path) -> str:
@@ -228,7 +228,7 @@ def assign_roles(root: Path, roles: dict[str, str]) -> dict[str, str]:
         if pattern in exact:
             continue
         for path in root.glob(pattern):
-            if path.is_file() and not path.is_symlink():
+            if is_output_file(path):
                 assigned.setdefault(path.relative_to(root).as_posix(), role)
     assigned.update(exact)
     return assigned
