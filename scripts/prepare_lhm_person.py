@@ -29,20 +29,57 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "worker"))
+sys.path.insert(0, str(ROOT / "worker" / "stages"))
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
+# The camera solver and the tracker decode the same way, and a frame index only means what
+# their sequential walk counted, so their decoders are imported rather than restated here.
+import dense_pi3x
+from dense_pi3x import DECODE_OPENCV, choose_decode_backend, opencv_first_frame
+from track_people import source_metadata
+
+
+def decode_frames(video, indices):
+    """Decode the requested source ordinals in one forward pass, keyed by counted ordinal.
+
+    Nothing seeks. `CAP_PROP_POS_FRAMES` cannot reach the tail of a variable-rate file and can
+    land on a neighbour elsewhere in it, so an index handed over by cameras.json or a track
+    record -- which both name a position in the decoder's own sequence -- has to be reached by
+    counting decoded frames, exactly as worker/stages/dense_pi3x.py counted them. When OpenCV
+    cannot decode this codec at all (AV1), the same helpers pipe raw frames out of ffmpeg.
+    """
+    wanted = {int(index) for index in indices}
+    if not wanted:
+        raise ValueError("no source frame requested")
+    if min(wanted) < 0:
+        raise ValueError(f"negative source frame index {min(wanted)}")
+    fps, count, size = source_metadata(video)
+    backend, reason = choose_decode_backend(*opencv_first_frame(cv2, video))
+    frames = {}
+
+    def sink(ordinal, bgr):
+        frames[int(ordinal)] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    if backend == DECODE_OPENCV:
+        decoded, _ = dense_pi3x.decode_opencv(cv2, video, wanted, sink)
+    else:
+        decoded, _ = dense_pi3x.decode_ffmpeg(video, size[0], size[1], wanted, sink)
+    absent = sorted(wanted - set(frames))
+    if absent:
+        raise RuntimeError(
+            f"cannot decode source frame {absent[0]} of {video}: {decoded} frames decode from "
+            f"this file ({backend}: {reason}), so its last source index is {max(decoded - 1, 0)}. "
+            f"The frame index is a position in the decoded sequence, not a container estimate "
+            f"(the container declares {count})."
+        )
+    return frames, fps, decoded
+
 
 def decode(video, index):
-    cap = cv2.VideoCapture(str(video))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, index)
-    ok, bgr = cap.read()
-    cap.release()
-    if not ok:
-        raise RuntimeError(f"cannot decode frame {index}")
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), fps, count
+    """One source frame by its decoded ordinal, with that file's rate and decodable length."""
+    frames, fps, decoded = decode_frames(video, [index])
+    return frames[int(index)], fps, decoded
 
 
 _rcnn = None
@@ -171,8 +208,10 @@ def main():
     bbox = [float(v) for v in a.bbox.split(",")] if a.bbox else None
     if a.candidates:
         tiles = []
-        for i in [int(x) for x in a.candidates.split(",")]:
-            rgb, _, _ = decode(a.video, i)
+        wanted = [int(x) for x in a.candidates.split(",")]
+        decoded, _, _ = decode_frames(a.video, wanted)
+        for i in wanted:
+            rgb = decoded[i]
             m = person_mask(rgb, a.dilate, a.method, bbox)
             print(i, json.dumps(box_report(m, rgb.shape[1], rgb.shape[0])))
             if a.sheet:
@@ -235,8 +274,14 @@ def main():
     h, w = rgb.shape[:2]
     m = person_mask(rgb, a.dilate, a.method, bbox)
     rep = box_report(m, w, h)
-    if rep.get("empty") or not rep["portrait"]:
-        sys.exit(f"unusable person mask: {rep}")
+    if rep.get("empty"):
+        sys.exit(f"unusable person mask: no person found at source frame {a.frame}: {rep}")
+    if not rep["portrait"]:
+        sys.exit(
+            f"unusable person mask: the mask at source frame {a.frame} is wider ({rep['width']}px) "
+            f"than tall ({rep['height']}px), so this frame shows part of a person -- a head, a "
+            f"torso or a cropped close-up -- and lhm_person.py needs a portrait person: {rep}"
+        )
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     Image.fromarray(rgb).save(out / "source.png")
@@ -249,6 +294,9 @@ def main():
         sourceWidth=w,
         sourceHeight=h,
         fps=fps,
+        decodableFrames=count,
+        frameIndexSemantics="Position in the decoder's own sequential order, counted forward; "
+        "the same ordinal worker/stages/dense_pi3x.py and track_people.py count.",
         duration=count / fps,
         personBounds=rep["box"],
         touchesFrame=rep["touchesFrame"],
