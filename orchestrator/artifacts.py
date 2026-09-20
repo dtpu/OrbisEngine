@@ -208,6 +208,32 @@ class S3Archive:
                 raise ValueError(f"immutable S3 manifest differs: {key}") from error
 
 
+def assign_roles(root: Path, roles: dict[str, str]) -> dict[str, str]:
+    """Which role each file under ``root`` takes, by the same globbing the QA validator uses.
+
+    ``PurePath.match`` treats ``**`` as one segment and anchors from the right, so a bundle
+    pattern like ``outputs/prepared-person/**/*`` matched nothing here while
+    ``Path.glob`` matched every file in the bundle. A stage's outputs therefore passed QA and
+    were then frozen as ``attempt_file``, so the next stage asked for the role and got nothing.
+    Globbing in both places is what keeps the two answers the same.
+
+    An exact path wins over a pattern, so a bundle's catch-all does not swallow the one file
+    inside it that has a role of its own; between patterns, the first one to name a file keeps
+    it.
+    """
+    wildcards = set("*?[")
+    exact = {pattern: role for pattern, role in roles.items() if not (wildcards & set(pattern))}
+    assigned: dict[str, str] = {}
+    for pattern, role in roles.items():
+        if pattern in exact:
+            continue
+        for path in root.glob(pattern):
+            if path.is_file() and not path.is_symlink():
+                assigned.setdefault(path.relative_to(root).as_posix(), role)
+    assigned.update(exact)
+    return assigned
+
+
 def freeze_attempt(
     attempt: AttemptWorkspace,
     store: LocalCAS,
@@ -216,6 +242,7 @@ def freeze_attempt(
     roles: dict[str, str] | None = None,
 ) -> AttemptManifest:
     roles = roles or {}
+    assigned = assign_roles(attempt.root, roles)
     files = []
     for path in sorted(attempt.root.rglob("*")):
         if path.is_symlink():
@@ -224,12 +251,7 @@ def freeze_attempt(
             continue
         relative = path.relative_to(attempt.root).as_posix()
         digest, _ = store.add_file(path)
-        role = roles.get(relative)
-        if role is None:
-            role = next(
-                (candidate for pattern, candidate in roles.items() if path.match(pattern)),
-                "attempt_file",
-            )
+        role = assigned.get(relative, "attempt_file")
         safe_id(role)
         identity = hashlib.sha256(
             f"{attempt.run_id}\0{attempt.attempt_id}\0{relative}\0{digest}".encode()
