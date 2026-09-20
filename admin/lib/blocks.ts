@@ -113,6 +113,20 @@ export function isVisual(artifact: RunArtifact): boolean {
   return VISUAL.has(classify(artifact).type);
 }
 
+/**
+ * Block types a tile or thumbnail can draw from the bytes themselves.
+ *
+ * Narrower than `isVisual`, and deliberately so: a world or a point cloud is visual in the
+ * inspector, which gives it a WebGL canvas, but a tile has no canvas to give and falls back to
+ * a vertex count. So a stage that wrote both a `.spz` and the thumbnail beside it should lead
+ * with the thumbnail here, even though the world outranks it everywhere else.
+ */
+const POSTER = new Set<BlockType>(['video', 'image']);
+
+export function hasPoster(artifact: RunArtifact): boolean {
+  return artifact.size > 0 && POSTER.has(classify(artifact).type);
+}
+
 export function leadArtifact(artifacts: RunArtifact[]): RunArtifact | undefined {
   return [...artifacts].sort(
     (a, b) => LEAD.indexOf(classify(a).type) - LEAD.indexOf(classify(b).type),

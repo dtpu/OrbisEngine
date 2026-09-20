@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArtifactBlock } from '@/components/blocks';
 import { StateMark } from '@/components/state-mark';
 import { Progress } from '@/components/progress';
-import { classify, isVisual, leadArtifact } from '@/lib/blocks';
+import { classify, hasPoster, isVisual, leadArtifact } from '@/lib/blocks';
 import {
   elapsedMs,
   formatBytes,
@@ -13,7 +13,7 @@ import {
   statusLabel,
   statusTone,
 } from '@/lib/format';
-import { directDependencies, orderStages } from '@/lib/graph';
+import { dependenciesOf, directDependencies, orderStages } from '@/lib/graph';
 import type { PipelineRun, RunArtifact, RunAttempt, RunNode } from '@/lib/types';
 
 const NODE_W = 248;
@@ -22,6 +22,8 @@ const GAP_X = 72;
 const GAP_Y = 28;
 /** How far outside the block a skipping edge runs, and how far apart two of them sit. */
 const LANE = 22;
+/** Vertical space between bands: enough for a label and for an edge to route through. */
+const BAND_GAP = 60;
 const LANE_STEP = 12;
 const CORNER = 14;
 
@@ -29,6 +31,14 @@ interface Placed {
   node: RunNode;
   x: number;
   y: number;
+  band: number;
+}
+
+interface Band {
+  key: string;
+  label: string;
+  top: number;
+  height: number;
 }
 
 interface Point {
@@ -65,33 +75,132 @@ function roundedPath(points: Point[]): string {
   return `${d} L ${last.x} ${last.y}`;
 }
 
-/** Columns by dependency depth, rows stacked and centred, so footage flows left to right. */
-function place(nodes: RunNode[]): { placed: Placed[]; width: number; height: number } {
-  const ordered = orderStages(nodes);
-  const columns = new Map<number, RunNode[]>();
-  for (const { node, depth } of ordered) columns.set(depth, [...(columns.get(depth) ?? []), node]);
-  const tallest = Math.max(1, ...[...columns.values()].map((column) => column.length));
-  const height = tallest * NODE_H + (tallest - 1) * GAP_Y;
-  const placed: Placed[] = [];
-  for (const [depth, column] of columns) {
-    const columnHeight = column.length * NODE_H + (column.length - 1) * GAP_Y;
-    const offset = (height - columnHeight) / 2;
-    column.forEach((node, row) => {
-      placed.push({ node, x: depth * (NODE_W + GAP_X), y: offset + row * (NODE_H + GAP_Y) });
-    });
+/** The branch an expanded stage belongs to: `lhm_frozen:00` is branch `00`. */
+function branchKeyOf(id: string): string | null {
+  const colon = id.lastIndexOf(':');
+  return colon > 0 ? id.slice(colon + 1) : null;
+}
+
+/**
+ * Which band a stage is drawn in.
+ *
+ * The fixed pipeline is one band. Stages an expand created at runtime -- one set per person, per
+ * object -- are their own band each, because they are not steps of the pipeline so much as the
+ * same few steps repeated for each thing found in the footage. Human gates are their own band
+ * too: what a person owes the run reads better collected than scattered down the flow.
+ */
+function bandOf(node: RunNode, deepestExpand: Map<string, string>): { key: string; label: string } {
+  const branch = branchKeyOf(node.id);
+  if (branch) {
+    const origin = deepestExpand.get(node.id);
+    return {
+      key: `branch:${branch}`,
+      label: origin ? `${origin} ${branch}` : `branch ${branch}`,
+    };
   }
-  const width = columns.size * NODE_W + (columns.size - 1) * GAP_X;
-  return { placed, width, height };
+  if (node.definition.kind === 'human') return { key: 'review', label: 'review' };
+  return { key: 'pipeline', label: 'pipeline' };
+}
+
+/**
+ * Columns by dependency depth, rows grouped into bands, so footage flows left to right and each
+ * band reads as one track of work.
+ */
+function place(nodes: RunNode[]): {
+  placed: Placed[];
+  bands: Band[];
+  width: number;
+  height: number;
+} {
+  const ordered = orderStages(nodes);
+  const depthOf = new Map(ordered.map((entry) => [entry.node.id, entry.depth]));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+
+  /*
+   * A branch is named after the expand that made it. `admission` is an expand too -- it fans a
+   * clip into shots -- so the nearest one is ambiguous and the deepest is taken instead: the
+   * person branches descend from `tracks`, which sits well below `admission`.
+   */
+  const deepestExpand = new Map<string, string>();
+  for (const node of nodes) {
+    let best: string | undefined;
+    const seen = new Set<string>([node.id]);
+    const queue = [...dependenciesOf(node)];
+    while (queue.length) {
+      const id = queue.shift() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const parent = byId.get(id);
+      if (!parent) continue;
+      if (
+        parent.definition.kind === 'expand' &&
+        (best === undefined || (depthOf.get(id) ?? 0) > (depthOf.get(best) ?? 0))
+      ) {
+        best = id;
+      }
+      queue.push(...dependenciesOf(parent));
+    }
+    if (best) deepestExpand.set(node.id, best);
+  }
+
+  const groups = new Map<string, { label: string; columns: Map<number, RunNode[]> }>();
+  for (const { node, depth } of ordered) {
+    const band = bandOf(node, deepestExpand);
+    const group = groups.get(band.key) ?? { label: band.label, columns: new Map() };
+    group.columns.set(depth, [...(group.columns.get(depth) ?? []), node]);
+    groups.set(band.key, group);
+  }
+
+  const rank = (key: string) => (key === 'pipeline' ? 0 : key === 'review' ? 2 : 1);
+  const keys = [...groups.keys()].sort(
+    (a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }),
+  );
+
+  const placed: Placed[] = [];
+  const bands: Band[] = [];
+  let top = 0;
+  let deepest = 0;
+  keys.forEach((key, index) => {
+    const group = groups.get(key) as { label: string; columns: Map<number, RunNode[]> };
+    const rows = Math.max(1, ...[...group.columns.values()].map((column) => column.length));
+    const height = rows * NODE_H + (rows - 1) * GAP_Y;
+    for (const [depth, column] of group.columns) {
+      deepest = Math.max(deepest, depth);
+      column.forEach((node, row) => {
+        placed.push({
+          node,
+          x: depth * (NODE_W + GAP_X),
+          y: top + row * (NODE_H + GAP_Y),
+          band: index,
+        });
+      });
+    }
+    bands.push({ key, label: group.label, top, height });
+    top += height + BAND_GAP;
+  });
+
+  return {
+    placed,
+    bands,
+    width: (deepest + 1) * NODE_W + deepest * GAP_X,
+    height: Math.max(0, top - BAND_GAP),
+  };
 }
 
 /**
  * The artifact a node's card shows.
  *
- * A stage's own contract outputs come first. Some stages produce nothing to look at -- a submit
- * stage hands a clip to a provider and gets back an operation id -- and a card that shows the
- * receipt says far less than one that shows the footage that went out. So when the outputs carry
- * no picture, the card falls back to a visual file the same attempt handled, and says that it is
- * showing the input rather than a result.
+ * A card is a tile, and a tile can only draw a frame or a clip: it has no WebGL context to spend
+ * on a world or a point cloud, so those fall back to a vertex count. That makes the ranking here
+ * different from the inspector's. `marble_video` writes both a `.spz` world and the thumbnail
+ * beside it, and the thumbnail is the one worth showing at this size even though the world
+ * outranks it everywhere else; `lhm_frozen` writes point clouds and eight PNGs of the person it
+ * fitted. So the card leads with whatever the stage itself produced that can be drawn.
+ *
+ * Failing that it takes the stage's own lead -- a count or a gist still beats a bare mark -- and
+ * only then borrows a picture from elsewhere in the attempt, saying that it is showing the input
+ * rather than a result. A submit stage that hands a clip to a provider and gets back an operation
+ * id has nothing else worth looking at.
  */
 function previewFor(
   run: PipelineRun,
@@ -103,10 +212,13 @@ function previewFor(
     attempts[attempts.length - 1];
   if (!preferred) return {};
   const mine = (run.artifacts ?? []).filter((artifact) => artifact.attemptId === preferred.id);
-  const lead = leadArtifact(mine.filter((artifact) => artifact.role !== 'attempt_file'));
+  const own = mine.filter((artifact) => artifact.role !== 'attempt_file');
+  const drawable = leadArtifact(own.filter(hasPoster));
+  if (drawable) return { artifact: drawable, attempt: preferred };
+  const lead = leadArtifact(own);
   if (lead && isVisual(lead)) return { artifact: lead, attempt: preferred };
-  const visual = leadArtifact(mine.filter(isVisual));
-  if (visual) return { artifact: visual, attempt: preferred, borrowed: true };
+  const borrowed = leadArtifact(mine.filter(hasPoster)) ?? leadArtifact(mine.filter(isVisual));
+  if (borrowed) return { artifact: borrowed, attempt: preferred, borrowed: true };
   return { artifact: lead, attempt: preferred };
 }
 
@@ -123,7 +235,7 @@ export function GraphCanvas({
   now: number;
   typical: Map<string, number>;
 }) {
-  const { placed, width, height } = useMemo(() => place(run.nodes), [run.nodes]);
+  const { placed, bands, width, height } = useMemo(() => place(run.nodes), [run.nodes]);
   const byId = useMemo(() => new Map(placed.map((entry) => [entry.node.id, entry])), [placed]);
   const edgesInto = useMemo(() => directDependencies(run.nodes), [run.nodes]);
 
@@ -156,10 +268,13 @@ export function GraphCanvas({
           d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
         };
       }
-      const below = (y1 + y2) / 2 >= height / 2;
-      const offset = LANE + lanes * LANE_STEP;
+      const band = bands[from.band];
+      const offset = lanes * LANE_STEP;
       lanes += 1;
-      const lane = below ? height + offset : -offset;
+      const lane =
+        band && band.top + band.height < height
+          ? band.top + band.height + BAND_GAP / 2 + offset
+          : height + LANE + offset;
       const gutterIn = x1 + GAP_X / 2;
       const gutterOut = x2 - GAP_X / 2;
       return {
@@ -175,7 +290,7 @@ export function GraphCanvas({
         ]),
       };
     });
-  }, [placed, byId, edgesInto, height]);
+  }, [placed, bands, byId, edgesInto, height]);
   const frame = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 24, y: 24, k: 1 });
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
@@ -277,6 +392,18 @@ export function GraphCanvas({
             height,
           }}
         >
+          {bands.map((band) =>
+            band.top > 0 ? (
+              <span
+                className="gband"
+                key={band.key}
+                style={{ top: band.top - BAND_GAP / 2, width }}
+                aria-hidden="true"
+              >
+                {band.label}
+              </span>
+            ) : null,
+          )}
           <svg className="canvas__edges" width={width} height={height} aria-hidden="true">
             {edges.map(({ from, to, d }) => {
               const lit = from.node.id === selectedId || to.node.id === selectedId;

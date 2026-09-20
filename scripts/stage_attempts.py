@@ -83,6 +83,7 @@ BOOL_FLAGS = {
     "--extend-mask-to-bottom",
     "--refine-first",
     "--larger-model",
+    "--recover-missing-poses",
 }
 NUMBER_FLAGS = {
     "--fps",
