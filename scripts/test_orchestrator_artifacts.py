@@ -228,6 +228,54 @@ class BundleRoleTests(unittest.TestCase):
         self.assertEqual(list(assigned), ["outputs/crops/a.png"])
 
 
+class MotionBundleTests(unittest.TestCase):
+    """What package_person_sequence.py reads has to be what lhm_motion hands over.
+
+    It opens sequence.json in the motion directory and then copies every PLY that file names,
+    plus registration.json and missing-poses.json when they are there. Only frame_*.ply and
+    motion.json carried a role, so packaging would have received a lone motion.json.
+    """
+
+    def test_the_whole_motion_directory_carries_a_role(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            motion = root / "outputs/runs/activity-1/lhm-motion"
+            motion.mkdir(parents=True)
+            for name in (
+                "sequence.json",
+                "motion.json",
+                "registration.json",
+                "missing-poses.json",
+                "frame_000.ply",
+                "recovery-receipt.json",
+            ):
+                (motion / name).write_text("{}")
+            roles = {
+                pattern.replace("{name}", "activity-1"): role
+                for pattern, role in default_adapters()["lhm_motion"].output_roles.items()
+            }
+            assigned = assign_roles(root, roles)
+            base = "outputs/runs/activity-1/lhm-motion"
+            self.assertEqual(assigned[f"{base}/motion.json"], "person_motion")
+            self.assertEqual(assigned[f"{base}/recovery-receipt.json"], "recovery_receipt")
+            for name in (
+                "sequence.json",
+                "registration.json",
+                "missing-poses.json",
+                "frame_000.ply",
+            ):
+                with self.subTest(file=name):
+                    self.assertEqual(assigned[f"{base}/{name}"], "person_frames")
+
+    def test_packaging_asks_for_the_frames_as_well_as_the_motion(self):
+        package = stage_registry()["package_people"]
+        bound = {
+            (b.stage_id, b.role) for b in package.inputs.values() if b.source == "stage_output"
+        }
+        self.assertIn(("lhm_motion", "person_motion"), bound)
+        self.assertIn(("lhm_motion", "person_frames"), bound)
+
+
 class DeclaredBundleTests(unittest.TestCase):
     def test_a_role_globbed_as_a_bundle_is_declared_as_many(self):
         """Otherwise QA rejects the stage: "produced 4 files, expected one"."""
