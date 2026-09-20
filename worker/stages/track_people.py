@@ -20,28 +20,172 @@ dark tops crossing paths: their trousers differ, and the mask splits torso from 
   python track_people.py --video clip.mp4 --out tracks/ --fps 12 [--cameras cameras.json]
 """
 
-import argparse, hashlib, json, os, sys, time
+import argparse, hashlib, json, os, subprocess, sys, time
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
 
+# worker/modal_multiperson.py mounts all of worker/stages as /root/stages, so the solver's own
+# module travels with this one: its backend decision and container probe are imported rather
+# than guessed again here. Its decoders push frames into a sink; tracking has to pull them one
+# at a time in order, so the two generators below are that same sequential walk, reshaped.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dense_pi3x
+from dense_pi3x import DECODE_FFMPEG, DECODE_OPENCV, choose_decode_backend, opencv_first_frame
+
 HIST_BINS = 6  # per channel, so 216 bins per body half
+SAMPLE_AUTHORITY_CAMERAS = "cameras"
+SAMPLE_AUTHORITY_FPS_RULE = "fps-rule"
 
 
-def sample_indices(video, fps_out, start=0.0, stop=None):
-    """The decode schedule lhm_animate.py uses; every stage must agree on it exactly."""
-    cap = cv2.VideoCapture(video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+def source_metadata(video):
+    """Container frame rate, frame count and frame size."""
+    cap = cv2.VideoCapture(str(video))
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    size = (
+        int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+    )
     cap.release()
-    duration = count / fps
+    if fps <= 0 or count < 1 or min(size) < 1:
+        # A codec OpenCV cannot decode still has a container ffprobe can read.
+        probe = dense_pi3x.probe_source(video)
+        fps = fps if fps > 0 else float(probe.get("averageFps") or 0.0)
+        count = count if count > 0 else int(probe.get("containerFrames") or 0)
+        size = (size[0] or int(probe.get("width") or 0), size[1] or int(probe.get("height") or 0))
+    if fps <= 0 or count < 1:
+        raise ValueError(f"Unusable source metadata for {video}: {fps} fps, {count} frames")
+    return fps, count, size
+
+
+def fps_rule_indices(fps_out, src_fps, count, start=0.0, stop=None):
+    """The container-rate schedule this stage used before the solver measured its own.
+
+    It addresses frames by `round(time * average_fps)`, which is only the frame ffmpeg's `fps`
+    filter keeps when the source really is constant-rate.
+    """
+    duration = count / src_fps
     stop = duration if stop is None else stop
     requested = start + np.arange(int(np.ceil((stop - start) * fps_out))) / fps_out
     requested = requested[requested < stop]
-    indices = np.clip(np.rint(requested * fps).astype(int), 0, count - 1)
-    return indices, indices / fps, fps, count, duration
+    indices = np.clip(np.rint(requested * src_fps).astype(int), 0, count - 1)
+    return indices, indices / src_fps
+
+
+def plan_samples(cameras, fps_out, src_fps, count):
+    """Which source frames to track, at what times, and which rule chose them.
+
+    When a solve is supplied its samples are the authority. dense_pi3x.py selects them from the
+    decoded presentation timestamps the way ffmpeg's `fps` filter does, so on a variable-rate
+    source they are not `round(time * average_fps)` at all: on a 59.49 fps phone clip the
+    solver kept frames 2, 7, 12, 17, 22 ... while this stage's own rule asked for 0, 5, 10, and
+    the two lists could never be reconciled. Adopting each camera's `sourceIndex` and `time` is
+    what keeps every per-sample record paired with the camera that reconstructed that frame.
+    """
+    if cameras is not None:
+        indices = np.array([int(c["sourceIndex"]) for c in cameras], int)
+        times = np.array([float(c["time"]) for c in cameras], float)
+        if len(indices) < 1:
+            raise ValueError("Camera records are empty")
+        if np.any(np.diff(indices) <= 0):
+            raise ValueError("Camera records must name increasing, unique source indices")
+        return indices, times, SAMPLE_AUTHORITY_CAMERAS
+    indices, times = fps_rule_indices(fps_out, src_fps, count)
+    if len(np.unique(indices)) != len(indices):
+        raise ValueError("Source frame rate below the requested independent sample density")
+    return indices, times, SAMPLE_AUTHORITY_FPS_RULE
+
+
+def decode_shortfall(indices, decoded):
+    """The complaint when the decoder never handed back some of the planned frames."""
+    missing = [int(index) for index in indices if int(index) not in decoded]
+    if not missing:
+        return None
+    tail = f", and {len(missing) - 1} more up to {missing[-1]}" if len(missing) > 1 else ""
+    return (
+        f"Decoded {len(indices) - len(missing)} of {len(indices)} planned source frames; "
+        f"source frame {missing[0]} never decoded{tail}. The source is shorter or more damaged "
+        "than the sample plan it was given."
+    )
+
+
+def opencv_frames(video, wanted):
+    """Yield `(source index, BGR frame)` for the wanted indices, decoding strictly forward.
+
+    Nothing seeks. `CAP_PROP_POS_FRAMES` cannot reach the last frames of a variable-rate file
+    -- on the soccer clip every index from 706 on fails while all 712 decode in order -- and
+    `dense_pi3x.decode_opencv` counted the solver's ordinals with this same walk, so the
+    indices in cameras.json mean exactly what this loop counts.
+    """
+    cap = cv2.VideoCapture(str(video))
+    ordinal = 0
+    try:
+        while cap.grab():
+            if ordinal in wanted:
+                ok, bgr = cap.retrieve()
+                if not ok:
+                    break
+                yield ordinal, bgr
+            ordinal += 1
+    finally:
+        cap.release()
+
+
+def ffmpeg_frames(video, size, wanted):
+    """The same walk piped out of ffmpeg, for codecs OpenCV opens but cannot decode (AV1).
+
+    Full resolution and no re-encode, so the pixels are the source's own. `-fps_mode
+    passthrough` matters: without it ffmpeg pads a variable-rate stream up to a constant rate
+    by duplicating frames, and every ordinal the plan was built from would shift.
+    """
+    width, height = int(size[0]), int(size[1])
+    if width < 1 or height < 1:
+        raise RuntimeError("The ffmpeg fallback needs the source frame size")
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-noautorotate",
+        "-i",
+        str(video),
+        "-map",
+        "0:v:0",
+        "-fps_mode",
+        "passthrough",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-",
+    ]
+    frame_bytes = width * height * 3
+    ordinal = 0
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            buffer = proc.stdout.read(frame_bytes)
+            if len(buffer) < frame_bytes:
+                break
+            if ordinal in wanted:
+                yield ordinal, np.frombuffer(buffer, np.uint8).reshape(height, width, 3).copy()
+            ordinal += 1
+    finally:
+        proc.stdout.close()
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait()
+
+
+def sample_stream(video, backend, size, wanted):
+    """The decode generator this run uses, chosen from what OpenCV could actually do."""
+    if backend == DECODE_OPENCV:
+        return opencv_frames(video, wanted)
+    return ffmpeg_frames(video, size, wanted)
 
 
 def colour_histogram(rgb, mask, box):
@@ -169,14 +313,23 @@ def main():
     Accelerator()
 
     source_sha = hashlib.sha256(Path(a.video).read_bytes()).hexdigest()
-    indices, times, src_fps, count, duration = sample_indices(a.video, a.fps)
+    src_fps, count, source_size = source_metadata(a.video)
+    duration = count / src_fps
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
+    indices, times, authority = plan_samples(cameras, a.fps, src_fps, count)
+    # Retained as a guard, not as a schedule: after adopting the cameras' own samples this can
+    # only fire if a camera record is malformed.
     if cameras and (
         len(cameras) != len(indices)
         or any(c["sourceIndex"] != int(i) for c, i in zip(cameras, indices))
     ):
         raise ValueError("Camera records must correspond exactly to sampled source indices")
+    backend, backend_reason = choose_decode_backend(*opencv_first_frame(cv2, a.video))
+    print(
+        f"{len(indices)} samples from {authority}; decode backend {backend} ({backend_reason})",
+        flush=True,
+    )
 
     rcnn = None
     if not a.no_maskrcnn:
@@ -190,18 +343,18 @@ def main():
         )
 
     estimator = PoseEstimator("./pretrained_models/human_model_files", device="cuda")
-    cap = cv2.VideoCapture(a.video)
+    wanted = {int(index): sample for sample, index in enumerate(indices)}
+    decoded = set()
     tracks, closed, next_id = [], [], 0
     overlay_samples = {0, len(indices) // 2, len(indices) - 1}
     mask_store = {}
     unmatched_rcnn_total = 0
     w = h = None
 
-    for sample, (index, timestamp) in enumerate(zip(indices, times)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-        ok, bgr = cap.read()
-        if not ok:
-            raise RuntimeError(f"Unable to decode source frame {index}")
+    for index, bgr in sample_stream(a.video, backend, source_size, set(wanted)):
+        sample = wanted[index]
+        timestamp = float(times[sample])
+        decoded.add(index)
         raw = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         h, w = raw.shape[:2]
         diag = float(np.hypot(w, h))
@@ -384,7 +537,9 @@ def main():
             flush=True,
         )
 
-    cap.release()
+    shortfall = decode_shortfall(indices, decoded)
+    if shortfall:
+        raise RuntimeError(shortfall)
     del estimator, rcnn
     torch.cuda.empty_cache()
 
@@ -531,6 +686,15 @@ def main():
         duration=duration,
         fps=a.fps,
         samples=len(indices),
+        sampleAuthority=authority,
+        sampleAuthorityNote=(
+            "cameras: the sampled source frames and their times were adopted from the solve's "
+            "cameras.json, which selects them from decoded presentation timestamps. fps-rule: "
+            "no cameras were supplied, so they came from round(time * container average fps), "
+            "which only addresses the intended frames on a constant-rate source."
+        ),
+        decodeBackend=backend,
+        decodeBackendReason=backend_reason,
         sourceIndices=[int(i) for i in indices],
         timestamps=[float(t) for t in times],
         width=w,
