@@ -30,8 +30,9 @@ export function mountQuestViewPanel({
     .quest-view-picture { position:relative; width:100%; height:auto; aspect-ratio:1 / 1; min-height:0; background:var(--surface-2,#e0e0e4); display:grid; place-items:center; overflow:hidden; }
     .quest-view-picture img { width:100%; height:100%; object-fit:contain; position:absolute; inset:0; background:#000; }
     .quest-view-picture p { color:var(--mute,#8b8996); max-width:220px; padding:16px; margin:0; text-align:center; font-size:13px; }
-    .quest-view-grip { position:absolute; left:0; bottom:0; width:24px; height:24px; cursor:nesw-resize; touch-action:none; border-radius:0 0 0 14px; background:linear-gradient(45deg, transparent 9px, var(--line-2,#d3d2d8) 9px, var(--line-2,#d3d2d8) 10.5px, transparent 10.5px, transparent 14px, var(--line-2,#d3d2d8) 14px, var(--line-2,#d3d2d8) 15.5px, transparent 15.5px); }
+    .quest-view-grip { position:absolute; left:0; top:0; width:28px; height:28px; cursor:nwse-resize; touch-action:none; border-radius:14px 0 0 0; background:linear-gradient(135deg, var(--dim,#b3b1bb) 0 1.5px, transparent 1.5px 6px, var(--dim,#b3b1bb) 6px 7.5px, transparent 7.5px 12px, var(--dim,#b3b1bb) 12px 13.5px, transparent 13.5px); background-size:28px 28px; }
     .quest-view-grip:hover, .quest-view-grip:focus-visible { background-color:var(--surface,#e8e8eb); outline:none; }
+    .quest-view-panel header { padding-left:34px; }
     @media(max-width:520px) { .quest-view-panel { right:10px; width:min(380px,calc(100% - 20px)); } }
   `;
   stage.append(style, panel);
@@ -259,18 +260,26 @@ export function mountQuestViewPanel({
     setOpen(false);
     toggle.focus();
   };
-  // The panel is anchored to the stage's bottom-right, so dragging its lower-left corner outward
-  // (left or down) makes it larger; height follows the headset image's aspect ratio.
-  let drag: { pointer: number; x: number; width: number } | undefined;
+  // The panel is anchored to the stage's bottom-right, so dragging its top-left corner outward
+  // (left or up) makes it larger; height follows the headset image's aspect ratio, so a vertical
+  // drag is converted through that ratio and whichever delta is larger wins.
+  let drag: { pointer: number; x: number; y: number; width: number } | undefined;
   const onGripDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    drag = { pointer: e.pointerId, x: e.clientX, width: panel.getBoundingClientRect().width };
+    drag = {
+      pointer: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      width: panel.getBoundingClientRect().width,
+    };
     grip.setPointerCapture(e.pointerId);
   };
   const onGripMove = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.pointer) return;
-    preferred = Math.max(220, drag.width + (drag.x - e.clientX));
+    const dx = drag.x - e.clientX;
+    const dy = (drag.y - e.clientY) * imageRatio;
+    preferred = Math.max(220, drag.width + (Math.abs(dx) >= Math.abs(dy) ? dx : dy));
     resizePanel();
   };
   const onGripUp = (e: PointerEvent) => {
