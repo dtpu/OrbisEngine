@@ -1,26 +1,7 @@
 // Shared by the desktop scene rail and the in-headset sidebar.
 export const CLIPS = [
   {
-    id: 'elevator',
-    title: 'Two people, one handheld take',
-    place: 'Fourth-floor lift lobby · phone · 10.0 s',
-    src: '/clips/elevator.mp4',
-    poster: 1.4,
-    sub: 'Two men, a lift lobby, and a bottle moving between them',
-    free: 'Explore close to the recorded path; the railings set the boundary',
-    lead: 'Two men are reconstructed from one phone clip in the lift lobby where they were filmed. The source shows several bottle throws and catches; the viewer includes the bottle and backpack alongside the people.',
-    proof: [
-      'Two principal people remain visible through the source clip',
-      'The lift doors, railings, and floor provide the scene landmarks',
-      'The source contains throws around 0.9–1.3 s, 5.6–6.5 s, and 7.7–8.2 s',
-    ],
-    caveat:
-      'The floor and door headers soften away from the recorded views. The bottle and backpack are present, while their fine timing and the wider walking boundary remain uncertain.',
-    srctxt:
-      'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
-  },
-  {
-    id: 'kitchen',
+    id: 'kitchen-repair',
     title: 'Kitchen · fixture repair',
     place: 'Kitchen · phone · 50.73 s',
     src: '/reviews/gym-kitchen/kitchen/source.mp4',
@@ -51,10 +32,46 @@ export const CLIPS = [
       'Broad body shape, imperfect foot/back contact and late hand/dumbbell separation remain. Dumbbell geometry is inferred.',
     srctxt: 'Original phone clip of a man lifting dumbbells on an incline bench.',
   },
+  {
+    id: 'plaza',
+    title: 'Two friends outside the venue',
+    place: 'Engineering building plaza · phone · 11 s',
+    src: '/clips/img5594-video-baseline/playback.mp4',
+    poster: 5,
+    sub: 'Two people cross the plaza in one handheld phone clip',
+    free: 'Walk around them; stay near the recorded side of the plaza',
+    lead: 'Two friends walk past the building entrance. Both are reconstructed from one phone clip and stand on the ground measured from the footage.',
+    proof: [
+      'Both people keep their size and footing through the clip',
+      'The entrance, benches and paving are the alignment landmarks',
+    ],
+    caveat:
+      'The backpack on the brown-hoodie friend is missing from the avatar. Sign text is garbled because the world is generated, and areas the phone never saw are invented.',
+    srctxt: 'One 11-second phone clip filmed outside the hackathon venue.',
+  },
+  {
+    id: 'elevator',
+    title: 'Two people, one handheld take',
+    place: 'Fourth-floor lift lobby · phone · 10.0 s',
+    src: '/clips/elevator.mp4',
+    poster: 1.4,
+    sub: 'Two men, a lift lobby, and a bottle moving between them',
+    free: 'Explore close to the recorded path; the railings set the boundary',
+    lead: 'Two men are reconstructed from one phone clip in the lift lobby where they were filmed. The source shows several bottle throws and catches; the viewer includes the bottle and backpack alongside the people.',
+    proof: [
+      'Two principal people remain visible through the source clip',
+      'The lift doors, railings, and floor provide the scene landmarks',
+      'The source contains throws around 0.9–1.3 s, 5.6–6.5 s, and 7.7–8.2 s',
+    ],
+    caveat:
+      'The floor and door headers soften away from the recorded views. The bottle and backpack are present, while their fine timing and the wider walking boundary remain uncertain.',
+    srctxt:
+      'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
+  },
 ];
 
-// The rail shows only the accepted scenes above. Older clips still open directly through their
-// ?demo= presets in fourd.html; they are not listed here.
+// The rail shows only the scenes above. Older clips still open directly through their ?demo=
+// presets in fourd.html; they are not listed here.
 export const SPARES: typeof CLIPS = [];
 
 export const ALL = [...CLIPS, ...SPARES];

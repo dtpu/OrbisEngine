@@ -55,7 +55,7 @@ try {
   });
   await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
   await page.goto(
-    `${base}/fourd.html?demo=stairs2&xr=1&fakexr=1&xrmove=smooth&xrwalkgain=1.5&fakew=384&fakeh=384&xradapt=0&xrview=0`,
+    `${base}/fourd.html?demo=elevator&xr=1&fakexr=1&xrmove=smooth&xrwalkgain=1.5&fakew=384&fakeh=384&xradapt=0&xrview=0`,
     { waitUntil: 'load', timeout: 120000 },
   );
   await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });
@@ -290,8 +290,8 @@ try {
   const opened = await state();
   assert.equal(opened.sidebar.open, true);
   assert.equal(opened.playing, false);
-  assert.equal(opened.sidebar.selected, 'stairs2');
-  assert.equal(opened.sidebar.clipCount, 9);
+  assert.equal(opened.sidebar.selected, 'elevator');
+  assert.equal(opened.sidebar.clipCount, 4);
   const aim = await page.evaluate(() => {
     const w = window.wander;
     const controller = w.spark.renderer.xr.getController(1);
@@ -330,19 +330,18 @@ try {
     'Panel remains anchored while head moves',
   );
   assert.deepEqual(tracked.sidebar.quaternion, opened.sidebar.quaternion);
-  await focus(8);
-  const spare = await state();
-  assert.equal(spare.sidebar.selected, 'stairs2', 'Focus does not change loaded selection');
-  assert.ok(spare.sidebar.scroll > 0, 'All spare entries are reachable by scrolling');
+  await focus(0);
+  const browsed = await state();
+  assert.equal(browsed.sidebar.selected, 'elevator', 'Focus does not change loaded selection');
   await frames(10);
-  assert.equal((await state()).sidebar.focus, 8, 'Focus stays stable after joystick release');
-  records.menu = { opened, tracked, spare };
-  await page.screenshot({ path: `${out}/menu-spares.png` });
+  assert.equal((await state()).sidebar.focus, 0, 'Focus stays stable after joystick release');
+  records.menu = { opened, tracked, browsed };
+  await page.screenshot({ path: `${out}/menu-browsed.png` });
 
-  console.log('XR sidebar: movement and spare scrolling passed');
-  await focus(3);
+  console.log('XR sidebar: movement and browsing passed');
+  await focus(2);
   await button(4);
-  await assertRuntime('atrium');
+  await assertRuntime('plaza');
   await assertAudio(false);
   const parked = await page.evaluate(() => {
     const previous = window.__sidebarTest.prior;
@@ -358,12 +357,12 @@ try {
   assert.equal(parked.attached, false, 'Cached HUD and media are detached');
   assert.equal(parked.sources, 0, 'Cached scene must not keep audio voices alive');
   records.parked = parked;
-  await page.screenshot({ path: `${out}/atrium-switched.png` });
+  await page.screenshot({ path: `${out}/plaza-switched.png` });
   await button(5);
-  await focus(2);
+  await focus(3);
   const requestsBeforeReturn = assetRequests.length;
   await button(0);
-  await assertRuntime('stairs2');
+  await assertRuntime('elevator');
   await assertAudio(false);
   assert.deepEqual(
     assetRequests.slice(requestsBeforeReturn),
@@ -385,15 +384,15 @@ try {
   assert.equal(cachedReturn.sameRuntime, true, 'Reuse the prepared scene, not just cached files');
   assert.equal(cachedReturn.cache.hits, 1);
   assert.equal(cachedReturn.cache.lastLoad.reused, true);
-  assert.deepEqual(cachedReturn.cache.retained, ['atrium']);
+  assert.deepEqual(cachedReturn.cache.retained, ['plaza']);
   records.cachedReturn = cachedReturn;
   console.log('XR cached return', JSON.stringify(cachedReturn.cache));
   await page.evaluate(() => {
     (window.wander as ViewerDiagnostics & { setMuted(value: boolean): void }).setMuted(true);
   });
   for (const [demo, row] of [
-    ['atrium', 3],
-    ['stairs2', 2],
+    ['plaza', 2],
+    ['elevator', 3],
   ] as const) {
     await button(5);
     await focus(row);
@@ -409,12 +408,12 @@ try {
   }
 
   // Hold a required manifest indefinitely: a second controller choice must not wait for it.
-  const lobbyManifest = '**/worlds/lobby-4d/person/sequence.json*';
+  const gymManifest = '**/reviews/gym-repair/person-contact-candidate/sequence.json*';
   let releaseStall!: () => void;
   let sawStall!: () => void;
   const stalled = new Promise<void>((resolve) => (sawStall = resolve));
   const released = new Promise<void>((resolve) => (releaseStall = resolve));
-  await page.route(lobbyManifest, async (route) => {
+  await page.route(gymManifest, async (route) => {
     sawStall();
     await released;
     await route.continue().catch(() => {}); // Cancellation can close the underlying request.
@@ -424,22 +423,22 @@ try {
   await button(4);
   await stalled;
   assert.equal((await state()).sidebar.busy, true);
-  await focus(3);
-  await button(4);
-  await assertRuntime('atrium');
-  assert.equal((await state()).sidebar.error, '');
-  releaseStall();
-  await page.unroute(lobbyManifest);
-  await frames(8);
-  assert.equal((await state()).demo, 'atrium', 'A late cancelled load cannot replace the choice');
-  records.cancelledLoad = await state();
-  await button(5);
   await focus(2);
   await button(4);
-  await assertRuntime('stairs2');
+  await assertRuntime('plaza');
+  assert.equal((await state()).sidebar.error, '');
+  releaseStall();
+  await page.unroute(gymManifest);
+  await frames(8);
+  assert.equal((await state()).demo, 'plaza', 'A late cancelled load cannot replace the choice');
+  records.cancelledLoad = await state();
+  await button(5);
+  await focus(3);
+  await button(4);
+  await assertRuntime('elevator');
 
   // Fail a required manifest to exercise rollback instead of a cache hit.
-  await page.route('**/worlds/lobby-4d/person/sequence.json*', (route) =>
+  await page.route(gymManifest, (route) =>
     route.fulfill({
       status: 500,
       contentType: 'application/json',
@@ -474,13 +473,13 @@ try {
   assert.equal(failed.sidebar.open, true);
   assert.equal(failed.playing, false);
   assert.ok(failed.sidebar.error.length > 0);
-  await assertRuntime('stairs2');
+  await assertRuntime('elevator');
   records.failure = failed;
   await page.screenshot({ path: `${out}/menu-load-error.png` });
-  await page.unroute('**/worlds/lobby-4d/person/sequence.json*');
+  await page.unroute(gymManifest);
   // Retry the same focused row with A and prove the error did not strand the session.
   await button(4);
-  await assertRuntime('lobby');
+  await assertRuntime('gym-accepted');
   await assertAudio(true);
   await page.evaluate(() => {
     (window.wander as ViewerDiagnostics & { setMuted(value: boolean): void }).setMuted(false);
@@ -501,7 +500,7 @@ try {
     window.__sidebarTest.prior = window.wander;
   });
   await button(5);
-  await focus(2);
+  await focus(3);
   await button(4);
   await page.waitForFunction(() => {
     const sidebar = (window.__xr as Report).sidebar;
@@ -509,7 +508,7 @@ try {
   });
   assert.equal(await page.evaluate(() => window.wander === window.__sidebarTest.prior), true);
   assert.equal((await state()).playing, false, 'Restored error sidebar pauses playback');
-  await assertRuntime('lobby');
+  await assertRuntime('gym-accepted');
   records.activationFailure = await state();
   await page.screenshot({ path: `${out}/menu-activation-error.png` });
   await button(5);
