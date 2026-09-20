@@ -97,6 +97,25 @@ describe('bottle interaction simulation', () => {
     expect(unsupported.snapshot().mode).toBe('free');
   });
 
+  test('lifted landing support keeps lower recorded poses reachable without allowing pickup through real floor', () => {
+    const b = bottle({ floorLift: 0.5 });
+    b.reset([0, 0.2, 0]);
+    expect(b.grab('left', [0, 0.2, 0], 0)).toBe(true);
+    b.release('left', [0, 0, 0]);
+    for (let i = 0; i < 600 && b.snapshot().mode !== 'resting'; i++) b.step(1 / 60);
+    expect(b.snapshot().mode).toBe('resting');
+    expect(b.snapshot().position[1]).toBeCloseTo(0.55);
+    expect(b.grab('left', b.snapshot().position, 0)).toBe(true);
+    b.reset([0, 0.2, 0]);
+    expect(b.grab('left', [0, -0.1, 0], 0.5)).toBe(false);
+    const unknown = bottle({ floorLift: 0.5, floorAt: () => null });
+    unknown.startFlight([0, 0.2, 0], [0, -30, 0]);
+    unknown.step(0.1);
+    expect(unknown.snapshot().position[1]).toBeLessThan(0);
+    expect(unknown.snapshot().mode).toBe('free');
+    expect(() => bottle({ floorLift: -1 })).toThrow();
+  });
+
   test('a downward occupied floor bin settles without making walls or ceilings into support', () => {
     const occupiedFloor = bottle({
       blockedAt: ([, y]) => y <= 0.15,

@@ -137,9 +137,10 @@ export class BottleScene {
       .getBoundingSphere(new THREE.Sphere()).radius;
     this.physics = new BottlePhysics({
       radius: Math.max(radius, 0.005 * host.stature),
-      // Intentional knee-height interaction support keeps the loose bottle within easy reach.
+      floorRadius: Math.max(radius, visualRadius),
+      // Intentional waist-height interaction support keeps the loose bottle within easy reach.
       // This is a gameplay offset above measured floor, not reconstructed floor elevation.
-      floorRadius: Math.max(radius, visualRadius) + 0.25 * host.stature,
+      floorLift: 0.5 * host.stature,
       gravity: 5.77 * host.stature,
       maxSpeed: 8 * host.stature,
       floorAt: host.floorAt,
