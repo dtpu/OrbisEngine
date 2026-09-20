@@ -60,10 +60,13 @@ adb reverse tcp:5399 tcp:5399
 ```
 
 In Meta Browser open `http://localhost:5399/demo.html?xr=1`, start playback, and select **Enter VR**.
-Default movement is teleport with snap turning; `?xr=1&xrmove=smooth` enables smooth locomotion.
-In smooth mode the left stick walks and strafes in the direction you face, with analog speed;
-the right stick snap-turns without changing your height. Physical leaning, walking and crouching
-remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
+Default movement is teleport with snap turning. `?xr=1&xrmove=smooth` enables smooth walking
+with the left joystick and continuous turning with the right joystick. Right-stick turning has a
+15% deadzone, stops on release, and turns at 90 degrees/second at full deflection. Add
+`&xrturnspeed=60` to adjust that rate (0–180 degrees/second), or `&xrturnmode=snap` to keep
+snap turning while walking smoothly. `&xrturn=0` disables joystick turning in either mode.
+Left-stick walking follows the direction you face, with analog speed. Physical leaning, walking
+and crouching remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
 physical steps cover up to 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2;
 only the extra travel is limited by the scene boundary and, in walk mode, obstacle checks.
 Physical head tracking remains unrestricted; the gain does not magnify head rotation, eye height
@@ -163,8 +166,8 @@ with `WANDER_SHARE_DIR`, `WANDER_CLIPS_DIR`, and `WANDER_MARBLE_DIR`. Use `WANDE
 when publishing an external evidence directory. Packaged viewer assets live under `public/` and
 remain untracked. See the [code map](#code-map) and [object packaging](docs/objects.md).
 
-For an unattended improvement run, fill [TONIGHT.md](docs/overnight/TONIGHT.md), then follow the
-[overnight runbook](docs/overnight/RUNBOOK.md). It covers recovering source clips from S3,
+For an unattended improvement run, write the run brief and follow
+[unattended runs](docs/unattended-runs.md). It covers recovering source clips from S3,
 checking caches, budgets and model selection, isolated candidate runs, visual acceptance,
 and recovery without duplicate Marble generations.
 
@@ -182,6 +185,7 @@ bun run test:audio-browser
 bun run test:audio-package
 bun run test:person-motion
 bun run test:static-colliders
+bun run test:xr-turning
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
@@ -193,10 +197,13 @@ for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/di
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
 `bun run test:xr` runs all XR and person-size unit tests without Chrome or a server.
 With Chrome installed and that server running, `bun run test:xr-browser` runs the simulated XR
-browser suite: physical gain and wall checks, tracked height, re-entry, teleporting between levels,
-stair support, body stepping/crouching, playback controls and runtime person scaling.
+browser suite: physical gain and wall checks, smooth/snap turning, tracked height, re-entry,
+teleporting between levels, stair support, body stepping/crouching, playback controls and runtime person scaling.
 `bun run test:xr-locomotion` retains the focused movement check; `bun run test:person-size-browser`
 runs the authoring-scale regression alone. Simulated captures stay under `.context/evidence/`.
+The turning browser check also needs that server. After building, run
+`XR_TEST_DIST=dist bun run test:xr-turning` to test this checkout's compiled code
+while using the running server for scene assets. Evidence stays under `.context/evidence/`.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
 Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
 checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)

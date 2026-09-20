@@ -80,10 +80,10 @@ uv run --locked --group inference scripts/run_clip.py --help
 The help command checks the local CLI only; it does not authenticate or launch work. Source this
 file in the shell that will start the run. Both private files are gitignored; never use `VITE_`
 prefixes for secrets. Agree on the overnight task and spend limit. Interactive runs retain the
-cleaned-frame review gate; the explicit unattended policy in [overnight rules](overnight/RULES.md)
+cleaned-frame review gate; the explicit unattended policy in [unattended runs](unattended-runs.md)
 uses `--no-gate`. Both retain the one-generation-per-new-clip Marble rule. The pipeline has no
 single cross-provider hard budget cap; credentials alone do not bound spending. Revoke temporary
-shared access afterward. See the [overnight runbook](overnight/RUNBOOK.md) before paid work.
+shared access afterward. See [unattended runs](unattended-runs.md) before paid work.
 
 ## Recover input clips and runs
 
