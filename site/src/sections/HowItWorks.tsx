@@ -1,7 +1,13 @@
 import Section from '../components/Section';
 import { Eyebrow, H2 } from '../components/Heading';
 import { steps } from '../content/steps';
+import type { SyntheticEvent } from 'react';
 import styles from './HowItWorks.module.css';
+
+// Step images are exported with the media bundle; until they exist, hide the broken-image glyph.
+const hideBroken = (e: SyntheticEvent<HTMLImageElement>) => {
+  e.currentTarget.style.visibility = 'hidden';
+};
 
 export default function HowItWorks() {
   return (
@@ -10,14 +16,14 @@ export default function HowItWorks() {
         <Eyebrow>Pipeline</Eyebrow>
         <H2>How it works</H2>
       </div>
-      <ol className={styles.strip} aria-label="Pipeline steps" tabIndex={0}>
+      <ol className={styles.strip} aria-label="Pipeline steps">
         {steps.map((step) => (
           <li key={step.n} className={styles.step}>
             <div className={styles.numberRow}>
               <span className={styles.number}>{String(step.n).padStart(2, '0')}</span>
             </div>
             <div className={styles.media}>
-              <img src={step.image} alt={step.title} loading="lazy" />
+              <img src={step.image} alt={step.title} loading="lazy" onError={hideBroken} />
             </div>
             <h3 className={styles.title}>{step.title}</h3>
             <p className={styles.body}>{step.body}</p>
