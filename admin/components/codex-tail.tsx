@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMounted } from '@/components/use-now';
 import { collapse, TranscriptRow } from '@/components/transcript';
-import { listRecentTranscripts, readTranscript, sendMessage } from '@/lib/client';
+import { listReviewTranscripts, readTranscript, sendMessage } from '@/lib/client';
 import { formatWhen } from '@/lib/format';
 import type { ReviewTranscript, TranscriptEvent } from '@/lib/types';
 
@@ -22,17 +23,14 @@ function keyOf(item: ReviewTranscript): string {
   return `${item.runId ?? ''}/${item.nodeId}/${item.attemptId}`;
 }
 
-function shortRun(runId: string): string {
-  // "e2e-new-clip-20260920-r7:shot:00" reads better as "…-r7 shot 00" in a narrow header.
-  return runId.replace(/:shot:/, ' shot ');
-}
-
 /**
- * The persistent Codex log. It follows whatever review the agent is writing right now, falls
- * back to the most recent finished one, and lets the operator drop the agent a message that it
- * reads at its next review.
+ * One run's Codex log. It follows whatever review the agent is writing for this run right now,
+ * falls back to the most recent finished one, and lets the operator drop the agent a message
+ * that it reads at its next review. Scoped to the run whose page it sits on: a log belongs to
+ * the run you are looking at, and answering it sends a message about one of that run's stages.
  */
-export function CodexTail() {
+export function CodexTail({ runId }: { runId: string }) {
+  const mounted = useMounted();
   const [open, setOpen] = useState(true);
   const [transcripts, setTranscripts] = useState<ReviewTranscript[]>([]);
   const [available, setAvailable] = useState(true);
@@ -44,9 +42,13 @@ export function CodexTail() {
   const [follow, setFollow] = useState(true);
   const stream = useRef<HTMLDivElement>(null);
 
+  // Below 1100px the rail floats over the page instead of sitting beside it, so it starts
+  // collapsed there. A stored choice still wins: only the default depends on the width.
   useEffect(() => {
     try {
-      setOpen(window.localStorage.getItem(OPEN_KEY) !== 'closed');
+      const stored = window.localStorage.getItem(OPEN_KEY);
+      if (stored) setOpen(stored !== 'closed');
+      else setOpen(window.innerWidth > 1100);
     } catch {
       // Storage may be blocked; the sidebar simply starts open.
     }
@@ -64,13 +66,13 @@ export function CodexTail() {
 
   const reload = useCallback(async () => {
     try {
-      const listing = await listRecentTranscripts();
+      const listing = await listReviewTranscripts(runId);
       setTranscripts(listing.transcripts);
       setAvailable(listing.available);
     } catch {
       // The API may be down; keep whatever we last saw.
     }
-  }, []);
+  }, [runId]);
 
   useEffect(() => {
     void reload();
@@ -144,7 +146,9 @@ export function CodexTail() {
     }
   }
 
-  const live = current ? !current.finished : false;
+  const live = mounted && current ? !current.finished : false;
+  // Until the mount, the server and the client agree on exactly one thing: nothing is loaded.
+  const target = mounted ? current : null;
 
   return (
     <aside className={`tail${open ? '' : ' tail--closed'}`} aria-label="Codex log">
@@ -162,42 +166,41 @@ export function CodexTail() {
       {open ? (
         <>
           <div className="tail__head">
-            {current?.runId ? (
+            {target?.runId ? (
               <>
                 <span className={`status status--${live ? 'active' : 'muted'}`}>
                   {live ? 'reviewing' : 'last review'}
                 </span>
                 <Link
                   className="mono"
-                  href={`/runs/${encodeURIComponent(current.runId)}?stage=${encodeURIComponent(current.nodeId)}`}
+                  href={`/runs/${encodeURIComponent(target.runId)}?stage=${encodeURIComponent(target.nodeId)}`}
                 >
-                  {current.nodeId}
+                  {target.nodeId}
                 </Link>
-                <span className="tail__where">
-                  on <span className="mono">{shortRun(current.runId)}</span>
-                  {live ? '' : `, ${formatWhen(current.updatedAt)}`}
-                </span>
+                {live ? null : <span className="tail__where">{formatWhen(target.updatedAt)}</span>}
               </>
             ) : (
               <span className="tail__where">
-                {available
-                  ? 'No Codex review yet.'
-                  : 'Transcripts are not available from this API.'}
+                {!mounted
+                  ? 'Loading…'
+                  : available
+                    ? 'No Codex review yet.'
+                    : 'Transcripts are not available from this API.'}
               </span>
             )}
           </div>
 
-          {transcripts.length > 1 ? (
+          {mounted && transcripts.length > 1 ? (
             <select
               className="tail__pick"
               aria-label="Which review to follow"
-              value={currentKey ?? ''}
+              value={(mounted ? currentKey : null) ?? ''}
               onChange={(event) => setChosen(event.target.value || null)}
             >
               {transcripts.map((item) => (
                 <option key={keyOf(item)} value={keyOf(item)}>
                   {item.finished ? '' : 'live: '}
-                  {item.nodeId} on {shortRun(item.runId ?? '')}, {formatWhen(item.updatedAt)}
+                  {item.nodeId}, {formatWhen(item.updatedAt)}
                 </option>
               ))}
             </select>
@@ -211,10 +214,12 @@ export function CodexTail() {
               setFollow(element.scrollHeight - element.scrollTop - element.clientHeight < 40);
             }}
           >
-            {tail?.error ? <p className="tail__system">{tail.error}</p> : null}
-            {rows.map((event, index) => (
-              <TranscriptRow key={event.item?.id ?? `${event.type}-${index}`} event={event} />
-            ))}
+            {mounted && tail?.error ? <p className="tail__system">{tail.error}</p> : null}
+            {mounted
+              ? rows.map((event, index) => (
+                  <TranscriptRow key={event.item?.id ?? `${event.type}-${index}`} event={event} />
+                ))
+              : null}
             {live && rows.length > 0 ? <p className="tail__system tail__cursor">▍</p> : null}
           </div>
 
@@ -222,18 +227,18 @@ export function CodexTail() {
             <input
               type="text"
               value={draft}
-              disabled={!current?.runId}
+              disabled={!target?.runId}
               aria-label="Message the agent"
               title={note ?? 'The agent reads this at its next review.'}
               placeholder={
-                current ? `Message the agent about ${current.nodeId}` : 'Message the agent'
+                target ? `Message the agent about ${target.nodeId}` : 'Message the agent'
               }
               onChange={(event) => setDraft(event.target.value)}
             />
             <button
               className="button button--small"
               type="submit"
-              disabled={sending || !draft.trim() || !current?.runId}
+              disabled={sending || !draft.trim() || !target?.runId}
             >
               Send
             </button>

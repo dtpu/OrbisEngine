@@ -440,3 +440,22 @@ def generate_preview(source: Path, destination: Path, media_type: str) -> Path |
         preview.write_bytes(content)
         return preview
     return None
+
+
+def flush_pending_outboxes(workspace_root: Path, store: LocalCAS, archive) -> int:
+    """Push attempt manifests that were queued but never reached the archive.
+
+    A run enqueues its files and flushes them immediately, but a flush can fail -- a full disk
+    is the usual reason -- and the work still finishes, because the bytes are already safe in
+    the local store. Nothing retried those entries afterwards, so the database recorded
+    artifacts whose blobs the archive never received, and the next thing to want one failed
+    with "artifact storage object is unavailable". Recovering at start-up costs nothing when
+    there is nothing to do.
+    """
+    recovered = 0
+    for outbox in sorted(Path(workspace_root).glob("*/outbox")):
+        try:
+            recovered += UploadOutbox(outbox, store, archive).flush()
+        except Exception as error:  # noqa: BLE001 - one bad run must not stop the rest
+            print(f"could not flush {outbox}: {error}", flush=True)
+    return recovered

@@ -10,7 +10,6 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from orchestrator.activities.adapters import default_adapters
 from orchestrator.artifacts import (
     LocalCAS,
     ManifestResolver,
@@ -20,8 +19,6 @@ from orchestrator.artifacts import (
     generate_preview,
     sha256_file,
 )
-from orchestrator.quality.validators import validate_stage_outputs
-from orchestrator.stages.registry import stage_registry
 from orchestrator.workspace import RunWorkspace
 from orchestrator.workspace import RunWorkspace
 
@@ -228,131 +225,6 @@ class BundleRoleTests(unittest.TestCase):
         self.write("outputs/crops/a.png", "inputs/outputs/crops/b.png")
         assigned = assign_roles(self.root, {"outputs/crops/*.png": "object_crops"})
         self.assertEqual(list(assigned), ["outputs/crops/a.png"])
-
-
-class IncidentalFileTests(unittest.TestCase):
-    """A stage's tooling writes files to coordinate itself. They are not its outputs.
-
-    LHM's frozen person finished on the GPU in 98 seconds and was then failed by its own QA:
-    "canonical_person: recovery-receipt.json.lock is empty". A lock is empty by design, and
-    the emptiness check exists to catch an output that was truncated.
-    """
-
-    def test_a_lock_file_is_neither_an_output_nor_a_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            frozen = root / "outputs/runs/activity-1/lhm-frozen"
-            frozen.mkdir(parents=True)
-            (frozen / "canonical-state.pt").write_bytes(b"weights")
-            (frozen / "recovery-receipt.json").write_text("{}")
-            (frozen / "recovery-receipt.json.lock").write_bytes(b"")
-
-            roles = {
-                pattern.replace("{name}", "activity-1"): role
-                for pattern, role in default_adapters()["lhm_frozen"].output_roles.items()
-            }
-            assigned = assign_roles(root, roles)
-            self.assertNotIn(
-                "outputs/runs/activity-1/lhm-frozen/recovery-receipt.json.lock", assigned
-            )
-            self.assertEqual(
-                assigned["outputs/runs/activity-1/lhm-frozen/canonical-state.pt"],
-                "canonical_person",
-            )
-            definition = stage_registry()["lhm_frozen"].model_dump(mode="json")
-            self.assertEqual(validate_stage_outputs(definition, root, roles), ())
-
-    def test_a_lock_file_is_still_kept_with_the_attempt(self):
-        """Not an output is not the same as not evidence; everything is still frozen."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "outputs").mkdir()
-            (root / "outputs/thing.json").write_text("{}")
-            (root / "outputs/thing.json.lock").write_bytes(b"")
-            store = LocalCAS(root / "cas")
-            store.initialize()
-            workspace = RunWorkspace(root / "runs", "run-1")
-            workspace.initialize()
-            made = workspace.create_attempt("stage", "attempt-1", {"runId": "run-1"})
-            (made.outputs / "thing.json").write_text("{}")
-            (made.outputs / "thing.json.lock").write_bytes(b"")
-            made.finalize({"status": "succeeded", "error": None, "command": []})
-            manifest = freeze_attempt(
-                made, store, status="succeeded", roles={"outputs/thing.json": "report"}
-            )
-            by_path = {item.relative_path: item.role for item in manifest.files}
-            self.assertEqual(by_path["outputs/thing.json"], "report")
-            self.assertEqual(by_path["outputs/thing.json.lock"], "attempt_file")
-
-
-class MotionBundleTests(unittest.TestCase):
-    """What package_person_sequence.py reads has to be what lhm_motion hands over.
-
-    It opens sequence.json in the motion directory and then copies every PLY that file names,
-    plus registration.json and missing-poses.json when they are there. Only frame_*.ply and
-    motion.json carried a role, so packaging would have received a lone motion.json.
-    """
-
-    def test_the_whole_motion_directory_carries_a_role(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            motion = root / "outputs/runs/activity-1/lhm-motion"
-            motion.mkdir(parents=True)
-            for name in (
-                "sequence.json",
-                "motion.json",
-                "registration.json",
-                "missing-poses.json",
-                "frame_000.ply",
-                "recovery-receipt.json",
-            ):
-                (motion / name).write_text("{}")
-            roles = {
-                pattern.replace("{name}", "activity-1"): role
-                for pattern, role in default_adapters()["lhm_motion"].output_roles.items()
-            }
-            assigned = assign_roles(root, roles)
-            base = "outputs/runs/activity-1/lhm-motion"
-            self.assertEqual(assigned[f"{base}/motion.json"], "person_motion")
-            self.assertEqual(assigned[f"{base}/recovery-receipt.json"], "recovery_receipt")
-            for name in (
-                "sequence.json",
-                "registration.json",
-                "missing-poses.json",
-                "frame_000.ply",
-            ):
-                with self.subTest(file=name):
-                    self.assertEqual(assigned[f"{base}/{name}"], "person_frames")
-
-    def test_packaging_asks_for_the_frames_as_well_as_the_motion(self):
-        package = stage_registry()["package_people"]
-        bound = {
-            (b.stage_id, b.role) for b in package.inputs.values() if b.source == "stage_output"
-        }
-        self.assertIn(("lhm_motion", "person_motion"), bound)
-        self.assertIn(("lhm_motion", "person_frames"), bound)
-
-
-class DeclaredBundleTests(unittest.TestCase):
-    def test_a_role_globbed_as_a_bundle_is_declared_as_many(self):
-        """Otherwise QA rejects the stage: "produced 4 files, expected one"."""
-        for executor, adapter in default_adapters().items():
-            patterns = getattr(adapter, "output_roles", None)
-            if not patterns:
-                continue
-            many = {
-                role for pattern, role in patterns.items() if "*" in pattern.replace("{name}", "")
-            }
-            for stage in stage_registry().values():
-                if stage.executor != executor:
-                    continue
-                for name, contract in stage.outputs.items():
-                    if contract.role in many:
-                        with self.subTest(stage=stage.id, output=name):
-                            self.assertTrue(
-                                contract.multiple,
-                                f"{stage.id}.{name} is globbed as many files but declared as one",
-                            )
 
 
 if __name__ == "__main__":

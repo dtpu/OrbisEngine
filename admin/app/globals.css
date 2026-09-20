@@ -5,27 +5,36 @@
  * judges are the only saturated things on the page. Colour is reserved for status and it always
  * accompanies a word. Identifiers, hashes, sizes and times are set in the mono; everything read
  * as prose is set in the sans.
+ *
+ * Surfaces run bezel -> ground -> panel -> panel-2. Anything that is not content takes the bezel
+ * tone: the top bar, the agent rail, and every well a frame or clip is laid into. Content sits
+ * above it. That split is what keeps a preview reading as footage rather than as page decoration.
  */
 
 :root {
   color-scheme: dark;
 
-  --ground: #2b2d30;
-  --panel: #333639;
-  --panel-2: #3b3f43;
-  --well: #202224;
-  --line: #4a4e54;
-  --line-soft: #3f4247;
+  --bezel: #17191b;
+  --ground: #232528;
+  --panel: #2c2f33;
+  --panel-2: #363b40;
+  --well: #17191b;
+  --line: #474c52;
+  --line-soft: #34383d;
 
-  --ink: #edeae3;
-  --ink-2: #cbc9c3;
-  --muted: #a3a4a6;
-  --dim: #808285;
+  --ink: #efece6;
+  --ink-2: #c6c4bf;
+  --muted: #989a9d;
+  --dim: #74777a;
 
-  --attention: #f2b75b;
-  --active: #7fb6e6;
-  --good: #7dc48c;
-  --bad: #ee7c72;
+  --attention: #f0b35a;
+  --active: #79b4e8;
+  --good: #6fc98a;
+  --bad: #ef7f74;
+
+  /* Status at a whisper: a tinted surface for the one row that needs a person. */
+  --attention-wash: #302716;
+  --attention-line: #6b5427;
 
   --attention-ink: #2b1f08;
   --focus: #ffffff;
@@ -133,8 +142,8 @@ a:hover {
   gap: 24px;
   height: 48px;
   padding: 0 24px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--ground);
+  border-bottom: 1px solid #000;
+  background: var(--bezel);
 }
 .brand {
   display: inline-flex;
@@ -152,6 +161,8 @@ a:hover {
   stroke-width: 1.5;
 }
 .brand__area {
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
   color: var(--muted);
   font-weight: 400;
 }
@@ -183,20 +194,20 @@ a:hover {
   align-items: start;
 }
 .section-title {
-  font-size: var(--t-17);
+  font-size: var(--t-21);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 .section-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 .section-head .count {
   color: var(--muted);
   font-family: var(--mono);
-  font-size: var(--t-12);
+  font-size: var(--t-14);
 }
 .section-head .live {
   margin-left: auto;
@@ -262,7 +273,7 @@ a:hover {
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.58;
   }
 }
 
@@ -272,16 +283,17 @@ a:hover {
   height: 10px;
 }
 .strip--compact {
-  height: 6px;
+  height: 7px;
 }
+/* A stage not yet reached sits barely above the page; a finished one has done its talking. */
 .strip__cell {
   flex: 1 1 0;
   min-width: 3px;
   border-radius: 1px;
-  background: var(--line);
+  background: var(--line-soft);
 }
 .strip__cell--idle {
-  background: var(--line);
+  background: var(--line-soft);
 }
 .strip__cell--active {
   background: var(--active);
@@ -300,16 +312,18 @@ a:hover {
   background: var(--line-soft);
 }
 
-/* Attention banner --------------------------------------------------------------------------- */
+/* Attention ----------------------------------------------------------------------------------
+ *
+ * The one loud thing on the page. A run that is merely working needs no colour; a run that has
+ * stopped and is waiting for a person gets the amber rail, a warmer surface, and the only
+ * button-shaped affordance above the fold. Everything else on the page stays quiet so this
+ * can be seen from across a room.
+ */
 
 .gates {
   display: grid;
-  gap: 1px;
-  margin-bottom: 28px;
-  background: var(--line-soft);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-control);
-  overflow: hidden;
+  gap: 2px;
+  margin-bottom: 32px;
 }
 .gate {
   display: grid;
@@ -317,9 +331,11 @@ a:hover {
   gap: 14px;
   align-items: center;
   width: 100%;
-  padding: 12px 16px;
+  padding: 13px 16px 13px 13px;
   border: 0;
-  background: var(--panel);
+  border-left: 3px solid var(--attention);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: var(--attention-wash);
   color: var(--ink);
   font: inherit;
   text-align: left;
@@ -327,22 +343,39 @@ a:hover {
   cursor: pointer;
 }
 .gate:hover {
-  background: var(--panel-2);
+  background: color-mix(in srgb, var(--attention-wash) 82%, var(--attention));
+}
+.gate .status {
+  font-size: var(--t-12);
 }
 .gate__what {
   min-width: 0;
+  font-size: var(--t-14);
 }
 .gate__what strong {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--ink);
 }
 .gate__where {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: var(--t-12);
 }
 .gate__cta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--attention-line);
+  border-radius: var(--r-control);
   font-size: var(--t-12);
+  font-weight: 500;
   color: var(--attention);
   white-space: nowrap;
+}
+.gate:hover .gate__cta {
+  background: var(--attention);
+  border-color: var(--attention);
+  color: var(--attention-ink);
 }
 
 /* Runs table --------------------------------------------------------------------------------- */
@@ -353,56 +386,116 @@ a:hover {
 .runs__head,
 .run {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(140px, 1fr) 88px 120px;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(200px, 1fr) 88px 128px;
+  gap: 16px;
   align-items: center;
-  padding: 12px 8px;
+  padding: 11px 10px;
   border-bottom: 1px solid var(--line-soft);
 }
 .runs__head {
   color: var(--dim);
   font-size: var(--t-12);
-  padding-top: 8px;
-  padding-bottom: 8px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.runs__head .right {
+  text-align: right;
 }
 .run {
+  position: relative;
+  /* Every row is the same height whatever its tally says, so the eye can run down the column. */
+  min-height: 62px;
   color: var(--ink);
   text-decoration: none;
 }
 .run:hover {
   background: var(--panel);
 }
+
+/*
+ * A run fans out into one child run per shot. The rail is that relationship, not an indent:
+ * it is scoped to the group so the last shot's rail stops at its own tick rather than running on.
+ */
+.runs__group {
+  position: relative;
+}
 .run--shot {
-  padding-left: 32px;
+  padding-left: 40px;
+}
+.run--shot::before,
+.run--shot::after {
+  content: '';
+  position: absolute;
+  background: var(--line-soft);
+}
+.run--shot::before {
+  left: 20px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.run--shot:last-child::before {
+  bottom: 50%;
+}
+.run--shot::after {
+  left: 20px;
+  top: 50%;
+  width: 11px;
+  height: 1px;
 }
 .run__name {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 .run__id {
   font-family: var(--mono);
   font-size: var(--t-12);
   font-weight: 500;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
+.run--shot .run__id {
+  color: var(--ink-2);
+}
 .run__id .shot {
-  color: var(--muted);
+  color: var(--dim);
   font-weight: 400;
 }
 .run__what {
   color: var(--muted);
-  font-size: var(--t-12);
-  margin-top: 2px;
+  font-size: var(--t-11);
 }
 .run__progress {
   display: grid;
-  gap: 5px;
+  gap: 7px;
 }
+
+/* Counts carry the same colour vocabulary as the strip above them, so the two agree. */
 .run__tally {
+  display: flex;
+  gap: 4px 10px;
+  min-width: 0;
   font-family: var(--mono);
   font-size: var(--t-11);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.run__count {
+  flex: none;
+}
+.run__count--done {
   color: var(--muted);
+}
+.run__count--active {
+  color: var(--active);
+}
+.run__count--bad {
+  color: var(--bad);
+}
+.run__count--attention {
+  color: var(--attention);
 }
 .run__when {
   display: grid;
@@ -415,10 +508,12 @@ a:hover {
 .run__when .live {
   color: var(--active);
 }
+
+/* Status keeps a fixed left edge in its column: a colour you have to hunt for is not a signal. */
 .run__state {
   display: grid;
-  gap: 2px;
-  justify-items: end;
+  gap: 3px;
+  justify-items: start;
 }
 .run__needs {
   font-size: var(--t-11);
@@ -432,18 +527,24 @@ a:hover {
 
 /* Forms -------------------------------------------------------------------------------------- */
 
+/*
+ * Starting a run is not an event worth shouting about; a run stopping for you is. This panel
+ * stays the quietest thing on the page: no fill, one hairline, and a button that only earns
+ * its weight once a clip has been chosen.
+ */
 .create {
   position: sticky;
   top: 24px;
-  padding: 20px;
-  background: var(--panel);
+  padding: 18px;
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-stage);
   display: grid;
-  gap: 16px;
+  gap: 14px;
 }
 .create__title {
-  font-size: var(--t-17);
+  font-size: var(--t-14);
   font-weight: 600;
+  color: var(--ink-2);
 }
 .field {
   display: grid;
@@ -523,16 +624,20 @@ select {
 .drop {
   display: grid;
   gap: 4px;
-  padding: 18px 14px;
+  padding: 26px 14px;
   border: 1px dashed var(--line);
   border-radius: var(--r-control);
   background: var(--well);
   cursor: pointer;
   text-align: center;
 }
-.drop:hover,
+.drop:hover {
+  border-color: var(--muted);
+}
 .drop--over {
-  border-color: var(--ink-2);
+  border-color: var(--attention);
+  border-style: solid;
+  background: var(--attention-wash);
 }
 .drop input {
   position: absolute;
@@ -632,7 +737,9 @@ button,
 }
 .button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  background: transparent;
+  border-color: var(--line-soft);
+  color: var(--dim);
 }
 .button--primary {
   background: var(--ink);
@@ -683,21 +790,25 @@ button,
 /* Notices ------------------------------------------------------------------------------------ */
 
 .notice {
-  padding: 10px 14px;
-  border-radius: var(--r-control);
+  padding: 11px 14px;
+  border-radius: 0 var(--r-control) var(--r-control) 0;
   border-left: 3px solid var(--line);
   background: var(--panel);
+  color: var(--ink-2);
   font-size: var(--t-12);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 .notice--error {
   border-left-color: var(--bad);
+  background: color-mix(in srgb, var(--panel) 84%, var(--bad));
 }
 .notice--ok {
   border-left-color: var(--good);
+  background: color-mix(in srgb, var(--panel) 88%, var(--good));
 }
 .notice--warn {
   border-left-color: var(--attention);
+  background: color-mix(in srgb, var(--panel) 88%, var(--attention));
 }
 .notice code {
   font-family: var(--mono);
@@ -736,6 +847,9 @@ button,
   overflow-wrap: anywhere;
   line-height: 1.15;
 }
+.run-head .strip {
+  margin-top: 4px;
+}
 .run-head__what {
   margin-top: 6px;
   color: var(--ink-2);
@@ -743,10 +857,10 @@ button,
 .run-head__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 20px;
-  margin-top: 6px;
+  gap: 6px 26px;
+  margin-top: 10px;
   font-size: var(--t-12);
-  color: var(--muted);
+  color: var(--dim);
 }
 .run-head__facts .mono {
   color: var(--ink-2);
@@ -817,9 +931,13 @@ button,
   overscroll-behavior: contain;
   padding-right: 6px;
 }
+/*
+ * Stages are grouped by dependency tier: everything in one tier can run at once. The rail is
+ * that fact, which is why it is drawn rather than left to an indent.
+ */
 .ladder__tier {
   position: relative;
-  padding: 6px 0 6px 14px;
+  padding: 7px 0 7px 16px;
 }
 .ladder__tier + .ladder__tier {
   border-top: 1px solid var(--line-soft);
@@ -827,11 +945,11 @@ button,
 .ladder__tier::before {
   content: '';
   position: absolute;
-  left: 3px;
-  top: 12px;
-  bottom: 12px;
+  left: 4px;
+  top: 14px;
+  bottom: 14px;
   width: 1px;
-  background: var(--line-soft);
+  background: var(--line);
 }
 .stage {
   display: grid;
@@ -852,6 +970,7 @@ button,
 .stage--selected,
 .stage--selected:hover {
   background: var(--panel-2);
+  box-shadow: inset 2px 0 0 var(--ink-2);
 }
 .stage__dot {
   width: 8px;
@@ -938,6 +1057,9 @@ button,
   display: grid;
   gap: 4px;
 }
+.inspect__head p {
+  color: var(--ink-2);
+}
 .inspect__head h2 {
   font-size: var(--t-21);
   font-weight: 500;
@@ -953,9 +1075,10 @@ button,
 .inspect__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 18px;
+  gap: 6px 24px;
+  margin-top: 4px;
   font-size: var(--t-12);
-  color: var(--muted);
+  color: var(--dim);
 }
 .inspect__facts .mono {
   color: var(--ink-2);
@@ -1033,11 +1156,12 @@ button,
 
 .review {
   display: grid;
-  gap: 8px;
-  padding: 14px 16px;
+  gap: 10px;
+  max-width: 76ch;
+  padding: 16px 18px;
   border-left: 3px solid var(--line);
   background: var(--panel);
-  border-radius: var(--r-control);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
 }
 .review--good {
   border-left-color: var(--good);
@@ -1052,9 +1176,9 @@ button,
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 14px;
+  gap: 4px 16px;
   font-size: var(--t-12);
-  color: var(--muted);
+  color: var(--dim);
 }
 .review__head .status {
   font-size: var(--t-14);
@@ -1062,11 +1186,13 @@ button,
 .review__head .exposed {
   color: var(--attention);
 }
+/* A long paragraph on a dark surface needs a shorter line and more air between the lines. */
 .review__body {
   color: var(--ink-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-width: 78ch;
+  max-width: 66ch;
+  line-height: 1.65;
 }
 .review__extra {
   font-size: var(--t-12);
@@ -1088,10 +1214,12 @@ button,
   margin-top: 8px;
 }
 .ask {
-  padding: 12px 14px;
+  padding: 13px 15px;
   border-radius: var(--r-control);
   background: var(--well);
   color: var(--ink);
+  max-width: 66ch;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1358,21 +1486,30 @@ button,
   overflow: visible;
   pointer-events: none;
 }
+/*
+ * An edge says what waits on what; the card at each end already says how it went. Colouring
+ * every edge by its source only repeats that, and a dozen saturated lines turn structure into
+ * noise. Edges stay a hairline until a stage is selected, and then its own show their state.
+ */
 .gedge {
   fill: none;
-  stroke: var(--line);
+  stroke: var(--line-soft);
   stroke-width: 1.5;
 }
-.gedge--good {
+.gedge--lit {
+  stroke: var(--ink-2);
+  stroke-width: 2;
+}
+.gedge--lit.gedge--good {
   stroke: var(--good);
 }
-.gedge--bad {
+.gedge--lit.gedge--bad {
   stroke: var(--bad);
 }
-.gedge--active {
+.gedge--lit.gedge--active {
   stroke: var(--active);
 }
-.gedge--attention {
+.gedge--lit.gedge--attention {
   stroke: var(--attention);
 }
 
@@ -1393,6 +1530,13 @@ button,
 .gnode:hover {
   background: var(--panel-2);
   border-color: var(--line);
+}
+/* A stage waiting on a person is amber here too: one language across list, graph and home. */
+.gnode--attention {
+  border-color: var(--attention);
+}
+.gnode--bad {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--line-soft));
 }
 .gnode--selected {
   border-color: var(--ink);
@@ -1620,21 +1764,16 @@ video.viewer__media {
 .decide {
   display: grid;
   gap: 14px;
+  max-width: 76ch;
   padding: 18px 20px;
+  border-left: 3px solid transparent;
   background: var(--panel);
   border-radius: var(--r-stage);
 }
 .decide--gate {
-  box-shadow: inset 0 0 0 1px var(--attention);
-}
-.decide__title {
-  font-size: var(--t-14);
-  font-weight: 600;
-}
-.decide__title small {
-  font-weight: 400;
-  color: var(--muted);
-  margin-left: 8px;
+  border-left-color: var(--attention);
+  border-radius: 0 var(--r-stage) var(--r-stage) 0;
+  background: var(--attention-wash);
 }
 .decide__actions {
   display: flex;
@@ -1688,6 +1827,10 @@ video.viewer__media {
 .shell__main {
   min-width: 0;
 }
+/*
+ * What the agent is doing is ambient: worth a glance, never worth competing with the runs table
+ * or with footage. It takes the bezel tone and speaks a step below full contrast.
+ */
 .tail {
   position: sticky;
   top: 48px;
@@ -1696,9 +1839,9 @@ video.viewer__media {
   gap: 8px;
   height: calc(100vh - 48px);
   min-width: 0;
-  padding: 8px 10px 10px;
-  border-left: 1px solid var(--line-soft);
-  background: var(--panel);
+  padding: 10px 12px 12px;
+  border-left: 1px solid #000;
+  background: var(--bezel);
 }
 .tail--closed {
   align-items: center;
@@ -1709,12 +1852,12 @@ video.viewer__media {
   align-items: center;
   align-self: flex-start;
   gap: 8px;
-  padding: 2px 4px;
+  padding: 3px 5px;
   font-size: var(--t-12);
   border: 0;
   border-radius: var(--r-control);
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-2);
   font-weight: 600;
 }
 .tail__toggle:hover {
@@ -1784,8 +1927,8 @@ video.viewer__media {
 .tail__say {
   padding: 8px 10px;
   border-radius: 6px 6px 6px 2px;
-  background: var(--well);
-  color: var(--ink);
+  background: #212326;
+  color: var(--ink-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1842,7 +1985,7 @@ video.viewer__media {
   padding: 8px 10px;
   max-height: 260px;
   overflow: auto;
-  background: var(--well);
+  background: #0f1012;
   border-radius: 4px;
   font-size: var(--t-11);
   line-height: 1.45;

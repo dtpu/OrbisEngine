@@ -44,16 +44,20 @@ not damage the main view or walking route. Label invented appearance and unobser
 - **Pass: advance. Fail: diagnose and retry only within the cap.** At most **three quality retries
   after the first execution per clip/stage** (four executions total), each with a changed,
   justified parameter or a new code hypothesis and recorded before/after evidence, timing, and cost.
-  Persist attempts across resume and candidate renaming; never reset counters. A reviewing agent
-  that wants a further attempt stops and asks the operator rather than deciding for itself; the
-  orchestrator enforces this as `AGENT_RETRY_CAP` in `orchestrator/workflows/run.py`.
-- A retry must move something the stage actually reads. Each stage declares its overridable
-  defaults in its `parameter_schema`, with the value it would otherwise use and a sentence on
-  what the knob does; the adapters read the schema, so an attempt's `task.json` shows the value
-  the stage really ran with and the reviewing agent is told the same. Anything not declared
-  cannot be set, and a stage refuses an attempt that names one. Tolerances and guards are
-  deliberately not declared: when the only way past a stage is to loosen one, that is a question
-  for the operator, not a retry.
+  Persist attempts across resume and candidate renaming; never reset counters. An agent that wants
+  a further attempt stops and asks the operator rather than deciding for itself.
+- This cap is now told to the agent rather than enforced against it. The orchestrator used to
+  refuse a fourth attempt; it no longer schedules anything, so what stops a loop is the agent
+  reading its own run's journal, which records every attempt of every step and is put in front of
+  it at the start of each turn. What is still enforced is spend: `scripts/run_clip.py`'s ledger
+  refuses to relaunch a paid operation that may already be in flight, at the point where the money
+  is committed.
+- A retry must move something the step actually reads. Each step declares its overridable
+  defaults in `orchestrator/steps.py`, with the value it would otherwise use and a sentence on
+  what the knob does, and the agent's brief lists them with those values. A test holds every
+  declared default to the one the underlying script really has, so the brief cannot lie about
+  what a step is running at. Tolerances and guards are deliberately not declared: when the only
+  way past a step is to loosen one, that is a question for the operator, not a retry.
 - A review that writes nothing for five minutes is interrupted and resumed in the same session
   and asked what it was waiting on (`WANDER_REVIEW_IDLE`, `WANDER_REVIEW_NUDGES`). Being stuck is
   an answer: `human.ask` leaves the stage waiting for an operator who can resume it, with the

@@ -97,12 +97,23 @@ export async function listMessages(runId: string): Promise<OperatorMessage[]> {
   return body.messages;
 }
 
+/**
+ * One run's transcripts, newest first.
+ *
+ * This endpoint leaves `runId` off every row and sorts oldest first, because the run is already
+ * in the URL. Callers still need it to read and answer a transcript, so it is put back here and
+ * the order matched to the cross-run listing, leaving one shape for both.
+ */
 export async function listReviewTranscripts(
   runId: string,
 ): Promise<{ transcripts: ReviewTranscript[]; available: boolean }> {
-  return (await unwrap(
+  const body = (await unwrap(
     await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}/reviews`, { cache: 'no-store' }),
   )) as { transcripts: ReviewTranscript[]; available: boolean };
+  return {
+    ...body,
+    transcripts: [...body.transcripts].reverse().map((item) => ({ ...item, runId })),
+  };
 }
 
 /** Newest transcripts across every run, live ones first by recency. */
