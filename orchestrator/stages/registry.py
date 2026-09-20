@@ -626,7 +626,13 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "source": run_input("source_video"),
                 "track": stage_output("tracks", "person_track"),
             },
-            outputs={"prepared_person": output("prepared_person", "application/octet-stream")},
+            outputs={
+                # A prepared reference is a small directory -- the source frame, its mask, the
+                # frame scores and the manifest -- so the role is many files, not one.
+                "prepared_person": output(
+                    "prepared_person", "application/octet-stream", multiple=True
+                )
+            },
             parameter_schema=PERSON_PREP_PARAMETERS,
             resources=local_resources(3600),
             quality=QualityPolicy(
@@ -640,7 +646,9 @@ def stage_registry() -> dict[str, StageDefinition]:
             executor="lhm_frozen",
             inputs={"prepared_person": stage_output("person_prep", "prepared_person")},
             outputs={
-                "canonical_person": output("canonical_person", "application/octet-stream"),
+                "canonical_person": output(
+                    "canonical_person", "application/octet-stream", multiple=True
+                ),
                 "recovery_receipt": output("recovery_receipt", "application/json"),
             },
             resources=modal_resources(concurrency="lhm"),
@@ -682,7 +690,7 @@ def stage_registry() -> dict[str, StageDefinition]:
                 "source": run_input("source_video"),
             },
             outputs={
-                "viewer_world": output("viewer_world", "application/x-directory"),
+                "viewer_world": output("viewer_world", "application/x-directory", multiple=True),
                 "people_manifest": output("people_manifest", "application/json"),
                 "audio_manifest": output("audio_manifest", "application/json", "wander.audio/1"),
             },
