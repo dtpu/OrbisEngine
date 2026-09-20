@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import * as THREE from 'three';
-import type { BottleAgentClient } from '../src/interaction/bottle-agent-client';
+import type { CharacterVoiceCast } from '../src/interaction/character-voice-cast';
+import type { CharacterVoice } from '../src/interaction/character-voice';
 import {
   BottleScene,
   type BottleSceneHost,
@@ -164,11 +165,11 @@ const hand = (
 
 // Invoke the same local acceptance callback used by the microphone's VAD event,
 // without opening capture, creating credentials, or replacing the voice client.
-const speechStarted = (runtime: BottleScene) =>
-  (runtime as unknown as { onSpeech(): boolean }).onSpeech();
+const speechStarted = (runtime: BottleScene, voice?: CharacterVoice) =>
+  (runtime as unknown as { onSpeech(voice?: CharacterVoice): boolean }).onSpeech(voice);
 
 function voiceFixture(runtime: BottleScene) {
-  const client = (runtime as unknown as { client: BottleAgentClient }).client;
+  const client = (runtime as unknown as { client: CharacterVoiceCast }).client;
   const options = (client as unknown as { options: { expired(): void } }).options;
   let connected = false;
   let attempts = 0;
@@ -340,6 +341,28 @@ describe('BottleScene real-physics interaction integration', () => {
     frame();
     expect(speechStarted(runtime)).toBe(false);
     expect(bottle.interactionOwned).toBe(true);
+  });
+
+  test('only the addressed voice may interrupt or switch the selected character', () => {
+    const { runtime, people, frame, host } = fixture(0.5);
+    people[0].group.position.set(1.5, 0, -1);
+    people[1].group.position.set(0, 0, -1);
+    frame();
+    expect(speechStarted(runtime, 'ash')).toBe(false);
+    expect(host.playing()).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe(null);
+    expect(speechStarted(runtime, 'echo')).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('receiver');
+    expect(runtime.snapshot().character?.voice).toBe('echo');
+
+    people[0].group.position.set(0, 0, -1);
+    people[1].group.position.set(1.5, 0, -1);
+    frame();
+    expect(speechStarted(runtime, 'echo')).toBe(false);
+    expect(runtime.snapshot().activePersonId).toBe('receiver');
+    expect(speechStarted(runtime, 'ash')).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('thrower');
+    expect(runtime.snapshot().character?.voice).toBe('ash');
   });
 
   test('a closer person in the same direction does not steal the current conversation', () => {
