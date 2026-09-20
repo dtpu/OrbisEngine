@@ -184,7 +184,7 @@ export function CodexTail({ runId }: { runId: string }) {
                 {!mounted
                   ? 'Loading…'
                   : available
-                    ? 'No Codex review yet.'
+                    ? 'No Codex logs yet'
                     : 'Transcripts are not available from this API.'}
               </span>
             )}
