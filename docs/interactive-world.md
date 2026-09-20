@@ -23,6 +23,7 @@ including its recorded audio, when one locally validated event occurs:
   body-heights rearms that person. A person walking past a stationary visitor does not trigger it.
 - Address a nearby, faced person through the microphone, up to 1.8 body-heights away. During an
   existing conversation the limit is 2.52 body-heights and looking down at the bottle is allowed.
+  Accepted speech pauses playback immediately; the character answers after the utterance commits.
   Clearly addressing another person changes the speaker without changing bottle ownership.
   Obstructed and hidden people remain unavailable. Speech has no typed-chat fallback.
 - Squeeze within 0.12 body-heights of the visible bottle. The reach check uses the controller and bottle paths between
@@ -45,12 +46,18 @@ near a recorded held pose: a successful return attaches the bottle to that pause
 the recording paused. It is not an animated catch, hand closure, or new body motion. A miss stays
 available for pickup; press X to restore an out-of-reach bottle.
 
+Loose bottles also use inferred support across single-cell gaps inside the measured floor region,
+requiring at least two neighboring floor samples that agree within one grid cell of height.
+This repairs sparse sampling gaps, not larger unknown areas or the outside boundary. The visible
+bottle has a separate conservative floor clearance so its base does not sink into the support.
+
 A pulsing ring and yellow beacon locate the bottle during playback and after release. During
 interaction a cyan bottle with an orange cap replaces the source prop, centered in the visitor's
 grip when held; its marker hides in the hand. This is invented appearance, scaled from manifest
 dimensions and clamped to 0.09–0.12 body-heights tall for visibility, with a narrow profile that
 leaves the glove visible. The locator stays upright when the bottle rotates. It does not replace measured
-positions or enlarge the physics collider. The source bottle returns on replay.
+positions or enlarge the measured wall collider. The separate floor clearance encloses the
+replacement bottle in any orientation. The source bottle returns on replay.
 
 Replay restores the recorded bottle, people, and source time to the start and plays once. It keeps
 the visitor's headset position and orientation; an existing voice session keeps its conversation
@@ -80,8 +87,10 @@ the selected anchor; the original clip only supplies its recorded mix, not isola
 speech.
 
 The shared voice prompt speaks in first person as the selected fictional character, using their
-manifest role, current activity, and a per-person conversational style. Replies are short ordinary
-dialogue without assistant introductions or action narration. Direct questions about whether the
+manifest role, current activity, and an invented per-person conversational style: deadpan skeptic,
+cocky competitor, or blunt observer. They can disagree, tease, and give dry comebacks rather than
+constantly praise or pitch activities. Replies are short ordinary dialogue without assistant
+introductions or action narration. Direct questions about whether the
 character is real receive a truthful answer. The prompt does not invent actual identities or
 recorded memories and cannot grant actions beyond the local viewer's tools.
 
@@ -98,7 +107,10 @@ object identifiers. Each provider connection lasts at most three minutes and ans
 Normal expiration renews the connection while VR remains active and visible, using the current
 scene state; prior conversation history is not carried across connections. Hiding VR stops capture and pauses the
 recording. Returning to visible VR reconnects a previously healthy connection without restarting
-the clip. Failed connections are not automatically retried. Input transcription is disabled; there
+the clip. A `response_cancel_not_active` race during an established connection does not close the
+microphone; the already-finished reply remains silent and later speech can get a response.
+Other errors still close capture and retain only a sanitized provider code in diagnostic state.
+Failed connections are not automatically retried. Input transcription is disabled; there
 is no transcript UI. Chrome must run on localhost (for Quest, use the documented ADB reverse
 connection) so both microphone permission and the local credential endpoint are available.
 
@@ -110,13 +122,15 @@ with synthetic headset/controller input. When another checkout serves the shared
 first and set `VIEWER_BUILD_DIR=dist` to serve this build through the browser test's route handler.
 No provider calls occur by default. `WANDER_TEST_LIVE_VOICE=1` explicitly enables a short paid voice
 smoke test and requires `OPENAI_API_KEY` in that test process's environment.
+With that opt-in, `WANDER_TEST_VOICE_WAV=/path/to/owned-speech.wav` injects a local speech fixture
+into the test microphone and checks real provider VAD, source pause, and two consecutive replies.
 
 On 2026-09-20 the real-asset browser check verified close approach interrupting advancing playback,
 source-audio pause, controller X replay, a grip and short throw into the assisted return region,
 automatic smooth whole-body facing, reset of the facing transform, and paused VR re-entry.
 The expanded range, locator, rotated controller grip alignment, and recorded/proxy bottle visibility
 passed in the actual viewer; screenshots were reviewed with the held bottle clear of the source
-actor. The final focused interaction suite contains 88 passing tests. A comparison against the
+actor. The final focused interaction suite contains 94 passing tests. A comparison against the
 source footage confirmed the basic held-pose target; this is not a precise new wrist reconstruction.
 The ordinary viewer still loops when the experiment is absent. Focused tests, existing XR/audio/
 collision regressions, TypeScript/build, and repository formatting were checked separately.
@@ -126,6 +140,16 @@ private local credential on 2026-09-20, the live browser test connected successf
 generated audio through the spatial output graph. The full live interaction browser check passed;
 the revised prompt produced a short scene-specific greeting without an assistant introduction.
 SDK lifecycle/audio-gate unit checks use mocked transport.
+
+The latest real-asset check also dropped bottles at the two reported sparse-floor locations using
+the production floor callback and visual clearance; both settled above support. Two synthetic
+spoken turns through the live provider paused source playback and produced measured audio while
+the microphone stayed connected. The replies followed the new dry, competitive style. This checks
+the full speech path in Chrome, not the Quest microphone or perceived conversational quality.
+The harmless cancellation race and a fatal credential error have separate SDK regression checks.
+A later physical Quest failure logged `response_cancel_not_active`: the old client had incorrectly
+closed its microphone for that error. After reloading the fix, the headset entered visible VR with
+a live microphone track and completed generated responses.
 
 A connected Quest entered a real immersive session and granted microphone permission. The new
 credential connected successfully; live microphone samples, outgoing audio, accepted speech events,
