@@ -602,6 +602,50 @@ def people_steps(names: list[str], people: int, *, multiperson: bool) -> list[st
 SAME_AS = {"package_people": "package"}
 
 
+def needs_of(step: str, people: int, multiperson: bool) -> list[str]:
+    """What a step wants finished, in the names this run's graph uses.
+
+    A per-person step waits on its own person and nobody else's: person 01's avatar does not
+    depend on person 00's. A step that joins them -- packaging -- waits on all of them.
+
+    The agent reads this to know what is unblocked and the dashboard draws the same answer as
+    edges, so it lives here rather than beside either of them: a graph whose arrows disagree
+    with what actually gates a step is worse than no arrows.
+    """
+    described = STEPS.get(base_step(step))
+    if described is None:
+        return []
+    _, _, index = step.rpartition("_")
+    mine = index if index.isdigit() else None
+    wanted: list[str] = []
+    for need in described.after:
+        if not multiperson or need not in PER_PERSON:
+            wanted.append(need)
+        elif mine is not None:
+            wanted.append(f"{need}_{mine}")
+        else:
+            wanted.extend(f"{need}_{person:02d}" for person in range(max(1, people)))
+    return wanted
+
+
+def dependencies_within(step: str, plan: list[str], people: int, multiperson: bool) -> list[str]:
+    """`needs_of` narrowed to the steps a plan actually contains.
+
+    A plan holds one packager, so a step that names `package` is gated by `package_people` when
+    that is the one being run -- the same substitution the run directory makes when it decides
+    what is done. Anything the plan does not contain is dropped rather than drawn: an edge to a
+    step that will never run is an arrow to nowhere.
+    """
+    present = set(plan)
+    instead = {base: name for name, base in SAME_AS.items()}
+    wanted = []
+    for need in needs_of(step, people, multiperson):
+        name = need if need in present else instead.get(need, need)
+        if name in present:
+            wanted.append(name)
+    return wanted
+
+
 def suggested_order(names: list[str] | None = None) -> list[str]:
     """The given steps, each after the ones it says it wants.
 

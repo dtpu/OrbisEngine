@@ -75,10 +75,26 @@ function roundedPath(points: Point[]): string {
   return `${d} L ${last.x} ${last.y}`;
 }
 
-/** The branch an expanded stage belongs to: `lhm_frozen:00` is branch `00`. */
+/**
+ * The branch an expanded stage belongs to: `lhm_frozen:00` and `lhm_frozen_00` are both branch
+ * `00`. Two separators because the orchestrator changed the one it writes; a run made before
+ * that change still has to draw.
+ */
 function branchKeyOf(id: string): string | null {
-  const colon = id.lastIndexOf(':');
-  return colon > 0 ? id.slice(colon + 1) : null;
+  const match = /[:_](\d+)$/.exec(id);
+  return match ? match[1] : null;
+}
+
+/**
+ * Whether a stage is a gate a person owns.
+ *
+ * `definition.kind` is the answer when the run document carries one. Runs the newer orchestrator
+ * writes leave it unset, so the id is the only thing left to read, and the stages that wait on a
+ * person are named for what they are.
+ */
+function isGateStage(node: RunNode): boolean {
+  if (node.definition.kind) return node.definition.kind === 'human';
+  return /(^|_)review$/.test(node.id) || node.id === 'verify';
 }
 
 /**
@@ -98,7 +114,7 @@ function bandOf(node: RunNode, deepestExpand: Map<string, string>): { key: strin
       label: origin ? `${origin} ${branch}` : `branch ${branch}`,
     };
   }
-  if (node.definition.kind === 'human') return { key: 'review', label: 'review' };
+  if (isGateStage(node)) return { key: 'review', label: 'review' };
   return { key: 'pipeline', label: 'pipeline' };
 }
 
