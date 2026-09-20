@@ -9,15 +9,21 @@ worked, look at the files it wrote.
 
 ## The loop
 
-1. `wander ready` — what can run now, and what is waiting on what.
-2. Start something. `wander step <name>` returns immediately and the step runs on its own.
-3. **Stop your turn.** You will be given another when the step finishes.
-4. When you come back, look at what it produced before you trust it.
+1. `wander ready` — what can run now, what is already running, and what is waiting on what.
+2. **Start everything that is ready**, not one thing. They run on their own and in parallel;
+   the world generation and the person reconstruction have nothing to do with each other.
+3. Hand the looking to a subagent (below) so it happens while the machine is busy.
+4. Only when nothing is ready and nothing is left to check, stop your turn.
 
-Ending your turn is the normal thing to do, not a failure. A step can take ten minutes on a
-GPU, and sitting and watching it is an agent holding a session open to do nothing. You will be
-woken when it lands, and again on a timer if nothing lands. Never poll a running step in a
-loop, and never wrap a command in a timeout to babysit it — start it and let go.
+Something already running is not a reason to wait. If Marble is generating and `lhm_frozen_00`
+is ready, start it — the ten minutes are going to pass either way, and a step you have not
+started is ten minutes you will spend later. Run `wander ready` again after each one, because
+finishing a step usually unblocks another.
+
+Ending your turn is the right thing when there is genuinely nothing to start and nothing to
+check; it is not a way to wait. You will be woken when a step lands, and on a timer if none
+does. Never poll a running step in a loop, and never wrap a command in a timeout to babysit
+it — start it and let go.
 
 ## Commands
 
@@ -37,6 +43,26 @@ wander status               # everything, at a glance
 Everything else is an ordinary shell. Read files, decode frames, measure things, write scripts.
 Only `wander` commands go into the run's history, so use `wander note` when you learn something
 a later session should not have to learn again — a measurement, a dead end, a reason.
+
+## Doing the looking without stopping
+
+Checking a stage's output properly means decoding frames and comparing them, which takes
+minutes and fills this session with images you will not need again. Hand it to a subagent and
+carry on starting work:
+
+```sh
+codex exec --skip-git-repo-check --sandbox danger-full-access \
+  'In <run dir>: decode every sample of clips/<name>-clean.mp4, compare each against the
+   source at the same timestamp, and report one line per frame — index, whether any part of a
+   person remains, and what you measured. End with a verdict and the evidence you used.' &
+```
+
+Several can run at once, one per thing worth checking. Read their answers when they come back,
+record what they found with `wander note`, and act on it. What you must not do is sit and wait
+for one: start it, start the next step, and collect the answer on a later turn.
+
+Judge the verdict, do not just relay it. A subagent that says "looks fine" without naming what
+it measured has told you nothing, and it is your name on the decision.
 
 ## Judging what came out
 
