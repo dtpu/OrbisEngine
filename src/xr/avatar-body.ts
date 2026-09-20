@@ -155,12 +155,20 @@ export function createAvatarBody(renderer: THREE.WebGLRenderer, rig: THREE.Group
     const grip = renderer.xr.getControllerGrip(index);
     const hand = renderer.xr.getHand(index);
     const controllerWrist = new THREE.Vector3();
-    let source: XRInputSource | null = null;
+    // Controller slots survive scene replacement and can differ from inputSources order
+    // after a reconnect. Retain each slot's identity on its shared Three group.
+    let source: XRInputSource | null = renderer.xr.isPresenting
+      ? 'wanderInputSource' in grip.userData
+        ? grip.userData.wanderInputSource
+        : (renderer.xr.getSession()?.inputSources[index] ?? null)
+      : null;
     const connected = (event: { data: XRInputSource }) => {
       source = event.data;
+      grip.userData.wanderInputSource = source;
     };
     const disconnected = () => {
       source = null;
+      grip.userData.wanderInputSource = null;
     };
     grip.addEventListener('connected', connected);
     grip.addEventListener('disconnected', disconnected);

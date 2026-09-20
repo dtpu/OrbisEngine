@@ -97,6 +97,49 @@ describe('bottle interaction simulation', () => {
     expect(unsupported.snapshot().mode).toBe('free');
   });
 
+  test('a downward occupied floor bin settles without making walls or ceilings into support', () => {
+    const occupiedFloor = bottle({
+      blockedAt: ([, y]) => y <= 0.15,
+    });
+    expect(occupiedFloor.startFlight([0, 1, 0], [0, -30, 0])).toBe(true);
+    const events = [];
+    for (let i = 0; i < 720; i++) {
+      events.push(...occupiedFloor.step(1 / 72));
+      if (occupiedFloor.snapshot().mode === 'resting') break;
+    }
+    expect(events.map((event) => event.type)).toEqual(['dropped']);
+    expect(occupiedFloor.snapshot().mode).toBe('resting');
+    expect(occupiedFloor.snapshot().position[1]).toBeGreaterThanOrEqual(0.15);
+
+    const wall = bottle({
+      gravity: 0,
+      floorAt: () => null,
+      blockedAt: ([x]) => x >= 0.2,
+    });
+    expect(wall.startFlight([0, 1, 0], [10, -1, 0])).toBe(true);
+    wall.step(0.1);
+    expect(wall.snapshot().mode).toBe('free');
+    expect(wall.snapshot().position[0]).toBeLessThan(0.2);
+
+    const floorWall = bottle({
+      gravity: 0,
+      blockedAt: ([x]) => x >= 0.2,
+    });
+    expect(floorWall.startFlight([0, 0.11, 0], [10, -1, 0])).toBe(true);
+    floorWall.step(0.1);
+    expect(floorWall.snapshot().mode).toBe('free');
+    expect(floorWall.snapshot().position[0]).toBeLessThan(0.2);
+
+    const ceiling = bottle({
+      gravity: 0,
+      blockedAt: ([, y]) => y >= 1.1,
+    });
+    expect(ceiling.startFlight([0, 1, 0], [0, 10, 0])).toBe(true);
+    ceiling.step(0.1);
+    expect(ceiling.snapshot().mode).toBe('free');
+    expect(ceiling.snapshot().velocity[1]).toBeLessThan(0);
+  });
+
   test('radius collision prevents a fast throw crossing a thin occupied wall', () => {
     // Sphere against an occupied cell spanning x=[0.5,0.52], y=[0,2], z=[-1,1].
     const b = bottle({
