@@ -24,7 +24,14 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.journal import Journal, RunProjection
-from orchestrator.steps import SAME_AS, STEPS, suggested_order
+from orchestrator.steps import (
+    PER_PERSON,
+    SAME_AS,
+    STEPS,
+    base_step,
+    people_steps,
+    suggested_order,
+)
 
 RUN_FILE = "run.json"
 LOG_DIR = "logs"
@@ -302,27 +309,81 @@ def completed(context: RunContext) -> set[str]:
     return {name for step in done for name in (step, SAME_AS.get(step, step))}
 
 
-def waiting_on(step: str, done: set[str]) -> list[str]:
-    """What this step usually wants finished that is not."""
-    described = STEPS.get(step)
+def tracked_people(context: RunContext) -> int:
+    """How many people this run really found, once tracking has said.
+
+    Before that the answer is the cap the run asked for, which is a guess; run_clip.py names
+    a stage per person, so guessing sixteen would fill the list with steps that will never
+    exist.
+    """
+    try:
+        report = json.loads((context.run_dir / "tracks" / "tracks.json").read_text())
+    except (OSError, ValueError):
+        return 1
+    return max(1, int(report.get("trackCount") or len(report.get("tracks") or ())))
+
+
+def graph_shape(context: RunContext) -> tuple[int, bool]:
+    """How many people this run has, and whether its graph names them separately."""
+    options = context.options
+    many = bool(options.get("all_people")) or int(options.get("people") or 1) > 1
+    return tracked_people(context), many
+
+
+def plan_for(context: RunContext) -> list[str]:
+    """The steps this run has, named the way run_clip.py will name them.
+
+    Whether the per-person stages are `person_prep` or `person_prep_00` is decided by the
+    shape of the graph the run asked for, not by how many people turned up: a run with
+    --people 16 uses the multiperson graph even when tracking finds one. How many of them
+    there are does come from tracking, so the list does not fill with fifteen stages that
+    will never exist.
+    """
+    people, many = graph_shape(context)
+    return people_steps(suggested_order(), people, multiperson=many)
+
+
+def needs_of(step: str, people: int, multiperson: bool) -> list[str]:
+    """What a step wants finished, in the names this run's graph uses.
+
+    A per-person step waits on its own person and nobody else's: person 01's avatar does not
+    depend on person 00's. A step that joins them -- packaging -- waits on all of them.
+    """
+    described = STEPS.get(base_step(step))
     if described is None:
         return []
-    return [need for need in described.after if need not in done]
+    _, _, index = step.rpartition("_")
+    mine = index if index.isdigit() else None
+    wanted: list[str] = []
+    for need in described.after:
+        if not multiperson or need not in PER_PERSON:
+            wanted.append(need)
+        elif mine is not None:
+            wanted.append(f"{need}_{mine}")
+        else:
+            wanted.extend(f"{need}_{person:02d}" for person in range(max(1, people)))
+    return wanted
+
+
+def waiting_on(step: str, done: set[str], people: int = 1, multiperson: bool = False) -> list[str]:
+    """The prerequisites of a step that are not done."""
+    return [need for need in needs_of(step, people, multiperson) if need not in done]
 
 
 def command_ready(context: RunContext, args: argparse.Namespace) -> int:
     done = completed(context)
     journal = context.journal()
+    people, many = graph_shape(context)
     ready, blocked = [], []
-    for name in suggested_order():
+    for name in plan_for(context):
         if name in done:
             continue
-        (blocked if waiting_on(name, done) else ready).append(name)
+        (blocked if waiting_on(name, done, people, many) else ready).append(name)
     print("ready to run now:")
     if not ready:
         print("  (nothing — everything is either done or waiting on something)")
     for name in ready:
-        step = STEPS[name]
+        step = STEPS[base_step(name)]
         last = journal.last_status(name)
         mark = "  PAID" if step.paid else ""
         again = f"  (last run: {last})" if last else ""
@@ -330,7 +391,7 @@ def command_ready(context: RunContext, args: argparse.Namespace) -> int:
     if args.all and blocked:
         print("\nwaiting on something:")
         for name in blocked:
-            print(f"  {name:<16} wants {', '.join(waiting_on(name, done))}")
+            print(f"  {name:<16} wants {', '.join(waiting_on(name, done, people, many))}")
     if done:
         print(f"\ndone: {', '.join(sorted(done & set(STEPS)))}")
     print(
@@ -342,20 +403,21 @@ def command_ready(context: RunContext, args: argparse.Namespace) -> int:
 
 def command_show(context: RunContext, args: argparse.Namespace) -> int:
     name = args.step
-    step = STEPS.get(name)
+    step = STEPS.get(base_step(name))
     if step is None:
         print(f"no step called {name}; `wander ready` lists them", file=sys.stderr)
         return 1
     done = completed(context)
     journal = context.journal()
+    people, many = graph_shape(context)
     print(f"{name} — {step.summary}")
     print(f"  writes     {step.writes}")
     if step.paid:
         print("  costs      money, every time it runs")
     if step.caution:
         print(f"  careful    {step.caution}")
-    outstanding = waiting_on(name, done)
-    print(f"  wants      {', '.join(step.after) or 'nothing'}")
+    outstanding = waiting_on(name, done, people, many)
+    print(f"  wants      {', '.join(needs_of(name, people, many)) or 'nothing'}")
     print(f"  waiting on {', '.join(outstanding) if outstanding else 'nothing — it can run now'}")
     properties = (step.parameters or {}).get("properties") or {}
     if properties:
