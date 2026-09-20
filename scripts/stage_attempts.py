@@ -63,12 +63,14 @@ CODE_FILES = {
         "worker/wander_worker/ply.py",
     ),
     "worker/modal_lhm.py": (
+        "worker/stages/lhm_registration.py",
         "worker/stages/lhm_person.py",
         "worker/stages/lhm_animate.py",
         "worker/stages/lhm_capacity.py",
     ),
     "worker/modal_multiperson.py::main": ("worker/stages/track_people.py",),
     "worker/modal_multiperson.py::animate": (
+        "worker/stages/lhm_registration.py",
         "worker/stages/lhm_execution.py",
         "worker/stages/lhm_recovery.py",
         "worker/stages/lhm_person.py",
@@ -97,6 +99,7 @@ NUMBER_FLAGS = {
     "--batch",
     "--anchors",
     "--track-id",
+    "--registration-sample",
     "--fixed-world-scale",
     "--execution-timeout",
     "--refine-strength",
@@ -186,6 +189,8 @@ def command_identity(command, root, source_selection=None):
                 not number.is_integer() or not 0 <= number <= 3600
             ):
                 raise ValueError("Execution timeout must be an integer from 0 to 3600")
+            if flag == "--registration-sample" and (not number.is_integer() or number < 0):
+                raise ValueError("Registration sample must be a nonnegative integer")
             parameters["options"][flag] = number
         elif flag in TEXT_FLAGS:
             parameters["options"][flag] = value

@@ -16,6 +16,7 @@ def main():
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument("--cameras")
     ap.add_argument("--depth-reference")
+    ap.add_argument("--registration-sample", type=int)
     ap.add_argument("--seed-poses")
     ap.add_argument("--seed-motion")
     ap.add_argument(
@@ -49,6 +50,11 @@ def main():
         help="Recorded original-recording time minus bundled-video time",
     )
     a = ap.parse_args()
+    from lhm_registration import animation_plan, depth_registration, validate_registration_option
+
+    validate_registration_option(a.registration_sample, a.fixed_world_scale)
+    if a.registration_sample is not None and (not a.cameras or not a.depth_reference):
+        raise ValueError("Explicit registration requires cameras and a depth reference")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     os.chdir(a.repo)
@@ -260,6 +266,9 @@ def main():
         raise RuntimeError("Track has no usable source pose")
     if first != 0 and not a.track_only:
         raise RuntimeError("Source pose zero missing; cannot fit a fixed depth scale")
+    registration_sample, export_samples = animation_plan(
+        poses, records, cameras, indices, a.registration_sample
+    )
     from LHM.models import model_dict
     from LHM.utils.hf_hub import wrap_model_hub
 
@@ -280,15 +289,45 @@ def main():
             method="Explicit native/world scale retained from the control. No first-frame depth normalization, floor fitting or per-frame grounding adjustment.",
         )
         (out / "registration.json").write_text(json.dumps(registration, indent=2))
-    for sample, pose in enumerate(poses):
-        if pose is None:
-            continue
+
+    def animate_pose(pose):
         params = pose_parameters(pose, betas=state["params"]["betas"])
         params["transform_mat_neutral_pose"] = state["neutral"]
         with torch.inference_mode():
             gs = model.animation_infer_gs(state["attrs"], state["query"], params)
         if not all(torch.isfinite(x).all() for x in (gs.xyz, gs.opacity, gs.scaling, gs.rotation)):
             raise RuntimeError("Non-finite animated Gaussians")
+        return gs
+
+    def fit_registration(gs, sample):
+        from plyfile import PlyData
+
+        points = PlyData.read(a.depth_reference)["vertex"].data
+        native = gs.xyz[gs.opacity[:, 0] > 0.5, 2].detach().cpu().numpy()
+        result = depth_registration(
+            np.column_stack([points[k] for k in ("x", "y", "z")]),
+            cameras[sample]["camera_to_world"],
+            records[sample]["source_intrinsics"],
+            native,
+            a.depth_roi,
+        )
+        result.update(
+            registrationSample=sample,
+            registrationSourceIndex=int(indices[sample]),
+            method="One positive scale from selected source-pose camera-space median depths, held fixed throughout. Pi3X observed person points versus opaque LHM body Gaussians; body-depth prior, not pixel-correspondence or floor fitting.",
+        )
+        (out / "registration.json").write_text(json.dumps(result, indent=2))
+        print("registration", result, flush=True)
+        return result
+
+    if a.registration_sample is not None:
+        registration_gs = animate_pose(poses[registration_sample])
+        registration = fit_registration(registration_gs, registration_sample)
+        world_scale = registration["uniformScale"]
+        del registration_gs
+    for sample in export_samples:
+        pose = poses[sample]
+        gs = animate_pose(pose)
         record = records[sample]
         if cameras:
             camera = np.array(cameras[sample]["camera_to_world"])
@@ -299,55 +338,8 @@ def main():
                 raise RuntimeError("Reflected source camera")
             cv_to_world = rotation @ np.diag([1.0, -1.0, -1.0])
             if world_scale is None:
-                from plyfile import PlyData
-
-                p = PlyData.read(a.depth_reference)["vertex"].data
-                xyz = np.column_stack([p["x"], p["y"], p["z"]])
-                local = (xyz - camera[:3, 3]) @ np.linalg.inv(camera[:3, :3]).T
-                roi_kept = None
-                if a.depth_roi:
-                    x0, y0, x1, y1 = [float(v) for v in a.depth_roi.split(",")]
-                    K0 = np.array(record["source_intrinsics"])
-                    cam_cv = local * np.array([1.0, -1.0, -1.0])
-                    uvw = cam_cv @ K0.T
-                    front = uvw[:, 2] > 1e-6
-                    uv = np.full((len(uvw), 2), -1e9)
-                    uv[front] = uvw[front, :2] / uvw[front, 2:3]
-                    inside = (
-                        front
-                        & (uv[:, 0] >= x0)
-                        & (uv[:, 0] <= x1)
-                        & (uv[:, 1] >= y0)
-                        & (uv[:, 1] <= y1)
-                    )
-                    if inside.sum() < 50:
-                        raise RuntimeError(
-                            f"Only {int(inside.sum())} depth-reference points inside the track ROI"
-                        )
-                    local = local[inside]
-                    roi_kept = int(inside.sum())
-                observed_depth = -local[:, 2]
-                observed_depth = observed_depth[np.isfinite(observed_depth) & (observed_depth > 0)]
-                opaque = gs.opacity[:, 0] > 0.5
-                native_depth = gs.xyz[opaque, 2]
-                native_depth = native_depth[torch.isfinite(native_depth) & (native_depth > 0)]
-                observed_median = float(np.median(observed_depth))
-                native_median = float(native_depth.median())
-                world_scale = observed_median / native_median
-                if not np.isfinite(world_scale) or world_scale <= 0:
-                    raise RuntimeError("Invalid first-frame depth registration")
-                registration = dict(
-                    uniformScale=world_scale,
-                    observedPersonMedianDepth=observed_median,
-                    nativeGaussianMedianDepth=native_median,
-                    registrationSample=sample,
-                    registrationSourceIndex=int(indices[sample]),
-                    depthRoi=a.depth_roi,
-                    depthRoiPoints=roi_kept,
-                    method="One positive scale from first-frame person camera-space median depths, held fixed throughout. Pi3X observed person points versus opaque LHM body Gaussians; body-depth prior, not pixel-correspondence or floor fitting.",
-                )
-                (out / "registration.json").write_text(json.dumps(registration, indent=2))
-                print("registration", registration, flush=True)
+                registration = fit_registration(gs, sample)
+                world_scale = registration["uniformScale"]
             rotation_t = torch.tensor(cv_to_world, dtype=torch.float32, device="cuda")
             translation_t = torch.tensor(camera[:3, 3], dtype=torch.float32, device="cuda")
             gs.xyz = (gs.xyz @ rotation_t.T) * world_scale + translation_t
@@ -430,11 +422,12 @@ def main():
         coordinates=(
             "OpenGL supplied fixed-SfM world; explicitly retained control scale"
             if a.fixed_world_scale is not None
-            else "OpenGL Pi3X world; one fixed first-frame body-depth scale"
+            else "OpenGL Pi3X world; one fixed source-pose body-depth scale"
         )
         if cameras
         else "OpenCV source camera for each timestamp; world motion unregistered",
         fixedWorldScaleControl=a.fixed_world_scale,
+        registrationSampleControl=a.registration_sample,
         sourcePosesReestimatedWithSuppliedIntrinsics=bool(a.fixed_world_scale is not None),
         cameraMetadataSha256=hashlib.sha256(Path(a.cameras).read_bytes()).hexdigest()
         if cameras

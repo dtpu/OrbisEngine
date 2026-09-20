@@ -394,6 +394,7 @@ def animate(
     depth_reference: str = "",
     track_id: int = 0,
     depth_roi: str = "",
+    registration_sample: int | None = None,
     fixed_world_scale: float | None = None,
     execution_timeout: int = 0,
 ):
@@ -403,8 +404,42 @@ def animate(
 
     from worker.stages.lhm_execution import animation_options
     from worker.stages.lhm_recovery import atomic_json, new_receipt, recover_outputs, submit_once
+    from worker.stages.lhm_registration import (
+        animation_plan,
+        select_depth_reference,
+        validate_registration_option,
+    )
 
+    validate_registration_option(registration_sample, fixed_world_scale)
     scale_flags, options = animation_options(fixed_world_scale, execution_timeout)
+    if registration_sample is not None:
+        import torch
+
+        track = Path(track_dir)
+        track_motion = json.loads((track / "motion.json").read_text())
+        tracks = json.loads((track.parent / "tracks.json").read_text())
+        camera_records = json.loads(Path(cameras).read_text())["cameras"]
+        _, expected_reference, expected_roi = select_depth_reference(
+            Path(cameras).parent, track_motion, tracks, camera_records, registration_sample
+        )
+        if not depth_reference or Path(depth_reference).resolve() != expected_reference.resolve():
+            raise ValueError("Registration depth reference does not match the selected sample")
+        if not depth_roi or [float(v) for v in depth_roi.split(",")] != [
+            float(v) for v in expected_roi.split(",")
+        ]:
+            raise ValueError("Registration ROI does not match the selected track pose")
+        if hashlib.sha256(Path(video).read_bytes()).hexdigest() != tracks["sourceSha256"]:
+            raise ValueError("Registration video does not match track source hash")
+        seed = torch.load(track / "source-poses.pt", map_location="cpu", weights_only=False)
+        records_by_sample = {r["sample"]: r for r in track_motion["frames"]}
+        animation_plan(
+            seed["poses"],
+            [records_by_sample.get(i) for i in range(len(seed["poses"]))],
+            camera_records,
+            seed["sourceIndices"],
+            registration_sample,
+        )
+        scale_flags += ["--registration-sample", str(registration_sample)]
     dest = Path(out)
     # Refuse an existing destination before any call, including after an ambiguous submission.
     receipt_path, receipt = new_receipt(dest, "motion")

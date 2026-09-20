@@ -1412,26 +1412,23 @@ class Pipeline:
                 self.ctx / "lhm_motion.log",
             )
             return
-        track = self.track_or_skip(idx)
+        self.track_or_skip(idx)
         dest = self.ctx / f"lhm-motion-{idx:02d}"
         if self.recover_lhm(dest, "motion", self.ctx / f"lhm_motion_{idx:02d}.log"):
             return
-        # The depth reference PLY holds every masked person, so restrict the registration to this
-        # track's own box in its first sample or both avatars inherit a blended scale.
-        first = track["quality"]["firstSample"]
-        rec = next(
-            r
-            for r in json.loads(
-                (self.ctx / "tracks" / f"track_{idx:02d}" / "motion.json").read_text()
-            )["frames"]
-            if r["sample"] == first
-        )
-        roi = ",".join(f"{v:.0f}" for v in rec["maskBox"])
-        reference = self.ctx / "pi3x" / f"frame_{first:03d}.ply"
-        if not reference.is_file() or reference.stat().st_size == 0:
-            raise QualityStop(
-                "blocked", f"LHM track {idx} lacks its required person depth at {reference}"
+        sys.path.insert(0, str(ROOT / "worker"))
+        from stages.lhm_registration import select_depth_reference
+
+        track_dir = self.ctx / "tracks" / f"track_{idx:02d}"
+        try:
+            registration_sample, reference, roi = select_depth_reference(
+                self.ctx / "pi3x",
+                json.loads((track_dir / "motion.json").read_text()),
+                json.loads((self.ctx / "tracks" / "tracks.json").read_text()),
+                json.loads(self.cameras().read_text())["cameras"],
             )
+        except (ValueError, OSError, KeyError) as error:
+            raise QualityStop("blocked", f"LHM track {idx} registration: {error}") from error
         self.paid_run(
             f"lhm_motion_{idx:02d}",
             [
@@ -1451,7 +1448,9 @@ class Pipeline:
                 "--depth-roi",
                 roi,
                 "--depth-reference",
-                str(self.ctx / "pi3x" / f"frame_{first:03d}.ply"),
+                str(reference),
+                "--registration-sample",
+                str(registration_sample),
                 "--out",
                 str(dest),
             ],

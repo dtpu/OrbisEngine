@@ -59,16 +59,40 @@ Both browser inputs preserve the selected source timeline and audio. A local rev
 `http://127.0.0.1:5401/reviews/joker-rocky-v1/index.html` exposes those inputs and an explicitly
 failed/experimental Joker preview. It is not a completed two-world delivery.
 
-Joker recovered 41 of 43 independent animation samples; samples 17 and 24 are missing.
-Playback interpolates those gaps. The real-viewer inspection also rejected the character's
-appearance and observed holes/residual actor fragments in the untrained stair surface.
-The cleaned-video revision retains floating head and limb fragments, so Marble submission
-has not been approved. Rocky's revised camera export is finite but contains a real batch
-boundary teleport; its animation and world remain unfinished. No Marble generation has
-been submitted for either candidate.
+Joker recovered 41 of 43 LHM animation samples; samples 17 and 24 are missing. That
+candidate interpolates those gaps, but its generated appearance failed source comparison.
+The current rough preview instead displays 43 independent source-colored depth samples,
+with incomplete silhouettes and missing backs. The observed stair surface has holes and
+residual actor fragments. Neither is an accepted scene.
+
+The user authorized one additional Joker cleanup execution after the ordinary three-attempt
+limit, retaining the $10 cap. Its approval is hash-bound to the original source and cleaning
+stage in the existing attempt ledger; it grants no fifth attempt or exception for Rocky.
+All 42 final Joker frames were reviewed. Recognizable person fragments are removed, but
+stair lines are offset across fill patches, and late frames contain disconnected lamp
+sections and damaged rails/building edges. The fourth cleanup therefore remains failed.
+
+Rocky's third camera solve uses 16 shared anchors and batches of eight local samples. All
+293 camera samples retain exact source indices matching the pose tracker, and the existing
+camera-jump guard passes. Its worst measured step is about 1.88 scene depths per second,
+19.54 times the median; thresholds are unchanged. This is not geometric or walking acceptance.
+CPU frame alignment now consumes the saved 16 anchor IDs instead of assuming eight. It
+checks anchor-array counts and source-camera correspondence before using them.
+
+Rocky's tracked person covers samples 31–292 (262 of 293). The first 11 samples show empty
+stairs; the partially visible entrance in samples 11–30 lacks supported poses. Camera and
+pose samples end at decoded source index 583, while the separately bound cleaning grid ends
+at 584. These grids are not interchangeable merely because both contain 293 samples.
+
+The third and final Rocky cleanup improves most body removal, including the previously
+reported late floating arm, but all-frame review found detached shoes/hands at samples
+101, 141–142 and 173–174. The distant monument also loses detail or disappears around
+224–252. These failures block world generation. No Marble generation has been submitted
+for either candidate; all 3,200 authorized credits remain unspent. Retain failed outputs and
+their evidence without promoting them or silently buying further cleanup attempts.
 
 The camera guard now measures static depth from the recorded supported anchor in the same
 normalized units as exported camera positions. It retains the existing rejection thresholds.
-The corrected calculation still rejects Rocky: camera 127 to 128 moves about 3.34 scene
+The corrected calculation still rejects the second Rocky solve: camera 127 to 128 moves about 3.34 scene
 depths per second, with a step about 59.76 times the median. A successful GPU exit does not
 promote that camera path.
