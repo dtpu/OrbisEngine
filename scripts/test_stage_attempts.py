@@ -230,6 +230,25 @@ class StageAttemptTests(unittest.TestCase):
 
 
 class CommandIdentityTests(unittest.TestCase):
+    def test_camera_anchor_count_changes_paid_identity(self):
+        command = [
+            "modal",
+            "run",
+            "worker/modal_motion.py",
+            "--experiment",
+            "pi3x",
+            "--video",
+            str(self.inputs / "clip.mov"),
+            "--out",
+            str(self.root / "result"),
+            "--anchors",
+            "8",
+        ]
+        first, _, _ = command_identity(command, self.root)
+        command[-1] = "16"
+        changed, _, _ = command_identity(command, self.root)
+        self.assertNotEqual(first, changed)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
