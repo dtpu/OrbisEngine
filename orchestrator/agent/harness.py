@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +24,32 @@ from orchestrator.workspace import atomic_json
 DECISION_FILE = "decision.json"
 INSTRUCTIONS_FILE = "TASK.md"
 PACKET_FILE = "task.json"
+PROMPT_FILE = "prompt.txt"
 TRANSCRIPT_FILE = "transcript.jsonl"
+
+# Codex announces the session it opened as the first event of a run.
+THREAD_EVENT = "thread.started"
+
+# How often the watchdog compares the transcript against its previous size.
+POLL_SECONDS = 5
+
+NUDGE = """You went quiet for {minutes:.0f} minutes, so the review was interrupted and resumed.
+This is the same session: everything you had read is still yours.
+
+Say in one line what you were doing and what you were waiting on, then finish. If a command
+hung, do not start it again the same way -- run it with a timeout, on a smaller sample, or read
+the file it was going to produce instead.
+
+If you are genuinely stuck -- a tool you cannot run, an input that is not there, a question only
+a person can answer -- then stop, and write {decision} with:
+
+```json
+{{"tool": "human.ask", "node_id": "{node_id}", "question": "what you need decided", "artifact_ids": []}}
+```
+
+That blocks this stage for an operator to look at and resume, which is a real outcome. Silence
+is not: a review that writes nothing blocks the stage anyway, with nothing for them to read.
+"""
 
 
 @dataclass(frozen=True)
@@ -42,6 +69,11 @@ class HarnessPolicy:
     # means choosing "danger-full-access" deliberately, per host, never by silent fallback.
     sandbox: str = "workspace-write"
     timeout_seconds: int = 900
+    # An agent that has written nothing for this long is interrupted and resumed with a nudge,
+    # up to ``idle_nudges`` times. A hung command or a model waiting on nothing otherwise burns
+    # the whole timeout in silence and the stage learns nothing from it. 0 disables the clock.
+    idle_seconds: int = 300
+    idle_nudges: int = 2
     command: tuple[str, ...] = ()
     # Only these host variables reach the harness. API credentials must be listed explicitly.
     passthrough: tuple[str, ...] = ("PATH", "HOME", "OPENAI_API_KEY")
@@ -56,6 +88,10 @@ class HarnessPolicy:
             raise ValueError(f"unknown sandbox mode {self.sandbox!r}")
         if self.timeout_seconds < 1:
             raise ValueError("harness timeout must be positive")
+        if self.idle_seconds < 0:
+            raise ValueError("the idle clock cannot be negative")
+        if self.idle_nudges < 0:
+            raise ValueError("the nudge count cannot be negative")
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> HarnessPolicy:
@@ -69,10 +105,31 @@ class HarnessPolicy:
             model=environ.get("WANDER_REVIEW_MODEL") or None,
             sandbox=environ.get("WANDER_REVIEW_SANDBOX", "workspace-write"),
             timeout_seconds=int(environ.get("WANDER_REVIEW_TIMEOUT", "900")),
+            idle_seconds=int(environ.get("WANDER_REVIEW_IDLE", "300")),
+            idle_nudges=int(environ.get("WANDER_REVIEW_NUDGES", "2")),
             command=command,
         )
 
-    def argv(self, workspace: Path, instructions: Path) -> tuple[str, ...]:
+    def argv(
+        self, workspace: Path, instructions: Path, session: str | None = None
+    ) -> tuple[str, ...]:
+        if self.kind == "codex" and session:
+            # Resuming keeps one session per run, so the agent remembers what it already
+            # decided. `resume` takes neither --cd nor --sandbox, so the workspace comes from
+            # the process directory and the sandbox from a config override.
+            command = [
+                "codex",
+                "exec",
+                "resume",
+                session,
+                "--json",
+                "--skip-git-repo-check",
+                "-c",
+                f'sandbox_mode="{self.sandbox}"',
+            ]
+            if self.model:
+                command += ["--model", self.model]
+            return (*command, "-")
         if self.kind == "codex":
             # Prompt on stdin ("-"); edits are confined to the workspace by Codex's own sandbox.
             command = [
@@ -80,7 +137,6 @@ class HarnessPolicy:
                 "exec",
                 "--json",
                 "--skip-git-repo-check",
-                "--ephemeral",
                 "--sandbox",
                 self.sandbox,
                 "--cd",
@@ -111,7 +167,31 @@ class HarnessPolicy:
             if self.model:
                 command += ["--model", self.model]
             return (*command, "-")
-        return tuple(part.replace("{workspace}", str(workspace)) for part in self.command)
+        # A custom harness that can continue a session says so by taking ``{session}``; that is
+        # also what makes it worth nudging rather than starting over.
+        return tuple(
+            part.replace("{workspace}", str(workspace)).replace("{session}", session or "")
+            for part in self.command
+        )
+
+
+def read_session(transcript: Path) -> str | None:
+    """The session Codex opened, taken from the first event it emitted."""
+    try:
+        with transcript.open() as stream:
+            for line in stream:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == THREAD_EVENT and event.get("thread_id"):
+                    return str(event["thread_id"])
+    except OSError:
+        return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -119,60 +199,169 @@ class HarnessOutcome:
     result: AgentResult
     decision: AgentToolCall | None
     decision_error: str | None
+    # The session this run used, so the next review of the same run can continue it.
+    session: str | None = None
+
+
+class Stalled(Exception):
+    """The harness stopped writing for longer than the idle clock allows."""
 
 
 class HarnessAgent:
     def __init__(self, policy: HarnessPolicy):
         self.policy = policy
 
-    def run(self, packet: AgentTaskPacket, workspace: Path, instructions: str) -> HarnessOutcome:
+    def run(
+        self,
+        packet: AgentTaskPacket,
+        workspace: Path,
+        instructions: str,
+        session: str | None = None,
+    ) -> HarnessOutcome:
+        """Review one attempt, nudging the agent back to work if it goes silent.
+
+        A review that says nothing for ``idle_seconds`` is interrupted and resumed in the same
+        session with :data:`NUDGE`, which asks what it was waiting on and tells it that being
+        stuck is an answer it may give. That turns the common silent failure -- a command that
+        hangs -- from a lost timeout into either a finished judgement or a question an operator
+        can act on. The transcript keeps every attempt, so the interruptions are visible.
+        """
         workspace = Path(workspace)
         workspace.mkdir(parents=True, exist_ok=True)
         packet_path = workspace / PACKET_FILE
         instructions_path = workspace / INSTRUCTIONS_FILE
         transcript = workspace / TRANSCRIPT_FILE
         decision_path = workspace / DECISION_FILE
+        prompt_path = workspace / PROMPT_FILE
         atomic_json(packet_path, packet.model_dump(mode="json"))
         instructions_path.write_text(instructions)
         decision_path.unlink(missing_ok=True)
         environment = {key: os.environ[key] for key in self.policy.passthrough if key in os.environ}
         environment.update(self.policy.extra_environment)
-        try:
-            with transcript.open("wb") as output:
-                completed = subprocess.run(
-                    self.policy.argv(workspace, instructions_path),
-                    cwd=workspace,
-                    env=environment,
-                    input=instructions.encode(),
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    timeout=self.policy.timeout_seconds,
-                    check=False,
+
+        prompt = instructions
+        mode = "wb"
+        nudges = 0
+        budget = float(self.policy.timeout_seconds)
+        while True:
+            prompt_path.write_text(prompt)
+            started = time.monotonic()
+            try:
+                code = self._spawn(
+                    self.policy.argv(workspace, instructions_path, session),
+                    workspace,
+                    environment,
+                    prompt_path,
+                    transcript,
+                    mode,
+                    budget,
                 )
-        except subprocess.TimeoutExpired:
-            result = AgentResult(
-                status="timed_out",
-                transcript_path=str(transcript),
-                error=f"agent exceeded {self.policy.timeout_seconds}s",
-            )
-            return HarnessOutcome(result, None, result.error)
-        except OSError as error:
-            result = AgentResult(
-                status="failed",
-                transcript_path=str(transcript),
-                error=f"harness could not start: {error}",
-            )
-            return HarnessOutcome(result, None, result.error)
-        status = "completed" if completed.returncode == 0 else "failed"
+            except subprocess.TimeoutExpired:
+                result = AgentResult(
+                    status="timed_out",
+                    transcript_path=str(transcript),
+                    error=f"agent exceeded {self.policy.timeout_seconds}s",
+                )
+                return HarnessOutcome(
+                    result, None, result.error, read_session(transcript) or session
+                )
+            except OSError as error:
+                result = AgentResult(
+                    status="failed",
+                    transcript_path=str(transcript),
+                    error=f"harness could not start: {error}",
+                )
+                return HarnessOutcome(result, None, result.error, session)
+            except Stalled:
+                budget -= time.monotonic() - started
+                session = read_session(transcript) or session
+                nudges += 1
+                quiet = self.policy.idle_seconds / 60
+                # A stall with a decision already written is a finished review whose process
+                # did not exit. There is nothing to ask it, so take the decision.
+                if decision_path.exists():
+                    code = 0
+                    break
+                resumable = session is not None and (
+                    self.policy.kind == "codex"
+                    or any("{session}" in part for part in self.policy.command)
+                )
+                if resumable and nudges <= self.policy.idle_nudges and budget > POLL_SECONDS:
+                    prompt = NUDGE.format(
+                        minutes=quiet, decision=DECISION_FILE, node_id=packet.node_id
+                    )
+                    mode = "ab"
+                    continue
+                sent = nudges - 1
+                if not resumable:
+                    unanswered = "opened no session to resume"
+                elif sent:
+                    unanswered = f"did not answer {sent} nudge(s)"
+                else:
+                    unanswered = "was not nudged"
+                result = AgentResult(
+                    status="stalled",
+                    transcript_path=str(transcript),
+                    error=f"agent wrote nothing for {quiet:.0f} minutes and {unanswered}",
+                )
+                return HarnessOutcome(result, None, result.error, session)
+            break
+
+        status = "completed" if code == 0 else "failed"
         result = AgentResult(
             status=status,
-            exit_code=completed.returncode,
+            exit_code=code,
             transcript_path=str(transcript),
             response_path=str(decision_path) if decision_path.exists() else None,
-            error=None if status == "completed" else f"agent exited {completed.returncode}",
+            error=None if status == "completed" else f"agent exited {code}",
         )
         decision, decision_error = self._read_decision(decision_path, packet)
-        return HarnessOutcome(result, decision, decision_error)
+        return HarnessOutcome(result, decision, decision_error, read_session(transcript) or session)
+
+    def _spawn(
+        self,
+        argv: tuple[str, ...],
+        workspace: Path,
+        environment: dict[str, str],
+        prompt_path: Path,
+        transcript: Path,
+        mode: str,
+        budget: float,
+    ) -> int:
+        """Run one harness process, raising :class:`Stalled` if it stops writing.
+
+        The prompt is a file rather than a pipe we write into, so a long brief cannot deadlock
+        against a child that has not started reading yet. Silence is measured by the size of the
+        transcript, which the child appends to as it works.
+        """
+        with prompt_path.open("rb") as prompt, transcript.open(mode) as output:
+            process = subprocess.Popen(
+                argv,
+                cwd=workspace,
+                env=environment,
+                stdin=prompt,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            started = time.monotonic()
+            quiet_since = started
+            written = transcript.stat().st_size
+            while True:
+                try:
+                    return process.wait(timeout=POLL_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+                now = time.monotonic()
+                size = transcript.stat().st_size
+                if size != written:
+                    written, quiet_since = size, now
+                if now - started > budget:
+                    _halt(process)
+                    raise subprocess.TimeoutExpired(argv, budget)
+                if self.policy.idle_seconds and now - quiet_since > self.policy.idle_seconds:
+                    _halt(process)
+                    raise Stalled()
 
     @staticmethod
     def _read_decision(
@@ -193,3 +382,21 @@ class HarnessAgent:
         if getattr(call, "node_id", packet.node_id) != packet.node_id:
             return None, "decision names a different stage than the one under review"
         return call, None
+
+
+def _halt(process: subprocess.Popen) -> None:
+    """Stop a harness and everything it started.
+
+    The agent's own child processes are what usually hang, and they are not the process we
+    spawned, so this signals the whole group the harness was given.
+    """
+    for stop in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, stop)
+        except (ProcessLookupError, PermissionError):
+            process.kill()
+        try:
+            process.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue

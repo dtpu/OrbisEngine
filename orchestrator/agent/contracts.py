@@ -55,7 +55,9 @@ class AgentResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["wander.agent-result/1"] = "wander.agent-result/1"
-    status: Literal["completed", "failed", "timed_out"]
+    # "stalled": the agent stopped writing and did not answer the nudges that followed. It is
+    # distinct from "timed_out", where it was working right up to the limit.
+    status: Literal["completed", "failed", "timed_out", "stalled"]
     exit_code: int | None = None
     transcript_path: str
     response_path: str | None = None
