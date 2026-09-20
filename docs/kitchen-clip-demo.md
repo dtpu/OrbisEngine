@@ -15,6 +15,7 @@ does not require Modal credentials or a new reconstruction run.
 - [Clip picker: kitchen selected](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
 - [Kitchen with repaired fixtures](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/index.html)
 - [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/preview.mp4)
+- [Download team MP4 — final two seconds silent](http://127.0.0.1:5399/reviews/kitchen-continuation/fixture-repair/kitchen-team-share.mp4)
 - [Earlier kitchen repair notes](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
 - [Previous kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
 - [Accepted gym scene](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail)
