@@ -13,13 +13,13 @@ export default function Gallery() {
         <Eyebrow>Examples</Eyebrow>
         <H2>Walk through these</H2>
         <p className={styles.intro}>
-          Nine clips from the demo picker, each rebuilt as a room you can move through. Cards with
-          known flaws keep an honest label instead of being hidden.
+          Seven reviewed clips, each rebuilt as a room you can move through. Cards with known flaws
+          keep an honest label instead of being hidden.
         </p>
       </header>
       <ul className={styles.grid}>
         {scenes.map((scene) => {
-          const href = demoSceneUrl(scene.id);
+          const href = scene.viewer ? demoSceneUrl(scene.viewer) : undefined;
           return (
             <li key={scene.id} className={styles.item}>
               <Card
@@ -36,9 +36,13 @@ export default function Gallery() {
                   />
                 }
               />
-              <a className={styles.open} href={href}>
-                Open in viewer →
-              </a>
+              {href ? (
+                <a className={styles.open} href={href}>
+                  Open in viewer →
+                </a>
+              ) : (
+                <span className={styles.open}>Review capture; not in the demo picker yet</span>
+              )}
             </li>
           );
         })}

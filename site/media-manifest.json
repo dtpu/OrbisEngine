@@ -1,1 +1,145 @@
-{ "files": [] }
+{
+  "files": [
+    {
+      "path": "elevator/source.mp4",
+      "asset": "/clips/elevator.mp4",
+      "note": "Two men by the lift, one 10 s phone clip"
+    },
+    {
+      "path": "elevator/wander.mp4",
+      "asset": "/reviews/austin-overnight/playback-final/elevator-baseline.mp4",
+      "note": "Viewer playback along the recovered camera path, reviewed 19 Sep"
+    },
+    { "path": "elevator/poster.jpg", "frame": { "from": "elevator/wander.mp4", "at": 1.4 } },
+    {
+      "path": "elevator/frame.jpg",
+      "frame": { "from": "elevator/source.mp4", "at": 6.0, "scale": "1280:-2" }
+    },
+    { "path": "elevator/render.jpg", "capture": true },
+
+    { "path": "lobby/source.mp4", "asset": "/clips/lobby.mp4" },
+    {
+      "path": "lobby/wander.mp4",
+      "asset": "/reviews/austin-overnight/playback-final/lobby-baseline.mp4"
+    },
+    { "path": "lobby/poster.jpg", "frame": { "from": "lobby/wander.mp4", "at": 4.7 } },
+    {
+      "path": "lobby/frame.jpg",
+      "frame": { "from": "lobby/source.mp4", "at": 4.733, "scale": "1280:-2" }
+    },
+    { "path": "lobby/render.jpg", "capture": true },
+
+    {
+      "path": "stairs2/wander.mp4",
+      "asset": "/reviews/austin-overnight/playback-final/stairs2-baseline.mp4"
+    },
+    { "path": "stairs2/poster.jpg", "frame": { "from": "stairs2/wander.mp4", "at": 1.0 } },
+
+    {
+      "path": "atrium/wander.mp4",
+      "asset": "/reviews/austin-overnight/playback-final/atrium-baseline.mp4"
+    },
+    { "path": "atrium/poster.jpg", "frame": { "from": "atrium/wander.mp4", "at": 1.0 } },
+
+    {
+      "path": "tos31/wander.mp4",
+      "asset": "/reviews/austin-overnight/playback-final/tos31-baseline.mp4"
+    },
+    { "path": "tos31/poster.jpg", "frame": { "from": "tos31/wander.mp4", "at": 3.0 } },
+
+    { "path": "gym/source.mp4", "asset": "/clips/gym.mp4" },
+    {
+      "path": "gym/review.mp4",
+      "asset": "/reviews/gym-repair/gym-contact-wip.mp4",
+      "note": "The accepted gym preview linked from reviews/gym-kitchen"
+    },
+    {
+      "path": "gym/wander.mp4",
+      "clip": { "from": "gym/review.mp4", "start": 3, "duration": 10, "scale": "960:-2" }
+    },
+    { "path": "gym/poster.jpg", "frame": { "from": "gym/wander.mp4", "at": 2.0 } },
+    {
+      "path": "gym/frame.jpg",
+      "frame": { "from": "gym/source.mp4", "at": 8.0, "scale": "1280:-2" }
+    },
+    { "path": "gym/render.jpg", "capture": true },
+
+    {
+      "path": "kitchen/review.mp4",
+      "asset": "/reviews/kitchen-continuation/fixture-repair/preview.mp4",
+      "note": "Current kitchen repair preview; its title bar is cropped off, the recording inset stays"
+    },
+    {
+      "path": "kitchen/wander.mp4",
+      "clip": {
+        "from": "kitchen/review.mp4",
+        "start": 30,
+        "duration": 10,
+        "crop": "1280:672:0:48",
+        "scale": "960:-2"
+      }
+    },
+    { "path": "kitchen/poster.jpg", "frame": { "from": "kitchen/wander.mp4", "at": 1.0 } },
+
+    {
+      "path": "hero/source.mp4",
+      "clip": { "from": "elevator/source.mp4", "start": 0, "duration": 10, "scale": "960:-2" }
+    },
+    { "path": "hero/source-poster.jpg", "frame": { "from": "hero/source.mp4", "at": 0 } },
+    { "path": "hero/wander.mp4", "capture": true },
+    { "path": "hero/wander-poster.jpg", "frame": { "from": "hero/wander.mp4", "at": 0 } },
+
+    { "path": "viewer/walk.mp4", "capture": true },
+    { "path": "viewer/walk.jpg", "frame": { "from": "viewer/walk.mp4", "at": 0 } },
+    { "path": "viewer/rewind.mp4", "capture": true },
+    { "path": "viewer/rewind.jpg", "frame": { "from": "viewer/rewind.mp4", "at": 0 } },
+    { "path": "viewer/audio.mp4", "capture": true },
+    { "path": "viewer/audio.jpg", "frame": { "from": "viewer/audio.mp4", "at": 0 } },
+
+    {
+      "path": "steps/1.jpg",
+      "frame": { "from": "elevator/source.mp4", "at": 0, "scale": "1280:-2" },
+      "note": "The first frame of the interval the run used"
+    },
+    {
+      "path": "steps/src/track-overlay.jpg",
+      "archive": "runs/elevator/tracks/track-overlay-000.jpg",
+      "optional": true,
+      "note": "Author archive: the run's tracked people with 2D keypoints"
+    },
+    {
+      "path": "steps/2.jpg",
+      "frame": { "from": "steps/src/track-overlay.jpg", "at": 0, "scale": "1280:-2" },
+      "optional": true
+    },
+    {
+      "path": "steps/src/person-source.png",
+      "archive": "runs/elevator/prepared-00/source.png",
+      "optional": true
+    },
+    {
+      "path": "steps/src/person-mask.png",
+      "archive": "runs/elevator/prepared-00/mask.png",
+      "optional": true
+    },
+    {
+      "path": "steps/3.jpg",
+      "ffmpeg": {
+        "inputs": ["steps/src/person-source.png", "steps/src/person-mask.png"],
+        "args": [
+          "-filter_complex",
+          "[0:v]eq=brightness=-0.3:saturation=0.3[dim];[1:v]format=gray[m];[0:v][m]alphamerge[fg];[dim][fg]overlay=format=auto,format=yuvj420p,scale=1280:-2",
+          "-frames:v",
+          "1",
+          "-q:v",
+          "2"
+        ]
+      },
+      "optional": true,
+      "note": "The run's person mask lifted out of the frame it was cut from"
+    },
+    { "path": "steps/4.jpg", "capture": true },
+    { "path": "steps/5.jpg", "capture": true },
+    { "path": "steps/6.jpg", "capture": true }
+  ]
+}

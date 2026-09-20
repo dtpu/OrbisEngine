@@ -36,11 +36,26 @@ Done:
 - Compare captions say the body-height offset is pending measurement instead of quoting numbers
   that were never measured.
 
+Media (20 Sep):
+
+- `site/media-manifest.json` now lists every file the page expects, sourced from the private
+  shared bucket: source clips from `/clips/`, the reviewed viewer playback loops from
+  `reviews/austin-overnight/playback-final/`, the accepted gym preview and the current kitchen
+  repair preview from their review folders, and run intermediates from the author archive for the
+  pipeline strip. `scripts/pull-media.ts` reads the bucket with the same credential rules as
+  `bun run assets:pull` and derives posters, compare frames and trimmed loops with ffmpeg.
+- `scripts/capture-media.ts` renders the rest from the real viewer (`fourd.html` driven through
+  `window.wander`): the hero loop, the three compare renders, the walk/rewind/audio loops and the
+  last three pipeline stills. It prints the viewpoint offsets in body-heights that the compare
+  captions quote.
+- The gallery has seven cards: the scenes with a clean reviewed loop. Review captures with the
+  debug HUD burned in (`authored/*.mp4`, `walk/*.mp4`) and copyrighted film clips other than
+  Tears of Steel were left out. Cards link to the demo only for ids the picker has
+  (`elevator`, `lobby`, `tos31`, `gym-accepted`, `kitchen-repair`).
+
 Remaining:
 
-- **Media export** (posters, loops, compare pairs, step images under `site/public/media/`). Needs
-  author credentials for the private asset store; every media box renders as a grey placeholder
-  until it lands. Fill `site/media-manifest.json` and run `bun run scripts/pull-media.ts`.
-- Measure and fill the compare-caption offsets in body-heights once the render pairs exist.
+- Publish the captured renders to the shared bucket so a build needs only `pull-media.ts`; until
+  then a deploy runs both scripts (see `site/README.md`).
 - Hosting and the `VITE_DEMO_URL` target; Lighthouse pass after real media is in place.
 - Consent for publishing teammate-filmed clips (SPEC open question 3).
