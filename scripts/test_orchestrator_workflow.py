@@ -69,22 +69,61 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(graph.nodes["pi3x"].status, NodeStatus.FAILED)
         self.assertEqual(graph.nodes["pi3x"].blocked_reason, "provider unavailable")
 
-    def test_approval_signal_promotes_waiting_human_node(self):
+    def test_approving_a_human_stage_queues_it_to_be_recorded(self):
+        """A human stage executes nothing, so it has no attempt and no artifact of its own.
+
+        Selecting one here would mean inventing an approval artifact that nothing produced, and
+        the stages that require an approval as input would then reference something absent. The
+        signal records intent; the loop turns it into a real attempt through record_approval.
+        """
         workflow = GenerationWorkflow()
         workflow.graph = instantiate_graph(GraphOptions(marble="video"))
-        node = workflow.graph.nodes["clean_review"]
+        node = workflow.graph.nodes["verify"]
         node.status = NodeStatus.WAITING_HUMAN
         workflow.approve(
             ApprovalSignal(
-                node_id="clean_review",
-                attempt_id="approval:1",
-                artifacts=outputs(workflow.graph, "clean_review"),
+                node_id="verify",
+                attempt_id="",
+                artifacts={},
                 approved_by="operator",
                 rationale="Reviewed every sampled frame",
             )
         )
+        self.assertIn("verify", workflow.pending_approvals)
+        self.assertEqual(workflow.pending_approvals["verify"].approved_by, "operator")
+        self.assertEqual(node.status, NodeStatus.WAITING_HUMAN)
+
+    def test_approving_a_stage_that_ran_selects_its_attempt_directly(self):
+        workflow = GenerationWorkflow()
+        workflow.graph = instantiate_graph(GraphOptions(marble="video"))
+        node = workflow.graph.nodes["clean"]
+        node.status = NodeStatus.WAITING_HUMAN
+        workflow.approve(
+            ApprovalSignal(
+                node_id="clean",
+                attempt_id="attempt:clean",
+                artifacts=outputs(workflow.graph, "clean"),
+                approved_by="operator",
+                rationale="Residuals are within tolerance",
+            )
+        )
         self.assertEqual(node.status, NodeStatus.SUCCEEDED)
-        self.assertEqual(node.selected_attempt_id, "approval:1")
+        self.assertEqual(node.selected_attempt_id, "attempt:clean")
+        self.assertEqual(workflow.pending_approvals, {})
+
+    def test_approving_a_node_that_is_not_waiting_is_refused(self):
+        workflow = GenerationWorkflow()
+        workflow.graph = instantiate_graph(GraphOptions(marble="video"))
+        with self.assertRaisesRegex(ValueError, "not waiting for human approval"):
+            workflow.approve(
+                ApprovalSignal(
+                    node_id="verify",
+                    attempt_id="",
+                    artifacts={},
+                    approved_by="operator",
+                    rationale="too early",
+                )
+            )
 
 
 if __name__ == "__main__":

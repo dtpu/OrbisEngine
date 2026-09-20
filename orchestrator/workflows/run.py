@@ -11,9 +11,10 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy as TemporalRetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from orchestrator.contracts import NodeStatus
+    from orchestrator.contracts import NodeStatus, StageDefinition, StageKind
     from orchestrator.graph import (
         BranchArtifact,
+        GraphNode,
         RunGraph,
         ShotBranch,
         child_workflows_for_shots,
@@ -96,6 +97,18 @@ class DecisionSignal:
 
 
 @dataclass
+class RecordApprovalInput:
+    run_id: str
+    node_id: str
+    stage_type: str
+    definition: dict[str, Any]
+    reviewed_attempt_id: str | None
+    artifacts: dict[str, list[str]]
+    approved_by: str
+    rationale: str
+
+
+@dataclass
 class RunStateInput:
     run_id: str
     state: dict[str, Any] | None = None
@@ -166,6 +179,19 @@ class FinishRunInput:
 
 
 @dataclass
+class PublishRunInput:
+    run_id: str
+
+
+@dataclass
+class PublishRunResult:
+    """What the archive step did, so a run records whether its outputs left this machine."""
+
+    published: bool
+    detail: str
+
+
+@dataclass
 class WorkflowResult:
     run_id: str
     status: str
@@ -231,6 +257,11 @@ def snapshot_state(
         "canceled": canceled,
         "nodes": {
             node.id: {
+                "stage_type": node.stage_type,
+                "definition": node.definition.model_dump(mode="json"),
+                "dependencies": list(node.dependencies),
+                "parent_node_id": node.parent_node_id,
+                "branch_key": node.branch_key,
                 "status": node.status.value,
                 "blocked_reason": node.blocked_reason,
                 "selected_attempt_id": node.selected_attempt_id,
@@ -259,7 +290,20 @@ def restore_state(
     for node_id, value in (state.get("nodes") or {}).items():
         node = graph.nodes.get(node_id)
         if node is None:
-            continue
+            # A node the run created by expanding a stage. The base graph has no place for it,
+            # so rebuild it from its row rather than dropping the work it represents.
+            definition = value.get("definition")
+            if not definition:
+                continue
+            node = GraphNode(
+                id=node_id,
+                stage_type=value.get("stage_type") or node_id,
+                definition=StageDefinition.model_validate(definition),
+                dependencies=tuple(value.get("dependencies") or ()),
+                parent_node_id=value.get("parent_node_id"),
+                branch_key=value.get("branch_key"),
+            )
+            graph.nodes[node_id] = node
         status = NodeStatus(value["status"])
         if status in {NodeStatus.RUNNING, NodeStatus.WAITING_AGENT}:
             status = NodeStatus.QUEUED
@@ -344,6 +388,8 @@ class GenerationWorkflow:
         self.retry_parameters: dict[str, dict[str, Any]] = {}
         # Times the reviewing agent has sent each stage back, bounded by AGENT_RETRY_CAP.
         self.agent_retries: dict[str, int] = {}
+        # Approvals waiting to be recorded as attempts, keyed by node.
+        self.pending_approvals: dict[str, ApprovalSignal] = {}
         self.revision = 0
 
     @workflow.run
@@ -413,6 +459,43 @@ class GenerationWorkflow:
             if self.revision != persisted_revision:
                 await self._persist(request.run_id)
                 persisted_revision = self.revision
+            for node_id, node in self.graph.nodes.items():
+                if (
+                    node.status == NodeStatus.WAITING_HUMAN
+                    and node.definition.kind == StageKind.HUMAN
+                    and node_id not in self.pending_approvals
+                ):
+                    # Gates advance on their own. The approval is still recorded as an attempt
+                    # with an author, so who let the run past remains answerable.
+                    self.pending_approvals[node_id] = ApprovalSignal(
+                        node_id=node_id,
+                        attempt_id="",
+                        artifacts={},
+                        approved_by="pipeline",
+                        rationale="human gate advanced automatically",
+                    )
+            while self.pending_approvals:
+                node_id, signal = self.pending_approvals.popitem()
+                node = self.graph.nodes[node_id]
+                result = await workflow.execute_activity(
+                    "record_approval",
+                    RecordApprovalInput(
+                        run_id=request.run_id,
+                        node_id=node_id,
+                        stage_type=node.stage_type,
+                        definition=node.definition.model_dump(mode="json"),
+                        reviewed_attempt_id=signal.attempt_id or None,
+                        artifacts=signal.artifacts,
+                        approved_by=signal.approved_by,
+                        rationale=signal.rationale,
+                    ),
+                    task_queue="local_cpu",
+                    start_to_close_timeout=timedelta(seconds=120),
+                    retry_policy=TemporalRetryPolicy(maximum_attempts=3),
+                    result_type=StageActivityResult,
+                )
+                apply_activity_result(self.graph, result)
+                self.revision += 1
             ready = self.graph.evaluate(run_inputs)
             queue_counts: dict[str, int] = {}
             for node_id in running:
@@ -570,6 +653,13 @@ class GenerationWorkflow:
         node = self.graph.nodes[signal.node_id]
         if node.status != NodeStatus.WAITING_HUMAN:
             raise ValueError(f"{signal.node_id} is not waiting for human approval")
+        if node.definition.kind == StageKind.HUMAN:
+            # A human stage runs nothing, so it has no attempt and no artifact to select. Its
+            # approval is its output: queue it and let the loop record it as an ordinary
+            # attempt, so stages that require an approval have something real to consume.
+            self.pending_approvals[signal.node_id] = signal
+            self.revision += 1
+            return
         self.graph.select_attempt(
             signal.node_id,
             signal.attempt_id,
@@ -707,6 +797,21 @@ class GenerationWorkflow:
         finished run into a failed workflow, so the write is retried and then given up on. The
         API derives a live status from the node rows in the meantime.
         """
+        if status == "succeeded":
+            try:
+                published = await workflow.execute_activity(
+                    "publish_run",
+                    PublishRunInput(run_id=run_id),
+                    task_queue="local_cpu",
+                    start_to_close_timeout=timedelta(seconds=3600),
+                    retry_policy=TemporalRetryPolicy(maximum_attempts=2),
+                    result_type=PublishRunResult,
+                )
+                workflow.logger.info("run %s archive: %s", run_id, published.detail)
+            except Exception as error:
+                # The outputs are already durable locally; failing to copy them off this machine
+                # must not turn a finished run into a failed one.
+                workflow.logger.warning("run %s was not archived: %s", run_id, error)
         try:
             await workflow.execute_activity(
                 "finish_run",

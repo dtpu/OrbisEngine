@@ -21,7 +21,6 @@ class RegistryTests(unittest.TestCase):
             "clean_multi",
             "world_prompt",
             "world_mode",
-            "clean_review",
             "marble_image_submit",
             "marble_image",
             "marble_video_submit",

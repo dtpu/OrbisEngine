@@ -524,22 +524,6 @@ def instantiate_graph(options: GraphOptions) -> RunGraph:
         if options.marble == "multi":
             add("world_mode")
             add("clean_multi")
-            review_source, review_role = "clean_multi", "clean_report"
-            review_frame_role = "clean_frames"
-        elif options.marble == "image":
-            review_source, review_role = "clean_first", "clean_report"
-            review_frame_role = "clean_frame"
-        else:
-            review_source, review_role = "clean", "clean_report"
-            review_frame_role = "clean_frame"
-        add(
-            "clean_review",
-            bindings={
-                "clean_report": (review_source, review_role),
-                "clean_frame": (review_source, review_frame_role),
-            },
-            depends_on=("clean_first", "clean") if options.marble == "both" else (),
-        )
         if options.marble in {"image", "both"}:
             add("marble_image_submit")
             add("marble_image")

@@ -879,8 +879,13 @@ def default_adapters() -> dict[str, object]:
         "track_people": (
             "tracks",
             {
+                # One manifest for the run, one motion file per tracked person, and the mask
+                # archive the object stages read. A catch-all here swept every log and overlay
+                # into person_track_data, which the stage declares as a single artifact, and
+                # left person_track with nothing to match.
                 "outputs/runs/{name}/tracks/tracks.json": "person_tracks",
-                "outputs/runs/{name}/tracks/**/*": "person_track_data",
+                "outputs/runs/{name}/tracks/track_*/motion.json": "person_track",
+                "outputs/runs/{name}/tracks/masks.npz": "person_track_data",
             },
         ),
         "lhm_frozen": (
