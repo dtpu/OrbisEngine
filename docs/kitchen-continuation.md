@@ -335,3 +335,32 @@ prior archive entries remain unchanged. Filtering scripts, source bindings, comp
 609 preview captures are retained under `evidence/kitchen-room-context-v1/`; the focused publish
 had no scanner exclusions. Local verification is
 `.context/evidence/kitchen-room-coverage/publication-verification.json`.
+
+## Wall and aisle repair
+
+The next user walkthrough exposed a ragged blue slab and a blocked approach to James. The blue
+paint is visible in the original recording. Its source-derived wall plane was incomplete and
+layered over a differently coloured generated wall. The new `room-access/environment.ply`
+retains every original observed Gaussian unchanged and adds 151,242 points continuing the fitted
+painted plane. Colours interpolate nearby recorded wall samples; unseen extensions are inferred.
+The background removes 14,496 overlapping generated centres, retaining 1,139,312 splats. This
+repairs the torn patch rather than establishing a fully accurate surrounding room.
+
+Walking failed at a gap between the observed floor hull and the visible kitchen aisle. The
+existing square occupancy footprint also padded furniture corners. Circular cell intersection
+now matches the capsule, and finite explicit walking supports can establish floor beyond the
+sampled hull without clearing obstacles or bypassing swept collision and step checks. Three
+bounded supports join the open approach to the observed tile floor using its measured tilted
+plane. Their hidden extent is inferred and recorded in `room-access/colliders.json`.
+
+A real keyboard route around the counter travelled 3.045 body-heights to beside James. Every
+sampled position remained unblocked and supported. Map placement accepts the bridge, refuses
+its unsupported edge and continues to reject the countertop. Twelve source-camera views and
+six displaced views load the combined scene without errors; James, pan, freezer and original
+source audio assets are unchanged. The scene still has generated-room seams, imperfect contact
+and missing Brita/bag motion. No new paid operation ran.
+
+The current picker selects this version. Review and preview are under
+`/reviews/kitchen-continuation/room-access/`. Earlier `room-context` and observed-room assets
+remain available. Geometry evidence is under `.context/evidence/kitchen-wall-repair/`; route,
+floor and collision evidence is under `.context/evidence/kitchen-room-coverage/walk-repair/`.
