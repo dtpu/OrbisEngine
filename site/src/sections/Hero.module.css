@@ -1,3 +1,18 @@
+.masthead {
+  margin: 0 0 var(--space-6);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--rule);
+}
+
+.mastheadImage {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: cover;
+  object-position: center 30%;
+}
+
 .copy {
   max-width: 720px;
   display: flex;
@@ -60,6 +75,14 @@
 }
 
 @media (max-width: 767px) {
+  .masthead {
+    margin-bottom: var(--space-5);
+  }
+
+  .mastheadImage {
+    max-height: 320px;
+  }
+
   .split {
     grid-template-columns: 1fr;
     gap: var(--space-5);

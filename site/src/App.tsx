@@ -1,4 +1,5 @@
 import DevGallery from './DevGallery';
+import TopBar from './components/TopBar';
 import Hero from './sections/Hero';
 import Gallery from './sections/Gallery';
 import Compare from './sections/Compare';
@@ -13,15 +14,18 @@ export default function App() {
     return <DevGallery />;
   }
   return (
-    <main>
-      <Hero />
-      <Gallery />
-      <Compare />
-      <HowItWorks />
-      <Viewer />
-      <Limits />
-      <Team />
-      <FinalCta />
-    </main>
+    <>
+      <TopBar />
+      <main>
+        <Hero />
+        <Gallery />
+        <Compare />
+        <HowItWorks />
+        <Viewer />
+        <Limits />
+        <Team />
+        <FinalCta />
+      </main>
+    </>
   );
 }

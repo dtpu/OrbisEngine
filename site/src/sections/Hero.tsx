@@ -3,6 +3,7 @@ import Button from '../components/Button';
 import VideoLoop from '../components/VideoLoop';
 import { Eyebrow, H1 } from '../components/Heading';
 import { DEMO_URL } from '../content/links';
+import header from '../brand/header.jpg';
 import styles from './Hero.module.css';
 
 // The elevator clip (two people, one handheld take): the recording on the left, and on the right
@@ -13,8 +14,17 @@ const WANDER_POSTER = '/media/hero/wander-poster.jpg';
 export default function Hero() {
   return (
     <Section id="hero" theme="dark">
+      <figure className={styles.masthead}>
+        <img
+          src={header}
+          alt="A visitor in a headset looking up, with the kitchen scene behind them"
+          className={styles.mastheadImage}
+          fetchPriority="high"
+        />
+      </figure>
+
       <div className={styles.copy}>
-        <Eyebrow>WANDER</Eyebrow>
+        <Eyebrow>ORBIS ENGINE</Eyebrow>
         <H1 className={styles.title}>Step inside a video.</H1>
         <p className={styles.sub}>
           One clip becomes a room you can walk through, with its people, objects, and sound
@@ -45,11 +55,11 @@ export default function Hero() {
             <VideoLoop
               src="/media/hero/wander.mp4"
               poster={WANDER_POSTER}
-              label="Wander viewpoint moving through the same moment"
+              label="Orbis Engine viewpoint moving through the same moment"
               className={styles.video}
             />
           </div>
-          <figcaption className={styles.label}>Wander</figcaption>
+          <figcaption className={styles.label}>Orbis Engine</figcaption>
         </figure>
       </div>
     </Section>

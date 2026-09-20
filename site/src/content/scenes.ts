@@ -10,7 +10,7 @@ export type Scene = {
 };
 
 // Media paths under public/media/, filled by site/media-manifest.json. Each card plays the
-// reviewed Wander loop for the scene; the poster is a still from that loop.
+// reviewed Orbis Engine loop for the scene; the poster is a still from that loop.
 const media = (id: string) => ({
   poster: `/media/${id}/poster.jpg`,
   wander: `/media/${id}/wander.mp4`,
