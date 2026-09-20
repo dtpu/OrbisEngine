@@ -8,7 +8,9 @@ one movable prop and lets the character respond to changes the viewer actually m
 
 Make the existing bottle-tossing scene react to a visitor: approaching can prompt a greeting,
 catching interrupts the recorded exchange, a character converses and faces the visitor, and a
-return throw can be accepted at an assisted catch target. Reset restores recorded playback.
+return throw can be accepted at an assisted catch target. The scene starts in interaction mode
+with the recording paused. Replay is an explicit visitor action; Reset restores the starting
+scene state and stays paused.
 This scope uses the current recorded bodies; exporting a controllable skeleton is a later task.
 
 The scene script is a small state machine. Seed its throw and handoff timing and participants
@@ -19,21 +21,50 @@ started conversation and a cooldown so walking around does not trigger repeated 
 
 Implement and review these stages in order:
 
-1. **Interrupt and reset:** opt-in scene entry, desktop and XR selection, grab/hold/release,
-   recorded-motion ownership, and a reliable reset. Validate the exact bottle scene visually.
+1. **Playback, interrupt, and reset:** opt-in scene entry paused, an immersive Replay control,
+   desktop and XR selection, grab/hold/release, recorded-motion ownership, and a reliable reset.
+   Validate the exact bottle scene visually.
 2. **Throw and return:** bounded simulated throws, supported floor/wall contacts, an explicit
    assisted catch region near a recorded receiving pose, misses, and pickup after a miss.
 3. **Conversation:** explicit voice/text connection, scene/event context, proximity and bottle
    reactions, transcripts, cancellation, and cleanup. No connection starts merely on page load.
 4. **Facing and actions:** whole-body turning around the character's position, a return marker,
-   and guarded requests to resume the recorded exchange only when bottle state allows it.
+   and an offer to replay. The agent cannot start or loop the recording on its own.
 5. **Acceptance:** demonstrate approach, catch, conversation, successful return, miss, reset,
-   and scene exit. Check real provider/audio behavior and physical headset behavior separately
+   manual replay, pause, VR re-entry, and scene exit. Check real provider/audio behavior and physical headset behavior separately
    from offline and simulated XR tests. Document any checks that cannot be performed.
 
 Natural reaching, independent head/eye movement, lip sync, and new walking animation are outside
 this first implementation. Initial engineering scaffolding exists locally for bottle physics
 and the agent connection; it is not yet integrated or a demonstrated viewer feature.
+
+## Manual replay while staying in VR
+
+Interaction mode is the default for this experiment. Entering or re-entering VR does not start
+the source recording. Walking, hand input, and an explicitly connected conversation keep working
+while the recording is paused. The current bodies hold their recorded poses until we add further
+animation; whole-body facing remains an illustrative interaction.
+
+Provide these controls both on desktop and inside the immersive scene:
+
+- **Replay recording:** deliberately restore the original character/bottle state and play once
+  from the beginning. Keep the visitor's position and orientation. Make the bottle reset clear
+  in the control's description. Retain conversation history and notify the agent of the reset.
+- **Pause / continue:** stop or continue that single playback without leaving VR. A catch can
+  also interrupt playback and transfer the bottle to the visitor.
+- **Reset scene:** restore the original starting state and remain in interaction mode, paused.
+
+At the end of a replay, stop at a valid final pose and return to interaction mode. Returning the
+bottle, completing a conversation, reconnecting an agent, or re-entering VR must never restart
+the recording automatically. During source playback, suspend agent speech and microphone input
+so the recorded soundtrack does not become a conversational turn; restore the user's prior
+conversation/microphone choice when playback stops. An agent may offer replay, but the visitor
+initiates it through the control.
+
+Implementation must coordinate the video's autoplay/loop flags, the viewer's initial transport
+state and modulo loop, and the existing XR-entry auto-play handler. An HTML-only button is not
+an immersive VR control. The current standard viewer's looping behavior remains outside this
+opt-in experiment. Verify that the scene still accepts input after the recording has ended.
 
 ## Feasibility in the current viewer
 
@@ -96,10 +127,11 @@ or headset performance has been demonstrated by this investigation.
 
 ## Suggested first experience
 
-Select a person, choose **Talk**, and pause the recorded scene at its current time. Ask a question
+Enter the paused scene, select a person, and choose **Talk**. Ask a question
 about something visible. Hear a generated answer from the selected person's position, with a
 transcript and a clear indication that this is AI dialogue. Ask the character to highlight a
-known object. End the conversation and restore the previous playback state.
+known object. End the conversation and remain in the scene. Use **Replay recording** to watch the
+original exchange when desired.
 
 Start with a paused body and a speaking indicator. This proves conversation and scene awareness
 without claiming new body or lip animation. Use a standard synthetic voice. A character's persona
