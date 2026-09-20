@@ -16,6 +16,24 @@ from orchestrator.workspace import AttemptWorkspace, RunWorkspace
 from orchestrator.workflows.run import StageActivityInput, StageActivityResult
 
 
+# How often a running stage tells Temporal it is still alive. Without this a worker that dies
+# mid-stage is only noticed when the stage's whole timeout expires -- four hours for a Modal or
+# Marble stage -- and the run sits still for all of them even though the work is long finished.
+HEARTBEAT_SECONDS = 20
+
+
+def beat() -> None:
+    """Report liveness, when there is a Temporal to report it to.
+
+    The runner is also called directly by tests and by the resume script, where there is no
+    activity context and nothing to tell.
+    """
+    try:
+        activity.heartbeat()
+    except RuntimeError:
+        pass
+
+
 class ArtifactResolver(Protocol):
     def hydrate(self, artifact_id: str, destination_directory: Path) -> Path: ...
 
@@ -193,19 +211,30 @@ class StageActivityRunner:
             **execution.environment,
         }
         with attempt.stdout.open("wb") as stdout, attempt.stderr.open("wb") as stderr:
+            process = None
             try:
-                completed = subprocess.run(
+                process = subprocess.Popen(
                     execution.command,
                     cwd=execution.cwd,
                     env=environment,
                     stdout=stdout,
                     stderr=stderr,
-                    check=False,
                 )
-                if completed.returncode not in execution.success_exit_codes:
+                while True:
+                    try:
+                        code = process.wait(timeout=HEARTBEAT_SECONDS)
+                        break
+                    except subprocess.TimeoutExpired:
+                        beat()
+                if code not in execution.success_exit_codes:
                     status = "unknown" if execution.unknown_on_failure else "failed"
-                    error = f"command exited {completed.returncode}"
+                    error = f"command exited {code}"
             except BaseException as caught:
+                if process and process.poll() is None:
+                    # Nothing will read this stage's output now, and a paid job left running
+                    # would report to a worker that is not listening.
+                    process.kill()
+                    process.wait()
                 status = "unknown" if execution.unknown_on_failure else "failed"
                 error = f"{type(caught).__name__}: {caught}"
         provider_status = "completed" if status == "succeeded" else status
@@ -233,13 +262,18 @@ class StageActivityRunner:
                 "command": list(execution.command),
             }
         )
+        beat()
         manifest = freeze_attempt(
             attempt,
             self.store,
             status=status,
             roles=execution.output_roles,
         )
+        beat()
+        # Hashing and archiving a stage's outputs takes as long as the outputs are large. Say so
+        # before and after, so a slow freeze is not read as a dead worker.
         self._publish(workspace, manifest)
+        beat()
         if claim_id:
             self.paid_guard.finish(
                 claim_id,
