@@ -228,6 +228,45 @@ export class BottlePhysics {
     return this.options.floorRadius ?? this.options.radius;
   }
 
+  private settleOnSupport(deltaSeconds: number, radius: number, gravity: number): BottleEvent[] {
+    const scaleSpeed = Math.sqrt(gravity * radius);
+    const bounceSpeed = this.options.bounceSpeed ?? scaleSpeed * 0.5;
+    const settleSpeed = this.options.settleSpeed ?? scaleSpeed * 0.12;
+    this.velocity[1] =
+      Math.abs(this.velocity[1]) < bounceSpeed ? 0 : Math.abs(this.velocity[1]) * 0.25;
+    const friction = Math.exp(-(this.options.groundDampingPerSecond ?? 12) * deltaSeconds);
+    this.velocity[0] *= friction;
+    this.velocity[2] *= friction;
+    if (Math.hypot(...this.velocity) < settleSpeed) {
+      this.velocity = [0, 0, 0];
+      this.mode = 'resting';
+      return [{ type: 'dropped', position: [...this.position] }];
+    }
+    return [];
+  }
+
+  /**
+   * Finds the upper boundary of a solid reached while descending. A floor callback has already
+   * established support beneath the prop; the sweep keeps coarse occupied floor bins from
+   * repeatedly reflecting a bottle above that measured support.
+   */
+  private downwardSolidContact(start: Vec3, next: Vec3, supported: boolean): Vec3 | null {
+    if (!supported || this.velocity[1] >= 0 || next[1] >= start[1] || this.blocked(start))
+      return null;
+    // Test lateral movement at the pre-contact height. A wall must remain a wall even when the
+    // same simulation step also reaches the floor.
+    const above: Vec3 = [next[0], start[1], next[2]];
+    if (this.blocked(above)) return null;
+    let clear = above;
+    let solid = next;
+    for (let i = 0; i < 12; i++) {
+      const middle: Vec3 = [next[0], (clear[1] + solid[1]) / 2, next[2]];
+      if (this.blocked(middle)) solid = middle;
+      else clear = middle;
+    }
+    return clear;
+  }
+
   private clearPath(start: Vec3, end: Vec3): boolean {
     const stepLength = this.options.radius * 0.5;
     const steps = Math.ceil(distance(start, end) / stepLength);
@@ -286,8 +325,23 @@ export class BottlePhysics {
       const floor = floorAt(next[0], next[2]);
       const grounded =
         floor !== null && Number.isFinite(floor) && next[1] <= floor + this.floorRadius;
+      // Occupancy bins can begin up to a small sphere diameter above their measured floor. Let a
+      // descending sweep resolve that finite, nearby solid as support rather than indefinitely
+      // reflecting from its coarse upper edge. A floor callback still anchors this to measured
+      // support; side walls and ceilings without a floor cannot enter this path.
+      const solidSupport =
+        floor !== null &&
+        Number.isFinite(floor) &&
+        next[1] <= floor + this.floorRadius + 2 * radius;
       if (grounded) next[1] = floor + this.floorRadius;
       if (this.blocked(next)) {
+        const contact = this.downwardSolidContact(start, next, solidSupport);
+        if (contact) {
+          this.position = contact;
+          const events = this.settleOnSupport(dt, radius, gravity);
+          if (events.length) return events;
+          continue;
+        }
         let bounced = false;
         for (let axis = 0; axis < 3; axis++) {
           const probe: Vec3 = [...start];
@@ -304,19 +358,8 @@ export class BottlePhysics {
         return [{ type: 'returned', position: [...this.position] }];
       this.position = next;
       if (grounded) {
-        const scaleSpeed = Math.sqrt(gravity * radius);
-        const bounceSpeed = this.options.bounceSpeed ?? scaleSpeed * 0.5;
-        const settleSpeed = this.options.settleSpeed ?? scaleSpeed * 0.12;
-        this.velocity[1] =
-          Math.abs(this.velocity[1]) < bounceSpeed ? 0 : Math.abs(this.velocity[1]) * 0.25;
-        const friction = Math.exp(-(this.options.groundDampingPerSecond ?? 12) * dt);
-        this.velocity[0] *= friction;
-        this.velocity[2] *= friction;
-        if (Math.hypot(...this.velocity) < settleSpeed) {
-          this.velocity = [0, 0, 0];
-          this.mode = 'resting';
-          return [{ type: 'dropped', position: [...this.position] }];
-        }
+        const events = this.settleOnSupport(dt, radius, gravity);
+        if (events.length) return events;
       }
     }
     return [];

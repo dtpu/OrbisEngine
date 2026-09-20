@@ -50,9 +50,12 @@ import { raycastWalkFloor } from './teleport';
 import type { BottleScene, InteractionHand } from '../interaction/bottle-scene';
 import { createQuestView } from './quest-view';
 import { ReplayButton } from './replay-button';
+import { createSceneSidebar, type SceneSidebarClip } from './scene-sidebar';
 
 type Wander = {
   spark: { lodSplatCount?: number };
+  playing?: boolean;
+  play?: (playing: boolean) => void;
   upm: number;
   floorY: number;
   clampOn: boolean;
@@ -85,13 +88,33 @@ export type XrInit = {
   camera: THREE.PerspectiveCamera;
   wander: Wander;
   q: URLSearchParams;
+  sceneNavigation?: {
+    clips: SceneSidebarClip[];
+    currentId: string;
+    select: (id: string, options?: { resumePlayback?: boolean }) => Promise<void>;
+  };
 };
+
+export type XrRuntime = { dispose(): void };
 
 const DEG = Math.PI / 180;
 const MIN_BUDGET = 150_000;
 const ADAPT_WINDOW = 90; // frames between budget decisions: ~1.25 s at 72 Hz
 
-export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Promise<void> {
+export async function initXR({
+  renderer,
+  scene,
+  camera,
+  wander,
+  q,
+  sceneNavigation,
+}: XrInit): Promise<XrRuntime> {
+  let disposed = false;
+  let switching = false;
+  let sidebarOpen = false;
+  let resumePlayback = false;
+  let errorResume: boolean | null = null;
+  let teleportBlockedUntilRelease = renderer.xr.isPresenting;
   const num = (k: string, d: number) => {
     const v = q.get(k);
     return v == null || v === '' || isNaN(+v) ? d : +v;
@@ -117,7 +140,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     hud.textContent = msg;
   };
 
-  if (q.get('xrpolyfill') === '1') {
+  if (q.get('xrpolyfill') === '1' && !renderer.xr.isPresenting) {
     // How this gets TESTED without a headset: the polyfill grants a real immersive-vr session on a
     // desktop browser, so three's whole XR path, the rig, the anchor and the render wrapper run for
     // real. It declines to install where a navigator.xr already exists - desktop Chrome has one and
@@ -143,7 +166,12 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const xr = navigator.xr;
   if (!xr) {
     note('xr=1: this browser has no navigator.xr');
-    return;
+    return {
+      dispose() {
+        btn.remove();
+        hud.remove();
+      },
+    };
   }
 
   // ---- budget ------------------------------------------------------------------------------------
@@ -254,10 +282,13 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   void xr
     .isSessionSupported('immersive-vr')
     .then((ok) => {
+      if (disposed) return;
       if (ok) btn.style.display = '';
       else note('xr=1: WebXR is here but no immersive-vr device is');
     })
-    .catch(() => note('xr=1: immersive-vr unsupported'));
+    .catch(() => {
+      if (!disposed) note('xr=1: immersive-vr unsupported');
+    });
 
   renderer.xr.enabled = true;
   renderer.xr.setFoveation(THREE.MathUtils.clamp(num('xrfoveation', 1), 0, 1));
@@ -266,50 +297,60 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // (0.64x the pixels) bought more than halving the splat budget did (scripts/bench-xr-stereo.mjs),
   // so the default spends sharpness on frame rate and ?xrfbscale=1 hands it back.
   const fbScale = THREE.MathUtils.clamp(num('xrfbscale', 0.8), 0.3, 2);
-  renderer.xr.setFramebufferScaleFactor(fbScale);
+  if (!renderer.xr.isPresenting) renderer.xr.setFramebufferScaleFactor(fbScale);
   report.fbScale = fbScale;
 
-  let floorRef = false;
+  let floorRef = renderer.xr.getSession()?.enabledFeatures?.includes('local-floor') ?? false;
   let groundFloor = wander.walk?.floor ?? wander.floorY;
-  btn.addEventListener(
-    'click',
-    () =>
-      void (async () => {
-        const live = renderer.xr.getSession();
-        if (live) {
-          await live.end();
+  let visibilitySession: XRSession | null = null;
+  const onVisibilityChange = () =>
+    wander.interaction?.visibilityChanged(visibilitySession?.visibilityState === 'visible');
+  const bindVisibility = () => {
+    const session = renderer.xr.getSession();
+    if (!session || session === visibilitySession) return;
+    visibilitySession?.removeEventListener('visibilitychange', onVisibilityChange);
+    visibilitySession = session;
+    session.addEventListener('visibilitychange', onVisibilityChange);
+    onVisibilityChange();
+  };
+  const unbindVisibility = () => {
+    visibilitySession?.removeEventListener('visibilitychange', onVisibilityChange);
+    visibilitySession = null;
+  };
+  const onButtonClick = () =>
+    void (async () => {
+      if (disposed) return;
+      const live = renderer.xr.getSession();
+      if (live) {
+        await live.end();
+        return;
+      }
+      try {
+        // Start capture while this click still has browser gesture authority; failure below releases it.
+        wander.interaction?.startVoice();
+        const session = await xr.requestSession('immersive-vr', {
+          optionalFeatures:
+            avatarHands || avatarBody ? ['local-floor', 'hand-tracking'] : ['local-floor'],
+        });
+        if (disposed) {
+          // The scene may have changed while the browser permission dialog was open.
+          await session.end();
           return;
         }
-        try {
-          wander.interaction?.startVoice();
-          // local-floor is not granted by default; ask, then believe the answer. With it the world's
-          // own floor meets the real one and standing up means something. Without it the session is
-          // seated and the head starts ?xreye= above the floor, which is the honest fallback.
-          const session = await xr.requestSession('immersive-vr', {
-            optionalFeatures:
-              avatarHands || avatarBody ? ['local-floor', 'hand-tracking'] : ['local-floor'],
-          });
-          floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
-          renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
-          await renderer.xr.setSession(session);
-          const visibility = () =>
-            wander.interaction?.visibilityChanged(session.visibilityState === 'visible');
-          session.addEventListener('visibilitychange', visibility);
-          session.addEventListener(
-            'end',
-            () => session.removeEventListener('visibilitychange', visibility),
-            { once: true },
-          );
-          visibility();
-        } catch (err) {
-          wander.interaction?.stopVoice();
+        floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
+        renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
+        await renderer.xr.setSession(session);
+      } catch (err) {
+        wander.interaction?.stopVoice();
+        if (!disposed)
           note('VR unavailable: ' + (err instanceof Error ? err.message : String(err)));
-        }
-      })(),
-  );
+      }
+    })();
+  btn.addEventListener('click', onButtonClick);
 
   // Where the rig sits so the head lands on the desktop camera's pose. Sampled ONCE per session
   // (BRAIN section 6 rules out a continuous recentre; 0.2 Hz is the worst frequency there is).
+  const homeParent = camera.parent;
   const home = camera.position.clone();
   const homeQ = camera.quaternion.clone();
   let homeYaw = yawOf(homeQ);
@@ -323,9 +364,13 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     avatarBody?.reset();
   };
 
-  renderer.xr.addEventListener('sessionstart', () => {
+  let sessionStartTimer = 0;
+  const onSessionStart = () => {
+    if (disposed) return;
     replayButton.reset();
-    btn.textContent = 'Exit VR';
+    floorRef = renderer.xr.getSession()?.enabledFeatures?.includes('local-floor') ?? floorRef;
+    btn.textContent = sceneNavigation ? 'Exit VR · B: scenes · A: select' : 'Exit VR';
+    bindVisibility();
     home.copy(camera.position);
     homeQ.copy(camera.quaternion);
     homeYaw = yawOf(homeQ);
@@ -336,6 +381,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     report.teleportValid = false;
     targetOk = false;
     physicalWalk.reset();
+    walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
     walkReferenceSpace = renderer.xr.getReferenceSpace();
     walkReferenceSpace?.addEventListener('reset', resetPhysicalWalk);
     vel.set(0, 0, 0);
@@ -355,7 +401,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     for (const c of controllers) rig.add(c.grip);
     // The one number nobody can look up: what this device actually asked for, per eye. It is not
     // there on the first frame, so read it once the first viewer pose has landed.
-    window.setTimeout(() => {
+    window.clearTimeout(sessionStartTimer);
+    sessionStartTimer = window.setTimeout(() => {
+      if (disposed || !renderer.xr.isPresenting) return;
       const vp = (renderer.xr.getCamera().cameras[0] as { viewport?: THREE.Vector4 } | undefined)
         ?.viewport;
       const layer = renderer.xr.getSession()?.renderState.baseLayer;
@@ -367,18 +415,24 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       publish();
       note(summary());
     }, 800);
-  });
+  };
 
-  renderer.xr.addEventListener('sessionend', () => {
+  const onSessionEnd = () => {
+    window.clearTimeout(sessionStartTimer);
+    unbindVisibility();
+    resumePlayback = false;
+    sidebar?.close();
     btn.textContent = 'Enter VR';
     walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
     walkReferenceSpace = null;
     physicalWalk.reset();
     rig.remove(camera);
+    homeParent?.add(camera);
     camera.remove(vignette.mesh);
     for (const c of controllers) {
       rig.remove(c.grip);
       c.aiming = false;
+      c.triggerHeld = false;
       c.ray.visible = false;
     }
     marker.set(null, false);
@@ -394,7 +448,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     camera.updateProjectionMatrix();
     finish();
     note(summary());
-  });
+  };
 
   // ---- controllers -----------------------------------------------------------------------------------
   const controllers = [0, 1].map((i) => {
@@ -422,22 +476,38 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       handGrip,
       ray,
       aiming: false,
-      source: null as XRInputSource | null,
+      triggerHeld: false,
+      // The native controller stays connected across scene replacement. Share the slot identity
+      // with avatar-hands; inputSources order can differ after a controller reconnects.
+      source: (renderer.xr.isPresenting
+        ? 'wanderInputSource' in handGrip.userData
+          ? handGrip.userData.wanderInputSource
+          : (renderer.xr.getSession()?.inputSources[i] ?? null)
+        : null) as XRInputSource | null,
       index: i,
+      onConnected(event: { data: XRInputSource }) {
+        c.source = event.data;
+        handGrip.userData.wanderInputSource = c.source;
+      },
+      onDisconnected() {
+        c.source = null;
+        handGrip.userData.wanderInputSource = null;
+        c.aiming = false;
+        c.triggerHeld = false;
+      },
+      onSelectStart() {
+        c.triggerHeld = true;
+        c.aiming = mode === 'teleport' && !sidebarOpen && !teleportBlockedUntilRelease;
+      },
+      onSelectEnd() {
+        c.triggerHeld = false;
+        c.aiming = false;
+      },
     };
-    grip.addEventListener('connected', (event) => {
-      c.source = event.data;
-    });
-    grip.addEventListener('disconnected', () => {
-      c.source = null;
-      c.aiming = false;
-    });
-    grip.addEventListener('selectstart', () => {
-      c.aiming = mode === 'teleport';
-    });
-    grip.addEventListener('selectend', () => {
-      c.aiming = false;
-    });
+    grip.addEventListener('connected', c.onConnected);
+    grip.addEventListener('disconnected', c.onDisconnected);
+    grip.addEventListener('selectstart', c.onSelectStart);
+    grip.addEventListener('selectend', c.onSelectEnd);
     return c;
   });
 
@@ -622,13 +692,90 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // Wrapped rather than spliced into fourd.html's loop: at this point three has already read this
   // frame's eye poses but has not yet composed them with the rig, so moving the rig here lands in
   // the SAME frame it was computed for. No lag, and fourd.html keeps its loop.
-  const origRender = renderer.render.bind(renderer);
+  const origRender = renderer.render;
   renderer.render = function (sc: THREE.Object3D, cam: THREE.Camera) {
     const xrFrame = renderer.xr.isPresenting && sc === scene && cam === camera;
-    if (xrFrame) tick();
-    origRender(sc, cam);
+    if (xrFrame && !disposed) tick();
+    origRender.call(renderer, sc, cam);
     if (xrFrame) questView?.afterRender();
   } as typeof renderer.render;
+
+  function suppressLocomotion() {
+    vel.set(0, 0, 0);
+    step.set(0, 0, 0);
+    physicalWalk.reset();
+    aimingPrev = false;
+    targetOk = false;
+    snapLatch = false;
+    teleportBlockedUntilRelease = true;
+    report.teleportTarget = null;
+    report.teleportValid = false;
+    marker.set(null, false);
+    for (const c of controllers) {
+      c.aiming = false;
+      c.ray.visible = false;
+    }
+  }
+
+  const sidebar = sceneNavigation
+    ? createSceneSidebar({
+        renderer,
+        scene,
+        onOpenChange(open) {
+          sidebarOpen = open;
+          suppressLocomotion();
+          if (open) {
+            if (errorResume !== null) {
+              resumePlayback = errorResume;
+              errorResume = null;
+            } else if (!switching) resumePlayback = !!wander.playing;
+            wander.play?.(false);
+          } else {
+            if (resumePlayback && !switching && !disposed && renderer.xr.isPresenting)
+              wander.play?.(true);
+            if (!switching) resumePlayback = false;
+          }
+        },
+        async onSelect(id) {
+          if (disposed) return;
+          if (id === sceneNavigation.currentId && !switching) {
+            sidebar?.close();
+            return;
+          }
+          try {
+            await sceneNavigation.select(id, { resumePlayback });
+          } catch {
+            // The current binding receives the session event, even if this one was
+            // disposed during a failed activation. Obsolete requests cannot clear it.
+          }
+        },
+      })
+    : null;
+  if (sidebar && sceneNavigation) {
+    sidebar.setCatalog(sceneNavigation.clips, sceneNavigation.currentId);
+    report.sidebar = sidebar.state;
+  }
+  const onSceneChange = (event: Event) => {
+    if (disposed || !sidebar) return;
+    const detail = (event as CustomEvent).detail;
+    switching = !!detail.loading;
+    if (switching) sidebar.setStatus('Loading… choose another clip to cancel', true);
+    else if (detail.error) {
+      resumePlayback = detail.resumePlayback ?? resumePlayback;
+      if (renderer.xr.isPresenting) {
+        errorResume = sidebarOpen ? null : resumePlayback;
+        sidebar.showError(detail.error);
+        if (sidebarOpen) wander.play?.(false);
+      } else sidebar.setStatus(detail.error, false);
+    } else {
+      sidebar.setStatus('', false);
+      if (detail.cancelled) {
+        resumePlayback = detail.resumePlayback ?? resumePlayback;
+        sidebar.close();
+      }
+    }
+  };
+  window.addEventListener('wander:scenechange', onSceneChange);
 
   function tick() {
     const now = performance.now();
@@ -675,7 +822,17 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
 
-    if (wander.possess) {
+    sidebar?.update({
+      headPosition: head,
+      headQuaternion: tmpQ.copy(rig.quaternion).multiply(headQuaternion),
+      upm,
+      dt,
+    });
+    bodyRigStart.copy(rig.position);
+
+    if (sidebarOpen || switching) {
+      suppressLocomotion();
+    } else if (wander.possess) {
       physicalWalk.reset();
       // Possession: the rig follows the person's head so the viewer's eyes land on it. His yaw
       // reaches the rig only as snap turns through the blink (header point 2: never a smooth turn
@@ -699,6 +856,14 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     } else {
       readSticks();
+      if (teleportBlockedUntilRelease) {
+        const triggerPressed =
+          controllers.some((c) => c.triggerHeld) ||
+          Array.from(renderer.xr.getSession()?.inputSources ?? []).some(
+            (source) => source.gamepad?.buttons[0]?.pressed,
+          );
+        if (!triggerPressed && sticks.moveY >= -0.5) teleportBlockedUntilRelease = false;
+      }
       if (turnMode === 'smooth') {
         // Apply the stick's analog rate directly every frame: no latch, blink, or release coast.
         // Pitch and roll stay with the headset's tracked pose.
@@ -724,7 +889,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       if (mode === 'teleport') {
         // Aim with the left stick pushed forward, or with either trigger held. Release to go.
         const held = controllers.find((c) => c.aiming);
-        const aiming = !!held || sticks.moveY < -0.5;
+        const aiming = !teleportBlockedUntilRelease && (!!held || sticks.moveY < -0.5);
         const src = (held ?? controllers[0]).grip;
         if (aiming && aim(src)) {
           marker.set(target, targetOk);
@@ -859,6 +1024,54 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     Object.entries(report)
       .map(([k, v]) => `${k} ${v}`)
       .join('\n');
+
+  renderer.xr.addEventListener('sessionstart', onSessionStart);
+  renderer.xr.addEventListener('sessionend', onSessionEnd);
+  if (renderer.xr.isPresenting) onSessionStart();
+
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      window.clearTimeout(sessionStartTimer);
+      renderer.xr.removeEventListener('sessionstart', onSessionStart);
+      renderer.xr.removeEventListener('sessionend', onSessionEnd);
+      walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
+      btn.removeEventListener('click', onButtonClick);
+      unbindVisibility();
+      wander.interaction?.stopVoice();
+      sidebar?.dispose();
+      window.removeEventListener('wander:scenechange', onSceneChange);
+      avatarHands?.dispose();
+      avatarBody?.dispose();
+      questView?.dispose();
+      for (const c of controllers) {
+        c.grip.removeEventListener('connected', c.onConnected);
+        c.grip.removeEventListener('disconnected', c.onDisconnected);
+        c.grip.removeEventListener('selectstart', c.onSelectStart);
+        c.grip.removeEventListener('selectend', c.onSelectEnd);
+        c.grip.remove(c.ray);
+        rig.remove(c.grip);
+        rig.remove(c.handGrip);
+        c.ray.geometry.dispose();
+        c.ray.material.dispose();
+      }
+      camera.remove(vignette.mesh);
+      vignette.mesh.geometry.dispose();
+      vignette.mesh.material.dispose();
+      marker.dispose();
+      rig.remove(camera);
+      homeParent?.add(camera);
+      camera.position.copy(home);
+      camera.quaternion.copy(homeQ);
+      camera.updateMatrixWorld(true);
+      rig.removeFromParent();
+      renderer.render = origRender;
+      if (lodOn) wander.spark.lodSplatCount = deskLod;
+      btn.remove();
+      hud.remove();
+    },
+  };
 }
 
 function yawOf(qt: THREE.Quaternion) {
@@ -926,6 +1139,11 @@ function buildMarker(upm: number) {
   group.visible = false;
   return {
     group,
+    dispose() {
+      group.removeFromParent();
+      ring.geometry.dispose();
+      ring.material.dispose();
+    },
     set(at: THREE.Vector3 | null, ok: boolean) {
       group.visible = at !== null;
       if (!at) return;
