@@ -160,6 +160,8 @@
   } from '@sparkjsdev/spark';
   const st = document.getElementById('st');
   const q = new URLSearchParams(location.search);
+  let interactionOn = q.get('interact') === '1';
+  let interaction = null;
   // ?demo=corridor: judge preset (clean image world, final alignment, camera behind/above the elder)
   const DEMOS = {
     corridor: {
@@ -2765,11 +2767,36 @@
         const O = {
           id: od.id,
           label: od.label,
+          meta: od,
+          track,
+          interactionOwned: false,
           ev: od.evidence || {},
           kind: a.kind || 'proxy',
           group: g,
           mesh,
+          samplePosition(tt) {
+            const x = THREE.MathUtils.clamp(tt * bfps - f0, 0, n - 1);
+            const i = Math.floor(x),
+              j = Math.min(n - 1, i + 1),
+              u = x - i;
+            const position = new THREE.Vector3()
+              .fromArray(track.positions[i])
+              .lerp(new THREE.Vector3().fromArray(track.positions[j]), u);
+            let dy = 0;
+            if (drift && track.sampleIndex) {
+              const sample =
+                track.sampleIndex[i] + (track.sampleIndex[j] - track.sampleIndex[i]) * u;
+              const k = Math.floor(sample),
+                next = Math.min(drift.length - 1, k + 1);
+              dy = (drift[k] ?? 0) + ((drift[next] ?? 0) - (drift[k] ?? 0)) * (sample - k);
+            }
+            g.updateWorldMatrix(true, false);
+            position.applyMatrix4(g.matrixWorld);
+            position.y += pos0[1] + tr[1] + dy - g.position.y;
+            return position;
+          },
           step(tt) {
+            if (O.interactionOwned) return;
             const x = THREE.MathUtils.clamp(tt * bfps - f0, 0, n - 1),
               i = Math.floor(x),
               j = Math.min(n - 1, i + 1),
@@ -3096,6 +3123,7 @@
   };
   video.crossOrigin = 'anonymous';
   video.autoplay = !q.has('pause');
+  video.loop = !interactionOn;
   const sceneAudio = new FourDAudio(
     video,
     dur,
@@ -3163,8 +3191,11 @@
     interpMs = ms;
   }
   function setTime(sec) {
+    if (interaction && !interaction.canPlay) return;
     sceneAudio.invalidate();
-    t = normalizePlaybackTime(sec, dur);
+    t = interactionOn
+      ? THREE.MathUtils.clamp(sec, 0, Math.max(0, dur - 0.001))
+      : normalizePlaybackTime(sec, dur);
     if (videoOk && Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
     applyTime();
   }
@@ -3173,7 +3204,9 @@
     return frame;
   }
   function play(p = true) {
+    if (p && interaction && !interaction.canPlay) return;
     playing = p;
+    interaction?.transportChanged(p);
     if (!p) {
       ++playGeneration;
       sceneAudio.invalidate();
@@ -4600,13 +4633,29 @@
     if (playing) {
       if (videoOk) {
         if (!video.paused && !video.seeking) {
-          if (video.currentTime >= dur) {
+          if (interactionOn && (video.ended || video.currentTime >= dur - 0.001)) {
+            t = Math.min(video.currentTime, dur - 0.001);
+            play(false);
+            interaction?.ended();
+          } else if (video.currentTime >= dur) {
             video.currentTime %= dur;
             sceneAudio.invalidate();
           }
-          t = video.currentTime % dur;
+          if (playing)
+            t = interactionOn ? Math.min(video.currentTime, dur - 0.001) : video.currentTime % dur;
         }
-      } else if (!videoUrl || videoUrl === '0' || video.error) t = (t + dt) % dur;
+        if (interactionOn && video.ended) {
+          t = Math.min(video.currentTime, dur - 0.001);
+          play(false);
+          interaction?.ended();
+        }
+      } else if (!videoUrl || videoUrl === '0' || video.error) {
+        t = interactionOn ? Math.min(t + dt, dur - 0.001) : (t + dt) % dur;
+        if (interactionOn && t >= dur - 0.001) {
+          play(false);
+          interaction?.ended();
+        }
+      }
       applyTime();
     }
     if (possess) possessApply(dt);
@@ -4848,8 +4897,73 @@
   };
   // Entering VR is an explicit playback action, including after a previous session paused on exit.
   // Resume once here so an intentional pause during the session remains respected.
-  renderer.xr.addEventListener('sessionstart', () => play(true));
-  renderer.xr.addEventListener('sessionend', () => play(false));
+  renderer.xr.addEventListener('sessionstart', () => {
+    if (interaction) interaction.sessionStart();
+    else play(true);
+  });
+  renderer.xr.addEventListener('sessionend', () => {
+    interaction?.sessionEnd();
+    play(false);
+  });
+
+  if (interactionOn) {
+    const objectId = q.get('interactObject');
+    const bottle = objects.find((object) =>
+      objectId ? object.id === objectId : object.meta.objectClass === 'thrown',
+    );
+    if (bottle) {
+      const { BottleScene } = await import('/src/interaction/bottle-scene.ts');
+      interaction = new BottleScene(
+        {
+          scene,
+          people,
+          objects,
+          stature: walkStature || collisionStature || 1.7 * upm,
+          sceneId: q.get('demo') || manifest?.clip || 'scene',
+          params: q,
+          time: () => t,
+          playing: () => playing,
+          play,
+          seek: setTime,
+          floorAt(x, z) {
+            const floor = walkGrid ? walkCell(x, z, Infinity).floor : sampleFloor(x, z);
+            return Number.isFinite(floor) ? floor : null;
+          },
+          blockedAt(position, radius) {
+            const center = new THREE.Vector3(...position);
+            const foot = center.clone().add(new THREE.Vector3(0, -radius, 0));
+            if (staticColliders.some((box) => capsuleIntersects(box, foot, 2 * radius, radius)))
+              return true;
+            if (!walkGrid) return false;
+            const lo = Math.max(0, Math.floor((center.y - radius - walkGrid.y0) / walkGrid.bin));
+            const hi = Math.min(
+              WALK_BINS - 1,
+              Math.floor((center.y + radius - walkGrid.y0) / walkGrid.bin),
+            );
+            let mask = 0;
+            for (let bin = lo; bin <= hi; bin++) mask |= 1 << bin;
+            return (
+              countGridFootprintContacts(
+                walkGrid,
+                center.x,
+                center.z,
+                radius,
+                (index) => !!(walkGrid.solid[index] & mask),
+              ) > 0
+            );
+          },
+        },
+        bottle,
+      );
+      window.wander.interaction = interaction;
+    } else {
+      interactionOn = false;
+      video.loop = true;
+      console.info(
+        'Interaction unavailable: this scene has no selected, separately loaded thrown object.',
+      );
+    }
+  }
 
   // ?xr=1: WebXR mode (src/xr/fourd-xr.ts) - enter-VR button, rig locomotion, the soft boundary as a
   // vignette, and the splat budget. Without the flag the module is never fetched and nothing above
