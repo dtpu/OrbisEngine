@@ -851,7 +851,9 @@ def materialize_lhm(context: AdapterContext, root: Path, name: str) -> None:
 
 def materialize_package(context: AdapterContext, root: Path, name: str) -> None:
     materialize_pi3x(context, root, name)
-    _copy_files(context.inputs.get("person_motion", ()), root / "runs" / name / "lhm-motion")
+    motion = root / "runs" / name / "lhm-motion"
+    _copy_files(context.inputs.get("person_frames", ()), motion)
+    _copy_files(context.inputs.get("person_motion", ()), motion)
 
 
 def _copy_viewer_world(paths: tuple[Path, ...], destination: Path) -> None:
@@ -995,8 +997,13 @@ def default_adapters() -> dict[str, object]:
         "lhm_motion": (
             "lhm_motion",
             {
+                # The packager reads the motion directory, not one file from it: sequence.json
+                # names the frames, and registration.json and missing-poses.json are copied
+                # through beside them. Only frame_*.ply and motion.json used to carry a role,
+                # so packaging got a lone motion.json and died on the missing sequence.json.
+                # The exact paths below still win over this catch-all.
+                "outputs/runs/{name}/lhm-motion/**/*": "person_frames",
                 "outputs/runs/{name}/lhm-motion/motion.json": "person_motion",
-                "outputs/runs/{name}/lhm-motion/frame_*.ply": "person_frames",
                 "outputs/runs/{name}/lhm-motion/recovery-receipt.json": "recovery_receipt",
             },
         ),
