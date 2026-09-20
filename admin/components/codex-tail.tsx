@@ -19,6 +19,17 @@ interface TailState {
   error?: string;
 }
 
+/**
+ * The node id a run's own session writes under. A session covers the whole run rather than one
+ * stage, so there is no step to name: printing it puts the word "agent" beside a dot that
+ * already says the agent is working. Older transcripts are per stage and do name one.
+ */
+const SESSION_NODE = 'agent';
+
+function stepOf(item: ReviewTranscript | null | undefined): string | null {
+  return item && item.nodeId !== SESSION_NODE ? item.nodeId : null;
+}
+
 function keyOf(item: ReviewTranscript): string {
   return `${item.runId ?? ''}/${item.nodeId}/${item.attemptId}`;
 }
@@ -138,7 +149,8 @@ export function CodexTail({ runId }: { runId: string }) {
     try {
       await sendMessage(current.runId, { message: text, node_id: current.nodeId });
       setDraft('');
-      setNote(`Sent. The agent reads it at its next review of ${current.nodeId}.`);
+      const step = stepOf(current);
+      setNote(step ? `Sent. The agent reads it at its next review of ${step}.` : 'Sent.');
     } catch (cause) {
       setNote((cause as Error).message);
     } finally {
@@ -168,15 +180,14 @@ export function CodexTail({ runId }: { runId: string }) {
           <div className="tail__head">
             {target?.runId ? (
               <>
-                <span className={`status status--${live ? 'active' : 'muted'}`}>
-                  {live ? 'reviewing' : 'last review'}
-                </span>
-                <Link
-                  className="mono"
-                  href={`/runs/${encodeURIComponent(target.runId)}?stage=${encodeURIComponent(target.nodeId)}`}
-                >
-                  {target.nodeId}
-                </Link>
+                {stepOf(target) ? (
+                  <Link
+                    className="mono"
+                    href={`/runs/${encodeURIComponent(target.runId)}?stage=${encodeURIComponent(target.nodeId)}`}
+                  >
+                    {target.nodeId}
+                  </Link>
+                ) : null}
                 {live ? null : <span className="tail__where">{formatWhen(target.updatedAt)}</span>}
               </>
             ) : (
@@ -200,7 +211,8 @@ export function CodexTail({ runId }: { runId: string }) {
               {transcripts.map((item) => (
                 <option key={keyOf(item)} value={keyOf(item)}>
                   {item.finished ? '' : 'live: '}
-                  {item.nodeId}, {formatWhen(item.updatedAt)}
+                  {stepOf(item) ? `${item.nodeId}, ` : ''}
+                  {formatWhen(item.updatedAt)}
                 </option>
               ))}
             </select>
@@ -231,7 +243,7 @@ export function CodexTail({ runId }: { runId: string }) {
               aria-label="Message the agent"
               title={note ?? 'The agent reads this at its next review.'}
               placeholder={
-                target ? `Message the agent about ${target.nodeId}` : 'Message the agent'
+                stepOf(target) ? `Message the agent about ${target?.nodeId}` : 'Message the agent'
               }
               onChange={(event) => setDraft(event.target.value)}
             />

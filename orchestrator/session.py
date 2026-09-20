@@ -22,7 +22,7 @@ import sys
 
 from orchestrator.agent.harness import HarnessAgent
 from orchestrator.journal import Journal, RunProjection
-from orchestrator.steps import STEPS, Step, suggested_order
+from orchestrator.steps import STEPS, Step, people_steps, planned_steps
 
 # What the steps themselves need. Modal authenticates through ~/.modal.toml, so HOME covers
 # it; Marble and OpenAI read a key from the environment and fail instantly without one.
@@ -102,8 +102,14 @@ def parameter_lines(step: Step) -> list[str]:
     return lines
 
 
-def render_brief(run_id: str, run_dir: Path, name: str, journal: Journal, goal: str) -> str:
-    """What the agent is told. Written to the run directory so it is auditable afterwards."""
+def render_brief(
+    run_id: str, run_dir: Path, name: str, journal: Journal, goal: str, plan: list[str]
+) -> str:
+    """What the agent is told. Written to the run directory so it is auditable afterwards.
+
+    ``plan`` is this run's own steps, not the catalogue: the agent is told to start everything
+    that is ready, so naming a step here is asking for it to be run.
+    """
     done = journal.done()
     entries = journal.entries()
     waiting = journal.unanswered()
@@ -127,7 +133,7 @@ def render_brief(run_id: str, run_dir: Path, name: str, journal: Journal, goal: 
         "and then end your turn: you will be given another when it finishes.",
         "",
     ]
-    outstanding = [name for name in suggested_order() if name not in done]
+    outstanding = [name for name in plan if name not in done]
     if outstanding:
         lines += ["Not done yet: " + ", ".join(outstanding), ""]
     if done:
@@ -228,6 +234,17 @@ class RunSession:
     def journal(self) -> Journal:
         return Journal(self.run_dir, projection=self.projection)
 
+    def plan(self, options: dict) -> list[str]:
+        """The steps this run asked for, in the names its graph uses.
+
+        The count is the one the run asked for rather than the one tracking found, because the
+        brief is written before tracking has run; `wander ready` is where the agent gets the
+        real number.
+        """
+        people = max(1, int(options.get("people") or 1))
+        many = bool(options.get("all_people")) or people > 1
+        return people_steps(planned_steps(options), people, multiperson=many)
+
     def read_session(self) -> str | None:
         try:
             return (self.run_dir / SESSION_FILE).read_text().strip() or None
@@ -238,7 +255,15 @@ class RunSession:
         """Give the agent one turn, then read the journal to see what it did."""
         journal = self.journal()
         before = len([e for e in journal.entries() if e.kind == "step.started"])
-        brief = render_brief(self.run_id, self.run_dir, self.described["name"], journal, self.goal)
+        described = self.described
+        brief = render_brief(
+            self.run_id,
+            self.run_dir,
+            described["name"],
+            journal,
+            self.goal,
+            self.plan(described.get("options") or {}),
+        )
         (self.run_dir / BRIEF_FILE).write_text(brief)
         install_skill(self.run_dir)
         outcome = self.harness.run(

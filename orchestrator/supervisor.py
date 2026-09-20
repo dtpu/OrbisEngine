@@ -20,7 +20,13 @@ from pathlib import Path
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.journal import Journal
 from orchestrator.session import RunSession
-from orchestrator.steps import STEPS, base_step, people_steps, planned_steps
+from orchestrator.steps import (
+    STEPS,
+    base_step,
+    dependencies_within,
+    people_steps,
+    planned_steps,
+)
 
 RUN_FILE = "run.json"
 
@@ -128,7 +134,15 @@ def main(argv: list[str] | None = None) -> int:
     policy = HarnessPolicy.from_environment()
     print(f"supervising {root} with {policy.kind}:{policy.model or 'default'}", flush=True)
 
+    heartbeat = os.environ.get("WANDER_HEARTBEAT")
+    # When a run was last given an agent, and how long its journal was then. `due` reads this
+    # to tell a run that is quiet because its work is still running from one that is quiet
+    # because its agent stopped.
+    pushed: dict[str, tuple[float, int]] = {}
+
     while True:
+        if heartbeat:
+            Path(heartbeat).write_text(f"{time.time()}\n")
         pending = runs_needing_work(root)
         if args.run_id:
             import json
@@ -137,10 +151,49 @@ def main(argv: list[str] | None = None) -> int:
                 d for d in pending if json.loads((d / RUN_FILE).read_text())["runId"] == args.run_id
             ]
         for run_dir in pending:
+            # One pass per run at a time. A step runs detached and outlives the turn that
+            # started it, so a run whose journal has not moved is a run whose agent is
+            # waiting on something -- handing it a second agent is how a 1600-credit world
+            # gets submitted twice.
+            if not (args.once or args.run_id) and not due(run_dir, pushed, args.push_after):
+                continue
             print(work_on(run_dir, repository, policy, args.turns), flush=True)
+            pushed[str(run_dir)] = (time.monotonic(), len(Journal(run_dir).entries()))
         if args.once or args.run_id:
             return 0
         time.sleep(args.interval)
+
+
+def owner_of(run_dir: Path) -> str | None:
+    """The run that already holds this directory, if one does and says so."""
+    import json
+
+    try:
+        return json.loads((run_dir / RUN_FILE).read_text()).get("runId")
+    except (OSError, ValueError):
+        return None
+
+
+def name_for(root: Path, name: str, run_id: str) -> str:
+    """A directory name of this run's own, keeping the clip's name where it is free.
+
+    A run directory is named for the clip because that is what someone reading the runs root is
+    looking for, and run_clip.py works in `<runs root>/<name>`, so the name and the directory
+    are the same thing. Two uploads called `clip.mp4` are ordinary, though, and sharing one
+    directory between them is not a collision that resolves itself: the second run reads the
+    first one's bytes, the second run's `run.json` overwrites the first one's, and the first
+    run can no longer be found by id at all. So a name another run holds is qualified with the
+    run id, which is unique.
+    """
+    if owner_of(root / name) in (None, run_id) and not (root / name).exists():
+        return name
+    if owner_of(root / name) == run_id:
+        return name
+    qualified = f"{name}-{run_id}"
+    held = owner_of(root / qualified)
+    if held not in (None, run_id):
+        raise FileExistsError(f"{root / qualified} already belongs to {held}")
+    return qualified
 
 
 def open_run(
@@ -162,6 +215,7 @@ def open_run(
     import json
     import shutil
 
+    name = name_for(root, name, run_id)
     run_dir = root / name
     run_dir.mkdir(parents=True, exist_ok=True)
     held = run_dir / f"source{Path(source).suffix.lower()}" if source else None
@@ -189,9 +243,14 @@ def open_run(
         # not known until tracking runs, but the shape is known now: a run that asked for the
         # multiperson graph gets `person_prep_00` even with one actor, and seeding the
         # single-person name leaves a row that can never run sitting beside the one that does.
+        # What a step waits on has to be named the way this graph names it too. `lhm_frozen_00`
+        # waits on `person_prep_00`, not on a `person_prep` that the multiperson graph never
+        # has; an edge to a name that is not there is an edge the dashboard drops, and the
+        # run then draws as a row of disconnected stages.
         settings = options or {}
         many = bool(settings.get("all_people")) or int(settings.get("people") or 1) > 1
-        for step in people_steps(planned_steps(settings), 1, multiperson=many):
+        plan = people_steps(planned_steps(settings), 1, multiperson=many)
+        for step in plan:
             described = STEPS[base_step(step)]
             repository.ensure_node(
                 run_id=run_id,
@@ -204,7 +263,7 @@ def open_run(
                     "paid": described.paid,
                     "parameter_schema": described.parameters or {},
                 },
-                dependencies=list(described.after),
+                dependencies=dependencies_within(step, plan, 1, many),
             )
     return run_dir
 
