@@ -335,6 +335,7 @@ try {
     await still(frame, { t: c.t, pos, look }, `${c.id}/render.jpg`);
     const actual = (await frame.evaluate(() => window.wander.camera.position.toArray())) as Vec;
     measurements.push(`${c.id} t=${c.t}s: ${describe(info, actual)}`);
+    console.log(`  ${measurements[measurements.length - 1]}`);
     await page.close();
   }
 
