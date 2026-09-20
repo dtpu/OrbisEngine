@@ -8,6 +8,42 @@ import numpy as np
 from PIL import Image
 
 
+# Share of sampled frames that must actually decode before the source is called unusable.
+MINIMUM_DECODED_FRAMES = 0.5
+
+
+def decoded_span_usable(decoded: int, requested: int, floor=MINIMUM_DECODED_FRAMES) -> bool:
+    """Whether enough of the requested span decoded to animate from."""
+    if requested == 0:
+        return False
+    return decoded / requested >= floor
+
+
+def decodable_span(readable, total: int) -> int:
+    """How many leading samples of the schedule the file actually yields.
+
+    Container metadata routinely overstates frame count, so the schedule every stage derives
+    from it can run past the end of the video: rocky advertises 448 frames over 18.685 s and
+    decodes 358 over 14.944 s. The dense solve and the tracker both truncate to what they can
+    read, and this stage did not -- it planned 225 samples against the 179 cameras the solve
+    had produced, and stopped at the correspondence guard with the GPU already paid for.
+
+    What decodes is a prefix, so find its edge by halving rather than reading the clip twice.
+    """
+    if total == 0 or not readable(0):
+        return 0
+    if readable(total - 1):
+        return total
+    low, high = 0, total - 1
+    while high - low > 1:
+        middle = (low + high) // 2
+        if readable(middle):
+            low = middle
+        else:
+            high = middle
+    return low + 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     for key in ("video", "canonical", "reference", "out", "model"):
@@ -94,6 +130,24 @@ def main():
         raise ValueError("Rounded samples leave the requested interval")
     if len(set(indices)) != len(indices):
         raise ValueError("Repeated source frames")
+
+    def readable(position: int) -> bool:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(indices[position]))
+        return bool(cap.read()[0])
+
+    # The cameras and the seed poses were both truncated to the span that really decodes, so
+    # this schedule has to be as well or nothing lines up with them.
+    decoded = decodable_span(readable, len(indices))
+    if decoded < len(indices):
+        if not decoded_span_usable(decoded, len(indices)):
+            raise RuntimeError(
+                f"Decode failed: only {decoded} of {len(indices)} sampled frames are readable"
+            )
+        print(
+            f"container claims {count} frames; {decoded} of {len(indices)} samples decode",
+            flush=True,
+        )
+        indices, times = indices[:decoded], times[:decoded]
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
     if cameras and (

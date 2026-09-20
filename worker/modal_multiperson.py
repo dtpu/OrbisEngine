@@ -272,7 +272,13 @@ def main(
     volumes={"/cache": cache},
     scaledown_window=2,
 )
-def animate_track(inputs: dict, flags: list, recovery_id: str = "", execution_timeout: int = 0):
+def animate_track(
+    inputs: dict,
+    flags: list,
+    recovery_id: str = "",
+    execution_timeout: int = 0,
+    recover_missing_poses: bool = False,
+):
     """Drive one saved canonical with retained track poses and durable generated outputs."""
     import hashlib
     import tempfile
@@ -337,7 +343,7 @@ def animate_track(inputs: dict, flags: list, recovery_id: str = "", execution_ti
             str(prepared / "seed-poses.pt"),
             "--seed-motion",
             str(prepared / "seed-motion.json"),
-            "--track-only",
+            *([] if recover_missing_poses else ["--track-only"]),
             *flags,
         ]
         run_logged_inference(
@@ -362,6 +368,7 @@ def animate_track(inputs: dict, flags: list, recovery_id: str = "", execution_ti
         "memoryGiB": 64,
         "timeoutSeconds": execution_timeout or 3600,
         "executionFlags": flags,
+        "recoverMissingPoses": recover_missing_poses,
         "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
         "codeRevision": LHM_REV,
         "model": model_id,
@@ -396,6 +403,7 @@ def animate(
     depth_roi: str = "",
     fixed_world_scale: float | None = None,
     execution_timeout: int = 0,
+    recover_missing_poses: bool = False,
 ):
     import hashlib
     import json
@@ -405,6 +413,8 @@ def animate(
     from worker.stages.lhm_recovery import atomic_json, new_receipt, recover_outputs, submit_once
 
     scale_flags, options = animation_options(fixed_world_scale, execution_timeout)
+    if recover_missing_poses and fixed_world_scale is None:
+        raise ValueError("Missing-pose recovery requires the measured fixed world scale")
     dest = Path(out)
     # Refuse an existing destination before any call, including after an ambiguous submission.
     receipt_path, receipt = new_receipt(dest, "motion")
@@ -432,6 +442,7 @@ def animate(
         flags += ["--depth-roi", depth_roi]
     receipt["execution"] = {
         "trackId": track_id,
+        "recoverMissingPoses": recover_missing_poses,
         "flags": flags,
         "timeoutSeconds": execution_timeout or 3600,
         "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
@@ -439,7 +450,12 @@ def animate(
     atomic_json(receipt_path, receipt)
     function = animate_track.with_options(**options) if options else animate_track
     result = submit_once(
-        function, receipt_path, inputs, flags=flags, execution_timeout=execution_timeout
+        function,
+        receipt_path,
+        inputs,
+        flags=flags,
+        execution_timeout=execution_timeout,
+        **({"recover_missing_poses": True} if recover_missing_poses else {}),
     )
     manifest = recover_outputs(receipt_path, cache)
     with tarfile.open(dest / "artifacts.tar.gz", mode="w:gz", compresslevel=1) as archive:
