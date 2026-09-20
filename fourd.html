@@ -25,6 +25,10 @@
     border-radius: 6px;
     line-height: 1.45;
     white-space: pre;
+    box-sizing: border-box;
+    max-width: calc(100vw - 24px);
+    max-height: 45vh;
+    overflow: auto;
   }
   #pip {
     position: fixed;
@@ -114,9 +118,10 @@
   // Available even if a module import or top-level asset load fails before the viewer API exists.
   window.__wanderStartupError = false;
   const reportStartupFailure = () => {
+    // Runtime errors remain visible to the browser console and error listeners.
+    if (window.wander) return;
     window.__wanderStartupError = true;
-    if (!window.wander)
-      document.getElementById('st').textContent = 'Scene could not load. Reload to retry.';
+    document.getElementById('st').textContent = 'Scene could not load. Reload to retry.';
   };
   window.addEventListener(
     'error',
@@ -4522,7 +4527,7 @@
     const ce = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
     const pe = person.rotation;
     const q2 = `person pos=${f3(person.position)} rot=${deg(pe.x)},${deg(pe.y)},${deg(pe.z)} scale=${person.scale.x.toFixed(3)} (${bodyRuler()})\ncamera pos=${f3(camera.position)} yaw=${deg(ce.y)} pitch=${deg(ce.x)}\nt=${t.toFixed(2)}s frame ${frame}/${nF} ${playing ? '▶' : '❚❚'}${snap ? ' snap' : ''} · ${fpsNow.toFixed(0)} fps${interp ? ` · interp ${interpMs.toFixed(1)} ms` : ''} · video ${videoOk ? (video.classList.contains('hidden') ? 'hidden' : 'on') : 'off'}${reel ? ` · showreel ${reel.t.toFixed(1)}/${REEL}s` : ''}${clampOn ? ` · clamp${edge > 0.005 ? ` edge ${edge.toFixed(2)}` : ''}` : ''}${feetInfo.fl !== undefined ? ` · floor ${feetInfo.fl.toFixed(2)} dy ${feetInfo.dy.toFixed(2)}` : ''}${possess ? ` · riding ${possess.p.id} (${possess.source}) head=${f3(possess.head)} his yaw ${deg(possess.yaw)}${Number.isFinite(possess.neverFilmed) ? ` · ${(100 * possess.neverFilmed).toFixed(0)} % of this view was never filmed` : ''}` : walkOn ? ` · walk eye ${(camera.position.y - walkFloor).toFixed(3)} u = ${((camera.position.y - walkFloor) / (walkStature || NaN)).toFixed(3)} stature · floor ${walkFloor.toFixed(3)}${walkBlocked(camera.position.x, camera.position.z) ? ' IN WALL' : ''}` : ''}${primary.lock ? ` · lock ${(Math.hypot(primary.lock[frame][0], primary.lock[frame][1]) * mPerNative).toFixed(2)} m` : ''}${proj ? ` · proj w=${proj.weight.toFixed(2)} f${proj.frame}` : ''}${exact ? ` · exact w=${exact.state().poseWeight.toFixed(2)} f${exact.state().frame}` : ''}`;
-    if (st.dataset.q !== q2) {
+    if (!window.__wanderStartupError && st.dataset.q !== q2) {
       st.dataset.q = q2;
       status();
       st.textContent += '\n' + q2;
