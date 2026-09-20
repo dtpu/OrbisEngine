@@ -91,16 +91,9 @@ def world_splats(spz_path: Path, min_alpha=0.5):
 
 
 def person_frames(seq_json: Path):
-    """Every frame this person HAS, in their own order -- the list need not start at sample 0."""
-    seq_json = Path(seq_json)
     seq = json.load(open(seq_json))
     base = seq_json.parent
     for fn in seq["frames"]:
-        if not (base / fn).is_file():
-            raise FileNotFoundError(
-                f"{seq_json} lists {fn}, which is not on disk. The package stage left an incomplete "
-                f"person; do not solve placement against a partial track."
-            )
         P = read_ply(base / fn)
         m = 1.0 / (1.0 + np.exp(-P["opacity"])) > 0.502
         yield np.stack([P["x"][m], P["y"][m], P["z"][m]], 1), np.stack([P["x"], P["y"], P["z"]], 1)
