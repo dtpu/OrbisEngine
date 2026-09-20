@@ -1,4 +1,4 @@
-"""Operator messages and the reviewing agent's live transcript, for the admin sidebar.
+"""Operator messages and the agent's live transcript, for the admin sidebar.
 
 The harness streams ``codex exec --json`` (or the Claude equivalent) straight into
 ``<workspace root>/<run>/reviews/<node>/<attempt>/transcript.jsonl`` while the agent works, so
@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 
+from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository
 from orchestrator.workspace import safe_id
 
@@ -41,47 +42,60 @@ def _modified(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat()
 
 
-def list_transcripts(root: Path, run_id: str) -> list[dict[str, Any]]:
-    run_root = _inside(root, root / run_id)
-    reviews = run_root / "reviews"
-    if not reviews.is_dir():
-        return []
-    found = []
-    for transcript in reviews.glob(f"*/*/{TRANSCRIPT_FILE}"):
-        if transcript.is_symlink() or not transcript.is_file():
+def run_directories(root: Path) -> dict[str, Path]:
+    """Every run's directory, by run id.
+
+    A run directory is named for the clip rather than the run, because that is the name the
+    legacy pipeline writes under and a person reading the filesystem wants to see. The id the
+    dashboard asks by is inside run.json.
+    """
+    found: dict[str, Path] = {}
+    for described in root.glob("*/run.json"):
+        try:
+            run_id = json.loads(described.read_text()).get("runId")
+        except (OSError, ValueError):
             continue
-        attempt_dir = transcript.parent
-        found.append(
-            {
-                "nodeId": attempt_dir.parent.name,
-                "attemptId": attempt_dir.name,
-                "bytes": transcript.stat().st_size,
-                "updatedAt": _modified(transcript),
-                # decision.json appears only when the agent has finished.
-                "finished": (attempt_dir / "decision.json").is_file(),
-            }
-        )
-    found.sort(key=lambda item: item["updatedAt"])
+        if run_id:
+            found[str(run_id)] = described.parent
     return found
+
+
+def _described(run_dir: Path, run_id: str) -> dict[str, Any] | None:
+    """One run's transcript, described the way the sidebar expects a review to be.
+
+    There is one agent per run now rather than one per attempt, so the node and attempt this
+    reports are the session itself. Keeping the shape means the admin panel did not have to
+    learn about the change.
+    """
+    transcript = run_dir / TRANSCRIPT_FILE
+    if transcript.is_symlink() or not transcript.is_file():
+        return None
+    journal = Journal(run_dir)
+    return {
+        "runId": run_id,
+        "nodeId": "agent",
+        "attemptId": run_dir.name,
+        "bytes": transcript.stat().st_size,
+        "updatedAt": _modified(transcript),
+        "finished": journal.finished() is not None,
+    }
+
+
+def list_transcripts(root: Path, run_id: str) -> list[dict[str, Any]]:
+    run_dir = run_directories(root).get(run_id)
+    if run_dir is None:
+        return []
+    described = _described(_inside(root, run_dir), run_id)
+    return [described] if described else []
 
 
 def list_recent_transcripts(root: Path, limit: int = 20) -> list[dict[str, Any]]:
     """Newest transcripts across every run, for the sidebar that follows whatever Codex is doing."""
-    found: list[dict[str, Any]] = []
-    for transcript in root.glob(f"*/reviews/*/*/{TRANSCRIPT_FILE}"):
-        if transcript.is_symlink() or not transcript.is_file():
-            continue
-        attempt_dir = transcript.parent
-        found.append(
-            {
-                "runId": attempt_dir.parent.parent.parent.name,
-                "nodeId": attempt_dir.parent.name,
-                "attemptId": attempt_dir.name,
-                "bytes": transcript.stat().st_size,
-                "updatedAt": _modified(transcript),
-                "finished": (attempt_dir / "decision.json").is_file(),
-            }
-        )
+    found = [
+        described
+        for run_id, run_dir in run_directories(root).items()
+        if (described := _described(run_dir, run_id)) is not None
+    ]
     found.sort(key=lambda item: item["updatedAt"], reverse=True)
     return found[:limit]
 
@@ -161,15 +175,11 @@ def register_review_routes(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail="review transcripts are not configured for this API",
             )
-        path = _inside(
-            root,
-            root
-            / _identifier(run_id)
-            / "reviews"
-            / _identifier(node_id)
-            / _identifier(attempt_id)
-            / TRANSCRIPT_FILE,
-        )
+        del node_id, attempt_id  # one agent per run; the session is the transcript
+        run_dir = run_directories(root).get(run_id)
+        if run_dir is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown run")
+        path = _inside(root, run_dir / TRANSCRIPT_FILE)
         if path.is_symlink() or not path.is_file():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown transcript")
         payload = tail_transcript(path, after)
