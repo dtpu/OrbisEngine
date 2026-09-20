@@ -43,7 +43,7 @@ does not identify an unsupported scene or an optional-feature problem.
 When the recording is paused, the visitor can hold and release the bottle. Its local simulation
 uses the reviewed floor and collision callbacks. A green receiving region is an assisted target
 near a recorded held pose: a successful return attaches the bottle to that paused pose and keeps
-the recording paused. It is not an animated catch, hand closure, or new body motion. A miss stays
+the recording paused. It is not an animated catch or hand closure. A miss stays
 available for pickup; press X to restore an out-of-reach bottle.
 
 Interaction loads the measured collision grid even when desktop walking is disabled. Loose bottles
@@ -81,7 +81,7 @@ carries across scene choices; a scene without a separately packaged thrown objec
 
 ## Runtime boundaries
 
-The recording, bottle, and voice session have separate ownership. The viewer freezes the recorded
+The recording, bottle, and voice session have separate ownership. The viewer pauses the recorded
 people at an interruption. It samples a recorded airborne bottle's current position and velocity
 into local physics instead of suspending it. The selected person smoothly turns toward the visitor
 locally while in conversation range. An accepted agent action can only face the paused body,
@@ -95,10 +95,25 @@ checked locally. The bottle participants, held/free spans, dimensions, and sampl
 the measured object and person manifests, rather than per-clip runtime constants. See
 [objects](objects.md) for their timing, coordinate, and evidence limits.
 
-Whole-body facing rotates a paused recorded group about its current anchor. There is no controllable
-walking, reaching, eye movement, lip sync, or real character rig. Generated voice is spatialized at
-the selected anchor; the original clip only supplies its recorded mix, not isolated character
-speech.
+Whole-body facing rotates a paused recorded group about its current anchor. The selected person
+also breathes subtly and nods while listening, with more active head gestures during authorized
+generated voice playback. Those gestures blend between listening and speaking over half a second;
+switching people or leaving conversation range fades the previous overlay out. Replay, scene
+disposal, hiding VR, and leaving VR restore the original splats. `?interactAnimation=0` disables
+this overlay while retaining facing and bottle handling.
+
+This is invented procedural motion, not a reconstruction of what the filmed person said or did.
+Although reconstruction uses a skeleton, the viewer's PLY/motion packages contain baked Gaussian
+poses, without runtime bones or skinning weights. A GPU modifier uses the current head anchor and
+approximate neck/chest regions to add small rotations and breathing; it does not advance the source
+timeline or alter stored frames. Head motion on each axis stays below three degrees and chest
+displacement below 0.0021 body-heights. The lower body and separately packaged props retain their poses. Regions
+are approximate, so this is suited to the existing upright people; unusual poses, especially a hand
+over the face, need separate visual review. Source projection and other splat modifiers are preserved.
+
+There is no controllable walking, reaching, eye movement, lip sync, or real character rig. Generated
+voice is spatialized at the selected anchor; the original clip only supplies its recorded mix, not
+isolated character speech.
 
 The shared voice prompt speaks in first person as the selected fictional character, using their
 manifest role, current activity, and an invented per-person conversational style: deadpan skeptic,
@@ -138,6 +153,14 @@ No provider calls occur by default. `WANDER_TEST_LIVE_VOICE=1` explicitly enable
 smoke test and requires `OPENAI_API_KEY` in that test process's environment.
 With that opt-in, `WANDER_TEST_VOICE_WAV=/path/to/owned-speech.wav` injects a local speech fixture
 into the test microphone and checks real provider VAD, source pause, and two consecutive replies.
+
+`bun run test:conversation-browser` checks real elevator Gaussian rendering with synthetic voice
+state transitions and no provider calls. It compares neutral and speaking pixels, checks that the
+lower body stays fixed, and requires exact restoration after disabling the overlay. It supports
+the same `VIEWER_BUILD_DIR=dist` route; `CONVERSATION_PERSON=1` checks the second person. It saves private evidence under
+`.context/evidence/conversation-animation/`. This is desktop GPU evidence, not headset performance
+or a new live voice-provider check. Motion/lifecycle tests also cover frame-rate independence,
+speaker switching, range loss, hidden people, replay, VR exit, and visibility suspension.
 
 On 2026-09-20 the real-asset browser check verified close approach interrupting advancing playback,
 source-audio pause, controller X replay, a grip and short throw into the assisted return region,
