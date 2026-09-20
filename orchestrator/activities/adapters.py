@@ -707,6 +707,29 @@ def legacy_parameter_flags(definition: dict[str, Any], parameters: dict[str, Any
     return flags
 
 
+def track_branches(context: AdapterContext, name: str) -> list[dict[str, str]]:
+    """One branch per person the tracker kept, so the graph grows a chain for each.
+
+    This list is the only way `tracks` tells the run who it found. While it was empty the
+    graph never expanded: no person was prepared, reconstructed, animated or packaged, and a
+    run finished "succeeded" holding a generated room with nobody in it.
+    """
+    tracks = context.attempt.outputs / "runs" / name / "tracks"
+    report = json.loads((tracks / "tracks.json").read_text())
+    branches = []
+    for track in report.get("tracks", []):
+        key = f"{int(track['track']):02d}"
+        motion = tracks / f"track_{key}" / "motion.json"
+        if not motion.is_file():
+            # The manifest is what a branch is resolved against; naming a file the stage did
+            # not write would fail the whole result rather than this one person.
+            continue
+        branches.append(
+            {"key": key, "relative_path": f"outputs/runs/{name}/tracks/track_{key}/motion.json"}
+        )
+    return branches
+
+
 class LegacyPipelineAdapter:
     """Run one existing Pipeline method inside attempt-scoped output directories."""
 
@@ -716,18 +739,25 @@ class LegacyPipelineAdapter:
         output_roles: dict[str, str],
         materialize=None,
         finalizer=None,
+        brancher=None,
     ):
         self.legacy_stage = legacy_stage
         self.output_roles = output_roles
         self.materialize = materialize
         self.finalizer = finalizer
+        self.brancher = brancher
 
-    def build(self, context: AdapterContext) -> StageExecution:
-        source = one(context, "source")
+    @staticmethod
+    def legacy_name(context: AdapterContext) -> str:
+        """The run directory this node uses, the same on every call for the same node."""
         digest = hashlib.sha256(
             f"{context.request.run_id}\0{context.request.node_id}".encode()
         ).hexdigest()[:16]
-        name = f"activity-{digest}"
+        return f"activity-{digest}"
+
+    def build(self, context: AdapterContext) -> StageExecution:
+        source = one(context, "source")
+        name = self.legacy_name(context)
         root = context.attempt.outputs
         run = root / "runs" / name
         run.mkdir(parents=True, exist_ok=True)
@@ -772,7 +802,7 @@ class LegacyPipelineAdapter:
         )
 
     def branches(self, context: AdapterContext) -> list[dict[str, str]]:
-        return []
+        return self.brancher(context, self.legacy_name(context)) if self.brancher else []
 
     def shots(self, context: AdapterContext) -> list[dict[str, Any]]:
         return []
@@ -1012,6 +1042,7 @@ def default_adapters() -> dict[str, object]:
                     "lhm_motion": materialize_lhm,
                     "package_people": materialize_package,
                 }.get(executor),
+                brancher={"track_people": track_branches}.get(executor),
             )
             for executor, (stage, roles) in legacy.items()
         },
