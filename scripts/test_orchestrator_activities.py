@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from orchestrator.activities import stage as stage_module
 from orchestrator.activities.stage import CommandAdapter, StageActivityRunner, StageExecution
 from orchestrator.artifacts import LocalCAS
 from orchestrator.workflows.run import StageActivityInput
@@ -105,6 +106,34 @@ class ActivityTests(unittest.TestCase):
         entry = json.loads((self.root / "runs/run-1/outbox/attempt-1.json").read_text())
         paths = {item["relative_path"] for item in entry["manifest"]["files"]}
         self.assertIn("outputs/partial.bin", paths)
+
+    def test_a_running_stage_reports_that_it_is_alive(self):
+        """Without this a dead worker is only noticed when the stage's own timeout expires.
+
+        A Marble stage's is four hours, so a worker killed mid-stage left the run sitting still
+        for all of them with nothing running and the work already done on disk.
+        """
+        beats = []
+        interval = stage_module.HEARTBEAT_SECONDS
+        stage_module.HEARTBEAT_SECONDS = 0.2
+        self.addCleanup(setattr, stage_module, "HEARTBEAT_SECONDS", interval)
+        original = stage_module.beat
+        stage_module.beat = lambda: beats.append(1)
+        self.addCleanup(setattr, stage_module, "beat", original)
+
+        adapter = CommandAdapter(
+            lambda context: StageExecution(
+                command=(sys.executable, "-c", "import time; time.sleep(1.2)"),
+                cwd=context.repository,
+            )
+        )
+        result = self.runner(adapter).execute(self.request(), "attempt-1")
+        self.assertEqual(result.status, "succeeded")
+        self.assertGreaterEqual(len(beats), 3, "the stage went quiet while it was working")
+
+    def test_reporting_liveness_outside_an_activity_is_harmless(self):
+        """The runner is also called by the tests and the resume script, with no Temporal."""
+        stage_module.beat()
 
     def test_missing_adapter_blocks_without_starting_attempt(self):
         result = self.runner(CommandAdapter(lambda context: None)).execute(
