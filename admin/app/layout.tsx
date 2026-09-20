@@ -40,9 +40,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <span className="brand__area">admin</span>
           </Link>
           <nav className="top__links" aria-label="Related tools">
-            <a href="http://127.0.0.1:8233" target="_blank" rel="noreferrer">
-              Temporal
-            </a>
             <a href="http://127.0.0.1:5399/demo.html" target="_blank" rel="noreferrer">
               Viewer
             </a>

@@ -876,6 +876,22 @@ button,
 .run-head__state .status {
   font-size: var(--t-14);
 }
+/* Pausing and cancelling belong to the run, so they sit with the run's state, not with a stage. */
+.run-head__acts {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+/* Cancelling a run cannot be undone, so the button asks once before it does it. */
+.button--armed {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #2a0f0c;
+}
+.button--armed:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
 .spend {
   font-family: var(--mono);
   font-size: var(--t-12);
@@ -1511,6 +1527,30 @@ button,
 }
 .gedge--lit.gedge--attention {
   stroke: var(--attention);
+}
+
+/*
+ * The rule between two bands, with the band's name sitting on it. A band is a track of work --
+ * the pipeline itself, one per person or object the footage turned out to contain, and the gates
+ * a human owes -- so the rule marks a change of track rather than decorating the canvas.
+ */
+.gband {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: var(--t-11);
+  color: var(--dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.gband::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
 }
 
 /* A stage card: what the stage made on top, what it is and how it went underneath. */

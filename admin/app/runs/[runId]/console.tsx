@@ -236,7 +236,7 @@ export default function RunConsole({ runId }: { runId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rationale, setRationale] = useState('');
-  const [hypothesis, setHypothesis] = useState('');
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [reconcileStatus, setReconcileStatus] = useState<Record<string, ReconcileStatus>>({});
   const [reconcileWhy, setReconcileWhy] = useState<Record<string, string>>({});
   const [history, setHistory] = useState<PipelineRun[]>([]);
@@ -325,7 +325,6 @@ export default function RunConsole({ runId }: { runId: string }) {
       await work();
       setNotice(done);
       setRationale('');
-      setHypothesis('');
       await refresh();
     } catch (cause) {
       setError((cause as Error).message);
@@ -359,13 +358,8 @@ export default function RunConsole({ runId }: { runId: string }) {
   function onCommand(name: RunCommand) {
     if (!run || !selected) return;
     const text = rationale.trim();
-    if (!text) {
-      setError(`${name[0].toUpperCase()}${name.slice(1)} needs a rationale.`);
-      return;
-    }
-    const why = hypothesis.trim();
-    if (name === 'retry' && !why) {
-      setError('A retry needs a hypothesis: what will be different this time?');
+    if (name === 'reject' && !text) {
+      setError('Rejecting needs a reason: it is the record of why this did not pass.');
       return;
     }
     void act(
@@ -373,10 +367,25 @@ export default function RunConsole({ runId }: { runId: string }) {
         command(run.id, name, {
           node_id: selected.id,
           attempt_id: attempt?.id,
-          rationale: text,
-          ...(name === 'retry' && why ? { parameters: { hypothesis: why } } : {}),
+          rationale: text || `Operator ran ${selected.id} again from the console.`,
         }),
       `Sent ${name} for ${selected.id}.`,
+    );
+  }
+
+  /**
+   * Pausing and cancelling act on the whole run, not on whichever stage happens to be selected,
+   * so they sit in the run header. The node id still travels with them because the API records
+   * every command against one, and where the operator was is the honest answer.
+   */
+  function onRunCommand(name: RunCommand, done: string) {
+    if (!run) return;
+    const where = selectedId ?? run.nodes[0]?.id;
+    if (!where) return;
+    setConfirmingCancel(false);
+    void act(
+      () => command(run.id, name, { node_id: where, rationale: `Operator ${name}d the run.` }),
+      done,
     );
   }
 
@@ -479,6 +488,39 @@ export default function RunConsole({ runId }: { runId: string }) {
         </div>
         <div className="run-head__state">
           <Status status={run.status} />
+          {TERMINAL_RUN.has(run.status) ? null : (
+            <div className="run-head__acts">
+              <button
+                className="button button--small button--quiet"
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  onRunCommand(paused ? 'resume' : 'pause', paused ? 'Run resumed.' : 'Run paused.')
+                }
+              >
+                {paused ? 'Resume run' : 'Pause run'}
+              </button>
+              {confirmingCancel ? (
+                <button
+                  className="button button--small button--danger button--armed"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onRunCommand('cancel', 'Run canceled.')}
+                >
+                  Confirm cancel
+                </button>
+              ) : (
+                <button
+                  className="button button--small button--danger"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmingCancel(true)}
+                >
+                  Cancel run
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <StageStrip nodes={run.nodes} />
       </header>
@@ -800,32 +842,17 @@ export default function RunConsole({ runId }: { runId: string }) {
                   </p>
                 ) : null}
 
-                {canRetry ? (
+                {isGate || selected.definition.kind === 'human' ? (
                   <div className="field">
-                    <label htmlFor="hypothesis">What will be different this retry</label>
-                    <input
-                      id="hypothesis"
-                      type="text"
-                      value={hypothesis}
-                      placeholder="Rerunning a stage unchanged is refused; say what changed"
-                      onChange={(event) => setHypothesis(event.target.value)}
+                    <label htmlFor="rationale">Reason</label>
+                    <textarea
+                      id="rationale"
+                      value={rationale}
+                      placeholder="What you checked in the files above and why they pass or fail."
+                      onChange={(event) => setRationale(event.target.value)}
                     />
                   </div>
                 ) : null}
-
-                <div className="field">
-                  <label htmlFor="rationale">Reason</label>
-                  <textarea
-                    id="rationale"
-                    value={rationale}
-                    placeholder={
-                      isGate
-                        ? 'What you checked in the files above and why they pass or fail.'
-                        : 'Why this action, in a sentence.'
-                    }
-                    onChange={(event) => setRationale(event.target.value)}
-                  />
-                </div>
 
                 <div className="decide__actions">
                   {isGate || selected.definition.kind === 'human' ? (
@@ -846,25 +873,6 @@ export default function RunConsole({ runId }: { runId: string }) {
                   >
                     Retry stage
                   </button>
-                  {paused ? (
-                    <button
-                      className="button"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onCommand('resume')}
-                    >
-                      Resume run
-                    </button>
-                  ) : (
-                    <button
-                      className="button button--quiet"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onCommand('pause')}
-                    >
-                      Pause run
-                    </button>
-                  )}
                   <span className="gap" />
                   {isGate || selected.definition.kind === 'human' ? (
                     <button
@@ -876,14 +884,6 @@ export default function RunConsole({ runId }: { runId: string }) {
                       Reject
                     </button>
                   ) : null}
-                  <button
-                    className="button button--danger"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onCommand('cancel')}
-                  >
-                    Cancel run
-                  </button>
                 </div>
               </div>
             </>
