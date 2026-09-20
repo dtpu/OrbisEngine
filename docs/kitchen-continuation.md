@@ -309,3 +309,24 @@ waypoints passed in the standalone viewer. The direct countertop approach still 
 occupied cells after about 0.186 body-heights. Evidence, including the failing baseline, is under
 `.context/evidence/kitchen-open-aisle/` in the kitchen walk worktree. Fixtures may specify
 `expectedParams` so a test fails if the viewer did not load its intended collider candidate.
+
+### VR support contact and active-tab refresh
+
+Smooth XR movement uses `walk.advance`, whose eased logical floor could finish slightly below
+an inclined explicit support. Its next capsule sweep then collided with that same support.
+The accepted-floor branch now keeps the logical foot at or above the reachable explicit top,
+while retaining grid-only height easing, the existing step limits and obstacle checks. The
+support query is bounded by the already accepted floor height, so it cannot select a higher
+surface after easing.
+
+The browser regression also runs the reviewed route through `walk.advance` at 60 Hz. The prior
+build fails the support-undershoot assertion; the candidate passes twelve waypoints, four probes
+and 283 explicit-support samples with no penetration. These calls exercise the XR movement routine,
+not physical controller input or headset comfort.
+
+The connected Quest's active kitchen tab still held the older bundle and original collider
+manifest even after port 5400 served the updated main build. Reloading that tab and re-entering
+VR loaded `colliders-open-entry.json` and the new runtime. A read-only on-device route probe
+then reached all twelve waypoints without occupied samples; the same probe on the cached old
+runtime had stalled on the support. It did not move the user's rig. Device state and before/after
+probe records are private under `.context/evidence/kitchen-vr/` in the kitchen walk worktree.

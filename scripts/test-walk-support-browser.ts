@@ -1,17 +1,24 @@
 // Build first. Supply a scene fixture with a reviewed route and expected map probes.
+// The direct walk.advance route exercises the same path synthetic XR smooth locomotion uses;
+// it is not physical-headset evidence.
 // WALK_TEST_CONFIG=... WALK_TEST_DIST=dist bun scripts/test-walk-support-browser.ts
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, type Frame } from 'playwright-core';
+import type { Vector3 } from 'three';
 import type { ViewerDiagnostics } from './viewer-types.ts';
 type SupportViewer = Omit<ViewerDiagnostics, 'walk'> & {
   params: Record<string, string>;
+  colliders: { supportAt(x: number, z: number): number | undefined };
   walk: {
     floor: number;
+    speed: number;
+    stepUp: number;
     canStand(x: number, z: number): boolean;
     blockedAt(x: number, z: number, floor?: number): number;
     cellAt(x: number, z: number): { floor: number; inside: number; dist: number };
+    advance(from: Vector3, delta: Vector3, dt: number): Vector3;
   };
 };
 
@@ -32,6 +39,7 @@ await mkdir(out, { recursive: true });
 const report: {
   errors: string[];
   route: unknown[];
+  xrRoute?: unknown;
   probes?: unknown;
   approach?: unknown;
   failure?: string;
@@ -77,6 +85,30 @@ try {
     w.play(false);
     w.setTime(time);
   }, fixture.time || 0);
+  report.xrRoute = await viewer.evaluate((waypoints) => {
+    const w = Reflect.get(window, 'wander') as unknown as SupportViewer;
+    let foot = new w.THREE.Vector3(w.camera.position.x, w.walk.floor, w.camera.position.z);
+    const samples: unknown[] = [];
+    for (const target of waypoints) {
+      let distance = Infinity;
+      for (let i = 0; i < 1000; i++) {
+        const delta = new w.THREE.Vector3(target[0] - foot.x, 0, target[1] - foot.z);
+        distance = delta.length();
+        if (distance < 0.12) break;
+        delta.setLength(Math.min(distance, w.walk.speed / 60));
+        const before = foot;
+        foot = w.walk.advance(foot, delta, 1 / 60);
+        const support = w.colliders.supportAt(foot.x, foot.z);
+        samples.push({ target, foot: foot.toArray(), support });
+        if (foot.y > before.y + w.walk.stepUp + 1e-9)
+          throw new Error('XR step must not rise beyond the accepted support height');
+        if (support !== undefined && foot.y < support - 1e-9)
+          throw new Error('XR foot must not sink below explicit support');
+      }
+      if (distance >= 0.15) throw new Error(`XR could not reach waypoint ${target}`);
+    }
+    return { samples, end: foot.toArray() };
+  }, fixture.waypoints);
   await viewer.evaluate(() => window.focus());
   for (const [index, target] of fixture.waypoints.entries()) {
     const samples = [];

@@ -3745,6 +3745,12 @@ export async function createFourD({ search, renderer, root, scope }) {
           dy < 0
             ? Math.max(dy, (-WALK_FALL_MPS * upm * dt) / count)
             : dy * Math.min(1, dt / count / WALK_RISE_S);
+        // The accepted support-height sweep may end on an inclined explicit top. Grid-only rise
+        // keeps its easing, while the logical capsule foot stays tangent to that explicit support;
+        // a tiny undershoot makes the next sweep collide with the top that supports this step.
+        const support = highestSupport(staticColliders, next.x, next.z, f, walkerRadius);
+        if (support !== undefined && !walkBlocked(next.x, next.z, support))
+          next.y = Math.max(next.y, support);
       }
     }
     return next;
