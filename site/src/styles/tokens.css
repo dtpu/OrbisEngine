@@ -1,0 +1,28 @@
+:root {
+  --bg: #fff;
+  --fg: #000;
+  --muted: #888;
+  --rule: #e5e5e5;
+  --max-w: 1200px;
+  --max-w-wide: 1400px;
+  --radius: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+  --space-7: 96px;
+  --space-8: 128px;
+  --text-body: 17px;
+  --leading-body: 1.6;
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+[data-theme='dark'] {
+  --bg: #000;
+  --fg: #fff;
+  --muted: #888;
+  --rule: #222;
+}

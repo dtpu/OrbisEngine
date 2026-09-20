@@ -1,0 +1,72 @@
+.slider {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius);
+  touch-action: none;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+.layer > * {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--bg);
+  outline: 1px solid var(--fg);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--fg);
+  transform: translate(-50%, -50%);
+}
+
+.range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: ew-resize;
+  margin: 0;
+}
+
+.pill {
+  position: absolute;
+  bottom: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  pointer-events: none;
+}
+
+.left {
+  left: var(--space-2);
+}
+
+.right {
+  right: var(--space-2);
+}
