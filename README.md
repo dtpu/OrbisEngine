@@ -60,7 +60,33 @@ adb reverse tcp:5399 tcp:5399
 ```
 
 In Meta Browser open `http://localhost:5399/demo.html?xr=1`, start playback, and select **Enter VR**.
-Default movement is teleport with snap turning; `?xr=1&xrmove=smooth` enables smooth locomotion.
+Default movement is teleport with snap turning. `?xr=1&xrmove=smooth` enables smooth walking
+with the left joystick and continuous turning with the right joystick. Right-stick turning has a
+15% deadzone, stops on release, and turns at 90 degrees/second at full deflection. Add
+`&xrturnspeed=60` to adjust that rate (0–180 degrees/second), or `&xrturnmode=snap` to keep
+snap turning while walking smoothly. `&xrturn=0` disables joystick turning in either mode.
+Left-stick walking follows the direction you face, with analog speed. Physical leaning, walking
+and crouching remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
+physical steps cover up to 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2;
+only the extra travel is limited by the scene boundary and, in walk mode, obstacle checks.
+Physical head tracking remains unrestricted; the gain does not magnify head rotation, eye height
+or crouching. Re-enter VR after changing these options.
+VR shows illustrative gloves at your tracked controller poses, with finger curls driven by the
+trigger and grip buttons. When the headset supplies hand tracking, the gloves follow its finger
+joints. Their appearance is invented; tracking does not reconstruct your real skin or clothing.
+Use `xrhands=0` to hide them.
+A simple torso, arms, legs and shoes provide a first-person body when you look down. The arms
+reach toward tracked hands/controllers; the torso and walking steps are estimated from head pose
+and movement. This is an illustrative avatar, not measured full-body or foot tracking. `xrbody=0`
+hides the body while keeping hands available.
+Entering VR starts playback, which loops until paused; exiting VR pauses it. With `walk=1`,
+smooth joystick movement uses the desktop floor and obstacle checks, including known stair heights.
+Default teleport mode aims at supported, unblocked floor cells and moves the rig and avatar to
+the selected height. Both modes follow supported floor beneath the head; unknown geometry cannot
+be selected as a teleport landing. Exiting VR restores the saved desktop camera and floor.
+`personsize=0.9` makes recorded people 10% smaller around their moving foot anchor without changing
+the scene's scale or your eye height. The default is 1. This is a visual adjustment, not a new
+measurement of the recorded person's height or a repair of missing reconstructed geometry.
 Measure the physical headset's frame rate before demonstrating it. Simulated XR tests check code
 paths only. The desktop viewer is the fallback when headset performance is inadequate.
 
@@ -159,6 +185,7 @@ bun run test:audio-browser
 bun run test:audio-package
 bun run test:person-motion
 bun run test:static-colliders
+bun run test:xr-turning
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
@@ -168,6 +195,15 @@ The formatted inline scripts in `demo.html` and `fourd.html` still use JavaScrip
 The audio browser check needs installed Chrome. With the live demo running, use `bun run smoke:xr`
 for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/directory` for
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
+`bun run test:xr` runs all XR and person-size unit tests without Chrome or a server.
+With Chrome installed and that server running, `bun run test:xr-browser` runs the simulated XR
+browser suite: physical gain and wall checks, smooth/snap turning, tracked height, re-entry,
+teleporting between levels, stair support, body stepping/crouching, playback controls and runtime person scaling.
+`bun run test:xr-locomotion` retains the focused movement check; `bun run test:person-size-browser`
+runs the authoring-scale regression alone. Simulated captures stay under `.context/evidence/`.
+The turning browser check also needs that server. After building, run
+`XR_TEST_DIST=dist bun run test:xr-turning` to test this checkout's compiled code
+while using the running server for scene assets. Evidence stays under `.context/evidence/`.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
 Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
 checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)
@@ -211,4 +247,3 @@ does not grant redistribution rights.
 Contributors: **Aayan Karmali (StockerMC), Austin Jian, and Daniel Pu**. The archive preserves the
 original development history and human authorship. To move this lean app to a future public repo,
 start from the single-branch clone above and push **main only** to that separate remote.
-

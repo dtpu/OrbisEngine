@@ -115,6 +115,8 @@ CODE_FILES = {
     ),
     "worker/modal_multiperson.py::main": ("worker/stages/track_people.py",),
     "worker/modal_multiperson.py::animate": (
+        "worker/stages/lhm_execution.py",
+        "worker/stages/lhm_recovery.py",
         "worker/stages/lhm_person.py",
         "worker/stages/lhm_animate.py",
     ),
@@ -140,6 +142,8 @@ NUMBER_FLAGS = {
     "--overlap",
     "--batch",
     "--track-id",
+    "--fixed-world-scale",
+    "--execution-timeout",
     "--refine-strength",
 }
 TEXT_FLAGS = {
@@ -227,6 +231,12 @@ def command_identity(command, root, source_selection=None):
             number = float(value)
             if not math.isfinite(number):
                 raise ValueError("Paid option must be finite")
+            if flag == "--fixed-world-scale" and not 0 < number < 10:
+                raise ValueError("Fixed world scale must be strictly between 0 and 10")
+            if flag == "--execution-timeout" and (
+                not number.is_integer() or not 0 <= number <= 3600
+            ):
+                raise ValueError("Execution timeout must be an integer from 0 to 3600")
             parameters["options"][flag] = number
         elif flag in TEXT_FLAGS:
             parameters["options"][flag] = value
@@ -321,7 +331,7 @@ class StageAttempts:
         identifiers, counts, windows, direct_claim_sources = set(), {}, {}, set()
         for attempt in data["attempts"]:
             if not isinstance(attempt, dict):
-                raise ValueError("Malformed saved paid-stage attempt")
+                raise ValueError("Malformed saved paid-stage attempt")  # noqa: TRY004 - malformed persisted data
             claim, events = attempt.get("claim"), attempt.get("events")
             if (
                 not isinstance(claim, dict)
