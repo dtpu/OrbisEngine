@@ -31,6 +31,7 @@ import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile,
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
+from sequence_frames import MissingPersonFrames, first_world_frame, optional_first_world_frame
 from stage_attempts import StageAttempts, command_identity
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2017,10 +2018,14 @@ class Pipeline:
         return rows, SHARE / f"{tag}-depth-ratio.png"
 
     def person_ply(self) -> Path:
-        p = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
-        if not p.exists():
-            raise RuntimeError(f"{p} is missing; the package stage has not run")
-        return p
+        """The reference body: the person's FIRST packaged frame, not sample 0.
+
+        A track need not start at sample 0 -- creed-v2's begins at sample 22 (source frame 44) and
+        has gaps -- so `person/frame_000.ply` is a file that need never exist even after a complete
+        package stage. scripts/sequence_frames.py reads the person's own `frames` list instead; on a
+        dense track starting at 0 that is `frame_000.ply`, unchanged.
+        """
+        return first_world_frame(ROOT / "public" / "worlds" / f"{self.name}-4d")
 
     def scale_fit(self):
         """Fit scale0, the SfM-to-Marble scale, against the Pi3X anchor cloud.
@@ -2124,7 +2129,10 @@ class Pipeline:
             raise RuntimeError("no fitted scale0: run the scale_fit stage first")
         floor = self.placement().get("floor")
         if floor is None:
-            raise RuntimeError("no implied floor: the package stage has not produced frame_000.ply")
+            raise RuntimeError(
+                "no implied floor: the package stage has left no person frame to measure the feet "
+                f"from (see {ROOT / 'public' / 'worlds' / f'{self.name}-4d' / 'person' / 'sequence.json'})"
+            )
         wdir = ROOT / "public" / "worlds" / f"{self.name}-4d"
         out = wdir / "placement.json"
         cmd = [
@@ -2385,8 +2393,9 @@ class Pipeline:
                     worldUrl=w.get("world_marble_url"),
                 )
             break
-        ply = ROOT / "public" / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
-        if ply.exists():
+        # The person's first PACKAGED frame, which is sample 0 only on a track that starts there.
+        ply = optional_first_world_frame(ROOT / "public" / "worlds" / f"{self.name}-4d")
+        if ply is not None:
             body, feet = body_stats(ply)
             out.update(bodyHeight=body, feetY=feet)
             if out.get("height"):

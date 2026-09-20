@@ -4503,8 +4503,12 @@
       target: [c.x, c.y, c.z],
       source: 'bounding-box',
     };
+    // A shot can legitimately reconstruct nobody (packager: `people: "none"` + `noPeopleReason`).
+    // There is then no primary to look at, so startPoseFor falls back to this shot's own first
+    // source camera; nothing else about the swap changes.
     console.log(
-      `shots: world ${k} ${shot.world} floor ${fy.toFixed(3)} scale ${(cast?.scale0 ?? scale0).toFixed(3)} start ${pose.source}`,
+      `shots: world ${k} ${shot.world} floor ${fy.toFixed(3)} scale ${(cast?.scale0 ?? scale0).toFixed(3)} start ${pose.source}` +
+        (shot.noPeopleReason ? ` (no person: ${shot.noPeopleReason})` : ''),
     );
     return {
       mesh,
@@ -5191,6 +5195,8 @@
         world: s.world,
         sourceStart: s.sourceStart,
         sourceEnd: s.sourceEnd,
+        // a declared world-only shot: its world and window are real, its cast is empty on purpose
+        noPeopleReason: s.noPeopleReason,
       })),
       gaps: shotGaps(shots, dur),
       gapMode: SHOT_GAP_MODE,
