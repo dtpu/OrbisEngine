@@ -642,6 +642,7 @@
         </div>
         <div class="spacer"></div>
         <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
+        <button class="hbtn" id="questviewbtn">Quest view</button>
         <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
       </header>
 
@@ -713,6 +714,7 @@
       // on by default; ?walk=0 gives the free camera back for authoring.
       import '@fontsource/instrument-serif';
       import '@fontsource-variable/manrope';
+      import { mountQuestViewPanel } from '/src/quest-view-panel.ts';
 
       const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
@@ -977,6 +979,11 @@
 
       /* ---------------- stage ---------------- */
       const frame = $('frame');
+      mountQuestViewPanel({
+        stage: $('stage'),
+        toggle: $('questviewbtn'),
+        isLocalPresenting: () => !!frame.contentWindow?.wander?.spark?.renderer?.xr.isPresenting,
+      });
       let ready = false,
         pollTimer = 0,
         loadTimer = 0,
