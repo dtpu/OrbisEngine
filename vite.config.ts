@@ -1,11 +1,14 @@
 import { defineConfig, loadEnv } from 'vite';
 import { sharedAssets } from './server/shared-assets.ts';
 import { questView } from './server/quest-view.ts';
+import { preparedWorlds, SPARK_BUILD_ID } from './server/prepared-worlds.ts';
 import path from 'node:path';
 
 export default defineConfig(({ mode }) => ({
+  define: { __WANDER_SPARK_BUILD_ID__: JSON.stringify(SPARK_BUILD_ID) },
   plugins: [
     questView(),
+    preparedWorlds(),
     sharedAssets({
       ...loadEnv(mode, process.cwd(), 'WANDER_'),
       ...Object.fromEntries(

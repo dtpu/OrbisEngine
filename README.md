@@ -100,12 +100,30 @@ measurement of the recorded person's height or a repair of missing reconstructed
 Measure the physical headset's frame rate before demonstrating it. Simulated XR tests check code
 paths only. The desktop viewer is the fallback when headset performance is inadequate.
 
+While in VR, press **B on the right controller** to open the scene sidebar where you point.
+It stays anchored there while you browse. It uses
+the same thumbnails and clip names as the desktop rail, including the spare scenes. Move either
+joystick up/down to browse, then press **A** to load the highlighted clip and its environment.
+Pointing at a row and pressing A or pulling the trigger also selects it.
+Press B again or point at the close button and pull the trigger to resume the current scene.
+Playback and artificial movement pause while browsing; your actual head movement remains tracked.
+Switching clips keeps the same VR session. The current scene stays visible while the next loads;
+a failed load leaves it available and shows a retry message in the sidebar.
+The previous scene stays prepared in memory for quick return visits. Loading a third scene
+replaces that spare before allocating another, so at most two scenes are resident. First visits
+still download or read cached assets and prepare their 3D data; the cache clears on page reload.
+To speed up first visits, [prepare the worlds on the Mac](docs/shared-assets.md#prepared-world-cache)
+once. The viewer then loads the same packed splats and detail tree without rebuilding them on the
+Quest. These disk caches survive page reloads; people and video still need to load.
+
 ## Code map
 
 | Path                                         | Responsibility                                                                     |
 | -------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `demo.html`                                  | Scene picker, loading state, source comparison, and demo controls                  |
 | `fourd.html`                                 | Three.js/Spark scene, video-master playback, people, objects, and grounded walking |
+| `src/fourd-session.js`, `src/fourd-runtime.js` | Persistent renderer and disposable scene loading without ending the VR session |
+| `src/scene-catalog.ts`                       | Shared desktop and VR clip list |
 | `src/video-projection.ts`, `src/walk-map.ts` | Recorded-image projection and the overhead position picker                         |
 | `src/xr/`, `src/audio/`                      | Headset locomotion and synchronized, position-aware audio                          |
 | `server/shared-assets.ts`                    | Private S3 delivery with pinned snapshots, verified caching, and byte ranges       |
@@ -220,6 +238,11 @@ runs the authoring-scale regression alone. Simulated captures stay under `.conte
 The turning browser check also needs that server. After building, run
 `XR_TEST_DIST=dist bun run test:xr-turning` to test this checkout's compiled code
 while using the running server for scene assets. Evidence stays under `.context/evidence/`.
+`bun test ./scripts/test-xr-scene-sidebar.ts` checks sidebar input edges, ray targets, scrolling,
+and bounded thumbnail loading. `XR_SIDEBAR_URL=http://127.0.0.1:5399 bun scripts/test-xr-scene-sidebar-browser.ts`
+checks scene switching, preserved XR sessions, paused movement, and failed-load recovery with
+synthetic XR against the running viewer. These are not physical-headset measurements.
+
 `bun test ./scripts/test-quest-view.ts` checks the spectator relay's ownership, expiry and upload
 limits. `bun scripts/test-quest-view-panel-browser.ts` checks the preview window's connection and
 visibility states. After building, `bun scripts/test-quest-view-browser.ts` checks real rendered
