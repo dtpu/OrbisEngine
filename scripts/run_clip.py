@@ -1434,6 +1434,10 @@ class Pipeline:
         )
 
     def lhm_motion(self, idx=None):
+        recover_missing = getattr(self.a, "recover_missing_poses", False)
+        fixed_scale = getattr(self.a, "fixed_world_scale", None)
+        if recover_missing and (idx is None or fixed_scale is None):
+            raise ValueError("Missing-pose recovery needs a saved track and measured fixed scale")
         if idx is None:
             dest = self.ctx / "lhm-motion"
             if self.recover_lhm(dest, "motion", self.ctx / "lhm_motion.log"):
@@ -1505,6 +1509,8 @@ class Pipeline:
                 str(self.ctx / "pi3x" / f"frame_{first:03d}.ply"),
                 "--out",
                 str(dest),
+                *(["--recover-missing-poses"] if recover_missing else []),
+                *(["--fixed-world-scale", str(fixed_scale)] if fixed_scale is not None else []),
             ],
             self.ctx / f"lhm_motion_{idx:02d}.log",
         )
@@ -2999,6 +3005,17 @@ def main():
         "--person-frame", type=int, help="source frame for the LHM avatar (default: middle)"
     )
     ap.add_argument("--person-method", default="maskrcnn", choices=["segformer", "maskrcnn"])
+    ap.add_argument(
+        "--recover-missing-poses",
+        action="store_true",
+        help="estimate only missing saved-track poses from source pixels in a fresh candidate; "
+        "requires --fixed-world-scale from the retained registration",
+    )
+    ap.add_argument(
+        "--fixed-world-scale",
+        type=float,
+        help="retain a measured native/world scale for saved-track animation without refitting",
+    )
     ap.add_argument(
         "--all-people",
         action="store_true",

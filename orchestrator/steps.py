@@ -447,6 +447,20 @@ STEPS: dict[str, Step] = {
             summary="Animate the canonical person along the poses estimated from the clip",
             writes="lhm-motion/ (sequence.json, motion.json, frame_*.ply)",
             after=("lhm_frozen", "pi3x"),
+            parameters=tunables(
+                recover_missing_poses=knob(
+                    "boolean",
+                    False,
+                    "estimate missing saved-track poses from source pixels while retaining existing poses; requires a fresh output and measured fixed scale",
+                ),
+                fixed_world_scale=knob(
+                    "number",
+                    None,
+                    "measured uniformScale from retained registration.json; prevents pose recovery from refitting scale",
+                    exclusiveMinimum=0,
+                    exclusiveMaximum=10,
+                ),
+            ),
             paid=True,
             caution=(
                 "The sampling schedule has to match the cameras: both are derived from the clip, "
