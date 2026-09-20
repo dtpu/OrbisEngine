@@ -110,7 +110,9 @@ recorded memories and cannot grant actions beyond the local viewer's tools.
 The first two cast members use the Ash and Echo preset voices respectively; larger casts cycle
 the same pair by manifest order. These are invented voices, not imitations of the recorded speakers.
 The original soundtrack is unchanged. Realtime cannot change a voice after a connection has spoken,
-so a two-person cast opens two voice connections on Enter VR. Both receive microphone input, but
+so a two-person cast opens two voice connections on Enter VR. The local server allows both session
+requests to start together, with at most two requests in flight and four attempts per minute.
+Both receive microphone input, but
 only the locally addressed character accepts a turn, speaks, or performs a permitted action. This
 preserves the first utterance when looking toward the other character and keeps each voice's history
 when switching back. It uses two input streams while active. Muting affects both, and hiding/exiting
