@@ -106,6 +106,19 @@ class DatabaseAttemptLedger:
                 {"run_id": request.run_id, "node_id": request.node_id},
                 with_for_update=True,
             )
-            if node:
+            # Only the newest attempt speaks for the node. A scheduler that was replaced can
+            # still have work in flight, and when that work ends it must not overwrite the state
+            # of the attempt that replaced it: a dead run's cancellation would otherwise mark a
+            # healthy stage failed.
+            newest = session.scalar(
+                select(AttemptRecord.id)
+                .where(
+                    AttemptRecord.run_id == request.run_id,
+                    AttemptRecord.node_id == request.node_id,
+                )
+                .order_by(AttemptRecord.started_at.desc())
+                .limit(1)
+            )
+            if node and newest == result.attempt_id:
                 node.status = result.status
                 node.updated_at = now
