@@ -119,10 +119,9 @@ base_image = (
         f"git clone https://github.com/aigc3d/LHM.git /opt/lhm && git -C /opt/lhm checkout {LHM_REV}",
     )
 )
-image = base_image.add_local_dir(HERE / "stages", "/root/stages", ignore=["__pycache__"])
-# Keep the cached L4 image intact. Only H100 selection builds these native extensions.
-h100_image = (
-    base_image.env({"TORCH_CUDA_ARCH_LIST": "9.0+PTX"})
+# Reuse cached base layers; rebuild native extensions for both L4 and H100.
+image = (
+    base_image.env({"TORCH_CUDA_ARCH_LIST": "8.9;9.0+PTX"})
     .run_commands(
         "rm -rf /opt/pytorch3d/build /opt/diff-gaussian-rasterization/build /opt/simple-knn/build"
     )
@@ -489,8 +488,6 @@ def main(
         "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
     }
     atomic_json(receipt_path, receipt)
-    if gpu == "H100":
-        options["image"] = h100_image
     function = (
         frozen.with_options(**options) if gpu != "L4" or execution_timeout != 1800 else frozen
     )

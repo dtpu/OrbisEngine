@@ -73,10 +73,10 @@ unresolved checkpoint and must not trigger resubmission.
 
 Native `modal_lhm.py` accepts `--gpu L4|H100` and `--execution-timeout 1..1800`;
 its defaults remain L4 and 1800 seconds, with four CPU cores and 64 GiB memory.
-Invalid selections stop locally before receipt creation or submission. H100 uses a derived
-image that rebuilds PyTorch3D, diff-gaussian-rasterization, and simple-knn for CUDA `9.0+PTX`;
-the existing L4 image remains unchanged. The first H100 launch needs CPU image-build time
-in addition to its GPU execution allowance. The worker checkpoints its detected CUDA device
+Invalid selections stop locally before receipt creation or submission. Both GPU selections use a shared derived
+image that rebuilds PyTorch3D, diff-gaussian-rasterization, and simple-knn for CUDA
+`8.9;9.0+PTX`, reusing cached base layers. The first launch on either GPU needs CPU
+image-build time in addition to its GPU execution allowance. The worker checkpoints its detected CUDA device
 name before inference and refuses a device mismatch. Receipts record selected resources and
 input hashes; output reports include selected and detected GPU and estimated compute cost.
 The estimate uses [Modal pricing](https://modal.com/pricing): L4 $0.000222/s or H100

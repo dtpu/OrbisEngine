@@ -1,5 +1,6 @@
 """Offline resource selection and pre-submission validation; no provider calls."""
 
+import inspect
 import json
 import sys
 import tempfile
@@ -33,6 +34,12 @@ class ResourceTests(unittest.TestCase):
         for timeout in (0, -1, 1801, True, 1.5, float("nan")):
             with self.assertRaises(ValueError):
                 execution_options(execution_timeout=timeout)
+
+    def test_resource_options_match_installed_modal_sdk(self):
+        # Bind the actual SDK signature: a permissive Mock would miss unsupported keys.
+        signature = inspect.signature(modal_lhm.frozen.with_options)
+        for gpu in ("L4", "H100"):
+            signature.bind(**execution_options(gpu, 120))
 
     def test_invalid_cli_cannot_stage_create_receipt_or_submit(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -76,9 +83,7 @@ class ResourceTests(unittest.TestCase):
                         execution_timeout=120,
                     )
                 options = function.with_options.call_args.kwargs
-                self.assertEqual(
-                    options, {**execution_options("H100", 120), "image": modal_lhm.h100_image}
-                )
+                self.assertEqual(options, execution_options("H100", 120))
                 submitted = function.with_options.return_value.spawn.call_args.kwargs
                 self.assertEqual(submitted["gpu"], "H100")
                 self.assertEqual(submitted["execution_timeout"], 120)
