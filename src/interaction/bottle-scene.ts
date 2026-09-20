@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { BottlePhysics, type Vec3 } from './bottle-physics';
 import { ApproachDetector } from './approach';
 import { BottleAgentClient } from './bottle-agent-client';
-import { VrInteractionControls, type ControlAction } from './vr-controls';
 import {
   nearestHeldTime,
   parseHeadTrack,
@@ -55,6 +54,7 @@ export type BottleSceneHost = {
   blockedAt(position: Vec3, radius: number): boolean;
 };
 type Attachment = { person: InteractionPerson; local: THREE.Vector3 };
+type ControlAction = 'microphone' | 'replay' | 'pause' | 'reset' | 'end';
 type SavedTransform = {
   object: THREE.Object3D;
   parent: THREE.Object3D;
@@ -67,7 +67,6 @@ const from = (v: Vec3) => new THREE.Vector3(...v);
 
 /** Owns the opt-in scene's local state. The voice model never writes transforms directly. */
 export class BottleScene {
-  readonly controls: VrInteractionControls;
   readonly bottle: InteractionObject;
   readonly physics: BottlePhysics;
   private readonly approach: ApproachDetector;
@@ -93,6 +92,10 @@ export class BottleScene {
   private disposed = false;
   private muted = false;
   private voiceStarting = false;
+  private voiceRequested = false;
+  private voiceAttempt = 0;
+  private resumeVoice = false;
+  private xrVisible = true;
   private voiceStatus = 'Mic off';
   private status = 'Playing · approach closely or grip the bottle';
   private lastEvent = 'playing';
@@ -104,7 +107,7 @@ export class BottleScene {
   private lastFrame = 0;
   private readonly onPageHide = () => this.dispose();
   private readonly onVisibility = () => {
-    if (document.hidden) this.suspend();
+    this.updateVisibility();
   };
 
   constructor(
@@ -137,8 +140,6 @@ export class BottleScene {
       dwellSeconds: setting('interactDwell', 0.4, 0.1, 1.5),
       facingCos: 0.5,
     });
-    this.controls = new VrInteractionControls(host.stature, (action) => this.control(action));
-    host.scene.add(this.controls.group);
     this.marker = new THREE.Mesh(
       new THREE.RingGeometry(0.068 * host.stature, 0.075 * host.stature, 48),
       new THREE.MeshBasicMaterial({
@@ -180,6 +181,10 @@ export class BottleScene {
       },
       action: (name, args) => this.agentAction(name, args),
       speechStarted: () => this.onSpeech(),
+      expired: () => {
+        if (this.voiceRequested && this.xrActive && this.xrVisible && !document.hidden)
+          this.startVoice(false);
+      },
     });
     for (const person of host.people) void this.loadHead(person);
     addEventListener('pagehide', this.onPageHide, { once: true });
@@ -432,8 +437,8 @@ export class BottleScene {
         : 'No valid receiving target is available.';
     }
     if (name === 'offer_replay') {
-      this.status = 'Replay is available on your VR controls';
-      return 'Replay offered; recording remains paused.';
+      this.status = 'Press X on the left controller to replay';
+      return 'Replay offered: press the left controller X button. Recording remains paused.';
     }
     return 'Unsupported action.';
   }
@@ -483,7 +488,7 @@ export class BottleScene {
     else if (action === 'reset') this.replay(false);
     else if (action === 'pause') {
       if (this.interrupted) {
-        this.status = 'Use Replay to restore the recorded exchange';
+        this.status = 'Press X to replay the recorded exchange';
         return;
       }
       this.host.play(!this.host.playing());
@@ -492,31 +497,66 @@ export class BottleScene {
         ? 'Playing · approach closely or grip the bottle'
         : 'Recording paused';
     } else if (action === 'end') {
-      this.client.disconnect();
-      this.voiceStarting = false;
-      this.muted = false;
-      this.client.setMuted(false);
-      this.voiceStatus = 'Mic off';
+      this.stopVoice();
     } else if (action === 'microphone') {
       if (this.voiceStarting) return;
       if (this.client.connected) {
         this.muted = !this.muted;
         this.client.setMuted(this.muted);
       } else {
-        this.muted = false;
-        this.client.setMuted(false);
-        this.voiceStarting = true;
-        this.client.setPlayback(this.host.playing());
-        this.client.notify(this.snapshot(), this.interrupted);
-        void this.client
-          .connect()
-          .catch(() => {
-            this.voiceStatus = 'Mic unavailable · select Enable mic to retry';
-          })
-          .finally(() => {
-            this.voiceStarting = false;
-          });
+        this.startVoice();
       }
+    }
+  }
+
+  /** Called synchronously from Enter VR so capture and audio share its user gesture. */
+  startVoice(react = true) {
+    if (this.disposed || document.hidden || !this.xrVisible) return;
+    this.voiceRequested = true;
+    if (this.voiceStarting || this.client.connected) return;
+    const attempt = ++this.voiceAttempt;
+    this.voiceStarting = true;
+    this.muted = false;
+    this.client.setMuted(false);
+    this.client.setPlayback(this.host.playing());
+    this.client.notify(this.snapshot(), react && this.interrupted);
+    void this.client
+      .connect()
+      .catch(() => {
+        if (attempt === this.voiceAttempt)
+          this.voiceStatus = 'Mic unavailable · re-enter VR to retry';
+      })
+      .finally(() => {
+        if (attempt === this.voiceAttempt) this.voiceStarting = false;
+      });
+  }
+
+  stopVoice() {
+    this.voiceAttempt++;
+    this.voiceRequested = false;
+    this.resumeVoice = false;
+    this.client.disconnect();
+    this.voiceStarting = false;
+    this.muted = false;
+    this.client.setMuted(false);
+    this.voiceStatus = 'Mic off';
+  }
+
+  visibilityChanged(visible: boolean) {
+    this.xrVisible = visible;
+    this.updateVisibility();
+  }
+
+  private updateVisibility() {
+    if (!this.xrActive) return;
+    if (document.hidden || !this.xrVisible) {
+      const resume =
+        this.resumeVoice || (this.voiceRequested && (this.client.connected || this.voiceStarting));
+      this.suspend();
+      this.resumeVoice = resume;
+    } else if (this.resumeVoice) {
+      this.resumeVoice = false;
+      this.startVoice(false);
     }
   }
 
@@ -528,7 +568,6 @@ export class BottleScene {
   }
   sessionStart() {
     this.xrActive = true;
-    this.controls.group.visible = true;
     this.lastFrame = performance.now();
     this.approach.reset();
     this.hands.clear();
@@ -537,11 +576,10 @@ export class BottleScene {
       this.hasEntered = true;
       if (!this.interrupted) this.host.play(true);
     }
+    this.updateVisibility();
   }
   private suspend() {
-    this.client.disconnect();
-    this.voiceStarting = false;
-    this.voiceStatus = 'Mic off';
+    this.stopVoice();
     this.host.play(false);
     this.hands.clear();
     this.armedHands.clear();
@@ -554,20 +592,14 @@ export class BottleScene {
   sessionEnd() {
     this.suspend();
     this.xrActive = false;
-    this.controls.group.visible = false;
+    this.xrVisible = true;
     this.marker.visible = false;
     this.speaker.visible = false;
   }
   ended() {
     this.host.play(false);
-    this.status = 'Recording finished · approach, talk, or Replay';
+    this.status = 'Recording finished · approach, talk, or press X to replay';
     this.client.setPlayback(false);
-  }
-  select(origin: THREE.Vector3, direction: THREE.Vector3) {
-    return this.controls.select(origin, direction);
-  }
-  hover(origin: THREE.Vector3, direction: THREE.Vector3) {
-    return this.controls.hover(origin, direction);
   }
 
   frame(
@@ -695,7 +727,7 @@ export class BottleScene {
         from(state.position).distanceTo(head) > 15 * this.host.stature
       ) {
         this.lost = true;
-        this.status = 'Bottle out of reach · Reset restores the scene';
+        this.status = 'Bottle out of reach · press X to replay';
         this.lastEvent = 'out_of_reach';
         this.client.notify(this.snapshot());
       }
@@ -716,13 +748,6 @@ export class BottleScene {
       this.speaker.position.copy(anchor).add(new THREE.Vector3(0, 0.1 * this.host.stature, 0));
       this.client.updateAudio(anchor, head, rotation, this.host.stature);
     }
-    this.controls.update(
-      head,
-      rotation,
-      `${this.status} · ${this.voiceStatus}`,
-      this.client.connected && !this.muted,
-      this.host.playing(),
-    );
   }
 
   snapshot() {
@@ -734,6 +759,7 @@ export class BottleScene {
       interrupted: this.interrupted,
       activePersonId: this.active?.id ?? null,
       lastEvent: this.lastEvent,
+      status: this.status,
       bottle: {
         id: this.bottle.id,
         ...this.physics.snapshot(),
@@ -758,7 +784,6 @@ export class BottleScene {
     this.disposed = true;
     this.fetchAbort.abort();
     this.restore();
-    this.controls.dispose();
     for (const mesh of [this.marker, this.speaker]) {
       mesh.removeFromParent();
       mesh.geometry.dispose();

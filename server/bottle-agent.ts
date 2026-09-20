@@ -111,7 +111,7 @@ function sessionConfig(context: SceneContext, model: string) {
   const tools = [
     ['face_player', 'Request that this fictional character face the player.'],
     ['show_return_target', 'Show the bottle return target to the player.'],
-    ['offer_replay', 'Offer the manual Replay control. Never start playback.'],
+    ['offer_replay', 'Offer replay using X on the left controller. Never start playback.'],
   ].map(([name, description]) => ({
     type: 'function',
     name,
@@ -133,7 +133,7 @@ function sessionConfig(context: SceneContext, model: string) {
         'recorded dialogue, real identities, measured geometry, or unseen actions. Say when you do not know.',
         'The source recording is historical; interactive motion and your behavior are invented.',
         'Wait for a locally accepted interruption. Never answer during source playback.',
-        'You may offer replay, but only the visitor can start it using the manual control.',
+        'You may offer replay, but only the visitor can start it by pressing X on the left controller.',
         'Only request the three available tools. The app validates them. Wait for a successful tool',
         'result before claiming an action happened. Never claim to catch, throw, move, or return the',
         'bottle unless the app explicitly reports that event. A target is only a visual guide.',
