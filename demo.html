@@ -609,6 +609,7 @@
         <div class="wordmark">Wander</div>
         <div class="spacer"></div>
         <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
+        <button class="hbtn" id="audiomodebtn" aria-pressed="false" hidden>Spatial dialogue</button>
         <button class="hbtn" id="questviewbtn">Quest view</button>
         <div class="hmenu">
           <button class="hbtn" id="helpbtn" aria-expanded="false" aria-controls="helppop">
@@ -1258,7 +1259,17 @@
       /* ---------------- sound ----------------
    The viewer's own sound buttons are hidden by dress(); this header button drives its audio through
    the window.wander API and mirrors its state. */
-      const soundBtn = $('soundbtn');
+      const soundBtn = $('soundbtn'),
+        modeBtn = $('audiomodebtn');
+      // Scenes with reviewed spatial tracks offer a second mode; the button only appears for them.
+      modeBtn.addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        w.setAudioMode(w.audioState.mode === 'spatial' ? 'original' : 'spatial');
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
       soundBtn.addEventListener('click', () => {
         const w = api();
         if (!w) return;
@@ -1280,8 +1291,12 @@
           soundBtn.disabled = true;
           soundBtn.classList.remove('on');
           soundBtn.textContent = 'Sound';
+          modeBtn.hidden = true;
           return;
         }
+        modeBtn.hidden = !st.spatialReady;
+        modeBtn.classList.toggle('on', st.mode === 'spatial');
+        modeBtn.setAttribute('aria-pressed', String(st.mode === 'spatial'));
         const unavailable = st.hasAudio === false && !st.loading;
         const on = !st.muted && st.unlocked;
         soundBtn.disabled = unavailable;
