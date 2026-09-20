@@ -5,6 +5,7 @@ export type RecordedSegment = {
   fromSourceFrame: number;
   toSourceFrame: number;
   parent?: string;
+  jointName?: string;
   throwerTrack?: number;
   catcherTrack?: number;
 };

@@ -4,19 +4,24 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import type * as THREE from 'three';
-import type { SplatMesh } from '@sparkjsdev/spark';
+import type { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import type { BottleScene, InteractionPerson } from '../src/interaction/bottle-scene';
 import type { ConversationSplats } from '../src/interaction/conversation-splats';
 import type { ConversationMotion } from '../src/interaction/conversation-motion';
 import type { ViewerDiagnostics } from './viewer-types';
 
-type Diagnostics = Omit<ViewerDiagnostics, 'people'> & {
+type Diagnostics = Omit<ViewerDiagnostics, 'people' | 'spark'> & {
   scene: THREE.Scene;
+  spark: SparkRenderer;
   people: Array<InteractionPerson & { pmesh: SplatMesh; loaded: number; nF: number }>;
   interaction: BottleScene;
 };
 type Internals = {
+  tracks: Map<string, unknown>;
   anchor(person: InteractionPerson): THREE.Vector3;
+  forward(person: InteractionPerson): THREE.Vector3;
+  heldPropPositions(person: InteractionPerson): THREE.Vector3[];
+  host: { stature: number };
   client: { options: { speaking(value: boolean): void } };
   animations: Map<string, { motion: ConversationMotion; splats: ConversationSplats }>;
 };
@@ -77,6 +82,13 @@ try {
     null,
     { timeout: 180000 },
   );
+  // Head/forward sidecars load after the viewer becomes ready. Wait for them before
+  // settling facing, otherwise a late track can turn the entire body between captures.
+  await page.waitForFunction(() => {
+    const w = window.wander as Diagnostics;
+    const { tracks } = w.interaction as unknown as Internals;
+    return w.people.every((person) => tracks.has(person.id) && person.loaded === person.nF);
+  });
   const initial = await page.evaluate((personIndex) => {
     const w = window.wander as Diagnostics;
     w.interaction.sessionStart();
@@ -151,8 +163,18 @@ try {
       lowerRows: Math.floor((bottomOfChest.y + 1) * 0.5 * w.spark.renderer.domElement.height),
     };
   }, personIndex);
-  const pixels = async (save: boolean) =>
-    page.evaluate(
+  const pixels = async (save: boolean) => {
+    // Spark sorts on a worker. A fixed sleep can capture the previous ordering,
+    // especially when hiding the room changes the visible Gaussian mapping.
+    await page.evaluate(async () => {
+      const w = window.wander as Diagnostics;
+      await w.spark.update({ scene: w.scene, camera: w.camera });
+    });
+    await page.waitForFunction(() => {
+      const { spark } = window.wander as Diagnostics;
+      return !spark.sorting && !spark.sortDirty;
+    });
+    return page.evaluate(
       ({ save, lowerRows }) => {
         const w = window.wander as Diagnostics;
         w.scene.getObjectByName('agent-speaking')!.visible = false;
@@ -188,6 +210,7 @@ try {
       },
       { save, lowerRows: region.lowerRows },
     );
+  };
 
   // Neutral baseline for exact restoration checks, including Gaussian orientation.
   await page.evaluate(() => {
@@ -197,16 +220,17 @@ try {
   });
   await page.waitForTimeout(250);
   await pixels(true);
+  await page.screenshot({ path: `${output}/isolated-neutral.png` });
   await advance(true, 40);
   await page.waitForTimeout(250);
   const changed = await pixels(false);
+  await page.screenshot({ path: `${output}/isolated-speaking.png` });
   assert.ok(changed && changed.nonBlack > 1000, JSON.stringify(changed));
   assert.ok(
     changed.changed > 50,
     'Speaking must change the real rendered person, not only metadata',
   );
   assert.equal(changed.lowerChanged, 0, 'Feet and lower body must remain in their recorded pose');
-  await page.screenshot({ path: `${output}/isolated-speaking.png` });
   await page.evaluate(() => {
     for (const animation of (
       (window.wander as Diagnostics).interaction as unknown as Internals
@@ -216,6 +240,50 @@ try {
   await page.waitForTimeout(250);
   const restored = await pixels(false);
   assert.equal(restored?.exactChanged, 0, 'Disabling the overlay must restore original pixels');
+  // Exercise each arm at the cadence's upper bound, with head/chest motion disabled, so
+  // changed pixels prove arm movement independently of the existing nod/breath animation.
+  const arms = [];
+  for (const side of [0, 1]) {
+    const freedom = await page.evaluate(
+      ({ personIndex, side }) => {
+        const w = window.wander as Diagnostics;
+        const internals = w.interaction as unknown as Internals;
+        const person = w.people[personIndex];
+        const animation = internals.animations.get(person.id)!;
+        const pose = {
+          ...animation.motion.snapshot(),
+          pitch: 0,
+          yaw: 0,
+          roll: 0,
+          breath: 0,
+          leftShoulder: side === 0 ? 0.16 : 0,
+          rightShoulder: side === 1 ? 0.16 : 0,
+          leftElbow: side === 0 ? 0.38 : 0,
+          rightElbow: side === 1 ? 0.38 : 0,
+        };
+        for (let i = 0; i < 30; i++)
+          animation.splats.update(
+            pose,
+            internals.anchor(person),
+            internals.forward(person),
+            internals.host.stature,
+            internals.heldPropPositions(person),
+            0.1,
+          );
+        return animation.splats.armFreedom[side];
+      },
+      { personIndex, side },
+    );
+    await page.waitForTimeout(250);
+    const rendered = await pixels(false);
+    await page.screenshot({ path: `${output}/arm-${side}.png` });
+    assert.ok(rendered);
+    if (freedom === 0)
+      assert.equal(rendered.exactChanged, 0, 'The prop-holding arm must stay fixed');
+    else assert.ok(rendered.changed > 50, 'A free arm gesture must change actual rendered pixels');
+    assert.equal(rendered.lowerChanged, 0, 'Arm gestures must preserve the lower body');
+    arms.push({ side, freedom, ...rendered });
+  }
   const replay = await page.evaluate(() => {
     const w = window.wander as Diagnostics;
     w.interaction.replay(false);
@@ -229,10 +297,10 @@ try {
   assert.deepEqual(errors, []);
   await writeFile(
     `${output}/results.json`,
-    JSON.stringify({ initial, speaking, changed, restored, replay, errors }, null, 2),
+    JSON.stringify({ initial, speaking, changed, restored, arms, replay, errors }, null, 2),
   );
   console.log(
-    'GPU head/chest motion changes pixels, preserves the lower body, and restores exactly',
+    'GPU head/chest/arm motion changes pixels, pins the held-prop arm, preserves legs, and restores exactly',
   );
 } finally {
   await browser.close();
