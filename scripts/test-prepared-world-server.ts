@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { preparedWorlds, SPARK_BUILD_ID } from '../server/prepared-worlds.ts';
+import { preparedWorldBuildId, preparedWorlds, SPARK_BUILD_ID } from '../server/prepared-worlds.ts';
 
 const source = 'a'.repeat(64);
 const assetPath = (hash = source, build = SPARK_BUILD_ID) =>
@@ -69,7 +70,7 @@ async function fixture(
   }
 }
 
-test('GET and HEAD serve exact identity bytes with private immutable cache headers', async () => {
+test('GET and HEAD serve exact identity bytes with private revalidation headers', async () => {
   await fixture(async ({ directory, get }) => {
     const bytes = Buffer.from([0, 255, 1, 128, 17, 19]);
     await writeFile(path.join(directory, SPARK_BUILD_ID, `${source}.bin`), bytes);
@@ -78,8 +79,8 @@ test('GET and HEAD serve exact identity bytes with private immutable cache heade
     assert.deepEqual(response.body, bytes);
     assert.equal(response.headers['content-type'], 'application/octet-stream');
     assert.equal(response.headers['content-length'], String(bytes.length));
-    assert.equal(response.headers['cache-control'], 'private, max-age=31536000, immutable');
-    assert.equal(response.headers.etag, `"${SPARK_BUILD_ID}-${source}"`);
+    assert.equal(response.headers['cache-control'], 'private, no-cache');
+    assert.equal(response.headers.etag, `"${createHash('sha256').update(bytes).digest('hex')}"`);
     const head = await get(assetPath(), 'HEAD');
     assert.equal(head.status, 200);
     assert.equal(head.body.length, 0);
@@ -160,4 +161,59 @@ test('unsupported methods return 405 while unrelated URLs reach the next middlew
     assert.equal(response.status, 418);
     assert.equal(response.body.toString(), 'next');
   });
+});
+
+test('same-size force replacements and rewrites invalidate the content validator', async () => {
+  await fixture(async ({ directory, get }) => {
+    const file = path.join(directory, SPARK_BUILD_ID, `${source}.bin`);
+    await writeFile(file, 'first bytes');
+    const first = await get(assetPath());
+    const original = await stat(file);
+    // Match prepare:worlds --force publication, including an adversarial preserved mtime.
+    await writeFile(file + '.part', 'other bytes');
+    await utimes(file + '.part', original.atime, original.mtime);
+    await rename(file + '.part', file);
+    const replacement = await get(assetPath(), 'GET', { 'If-None-Match': first.headers.etag! });
+    assert.equal(replacement.status, 200);
+    assert.equal(replacement.body.toString(), 'other bytes');
+    assert.notEqual(replacement.headers.etag, first.headers.etag);
+    assert.equal(replacement.headers['cache-control'], 'private, no-cache');
+    const cached = await get(assetPath(), 'GET', { 'If-None-Match': replacement.headers.etag! });
+    assert.equal(cached.status, 304);
+    // Also invalidate same-inode edits, even with the old mtime restored.
+    await writeFile(file, 'third bytes');
+    await utimes(file, original.atime, original.mtime);
+    const rewritten = await get(assetPath(), 'GET', {
+      'If-None-Match': replacement.headers.etag!,
+    });
+    assert.equal(rewritten.status, 200);
+    assert.equal(rewritten.body.toString(), 'third bytes');
+    assert.notEqual(rewritten.headers.etag, replacement.headers.etag);
+  });
+});
+
+test('build identity includes installed Spark, preparation policy and codec contents', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'wander-prepared-build-'));
+  const inputs = [
+    'node_modules/@sparkjsdev/spark/dist/spark.module.js',
+    'scripts/prepare-world-client.ts',
+    'src/prepared-world.ts',
+  ];
+  try {
+    for (const input of inputs) {
+      await mkdir(path.dirname(path.join(directory, input)), { recursive: true });
+      await writeFile(path.join(directory, input), input);
+    }
+    const initial = preparedWorldBuildId(directory);
+    assert.match(initial, /^[a-f0-9]{64}$/);
+    assert.equal(preparedWorldBuildId(directory), initial);
+    for (const input of inputs) {
+      await writeFile(path.join(directory, input), input + ' changed');
+      assert.notEqual(preparedWorldBuildId(directory), initial, input);
+      await writeFile(path.join(directory, input), input);
+      assert.equal(preparedWorldBuildId(directory), initial);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

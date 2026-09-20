@@ -88,7 +88,7 @@ export type XrInit = {
   sceneNavigation?: {
     clips: SceneSidebarClip[];
     currentId: string;
-    select: (id: string) => Promise<void>;
+    select: (id: string, options?: { resumePlayback?: boolean }) => Promise<void>;
   };
 };
 
@@ -110,6 +110,7 @@ export async function initXR({
   let switching = false;
   let sidebarOpen = false;
   let resumePlayback = false;
+  let errorResume: boolean | null = null;
   let teleportBlockedUntilRelease = renderer.xr.isPresenting;
   const num = (k: string, d: number) => {
     const v = q.get(k);
@@ -676,7 +677,10 @@ export async function initXR({
           sidebarOpen = open;
           suppressLocomotion();
           if (open) {
-            if (!switching) resumePlayback = !!wander.playing;
+            if (errorResume !== null) {
+              resumePlayback = errorResume;
+              errorResume = null;
+            } else if (!switching) resumePlayback = !!wander.playing;
             wander.play?.(false);
           } else {
             if (resumePlayback && !switching && !disposed && renderer.xr.isPresenting)
@@ -685,25 +689,16 @@ export async function initXR({
           }
         },
         async onSelect(id) {
-          if (switching || disposed) return;
-          if (id === sceneNavigation.currentId) {
+          if (disposed) return;
+          if (id === sceneNavigation.currentId && !switching) {
             sidebar?.close();
             return;
           }
-          switching = true;
-          sidebar?.setStatus('Loading scene…', true);
           try {
-            await sceneNavigation.select(id);
-            if (!disposed) sidebar?.setStatus('', false);
-          } catch (error) {
-            if (!disposed)
-              sidebar?.setStatus(error instanceof Error ? error.message : String(error), false);
-          } finally {
-            switching = false;
-            if (!disposed && !sidebarOpen) {
-              if (resumePlayback && renderer.xr.isPresenting) wander.play?.(true);
-              resumePlayback = false;
-            }
+            await sceneNavigation.select(id, { resumePlayback });
+          } catch {
+            // The current binding receives the session event, even if this one was
+            // disposed during a failed activation. Obsolete requests cannot clear it.
           }
         },
       })
@@ -712,6 +707,27 @@ export async function initXR({
     sidebar.setCatalog(sceneNavigation.clips, sceneNavigation.currentId);
     report.sidebar = sidebar.state;
   }
+  const onSceneChange = (event: Event) => {
+    if (disposed || !sidebar) return;
+    const detail = (event as CustomEvent).detail;
+    switching = !!detail.loading;
+    if (switching) sidebar.setStatus('Loading… choose another clip to cancel', true);
+    else if (detail.error) {
+      resumePlayback = detail.resumePlayback ?? resumePlayback;
+      if (renderer.xr.isPresenting) {
+        errorResume = sidebarOpen ? null : resumePlayback;
+        sidebar.showError(detail.error);
+        if (sidebarOpen) wander.play?.(false);
+      } else sidebar.setStatus(detail.error, false);
+    } else {
+      sidebar.setStatus('', false);
+      if (detail.cancelled) {
+        resumePlayback = detail.resumePlayback ?? resumePlayback;
+        sidebar.close();
+      }
+    }
+  };
+  window.addEventListener('wander:scenechange', onSceneChange);
 
   function tick() {
     const now = performance.now();
@@ -927,6 +943,7 @@ export async function initXR({
       walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
       btn.removeEventListener('click', onButtonClick);
       sidebar?.dispose();
+      window.removeEventListener('wander:scenechange', onSceneChange);
       avatarHands?.dispose();
       avatarBody?.dispose();
       questView?.dispose();
