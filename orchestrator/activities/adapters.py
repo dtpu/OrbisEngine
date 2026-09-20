@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.activities.stage import AdapterContext, StageExecution
+
+# The same resolution run_clip.py uses, so a host where modal lives only in the virtualenv
+# runs the same binary from either entry point.
+MODAL = os.environ.get("WANDER_MODAL") or shutil.which("modal") or "modal"
 
 
 def one(context: AdapterContext, name: str) -> Path:
@@ -224,7 +229,7 @@ class CleanMultiAdapter:
         output = context.attempt.outputs / "clean-multi"
         report = context.attempt.outputs / "clean-multi.json"
         command = [
-            "modal",
+            MODAL,
             "run",
             "worker/modal_clean_video.py",
             "--clip",
@@ -559,7 +564,7 @@ class ObjectShapeAdapter:
         description = json.loads(one(context, "prompt").read_text())["description"]
         settings = tuning(context)
         command = [
-            "modal",
+            MODAL,
             "run",
             "worker/modal_image_to_3d.py",
             "--image",
