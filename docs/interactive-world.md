@@ -33,6 +33,12 @@ holding X does not repeatedly restart it. Leaving VR closes the microphone conne
 failure leaves local bottle handling available. After fixing permission or server configuration,
 re-enter VR to retry. Provider errors do not trigger automatic retries.
 
+If Quest reports “The specified session configuration is not supported” despite previously
+working, restart Meta Browser and reopen the local viewer. In a headset check, even a bare
+`immersive-vr` request without microphone capture failed with the browser's internal runtime
+initialization error; restarting the browser restored immersive entry and voice. This error alone
+does not identify an unsupported scene or an optional-feature problem.
+
 When the recording is paused, the visitor can hold and release the bottle. Its local simulation
 uses the reviewed floor and collision callbacks. A green receiving region is an assisted target
 near a recorded held pose: a successful return attaches the bottle to that paused pose and keeps
@@ -127,3 +133,7 @@ and completed provider responses were observed on the headset. This establishes 
 not perceived speech quality. Controller comfort, hand tracking, source-soundtrack echo rejection, perceived latency,
 and spatial sound still need headset testing. Screenshots and measurements stay in ignored
 `.context/evidence/bottle-agent/`.
+
+After merging current main (`c93119a`), the updated character/bottle build entered a visible
+immersive session on the Quest with microphone permission granted and voice connected. Browser
+interaction checks, TypeScript/build, and formatting also passed after the merge.
