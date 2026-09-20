@@ -205,6 +205,25 @@ const checks: Check[] = [
       if (relevant.length > 0) throw new Error(`console errors: ${relevant.join(' | ')}`);
     },
   },
+  {
+    name: 'how-it-works renders six steps with images and footer',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const count = await page.$$eval('section#how-it-works ol li', (items) => items.length);
+        if (count !== 6) throw new Error(`expected 6 steps, got ${count}`);
+        const imgs = await page.$$eval('section#how-it-works ol li img', (els) =>
+          els.map((img) => [img.getAttribute('src') ?? '', img.getAttribute('alt') ?? '']),
+        );
+        if (imgs.length !== 6 || imgs.some(([src, alt]) => !src || !alt))
+          throw new Error(`step images missing src/alt: ${JSON.stringify(imgs)}`);
+        const text = await page.$eval('section#how-it-works', (el) => el.textContent ?? '');
+        if (!text.includes('Completed processing is not accepted quality'))
+          throw new Error('footer line missing');
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
