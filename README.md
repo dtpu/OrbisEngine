@@ -100,7 +100,8 @@ with the left joystick and continuous turning with the right joystick. Right-sti
 15% deadzone, stops on release, and turns at 90 degrees/second at full deflection. Add
 `&xrturnspeed=60` to adjust that rate (0–180 degrees/second), or `&xrturnmode=snap` to keep
 snap turning while walking smoothly. `&xrturn=0` disables joystick turning in either mode.
-Left-stick walking follows the direction you face, with analog speed. Physical leaning, walking
+Left-stick walking follows the direction you face, with analog speed and immediate start/stop
+response instead of acceleration or release drift. Physical leaning, walking
 and crouching remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
 physical steps cover up to 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2;
 only the extra travel is limited by the scene boundary and, in walk mode, obstacle checks.
@@ -143,6 +144,18 @@ still download or read cached assets and prepare their 3D data; the cache clears
 To speed up first visits, [prepare the worlds on the Mac](docs/shared-assets.md#prepared-world-cache)
 once. The viewer then loads the same packed splats and detail tree without rebuilding them on the
 Quest. These disk caches survive page reloads; people and video still need to load.
+
+With `xr=1`, the room and its background layers use adaptive detail even if the desktop scene
+requests `lod=0`. This lets `xrlod` (500,000 by default) and frame-time adjustment limit the static
+world workload. People and props still add their own rendering cost. CPU colour-blending modes
+keep their required raw data; `xrworldlod=0` preserves the desktop scene's detail choice for
+comparison. The scene's `edgefade` setting also applies in VR; `edgefade=0` disables boundary
+darkening while retaining the brief blink for teleport and snap turns.
+
+Recorded people and props update at up to 36 fps in VR (`xranimfps`), using the current video
+time on each update. Head tracking, controllers, interactive props and rendering keep the headset
+frame rate. This reduces CPU animation work; audio and playback speed stay unchanged. Use
+`xranimfps=0` to update recorded geometry on every headset frame for comparison.
 
 ## Code map
 
