@@ -1,0 +1,198 @@
+name: wander-pipeline
+
+x-orchestrator-environment: &orchestrator-environment
+  WANDER_DATABASE_URL: postgresql+psycopg://wander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/wander
+  WANDER_TEMPORAL_ADDRESS: temporal:7233
+  WANDER_CODE_REVISION: ${WANDER_CODE_REVISION:?set WANDER_CODE_REVISION}
+  WANDER_CONTAINER_DIGEST: ${WANDER_CONTAINER_DIGEST:-development}
+  WANDER_ARTIFACT_ROOT: /var/lib/wander/artifacts
+  MODAL_PROFILE: dtpu
+
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: wander
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./orchestrator/deployment/init-databases.sql:/docker-entrypoint-initdb.d/10-wander.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U wander -d temporal]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: wander
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    healthcheck:
+      test: [CMD, temporal, operator, cluster, health, --address, temporal:7233]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - 127.0.0.1:8080:8080
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    profiles: [s3]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      - 127.0.0.1:9001:9001
+    healthcheck:
+      test: [CMD, mc, ready, local]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+      args:
+        UV_ONLY_GROUP: orchestrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WANDER_DATABASE_URL: postgresql+psycopg://wander:${POSTGRES_PASSWORD}@postgres:5432/wander
+    command: [alembic, upgrade, head]
+    restart: no
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+      args:
+        UV_ONLY_GROUP: orchestrator
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    environment:
+      <<: *orchestrator-environment
+      WANDER_API_TOKEN: ${WANDER_API_TOKEN:?set WANDER_API_TOKEN}
+    command:
+      - uvicorn
+      - orchestrator.api.service:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-access-log
+    ports:
+      - 127.0.0.1:8000:8000
+    volumes:
+      - worker-data:/var/lib/wander
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+      args:
+        INSTALL_MEDIA_TOOLS: "1"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    environment:
+      <<: *orchestrator-environment
+      WANDER_WORKSPACE_ROOT: /var/lib/wander/runs
+      WANDER_CAS_ROOT: /var/lib/wander/cas
+      WANDER_HEARTBEAT: /var/lib/wander/worker-heartbeat
+    command: [python, -m, orchestrator.worker]
+    volumes:
+      - worker-data:/var/lib/wander
+      - ${HOME}/.modal.toml:/root/.modal.toml:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import pathlib,time; p=pathlib.Path('/var/lib/wander/worker-heartbeat'); raise SystemExit(not p.exists() or time.time()-p.stat().st_mtime>20)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:5399:8080
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/dashboard.html
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+  postgres-data:
+  worker-data:

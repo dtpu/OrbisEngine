@@ -30,6 +30,10 @@ FORBIDDEN_OUTPUTS = {
 }
 
 
+# What lhm_animate.py writes as the reason when a track simply is not in a sample.
+TRACK_ABSENT = "Track absent from this sample"
+
+
 def atomic_json(path, value):
     path = Path(path)
     temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
@@ -262,9 +266,19 @@ def output_problems(output, mode, files, require_registration=False):
                     problems.append(f"sequence frame missing or hash mismatch: {name}")
             if set(frames) != {name for name in files if name.endswith(".ply")}:
                 problems.append("exported PLY files differ from declared sequence frames")
-            if sequence.get("allRequestedSamplesReconstructed") is not True or sequence.get(
-                "requestedSamples"
-            ) != len(frames):
+            # A sample can be missing because the tracked person is not in it yet, which is
+            # not a failure to reconstruct anything: a runner entering the shot has no pose in
+            # the first frames, and the stage says so per sample. What must not be missing is a
+            # sample nothing accounts for. Requiring every requested sample to have a frame
+            # failed a clip whose actor arrives 83 ms in, after the GPU work had been paid for.
+            explained = [
+                sample
+                for sample in missing
+                if TRACK_ABSENT in str((sample or {}).get("reason", ""))
+            ]
+            if len(explained) != len(missing) or sequence.get("requestedSamples") != len(
+                frames
+            ) + len(missing):
                 problems.append("source motion coverage is partial or unverified")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("motion/sequence metadata is missing, malformed or inconsistent")

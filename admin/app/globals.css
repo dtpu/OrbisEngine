@@ -1,0 +1,2176 @@
+/*
+ * Wander admin.
+ *
+ * A review-suite surround: neutral mid-grey, no tint, so the footage and frames the operator
+ * judges are the only saturated things on the page. Colour is reserved for status and it always
+ * accompanies a word. Identifiers, hashes, sizes and times are set in the mono; everything read
+ * as prose is set in the sans.
+ *
+ * Surfaces run bezel -> ground -> panel -> panel-2. Anything that is not content takes the bezel
+ * tone: the top bar, the agent rail, and every well a frame or clip is laid into. Content sits
+ * above it. That split is what keeps a preview reading as footage rather than as page decoration.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bezel: #17191b;
+  --ground: #232528;
+  --panel: #2c2f33;
+  --panel-2: #363b40;
+  --well: #17191b;
+  --line: #474c52;
+  --line-soft: #34383d;
+
+  --ink: #efece6;
+  --ink-2: #c6c4bf;
+  --muted: #989a9d;
+  --dim: #74777a;
+
+  --attention: #f0b35a;
+  --active: #79b4e8;
+  --good: #6fc98a;
+  --bad: #ef7f74;
+
+  /* Status at a whisper: a tinted surface for the one row that needs a person. */
+  --attention-wash: #302716;
+  --attention-line: #6b5427;
+
+  --attention-ink: #2b1f08;
+  --focus: #ffffff;
+
+  --sans: var(--font-sans), 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: var(--font-mono), 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  --r-control: 4px;
+  --r-stage: 8px;
+
+  --t-11: 0.7857rem;
+  --t-12: 0.8571rem;
+  --t-14: 1rem;
+  --t-17: 1.2143rem;
+  --t-21: 1.5rem;
+  --t-26: 1.857rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 14px/1.5 var(--sans);
+  font-feature-settings: 'tnum';
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+ol,
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--dim);
+  text-underline-offset: 0.15em;
+}
+a:hover {
+  text-decoration-color: var(--ink);
+}
+
+.mono {
+  font-family: var(--mono);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  padding: 8px 12px;
+  background: var(--ink);
+  color: var(--ground);
+  border-radius: var(--r-control);
+  z-index: 20;
+}
+.skip:focus {
+  top: 12px;
+}
+
+/* Top bar ------------------------------------------------------------------------------------ */
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 48px;
+  padding: 0 24px;
+  border-bottom: 1px solid #000;
+  background: var(--bezel);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand__mark {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.brand__area {
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+}
+.top__links {
+  margin-left: auto;
+  display: flex;
+  gap: 18px;
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.top__links a {
+  text-decoration: none;
+}
+.top__links a:hover {
+  color: var(--ink);
+}
+
+/* Page frames -------------------------------------------------------------------------------- */
+
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 28px 24px 96px;
+}
+.home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 40px;
+  align-items: start;
+}
+.section-title {
+  font-size: var(--t-21);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.section-head .count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-14);
+}
+.section-head .live {
+  margin-left: auto;
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+
+/* Status words and the stage strip ----------------------------------------------------------- */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-12);
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+  flex: none;
+}
+.status--active {
+  color: var(--active);
+}
+.status--active::before {
+  background: var(--active);
+}
+.status--attention {
+  color: var(--attention);
+}
+.status--attention::before {
+  background: var(--attention);
+  animation: tally 1.6s ease-in-out infinite;
+}
+.status--good {
+  color: var(--good);
+}
+.status--good::before {
+  background: var(--good);
+}
+.status--bad {
+  color: var(--bad);
+}
+.status--bad::before {
+  background: var(--bad);
+}
+.status--muted {
+  color: var(--dim);
+}
+.status--idle::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim);
+}
+
+@keyframes tally {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.58;
+  }
+}
+
+.strip {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+}
+.strip--compact {
+  height: 7px;
+}
+/* A stage not yet reached sits barely above the page; a finished one has done its talking. */
+.strip__cell {
+  flex: 1 1 0;
+  min-width: 3px;
+  border-radius: 1px;
+  background: var(--line-soft);
+}
+.strip__cell--idle {
+  background: var(--line-soft);
+}
+.strip__cell--active {
+  background: var(--active);
+}
+.strip__cell--attention {
+  background: var(--attention);
+  animation: tally 1.6s ease-in-out infinite;
+}
+.strip__cell--good {
+  background: var(--good);
+}
+.strip__cell--bad {
+  background: var(--bad);
+}
+.strip__cell--muted {
+  background: var(--line-soft);
+}
+
+/* Attention ----------------------------------------------------------------------------------
+ *
+ * The one loud thing on the page. A run that is merely working needs no colour; a run that has
+ * stopped and is waiting for a person gets the amber rail, a warmer surface, and the only
+ * button-shaped affordance above the fold. Everything else on the page stays quiet so this
+ * can be seen from across a room.
+ */
+
+.gates {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 32px;
+}
+.gate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 13px 16px 13px 13px;
+  border: 0;
+  border-left: 3px solid var(--attention);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: var(--attention-wash);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.gate:hover {
+  background: color-mix(in srgb, var(--attention-wash) 82%, var(--attention));
+}
+.gate .status {
+  font-size: var(--t-12);
+}
+.gate__what {
+  min-width: 0;
+  font-size: var(--t-14);
+}
+.gate__what strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.gate__where {
+  color: var(--ink-2);
+  font-size: var(--t-12);
+}
+.gate__cta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--attention-line);
+  border-radius: var(--r-control);
+  font-size: var(--t-12);
+  font-weight: 500;
+  color: var(--attention);
+  white-space: nowrap;
+}
+.gate:hover .gate__cta {
+  background: var(--attention);
+  border-color: var(--attention);
+  color: var(--attention-ink);
+}
+
+/* Runs table --------------------------------------------------------------------------------- */
+
+.runs {
+  border-top: 1px solid var(--line);
+}
+.runs__head,
+.run {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(200px, 1fr) 88px 128px;
+  gap: 16px;
+  align-items: center;
+  padding: 11px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.runs__head {
+  color: var(--dim);
+  font-size: var(--t-12);
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.runs__head .right {
+  text-align: right;
+}
+.run {
+  position: relative;
+  /* Every row is the same height whatever its tally says, so the eye can run down the column. */
+  min-height: 62px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.run:hover {
+  background: var(--panel);
+}
+
+/*
+ * A run fans out into one child run per shot. The rail is that relationship, not an indent:
+ * it is scoped to the group so the last shot's rail stops at its own tick rather than running on.
+ */
+.runs__group {
+  position: relative;
+}
+.run--shot {
+  padding-left: 40px;
+}
+.run--shot::before,
+.run--shot::after {
+  content: '';
+  position: absolute;
+  background: var(--line-soft);
+}
+.run--shot::before {
+  left: 20px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.run--shot:last-child::before {
+  bottom: 50%;
+}
+.run--shot::after {
+  left: 20px;
+  top: 50%;
+  width: 11px;
+  height: 1px;
+}
+.run__name {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.run__id {
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  font-weight: 500;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.run--shot .run__id {
+  color: var(--ink-2);
+}
+.run__id .shot {
+  color: var(--dim);
+  font-weight: 400;
+}
+.run__what {
+  color: var(--muted);
+  font-size: var(--t-11);
+}
+.run__progress {
+  display: grid;
+  gap: 7px;
+}
+
+/* Counts carry the same colour vocabulary as the strip above them, so the two agree. */
+.run__tally {
+  display: flex;
+  gap: 4px 10px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-11);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.run__count {
+  flex: none;
+}
+.run__count--done {
+  color: var(--muted);
+}
+.run__count--active {
+  color: var(--active);
+}
+.run__count--bad {
+  color: var(--bad);
+}
+.run__count--attention {
+  color: var(--attention);
+}
+.run__when {
+  display: grid;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  color: var(--muted);
+  text-align: right;
+}
+.run__when .live {
+  color: var(--active);
+}
+
+/* Status keeps a fixed left edge in its column: a colour you have to hunt for is not a signal. */
+.run__state {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+}
+.run__needs {
+  font-size: var(--t-11);
+  color: var(--attention);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 24px 8px;
+}
+
+/* Forms -------------------------------------------------------------------------------------- */
+
+/*
+ * Starting a run is not an event worth shouting about; a run stopping for you is. This panel
+ * stays the quietest thing on the page: no fill, one hairline, and a button that only earns
+ * its weight once a clip has been chosen.
+ */
+.create {
+  position: sticky;
+  top: 24px;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-stage);
+  display: grid;
+  gap: 14px;
+}
+.create__title {
+  font-size: var(--t-14);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.field {
+  display: grid;
+  gap: 6px;
+}
+.field > label,
+.field__label {
+  font-size: var(--t-12);
+  color: var(--ink-2);
+}
+.field__hint {
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.field--row {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.checks {
+  display: grid;
+  gap: 8px;
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: var(--t-14);
+  cursor: pointer;
+}
+.check input {
+  margin: 4px 0 0;
+  accent-color: var(--ink);
+}
+.check small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--t-12);
+}
+
+input[type='text'],
+input[type='number'],
+select,
+textarea {
+  width: 100%;
+  background: var(--well);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  font: inherit;
+  font-feature-settings: 'tnum';
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--dim);
+}
+textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.45;
+}
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 55%,
+    calc(100% - 10px) 55%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+.drop {
+  display: grid;
+  gap: 4px;
+  padding: 26px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-control);
+  background: var(--well);
+  cursor: pointer;
+  text-align: center;
+}
+.drop:hover {
+  border-color: var(--muted);
+}
+.drop--over {
+  border-color: var(--attention);
+  border-style: solid;
+  background: var(--attention-wash);
+}
+.drop input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.drop strong {
+  font-weight: 500;
+}
+.drop__file {
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.drop__hint {
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--well);
+  overflow: hidden;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.15s linear;
+}
+
+.progress {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--well);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--active);
+  transition: width 0.6s ease;
+}
+.progress--good > span {
+  background: var(--good);
+}
+.progress--attention > span {
+  background: var(--attention);
+}
+.progress--indeterminate > span {
+  position: absolute;
+  left: 0;
+  width: 28%;
+  animation: sweep 1.8s ease-in-out infinite;
+}
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+.progress--thin {
+  height: 2px;
+}
+
+/* Buttons ------------------------------------------------------------------------------------ */
+
+button,
+.button {
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--panel-2);
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.button:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+.button:disabled {
+  cursor: not-allowed;
+  background: transparent;
+  border-color: var(--line-soft);
+  color: var(--dim);
+}
+.button--primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ground);
+}
+.button--primary:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+}
+.button--approve {
+  background: var(--good);
+  border-color: var(--good);
+  color: #10240f;
+}
+.button--approve:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.button--quiet {
+  background: transparent;
+}
+.button--danger {
+  background: transparent;
+  color: var(--bad);
+}
+.button--danger:hover:not(:disabled) {
+  border-color: var(--bad);
+}
+.button--small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: var(--t-12);
+}
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--dim);
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+.linkish:hover {
+  text-decoration-color: var(--ink);
+}
+
+/* Notices ------------------------------------------------------------------------------------ */
+
+.notice {
+  padding: 11px 14px;
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  border-left: 3px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  font-size: var(--t-12);
+  line-height: 1.55;
+}
+.notice--error {
+  border-left-color: var(--bad);
+  background: color-mix(in srgb, var(--panel) 84%, var(--bad));
+}
+.notice--ok {
+  border-left-color: var(--good);
+  background: color-mix(in srgb, var(--panel) 88%, var(--good));
+}
+.notice--warn {
+  border-left-color: var(--attention);
+  background: color-mix(in srgb, var(--panel) 88%, var(--attention));
+}
+.notice code {
+  font-family: var(--mono);
+}
+.notice + .notice {
+  margin-top: 8px;
+}
+
+/* Run console -------------------------------------------------------------------------------- */
+
+.crumbs {
+  font-size: var(--t-12);
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.crumbs a {
+  text-decoration: none;
+}
+.crumbs a:hover {
+  color: var(--ink);
+}
+.run-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px 32px;
+  align-items: end;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.run-head h1 {
+  font-family: var(--mono);
+  font-size: var(--t-26);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+}
+.run-head .strip {
+  margin-top: 4px;
+}
+.run-head__what {
+  margin-top: 6px;
+  color: var(--ink-2);
+}
+.run-head__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  margin-top: 10px;
+  font-size: var(--t-12);
+  color: var(--dim);
+}
+.run-head__facts .mono {
+  color: var(--ink-2);
+}
+.run-head__facts .live {
+  color: var(--active);
+}
+.run-head__state {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+.run-head__state .status {
+  font-size: var(--t-14);
+}
+/* Pausing and cancelling belong to the run, so they sit with the run's state, not with a stage. */
+.run-head__acts {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+/* Cancelling a run cannot be undone, so the button asks once before it does it. */
+.button--armed {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #2a0f0c;
+}
+.button--armed:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.spend {
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.spend strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.run-head .strip {
+  grid-column: 1 / -1;
+}
+
+.console {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 16px;
+  background: var(--well);
+  border-radius: var(--r-control);
+}
+.views__tab {
+  min-height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--t-12);
+}
+.views__tab--current {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+.console--graph {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Stage ladder */
+
+.ladder {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+}
+/*
+ * Stages are grouped by dependency tier: everything in one tier can run at once. The rail is
+ * that fact, which is why it is drawn rather than left to an indent.
+ */
+.ladder__tier {
+  position: relative;
+  padding: 7px 0 7px 16px;
+}
+.ladder__tier + .ladder__tier {
+  border-top: 1px solid var(--line-soft);
+}
+.ladder__tier::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--line);
+}
+.stage {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 3px 10px;
+  width: 100%;
+  padding: 7px 10px 7px 8px;
+  margin: 0 0 0 -8px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.stage:hover {
+  background: var(--panel);
+}
+.stage--selected,
+.stage--selected:hover {
+  background: var(--panel-2);
+  box-shadow: inset 2px 0 0 var(--ink-2);
+}
+.stage__dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.stage__dot--idle {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim);
+}
+.stage__dot--active {
+  background: var(--active);
+}
+.stage__dot--attention {
+  background: var(--attention);
+  animation: tally 1.6s ease-in-out infinite;
+}
+.stage__dot--good {
+  background: var(--good);
+}
+.stage__dot--bad {
+  background: var(--bad);
+}
+.stage__dot--muted {
+  background: var(--line);
+}
+.stage__id {
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  font-weight: 500;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.stage__state {
+  font-family: var(--sans);
+  font-weight: 400;
+  color: var(--muted);
+}
+.stage__state--attention {
+  color: var(--attention);
+}
+.stage__state--bad {
+  color: var(--bad);
+}
+.stage__state--active {
+  color: var(--active);
+}
+.stage__title {
+  grid-column: 2;
+  font-size: var(--t-12);
+  color: var(--muted);
+  line-height: 1.35;
+}
+.stage__flags {
+  grid-column: 2;
+  display: flex;
+  gap: 8px;
+  font-size: var(--t-11);
+  color: var(--dim);
+}
+.stage__elapsed {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--active);
+}
+.stage .progress {
+  grid-column: 2;
+  height: 2px;
+  margin-top: 2px;
+}
+
+/* Inspector */
+
+.inspect {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.inspect__head {
+  display: grid;
+  gap: 4px;
+}
+.inspect__head p {
+  color: var(--ink-2);
+}
+.inspect__head h2 {
+  font-size: var(--t-21);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.inspect__head h2 .mono {
+  font-weight: 500;
+}
+.inspect__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin-top: 4px;
+  font-size: var(--t-12);
+  color: var(--dim);
+}
+.inspect__facts .mono {
+  color: var(--ink-2);
+}
+.blocked {
+  color: var(--bad);
+  font-size: var(--t-12);
+}
+.waiting {
+  color: var(--muted);
+  font-size: var(--t-12);
+}
+
+.attempts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.attempt {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--t-12);
+}
+.attempt:hover {
+  border-color: var(--muted);
+}
+.attempt--current {
+  background: var(--panel-2);
+  color: var(--ink);
+  border-color: var(--panel-2);
+}
+.attempt__n {
+  font-family: var(--mono);
+  font-weight: 500;
+}
+.attempt__time {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.attempt__note {
+  font-size: var(--t-12);
+  color: var(--muted);
+  margin-top: 6px;
+}
+.timeline {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.timeline__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.timeline__row .mono {
+  color: var(--ink-2);
+}
+.timeline__row .live {
+  color: var(--active);
+}
+.attempt__note .mono {
+  color: var(--ink-2);
+}
+
+/* Agent reviews ------------------------------------------------------------------------------ */
+
+.review {
+  display: grid;
+  gap: 10px;
+  max-width: 76ch;
+  padding: 16px 18px;
+  border-left: 3px solid var(--line);
+  background: var(--panel);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+}
+.review--good {
+  border-left-color: var(--good);
+}
+.review--active {
+  border-left-color: var(--active);
+}
+.review--attention {
+  border-left-color: var(--attention);
+}
+.review__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  font-size: var(--t-12);
+  color: var(--dim);
+}
+.review__head .status {
+  font-size: var(--t-14);
+}
+.review__head .exposed {
+  color: var(--attention);
+}
+/* A long paragraph on a dark surface needs a shorter line and more air between the lines. */
+.review__body {
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 66ch;
+  line-height: 1.65;
+}
+.review__extra {
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.review__extra .mono {
+  color: var(--ink-2);
+}
+.review__earlier {
+  font-size: var(--t-12);
+  color: var(--muted);
+}
+.review__earlier summary {
+  cursor: pointer;
+}
+.review__earlier ol {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ask {
+  padding: 13px 15px;
+  border-radius: var(--r-control);
+  background: var(--well);
+  color: var(--ink);
+  max-width: 66ch;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ask__label {
+  display: block;
+  font-size: var(--t-12);
+  color: var(--attention);
+  margin-bottom: 4px;
+}
+.stage__flags .stage__agent {
+  color: var(--ink-2);
+}
+
+/* Blocks ------------------------------------------------------------------------------------- */
+
+/*
+ * One artifact drawn at a fixed density. The frame owns the size and the content is fitted into
+ * it, never the other way round: artifacts carry no dimensions on the API, so an unconstrained
+ * preview renders at its natural size and bursts out of whatever card is holding it.
+ */
+.block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+.block--tile {
+  height: 100%;
+}
+.block__frame {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--well);
+}
+.block--thumb .block__frame {
+  height: 74px;
+}
+.block__frame img,
+.block__frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.block__mark {
+  font-family: var(--mono);
+  font-size: var(--t-17);
+  line-height: 1;
+  color: var(--dim);
+}
+.block--tile .block__mark {
+  font-size: var(--t-26);
+}
+
+/* What a report or prompt says, read inside its own tile. */
+
+.gist {
+  display: grid;
+  align-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+.gist--facts {
+  gap: 4px;
+}
+.gist__fact {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.gist__fact b {
+  font-family: var(--mono);
+  font-size: var(--t-14);
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.gist__fact i {
+  font-style: normal;
+  font-size: var(--t-11);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gist--text {
+  align-content: start;
+  font-size: var(--t-11);
+  line-height: 1.45;
+  color: var(--ink-2);
+  /* The opening words are the point; the rest fades rather than cutting mid-letter. */
+  mask-image: linear-gradient(180deg, #000 60%, transparent 100%);
+}
+.block--thumb .gist {
+  padding: 6px 8px;
+}
+.block--thumb .gist__fact b {
+  font-size: var(--t-12);
+}
+.block--thumb .gist--text {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* A stage with nothing to show yet draws its state in the product's frame-and-lens shape. */
+
+.mark {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+.mark svg {
+  width: 56px;
+  height: 40px;
+  overflow: visible;
+}
+.block--thumb .mark svg {
+  width: 40px;
+  height: 28px;
+}
+.mark__frame {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  opacity: 0.55;
+}
+.mark__lens {
+  fill: currentColor;
+}
+.mark__lens--hollow {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+}
+.mark__lens--faint {
+  opacity: 0.6;
+}
+.mark__lens--sweep {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  transform-origin: 24px 17px;
+  animation: lens 1.5s linear infinite;
+}
+.mark__slash {
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.mark__label {
+  font-size: var(--t-11);
+  color: var(--dim);
+}
+.mark--good {
+  color: var(--good);
+}
+.mark--active {
+  color: var(--active);
+}
+.mark--attention {
+  color: var(--attention);
+}
+.mark--bad {
+  color: var(--bad);
+}
+.mark--good .mark__label,
+.mark--active .mark__label,
+.mark--attention .mark__label,
+.mark--bad .mark__label {
+  color: inherit;
+}
+
+@keyframes lens {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* The 3D blocks own a WebGL canvas, so they fill their box and report their own load state. */
+.block3d {
+  position: relative;
+  width: 100%;
+  min-height: 320px;
+  height: min(62vh, 720px);
+  background: var(--well);
+  border-radius: var(--r-stage);
+  overflow: hidden;
+  touch-action: none;
+}
+.block3d__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.block3d__canvas:active {
+  cursor: grabbing;
+}
+.block3d__status {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: var(--t-11);
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--well) 82%, transparent);
+  border-radius: var(--r-control);
+  pointer-events: none;
+}
+
+/* Graph canvas ------------------------------------------------------------------------------- */
+
+.canvas {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.canvas__tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.canvas__hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--t-12);
+}
+.canvas__frame {
+  position: relative;
+  height: clamp(420px, 62vh, 760px);
+  background: var(--well);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-stage);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.canvas__frame:active {
+  cursor: grabbing;
+}
+/* Panned and zoomed as a unit, so edges and cards can never drift apart. */
+.canvas__world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+.canvas__edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+/*
+ * An edge says what waits on what; the card at each end already says how it went. Colouring
+ * every edge by its source only repeats that, and a dozen saturated lines turn structure into
+ * noise. Edges stay a hairline until a stage is selected, and then its own show their state.
+ */
+.gedge {
+  fill: none;
+  stroke: var(--line-soft);
+  stroke-width: 1.5;
+}
+.gedge--lit {
+  stroke: var(--ink-2);
+  stroke-width: 2;
+}
+.gedge--lit.gedge--good {
+  stroke: var(--good);
+}
+.gedge--lit.gedge--bad {
+  stroke: var(--bad);
+}
+.gedge--lit.gedge--active {
+  stroke: var(--active);
+}
+.gedge--lit.gedge--attention {
+  stroke: var(--attention);
+}
+
+/*
+ * The rule between two bands, with the band's name sitting on it. A band is a track of work --
+ * the pipeline itself, one per person or object the footage turned out to contain, and the gates
+ * a human owes -- so the rule marks a change of track rather than decorating the canvas.
+ */
+.gband {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: var(--t-11);
+  color: var(--dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.gband::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+/* A stage card: what the stage made on top, what it is and how it went underneath. */
+.gnode {
+  position: absolute;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-stage);
+  overflow: hidden;
+}
+.gnode:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+/* A stage waiting on a person is amber here too: one language across list, graph and home. */
+.gnode--attention {
+  border-color: var(--attention);
+}
+.gnode--bad {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--line-soft));
+}
+.gnode--selected {
+  border-color: var(--ink);
+}
+.gnode:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.gnode__preview {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+}
+.gnode__empty {
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  border: 1px dashed var(--line-soft);
+  color: var(--dim);
+  font-size: var(--t-11);
+}
+.gnode__body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.gnode__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.gnode__id {
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode__kind {
+  flex: none;
+  font-size: var(--t-11);
+  color: var(--dim);
+}
+.gnode__state {
+  font-size: var(--t-11);
+  color: var(--muted);
+}
+.gnode__state--good {
+  color: var(--good);
+}
+.gnode__state--bad {
+  color: var(--bad);
+}
+.gnode__state--active {
+  color: var(--active);
+}
+.gnode__state--attention {
+  color: var(--attention);
+}
+
+/* Artifact viewer ---------------------------------------------------------------------------- */
+
+.viewer {
+  display: grid;
+  gap: 12px;
+}
+.viewer--empty .viewer__note {
+  padding: 40px 16px;
+  text-align: center;
+  background: var(--well);
+  border-radius: var(--r-stage);
+}
+.viewer__stage {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  max-height: min(62vh, 720px);
+  background: var(--well);
+  border-radius: var(--r-stage);
+  overflow: auto;
+}
+.viewer__stage--splat,
+.viewer__stage--mesh {
+  justify-items: stretch;
+  align-items: stretch;
+  overflow: hidden;
+}
+.viewer__stage--image {
+  background-color: var(--well);
+  background-image:
+    linear-gradient(45deg, #26282b 25%, transparent 25%, transparent 75%, #26282b 75%),
+    linear-gradient(45deg, #26282b 25%, transparent 25%, transparent 75%, #26282b 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    8px 8px;
+}
+.viewer__media {
+  display: block;
+  max-width: 100%;
+  max-height: min(62vh, 720px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+video.viewer__media {
+  width: 100%;
+}
+.viewer__audio {
+  width: min(100%, 520px);
+  margin: 40px 0;
+}
+.viewer__text {
+  align-self: stretch;
+  justify-self: stretch;
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--mono);
+  font-size: var(--t-12);
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.viewer__note {
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+.viewer__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 24px;
+  align-items: start;
+}
+.viewer__title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.viewer__title strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.viewer__role {
+  color: var(--muted);
+  font-size: var(--t-12);
+}
+.viewer__facts {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: var(--t-12);
+}
+.viewer__facts div {
+  display: flex;
+  gap: 6px;
+}
+.viewer__facts dt {
+  color: var(--dim);
+}
+.viewer__facts dd {
+  color: var(--ink-2);
+}
+.viewer__actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 6px;
+}
+
+.film {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scroll-snap-type: x proximity;
+}
+.film__frame {
+  flex: none;
+  display: grid;
+  gap: 6px;
+  width: 132px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  scroll-snap-align: start;
+}
+.film__frame:hover {
+  background: var(--panel);
+}
+.film__frame--active {
+  border-color: var(--ink);
+}
+.film__label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.film__name {
+  font-size: var(--t-12);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.film__size {
+  font-size: var(--t-11);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Decisions and messages --------------------------------------------------------------------- */
+
+.decide {
+  display: grid;
+  gap: 14px;
+  max-width: 76ch;
+  padding: 18px 20px;
+  border-left: 3px solid transparent;
+  background: var(--panel);
+  border-radius: var(--r-stage);
+}
+.decide--gate {
+  border-left-color: var(--attention);
+  border-radius: 0 var(--r-stage) var(--r-stage) 0;
+  background: var(--attention-wash);
+}
+.decide__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.decide__actions .gap {
+  flex: 1;
+}
+
+.messages {
+  display: grid;
+  gap: 10px;
+}
+.messages__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+/* Spend-guard unblock ------------------------------------------------------------------------ */
+
+.unblock {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--bad);
+  background: var(--panel);
+  border-radius: var(--r-control);
+  font-size: var(--t-12);
+  color: var(--ink-2);
+}
+.unblock__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* App shell and the persistent Codex log ---------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+}
+.shell:has(.tail--closed) {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+.shell__main {
+  min-width: 0;
+}
+/*
+ * What the agent is doing is ambient: worth a glance, never worth competing with the runs table
+ * or with footage. It takes the bezel tone and speaks a step below full contrast.
+ */
+.tail {
+  position: sticky;
+  top: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: calc(100vh - 48px);
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-left: 1px solid #000;
+  background: var(--bezel);
+}
+.tail--closed {
+  align-items: center;
+  padding: 8px 0;
+}
+.tail__toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  padding: 3px 5px;
+  font-size: var(--t-12);
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.tail__toggle:hover {
+  background: var(--panel-2);
+}
+.tail--closed .tail__toggle {
+  align-self: center;
+  writing-mode: vertical-rl;
+  padding: 8px 2px;
+}
+.tail__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.tail__dot--live {
+  background: var(--active);
+  animation: tally 1.6s ease-in-out infinite;
+}
+.tail__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: var(--t-12);
+}
+.tail__head a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.tail__head a:hover {
+  text-decoration: underline;
+}
+.tail__where {
+  color: var(--muted);
+}
+.tail__pick {
+  font-size: var(--t-12);
+}
+.tail__stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  padding: 2px 4px 2px 0;
+  font-size: var(--t-12);
+  line-height: 1.5;
+}
+.tail__stream > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.tail__system {
+  color: var(--dim);
+}
+.tail__cursor {
+  color: var(--active);
+  animation: tally 1s steps(2) infinite;
+}
+.tail__say {
+  padding: 8px 10px;
+  border-radius: 6px 6px 6px 2px;
+  background: #212326;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tail__think {
+  color: var(--muted);
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tail__raw {
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.tail__cmd {
+  min-width: 0;
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+}
+.tail__cmd--failed {
+  border-left-color: var(--bad);
+}
+.tail__cmd summary {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+  color: var(--ink-2);
+  list-style: none;
+}
+.tail__cmd summary::-webkit-details-marker {
+  display: none;
+}
+.tail__cmd summary .mono {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tail__cmd[open] summary .mono {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tail__exit {
+  flex: none;
+  color: var(--dim);
+  font-size: var(--t-11);
+}
+.tail__cmd--failed .tail__exit {
+  color: var(--bad);
+}
+.tail__cmd pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  background: #0f1012;
+  border-radius: 4px;
+  font-size: var(--t-11);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.tail__compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  margin-top: auto;
+}
+.tail__compose input {
+  padding: 6px 8px;
+  font-size: var(--t-12);
+}
+.tail__note {
+  grid-column: 1 / -1;
+  font-size: var(--t-11);
+  color: var(--dim);
+}
+
+/* Responsive --------------------------------------------------------------------------------- */
+
+@media (max-width: 1280px) {
+  .console {
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 24px;
+  }
+  .console--graph {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .console > .agent,
+  .console--graph .agent {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    position: static;
+    height: auto;
+  }
+  .console--graph .inspect {
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 1100px) {
+  .shell,
+  .shell:has(.tail--closed) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tail {
+    position: fixed;
+    right: 0;
+    top: 48px;
+    z-index: 15;
+    width: min(320px, 100vw);
+    height: calc(100vh - 48px);
+    box-shadow: -12px 0 32px rgb(0 0 0 / 35%);
+  }
+  .tail--closed {
+    width: auto;
+    height: auto;
+    padding: 6px;
+    border-radius: var(--r-control) 0 0 var(--r-control);
+    box-shadow: none;
+  }
+  .tail--closed .tail__toggle {
+    writing-mode: horizontal-tb;
+  }
+}
+
+@media (max-width: 880px) {
+  .home,
+  .console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .create,
+  .ladder {
+    position: static;
+    max-height: none;
+  }
+  .runs__head {
+    display: none;
+  }
+  .run {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .run__progress {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+  .run__when {
+    display: none;
+  }
+  .unblock__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .viewer__meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .viewer__actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .page {
+    padding: 20px 16px 72px;
+  }
+  .top {
+    padding: 0 16px;
+  }
+  .run-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .run-head__state {
+    justify-items: start;
+  }
+  .field--row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .messages__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status--attention::before,
+  .strip__cell--attention,
+  .stage__dot--attention {
+    animation: none;
+  }
+  .progress--indeterminate > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+  .mark__lens--sweep {
+    animation: none;
+    stroke-dasharray: none;
+    opacity: 0.6;
+  }
+  .bar > span {
+    transition: none;
+  }
+}
