@@ -41,7 +41,11 @@ export interface ViewerDiagnostics {
 declare global {
   interface Window {
     wander: ViewerDiagnostics;
-    __fakeXR: { frames: number[] };
+    __fakeXR: {
+      frames: number[];
+      head: { x: number; y: number; z: number; yaw: number; pitch: number };
+      axes: { left: number[]; right: number[] };
+    };
     __xr: unknown;
   }
 }
