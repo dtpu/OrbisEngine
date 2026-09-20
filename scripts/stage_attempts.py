@@ -63,6 +63,9 @@ CODE_FILES = {
         "worker/wander_worker/ply.py",
     ),
     "worker/modal_lhm.py": (
+        "worker/stages/lhm_resources.py",
+        "worker/stages/lhm_execution.py",
+        "worker/stages/lhm_recovery.py",
         "worker/stages/lhm_registration.py",
         "worker/stages/lhm_person.py",
         "worker/stages/lhm_animate.py",
@@ -158,6 +161,9 @@ def input_identity(path):
 def command_identity(command, root, source_selection=None):
     """Allowlisted direct worker commands: paths never establish a changed hypothesis."""
     root = Path(root)
+    # Detachment changes client lifetime, not the inference identity or retry allowance.
+    if list(command[1:3]) == ["run", "--detach"]:
+        command = [*command[:2], *command[3:]]
     if len(command) < 3 or command[1] != "run" or command[2] not in CODE_FILES:
         raise ValueError("Unregistered paid worker command; add its identity policy before launch")
     entry = command[2]
@@ -189,9 +195,19 @@ def command_identity(command, root, source_selection=None):
                 not number.is_integer() or not 0 <= number <= 3600
             ):
                 raise ValueError("Execution timeout must be an integer from 0 to 3600")
+            if (
+                flag == "--execution-timeout"
+                and entry == "worker/modal_lhm.py"
+                and not 1 <= number <= 1800
+            ):
+                raise ValueError("Native LHM execution timeout must be from 1 to 1800")
             if flag == "--registration-sample" and (not number.is_integer() or number < 0):
                 raise ValueError("Registration sample must be a nonnegative integer")
             parameters["options"][flag] = number
+        elif flag == "--gpu":
+            if entry != "worker/modal_lhm.py" or value not in {"L4", "H100"}:
+                raise ValueError("Native LHM GPU must be L4 or H100")
+            parameters["options"][flag] = value
         elif flag in TEXT_FLAGS:
             parameters["options"][flag] = value
         elif flag == "--only":
