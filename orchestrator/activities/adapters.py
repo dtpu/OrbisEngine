@@ -671,12 +671,21 @@ def flags(settings: dict[str, Any]) -> list[str]:
     return rendered
 
 
+# The only legacy stage that exists solely in run_clip.py's multiperson graph. The per-person
+# stages are named `lhm_frozen_00`, `lhm_motion_00`, `package_people` there and `lhm_frozen`,
+# `lhm_motion`, `package` in the single-person one -- and it is the single-person names the
+# orchestrator wants, because it does its own fan-out: each person is a node with its own
+# attempt directory, its own materialized `prepared-person`, and one person in it. Asking for
+# the multiperson graph for those stages names something it does not contain.
+MULTIPERSON_STAGES = frozenset({"tracks"})
+
+
 def legacy_people_flags(options: dict[str, Any]) -> list[str]:
     """Ask the legacy pipeline for the graph shape this run was created with.
 
-    run_clip.py builds a single-person graph unless it is told otherwise, and stages such as
-    `tracks` exist only in the multiperson graph. Without this the command names a stage its own
-    graph does not contain and reports "unknown stage(s)".
+    run_clip.py builds a single-person graph unless it is told otherwise, and `tracks` exists
+    only in the multiperson graph. Without this the command names a stage its own graph does
+    not contain and reports "unknown stage(s)".
     """
     people = options.get("people")
     if isinstance(people, int) and people > 1:
@@ -783,7 +792,8 @@ class LegacyPipelineAdapter:
             "--one-shot",
             "--no-publish",
         ]
-        command += legacy_people_flags(context.request.options)
+        if self.legacy_stage in MULTIPERSON_STAGES:
+            command += legacy_people_flags(context.request.options)
         command += legacy_parameter_flags(context.request.definition, context.request.parameters)
         return StageExecution(
             command=tuple(command),
