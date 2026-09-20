@@ -1,6 +1,7 @@
 """Persistent allowance for runner-controlled paid Modal executions.
 
-The three-execution ceiling is per original source SHA and logical stage, across candidates.
+The default three-execution ceiling is per original source SHA and logical stage, across candidates.
+A saved, evidence-bound authorization can permit exactly one fourth execution for one such scope.
 Inpainting operations share one allowance; individual LHM track suffixes have separate allowances.
 This does not count direct experiment scripts, SSH fine-tuning, OpenAI, or Marble generation.
 The orchestrator must account for those separately. Costs here are evidence, not dollar budgets.
@@ -224,6 +225,25 @@ def command_identity(command, root, source_selection=None):
     return parameters, code, outputs
 
 
+def _validate_scope(source, operation):
+    if not isinstance(source, str) or not re.fullmatch(r"[0-9a-f]{64}", source):
+        raise ValueError("Original source SHA-256 is required for paid execution")
+    if not isinstance(operation, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", operation):
+        raise ValueError("Concrete paid stage is required")
+
+
+def _authorization_evidence(path, expected=None):
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError("Extra authorization requires readable nonempty saved evidence")
+        actual = sha256_file(path)
+    except (OSError, ValueError):
+        raise ValueError("Extra authorization requires readable nonempty saved evidence") from None
+    if expected is not None and actual != expected:
+        raise ValueError("Extra authorization evidence SHA-256 changed")
+    return actual
+
+
 class StageAttempts:
     def __init__(self, path):
         self.path = Path(path)
@@ -276,6 +296,47 @@ class StageAttempts:
             for alias, canonical in aliases.items()
         ):
             raise ValueError("Invalid paid-stage source aliases")
+        authorizations = data.get("extraExecutionAuthorizations", [])
+        if not isinstance(authorizations, list):
+            raise ValueError("Malformed extra execution authorizations")  # noqa: TRY004 - persisted data
+        auth_by_scope, auth_ids, evidence_hashes, evidence_paths = {}, set(), set(), set()
+        for auth in authorizations:
+            if not isinstance(auth, dict):
+                raise ValueError("Malformed extra execution authorization")  # noqa: TRY004
+            _validate_scope(auth.get("sourceSha256"), auth.get("stage"))
+            scope = auth["sourceSha256"], auth["stage"]
+            if (
+                auth["sourceSha256"] in aliases
+                or logical_stage(auth["stage"]) != auth["stage"]
+                or not isinstance(auth.get("id"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", auth["id"])
+                or auth["id"] in auth_ids
+                or scope in auth_by_scope
+                or type(auth.get("maxExecutions")) is not int
+                or auth["maxExecutions"] != 4
+                or not isinstance(auth.get("evidence"), str)
+                or "\x00" in auth["evidence"]
+                or not Path(auth["evidence"]).is_absolute()
+                or auth["evidence"] in evidence_paths
+                or not isinstance(auth.get("evidenceSha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", auth["evidenceSha256"])
+                or auth["evidenceSha256"] in evidence_hashes
+                or not isinstance(auth.get("reason"), str)
+                or not auth["reason"].strip()
+                or len(auth["reason"]) > 4096
+                or not isinstance(auth.get("priorAttemptIds"), list)
+                or len(auth["priorAttemptIds"]) != MAX_EXECUTIONS
+                or any(not isinstance(item, str) for item in auth["priorAttemptIds"])
+                or len(set(auth["priorAttemptIds"])) != MAX_EXECUTIONS
+                or type(auth.get("atEpoch")) not in (int, float)
+                or not math.isfinite(auth["atEpoch"])
+                or auth["atEpoch"] <= 0
+            ):
+                raise ValueError("Malformed or duplicate extra execution authorization")
+            auth_by_scope[scope] = auth
+            auth_ids.add(auth["id"])
+            evidence_hashes.add(auth["evidenceSha256"])
+            evidence_paths.add(auth["evidence"])
         identifiers, counts, direct_claim_sources = set(), {}, set()
         for attempt in data["attempts"]:
             if not isinstance(attempt, dict):
@@ -316,10 +377,74 @@ class StageAttempts:
             identifiers.add(attempt["id"])
             key = claim["sourceSha256"], claim["stage"]
             counts[key] = counts.get(key, 0) + 1
-            if counts[key] > MAX_EXECUTIONS or claim.get("number") != counts[key]:
+            authorization = auth_by_scope.get(key)
+            maximum = authorization["maxExecutions"] if authorization else MAX_EXECUTIONS
+            if counts[key] > maximum or claim.get("number") != counts[key]:
                 raise ValueError("Invalid saved paid-stage execution count")
+            if counts[key] > MAX_EXECUTIONS:
+                if claim.get("authorizationId") != authorization["id"]:
+                    raise ValueError("Fourth execution lacks matching scoped authorization")
+            elif "authorizationId" in claim:
+                raise ValueError("Extra authorization can bind only the fourth execution")
+        for scope, auth in auth_by_scope.items():
+            prior = [
+                item
+                for item in data["attempts"]
+                if (item["claim"]["sourceSha256"], item["claim"]["stage"]) == scope
+            ][:MAX_EXECUTIONS]
+            if [item["id"] for item in prior] != auth["priorAttemptIds"] or any(
+                item["events"][-1]["status"] not in {"completed", "failed"} for item in prior
+            ):
+                raise ValueError(
+                    "Extra authorization requires three matching terminal prior attempts"
+                )
         if direct_claim_sources.intersection(aliases):
             raise ValueError("Cannot alias a source hash that already owns paid-stage claims")
+
+    def authorize_one_extra(self, source, operation, evidence, reason):
+        """Record explicit external approval for one fourth execution, never reset history."""
+        _validate_scope(source, operation)
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 4096:
+            raise ValueError("Extra execution authorization requires a nonempty bounded reason")
+        if not isinstance(evidence, (str, Path)) or not str(evidence).strip():
+            raise ValueError("Extra execution authorization requires saved evidence")
+        evidence = Path(evidence).resolve()
+        evidence_sha = _authorization_evidence(evidence)
+        stage = logical_stage(operation)
+        with self._locked() as data:
+            canonical = data.get("sourceAliases", {}).get(source, source)
+            prior = [
+                item
+                for item in data["attempts"]
+                if (item["claim"]["sourceSha256"], item["claim"]["stage"]) == (canonical, stage)
+            ]
+            if len(prior) != MAX_EXECUTIONS or any(
+                item["events"][-1]["status"] not in {"completed", "failed"} for item in prior
+            ):
+                raise ValueError(
+                    "Extra execution requires exactly three reconciled terminal attempts"
+                )
+            authorizations = data.setdefault("extraExecutionAuthorizations", [])
+            if any(
+                (item["sourceSha256"], item["stage"]) == (canonical, stage)
+                or item["evidenceSha256"] == evidence_sha
+                or item["evidence"] == str(evidence)
+                for item in authorizations
+            ):
+                raise ValueError("Duplicate extra execution authorization or reused evidence")
+            authorization = {
+                "id": uuid.uuid4().hex,
+                "sourceSha256": canonical,
+                "stage": stage,
+                "maxExecutions": 4,
+                "evidence": str(evidence),
+                "evidenceSha256": evidence_sha,
+                "reason": reason.strip(),
+                "priorAttemptIds": [item["id"] for item in prior],
+                "atEpoch": time.time(),
+            }
+            authorizations.append(authorization)
+        return authorization
 
     def begin(
         self,
@@ -333,10 +458,7 @@ class StageAttempts:
         log,
         results,
     ):
-        if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
-            raise ValueError("Original source SHA-256 is required for paid execution")
-        if not isinstance(operation, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", operation):
-            raise ValueError("Concrete paid stage is required")
+        _validate_scope(source_sha256, operation)
         if (
             not isinstance(parameters, dict)
             or not isinstance(code_version, dict)
@@ -358,9 +480,23 @@ class StageAttempts:
                 if item["claim"]["sourceSha256"] == source_sha256
                 and item["claim"]["stage"] == stage
             ]
-            if len(prior) >= MAX_EXECUTIONS:
+            authorization = next(
+                (
+                    item
+                    for item in data.get("extraExecutionAuthorizations", [])
+                    if (item["sourceSha256"], item["stage"]) == (source_sha256, stage)
+                ),
+                None,
+            )
+            maximum = authorization["maxExecutions"] if authorization else MAX_EXECUTIONS
+            if len(prior) >= maximum:
                 raise ValueError(
-                    "Paid-stage execution allowance exhausted (three total per original source/stage)"
+                    "Paid-stage execution allowance exhausted (three total per original source/stage; "
+                    "at most one explicitly authorized fourth execution)"
+                )
+            if len(prior) == MAX_EXECUTIONS:
+                _authorization_evidence(
+                    Path(authorization["evidence"]), authorization["evidenceSha256"]
                 )
             if any(item["events"][-1]["status"] in {"pending", "unknown"} for item in prior):
                 raise ValueError(
@@ -406,6 +542,8 @@ class StageAttempts:
                     }
                 ],
             }
+            if len(prior) == MAX_EXECUTIONS:
+                attempt["claim"]["authorizationId"] = authorization["id"]
             data["attempts"].append(attempt)
         return attempt
 

@@ -228,6 +228,147 @@ class StageAttemptTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "source aliases"):
                     self.begin()
 
+    def three_terminal(self, operation="clean"):
+        for number in range(1, 4):
+            self.finish(self.begin(operation, number, hypothesis=f"Measured change {number}"))
+
+    def authorize(self, operation="clean", source=SOURCE, evidence=None):
+        return self.ledger.authorize_one_extra(
+            source,
+            operation,
+            evidence or self.log,
+            "Explicit approval for one additional execution",
+        )
+
+    def test_extra_authorization_preserves_prior_and_allows_only_fourth(self):
+        self.three_terminal()
+        before = json.loads(self.ledger.path.read_text())["attempts"]
+        authorization = self.authorize()
+        self.assertEqual(json.loads(self.ledger.path.read_text())["attempts"], before)
+        # Logical inpainting aliases consume the same exception.
+        fourth = self.begin("clean_multi", 4, hypothesis="Measured revised body mask")
+        self.assertEqual(fourth["claim"]["number"], 4)
+        self.assertEqual(fourth["claim"]["authorizationId"], authorization["id"])
+        self.finish(fourth)
+        with self.assertRaisesRegex(ValueError, "exhausted"):
+            self.begin("clean_first", 5, hypothesis="Another mask")
+        saved = json.loads(self.ledger.path.read_text())
+        self.assertEqual(saved["attempts"][:3], before)
+        self.assertEqual([a["claim"]["number"] for a in saved["attempts"]], [1, 2, 3, 4])
+        self.assertEqual(saved["extraExecutionAuthorizations"][0]["maxExecutions"], 4)
+        self.assertEqual(
+            saved["extraExecutionAuthorizations"][0]["evidence"], str(self.log.resolve())
+        )
+
+    def test_extra_authorization_requires_three_terminal_and_blocks_pending(self):
+        with self.assertRaisesRegex(ValueError, "three reconciled terminal"):
+            self.authorize()
+        for number in [1, 2]:
+            self.finish(self.begin("clean", number, hypothesis=f"Changed {number}"))
+        third = self.begin("clean", 3, hypothesis="Changed 3")
+        with self.assertRaisesRegex(ValueError, "three reconciled terminal"):
+            self.authorize()
+        self.finish(third, status="unknown")
+        with self.assertRaisesRegex(ValueError, "three reconciled terminal"):
+            self.authorize()
+        self.ledger.reconcile(
+            third["id"], status="failed", evidence=self.log, reason="Observed failure"
+        )
+        self.authorize()
+        fourth = self.begin("clean", 4, hypothesis="Changed 4")
+        with self.assertRaises(ValueError):
+            self.begin("clean", 5, hypothesis="Changed 5")
+        self.finish(fourth)
+
+    def test_extra_authorization_does_not_relax_retry_identity(self):
+        self.three_terminal()
+        self.authorize()
+        with self.assertRaisesRegex(ValueError, "explicit new"):
+            self.begin("clean", 4)
+        with self.assertRaisesRegex(ValueError, "new hypothesis"):
+            self.begin("clean", 4, hypothesis="Measured change 3")
+        with self.assertRaisesRegex(ValueError, "parameters or code"):
+            self.begin("clean", 3, hypothesis="A distinct stated hypothesis")
+
+    def test_extra_authorization_rejects_duplicates_and_reused_evidence(self):
+        self.three_terminal()
+        self.authorize()
+        other = self.root / "other-approval.txt"
+        other.write_text("different approval")
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            self.authorize(evidence=other)
+        self.three_terminal("pi3x")
+        with self.assertRaisesRegex(ValueError, "reused evidence"):
+            self.authorize("pi3x")
+        other.write_bytes(self.log.read_bytes())
+        with self.assertRaisesRegex(ValueError, "reused evidence"):
+            self.authorize("pi3x", evidence=other)
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin("pi3x", 4, hypothesis="Fourth without authorization")
+        other.write_text("separate approval")
+        with self.assertRaisesRegex(ValueError, "three reconciled terminal"):
+            self.authorize(source="b" * 64, evidence=other)
+
+    def test_extra_authorization_resolves_canonical_source_alias(self):
+        self.three_terminal()
+        data = json.loads(self.ledger.path.read_text())
+        data["sourceAliases"] = {"b" * 64: SOURCE}
+        self.ledger.path.write_text(json.dumps(data))
+        authorization = self.authorize(source="b" * 64)
+        self.assertEqual(authorization["sourceSha256"], SOURCE)
+        self.begin("clean", 4, hypothesis="Changed final mask")
+
+    def test_extra_authorization_rejects_bad_arguments_and_changed_evidence(self):
+        self.three_terminal()
+        for source, operation, evidence, reason in (
+            ("bad", "clean", self.log, "approved"),
+            (SOURCE, "*", self.log, "approved"),
+            (SOURCE, "clean", None, "approved"),
+            (SOURCE, "clean", self.root / "missing", "approved"),
+            (SOURCE, "clean", self.root, "approved"),
+            (SOURCE, "clean", self.log, "  "),
+        ):
+            with (
+                self.subTest(source=source, operation=operation, evidence=evidence),
+                self.assertRaises(ValueError),
+            ):
+                self.ledger.authorize_one_extra(source, operation, evidence, reason)
+        self.authorize()
+        self.log.write_text("changed approval evidence")
+        with self.assertRaisesRegex(ValueError, "SHA-256 changed"):
+            self.begin("clean", 4, hypothesis="Changed mask")
+
+    def test_malformed_saved_authorizations_fail_closed(self):
+        self.three_terminal()
+        self.authorize()
+        original = self.ledger.path.read_text()
+        for key, value in (
+            ("sourceSha256", "b" * 64),
+            ("stage", "pi3x"),
+            ("stage", "clean"),
+            ("id", "invalid"),
+            ("evidenceSha256", None),
+            ("evidenceSha256", "not-a-hash"),
+            ("evidence", "relative.txt"),
+            ("reason", ""),
+            ("priorAttemptIds", []),
+            ("maxExecutions", 5),
+            ("atEpoch", float("nan")),
+        ):
+            with self.subTest(key=key, value=value):
+                data = json.loads(original)
+                data["extraExecutionAuthorizations"][0][key] = value
+                self.ledger.path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    self.begin("clean", 4, hypothesis="Changed mask")
+        self.ledger.path.write_text(original)
+        fourth = self.begin("clean", 4, hypothesis="Changed mask")
+        data = json.loads(self.ledger.path.read_text())
+        data["attempts"][-1]["claim"]["authorizationId"] = "f" * 32
+        self.ledger.path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "matching scoped authorization"):
+            self.finish(fourth)
+
 
 class CommandIdentityTests(unittest.TestCase):
     def test_camera_anchor_count_changes_paid_identity(self):
