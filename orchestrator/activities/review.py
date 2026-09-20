@@ -22,7 +22,7 @@ from temporalio import activity
 from orchestrator.agent.contracts import AgentArtifact, AgentAttemptSummary, AgentTaskPacket
 from orchestrator.agent.harness import DECISION_FILE, HarnessAgent
 from orchestrator.agent.tools import AskHuman, RequestRetry, SubmitVerdict
-from orchestrator.activities.stage import attempt_identifier
+from orchestrator.activities.stage import attempt_identifier, beat
 from orchestrator.artifacts import Archive, LocalCAS, UploadOutbox, freeze_attempt
 from orchestrator.contracts import StageDefinition
 from orchestrator.database import ArtifactRecord, AttemptRecord, OperatorMessageRecord
@@ -317,7 +317,11 @@ class ReviewActivities:
             if stale.exists():
                 shutil.rmtree(stale)
         outputs.mkdir(parents=True, exist_ok=True)
+        # Copying an attempt's outputs out of the store is the slow part of setting up a
+        # review; say we are alive on either side of it.
+        beat()
         roles = self._hydrate_outputs(artifacts, outputs, attempt_files)
+        beat()
         before = _snapshot(outputs)
         packet = AgentTaskPacket(
             run_id=request.run_id,
@@ -361,11 +365,13 @@ class ReviewActivities:
             },
             permitted_tools=PERMITTED,
         )
+        beat()
         outcome = self.harness.run(
             packet,
             scratch,
             render_instructions(packet, criteria, request.attempt_status, todo),
             session=session,
+            heartbeat=beat,
         )
         if outcome.result.status == "stalled":
             forget_session(reviews)
