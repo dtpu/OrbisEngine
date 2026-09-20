@@ -61,7 +61,7 @@ afterEach(() => {
     else delete globalThis[key];
   }
 });
-async function fixture(playing = true) {
+async function fixture(playing = true, options = {}) {
   const requests = [];
   const events = [];
   const live = new Set();
@@ -70,7 +70,7 @@ async function fixture(playing = true) {
   const session = createSceneSession({
     renderer: {},
     template: { content: { cloneNode: () => new Element() } },
-    initial: new URLSearchParams({ demo: 'A' }),
+    initial: new URLSearchParams({ demo: 'A', ...options }),
     clips: ['A', 'B', 'C', 'D'].map((id) => ({ id })),
     createRuntime({ search, scope }) {
       const id = search.get('demo');
@@ -101,7 +101,7 @@ async function fixture(playing = true) {
           runtime.deactivateCalls++;
         },
       };
-      const request = { id, scope, preparation, runtime, activations };
+      const request = { id, search, scope, preparation, runtime, activations };
       requests.push(request);
       live.add(request);
       maxLive = Math.max(maxLive, live.size);
@@ -123,6 +123,16 @@ async function fixture(playing = true) {
     resolve: () => requests.at(-1).preparation.resolve(requests.at(-1).runtime),
   };
 }
+
+test('scene switches retain the interaction opt-in without leaking scene-specific placement', async () => {
+  const f = await fixture(true, { interact: '1', interactObject: 'prop', pos: '1,2,3' });
+  const switched = f.session.select('B');
+  expect(f.latest().search.get('interact')).toBe('1');
+  expect(f.latest().search.get('interactObject')).toBe('prop');
+  expect(f.latest().search.has('pos')).toBe(false);
+  f.resolve();
+  await switched;
+});
 
 for (const outcome of ['resolve', 'reject']) {
   test(`superseding stalled preparation disposes immediately and ignores late ${outcome}`, async () => {
