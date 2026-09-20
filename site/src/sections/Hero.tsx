@@ -2,6 +2,7 @@ import Section from '../components/Section';
 import Button from '../components/Button';
 import VideoLoop from '../components/VideoLoop';
 import { Eyebrow, H1 } from '../components/Heading';
+import { DEMO_URL } from '../content/links';
 import styles from './Hero.module.css';
 
 const POSTER = '/media/elevator/poster.jpg';
@@ -17,7 +18,7 @@ export default function Hero() {
           replaying exactly as recorded.
         </p>
         <div className={styles.actions}>
-          <Button href="/demo.html">Try the demo</Button>
+          <Button href={DEMO_URL}>Try the demo</Button>
           <Button href="#how-it-works" variant="secondary">
             See how it works
           </Button>
