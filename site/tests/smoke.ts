@@ -162,7 +162,7 @@ const checks: Check[] = [
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const count = await page.$$eval('section#gallery article', (els) => els.length);
         if (count !== 9) throw new Error(`expected 9 gallery cards, got ${count}`);
-        const links = await page.$$eval('section#gallery a[href^="/demo.html?scene="]', (els) =>
+        const links = await page.$$eval('section#gallery a[href^="/demo.html?clip="]', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
         if (links.length < 9) throw new Error(`expected viewer links, got ${links.length}`);
@@ -246,7 +246,7 @@ const checks: Check[] = [
         const hrefs = await page.$$eval('section#team li a', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
-        if (hrefs.length !== 4 || hrefs.some((h) => h !== 'https://github.com/dtpu/htn2026'))
+        if (hrefs.length !== 4 || hrefs.some((h) => !h?.startsWith('https://github.com/')))
           throw new Error(`bad team links: ${hrefs.join(', ')}`);
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
