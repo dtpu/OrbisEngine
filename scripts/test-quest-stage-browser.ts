@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 
-const source = await Bun.file(new URL('../src/quest-view-panel.ts', import.meta.url)).text();
+const source = await Bun.file(new URL('../src/quest-stage.ts', import.meta.url)).text();
 const module = new Bun.Transpiler({ loader: 'ts' }).transformSync(source);
 let active = false;
 let stale = false;
@@ -20,7 +20,7 @@ const server = Bun.serve({
   port: 0,
   async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname === '/panel.js')
+    if (url.pathname === '/stage.js')
       return new Response(module, { headers: { 'Content-Type': 'application/javascript' } });
     if (url.pathname === '/api/quest-view') {
       requests++;
@@ -43,7 +43,7 @@ const server = Bun.serve({
       });
     }
     return new Response(
-      `<!doctype html><html><head><style>body{margin:0;background:#06090c;color:white;font:14px system-ui}#stage{position:relative;height:calc(100dvh - 45px);width:100%}#toggle{height:40px}#bar{position:absolute;bottom:15px;height:45px;left:16px;right:16px;background:#252a2d;border-radius:8px}</style></head><body><button id="toggle">Quest view</button><main id="stage"><div id="bar">Playback controls</div></main><script type="module">import {mountQuestViewPanel} from '/panel.js';window.presenting=false;window.disposePanel=mountQuestViewPanel({stage:document.querySelector('#stage'),toggle:document.querySelector('#toggle'),isLocalPresenting:()=>window.presenting});</script></body></html>`,
+      `<!doctype html><html><head><style>body{margin:0;background:#06090c;color:white;font:14px system-ui}#stage{position:relative;height:calc(100dvh - 45px);width:100%;background:#345}</style></head><body><div style="height:45px">Header</div><main id="stage"><p id="viewer">Desktop viewer</p></main><script type="module">import {mountQuestStage} from '/stage.js';window.presenting=false;window.disposeStage=mountQuestStage({stage:document.querySelector('#stage'),isLocalPresenting:()=>window.presenting});</script></body></html>`,
       { headers: { 'Content-Type': 'text/html' } },
     );
   },
@@ -69,9 +69,17 @@ try {
     return canvas.toDataURL('image/jpeg').split(',')[1];
   });
   jpeg = Buffer.from(encoded, 'base64');
-  const panel = page.locator('.quest-view-panel');
-  const status = panel.locator('[role=status]');
-  const picture = panel.locator('img');
+  const view = page.locator('.quest-stage');
+  const status = view.locator('[role=status]');
+  const picture = view.locator('img');
+  const shown = () => view.evaluate((element) => !(element as HTMLElement).hidden);
+  // Playwright's isVisible ignores overlap, so ask what is actually on top at the stage centre.
+  const onTop = () =>
+    page.evaluate(() => {
+      const rect = document.querySelector('#stage')!.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit?.closest('.quest-stage') ? 'quest' : hit?.id || hit?.tagName || 'none';
+    });
   async function expectStatus(value: string) {
     await page.waitForFunction(
       (text) => document.querySelector('[role=status]')?.textContent === text,
@@ -81,37 +89,30 @@ try {
   async function live() {
     await expectStatus('Live');
     await page.waitForFunction(() => {
-      const image = document.querySelector('img')!;
-      return (
-        !image.hidden && image.complete && image.naturalWidth === 320 && image.naturalHeight === 240
-      );
+      const image = document.querySelector<HTMLImageElement>('.quest-stage img')!;
+      return image.complete && image.naturalWidth === 320 && image.naturalHeight === 240;
     });
+    assert.ok(await shown(), 'a live image must replace the desktop viewer');
   }
   await expectStatus('Waiting for Quest');
-  assert.equal(await page.locator('#toggle').getAttribute('aria-expanded'), 'true');
-  assert.equal(
-    await page.locator('#toggle').getAttribute('aria-controls'),
-    await panel.getAttribute('id'),
-  );
+  assert.ok(!(await shown()), 'nothing to show means the desktop viewer stays visible');
+  assert.notEqual(await onTop(), 'quest');
   assert.equal(await status.getAttribute('aria-live'), 'polite');
   active = true;
   await live();
   assert.equal(await picture.evaluate((image) => getComputedStyle(image).objectFit), 'contain');
-  const desktopBounds = await panel.boundingBox();
-  assert.ok(desktopBounds && desktopBounds.width >= 370 && desktopBounds.width <= 382);
-  const desktopPicture = await panel.locator('.quest-view-picture').boundingBox();
-  assert.ok(desktopPicture);
-  assert.ok(Math.abs(desktopPicture!.width / desktopPicture!.height - 4 / 3) < 0.03);
-  await page.getByRole('button', { name: 'Expand Quest view' }).click();
-  const expandedBounds = await panel.boundingBox();
-  assert.ok(
-    expandedBounds && expandedBounds.width > desktopBounds!.width && expandedBounds.width <= 542,
+  const stageBounds = await page.locator('#stage').boundingBox();
+  const viewBounds = await view.boundingBox();
+  assert.ok(stageBounds && viewBounds);
+  assert.deepEqual(
+    [viewBounds!.x, viewBounds!.y, viewBounds!.width, viewBounds!.height],
+    [stageBounds!.x, stageBounds!.y, stageBounds!.width, stageBounds!.height],
+    'the live view fills the stage',
   );
-  await page.getByRole('button', { name: 'Reduce Quest view' }).click();
-  assert.equal(await page.getByRole('button', { name: 'Expand Quest view' }).count(), 1);
+  assert.equal(await onTop(), 'quest', 'the live view covers the desktop viewer');
   autoFrames = true;
   const cadence = await page.evaluate(async () => {
-    const image = document.querySelector('.quest-view-panel img')!;
+    const image = document.querySelector('.quest-stage img')!;
     let updates = 0;
     let previous = image.getAttribute('src');
     const observer = new MutationObserver(() => {
@@ -140,11 +141,12 @@ try {
     `displayed FPS should be sane, got ${displayedRate}`,
   );
   await mkdir('.context/evidence/quest-debug', { recursive: true });
-  await page.screenshot({ path: '.context/evidence/quest-debug/quest-view-panel-desktop.png' });
+  await page.screenshot({ path: '.context/evidence/quest-debug/quest-stage-desktop.png' });
   emptyFrame = true;
   sequence++;
   await expectStatus('Waiting for Quest');
   assert.equal(await picture.getAttribute('src'), null);
+  assert.ok(!(await shown()), 'an empty frame hands the stage back to the desktop viewer');
   emptyFrame = false;
   await live();
   stale = true;
@@ -165,13 +167,6 @@ try {
   assert.equal(await picture.getAttribute('src'), null);
   failure = false;
   sequence++;
-  await live();
-  await page.getByRole('button', { name: 'Minimize Quest view' }).click();
-  assert.equal(await page.locator('#toggle').getAttribute('aria-expanded'), 'false');
-  const closedRequests = requests;
-  await page.waitForTimeout(450);
-  assert.equal(requests, closedRequests, 'closed panel must stop requests');
-  await page.locator('#toggle').click();
   await live();
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -198,73 +193,45 @@ try {
     (window as unknown as { presenting: boolean }).presenting = false;
   });
   await live();
+  // A new headset session invalidates the image from the old one before its frame arrives.
   session = 'quest-b';
   sequence = 1;
   delay = 400;
-  await page.waitForTimeout(210);
-  await page.locator('#toggle').click();
-  await page.waitForTimeout(500);
-  assert.equal(
-    await picture.getAttribute('src'),
+  await page.waitForFunction(
+    () => !document.querySelector<HTMLImageElement>('.quest-stage img')?.getAttribute('src'),
     null,
-    'late frame cannot repopulate a closed panel',
+    { timeout: 2000 },
   );
+  assert.ok(!(await shown()), 'a session change clears the old image');
   delay = 0;
-  await page.locator('#toggle').click();
   await live();
   await page.setViewportSize({ width: 320, height: 568 });
-  let bounds = await panel.boundingBox();
-  assert.ok(
-    bounds &&
-      bounds.x >= 0 &&
-      bounds.y >= 0 &&
-      bounds.x + bounds.width <= 320 &&
-      bounds.y + bounds.height <= 568,
-  );
-  await page.screenshot({ path: '.context/evidence/quest-debug/quest-view-panel-mobile.png' });
-  await page.setViewportSize({ width: 320, height: 180 });
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
-  bounds = await panel.boundingBox();
-  assert.ok(
-    bounds &&
-      bounds.width >= 220 &&
-      bounds.x >= 0 &&
-      bounds.y >= 0 &&
-      bounds.x + bounds.width <= 320 &&
-      bounds.y + bounds.height <= 180,
-    'panel must remain readable and fit a short stage',
+  const mobileStage = await page.locator('#stage').boundingBox();
+  const mobileView = await view.boundingBox();
+  assert.ok(mobileStage && mobileView);
+  assert.deepEqual(
+    [mobileView!.width, mobileView!.height],
+    [mobileStage!.width, mobileStage!.height],
+    'the live view keeps filling a narrow stage',
   );
-  for (const name of ['Expand Quest view', 'Minimize Quest view']) {
-    const button = page.getByRole('button', { name });
-    const buttonBounds = await button.boundingBox();
-    assert.ok(
-      buttonBounds &&
-        bounds &&
-        buttonBounds.x >= bounds.x &&
-        buttonBounds.y >= bounds.y &&
-        buttonBounds.x + buttonBounds.width <= bounds.x + bounds.width &&
-        buttonBounds.y + buttonBounds.height <= bounds.y + bounds.height,
-      `${name} must be inside short panel`,
-    );
-  }
-  await page.getByRole('button', { name: 'Expand Quest view' }).click();
-  await page.getByRole('button', { name: 'Reduce Quest view' }).click();
-  await page.screenshot({ path: '.context/evidence/quest-debug/quest-view-panel-short.png' });
+  await page.screenshot({ path: '.context/evidence/quest-debug/quest-stage-mobile.png' });
   await page.evaluate(() => {
-    (window as unknown as { disposePanel: () => void }).disposePanel();
+    (window as unknown as { disposeStage: () => void }).disposeStage();
   });
   const disposedRequests = requests;
   await page.waitForTimeout(450);
   assert.equal(requests, disposedRequests);
-  assert.equal(await panel.count(), 0);
+  assert.equal(await view.count(), 0);
+  assert.notEqual(await onTop(), 'quest');
   assert.deepEqual(errors, []);
   console.log(
-    `Quest view panel: waiting, JPEG render, ${cadence} applied updates/sec, displayed ${displayedRate} fps, stale/stop, errors, close, hidden, local XR, late response, responsive bounds, disposal passed.`,
+    `Quest stage: waiting, JPEG render, ${cadence} applied updates/sec, displayed ${displayedRate} fps, stale/stop, errors, hidden, local XR, session change, narrow stage, disposal passed.`,
   );
 } finally {
   await browser.close();
