@@ -192,9 +192,17 @@ class CommandTests(unittest.TestCase):
             {"dilate": "28", "moved_mask": True, "lama_px": "1280"},
         )
 
-    def test_a_failed_step_is_journalled_and_reported(self):
+    def test_starting_a_step_records_it_and_returns(self):
+        """Starting work is not waiting for it: the agent ends its turn and is woken."""
+        self.assertEqual(main(["step", "clean"]), 0)
+        journal = Journal(self.run_dir)
+        started = [e for e in journal.entries() if e.kind == "step.started"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0].data["step"], "clean")
+
+    def test_a_step_run_here_reports_what_became_of_it(self):
         """The clip here is four bytes, so the stage really does fail."""
-        code = main(["step", "clean"])
+        code = main(["step", "--wait", "clean"])
         self.assertEqual(code, 1)
         journal = Journal(self.run_dir)
         self.assertEqual(journal.last_status("clean"), "failed")
