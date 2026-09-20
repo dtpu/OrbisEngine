@@ -5,6 +5,10 @@ The current writer is `scripts/package_objects.py`; `fourd.html` plays its baked
 The automatic pipeline detects thrown objects. Other motion labels describe the contract,
 but do not imply that the pipeline can reconstruct arbitrary doors, bags, or vehicles.
 
+For cooking clips, follow the [kitchen workflow](kitchen-workflow.md): inventory handled props
+before cleaning, preserve their source observations, and review each interaction separately.
+The current kitchen is a useful reference with recorded gaps, including the missing Brita pitcher.
+
 ## Files and discovery
 
 A package normally lives beside the multiperson manifest:
