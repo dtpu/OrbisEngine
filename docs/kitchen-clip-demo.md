@@ -15,7 +15,7 @@ does not require Modal credentials or a new reconstruction run.
 - [Clip picker: kitchen selected](http://127.0.0.1:5399/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
 - [Kitchen with inferred surroundings](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/index.html)
 - [Current kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/room-context/preview.mp4)
-- [Kitchen scene and review](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
+- [Earlier kitchen repair notes](http://127.0.0.1:5399/reviews/kitchen-continuation/index.html)
 - [Previous kitchen preview](http://127.0.0.1:5399/reviews/kitchen-continuation/actor-pan-door-preview.mp4)
 - [Accepted gym scene](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail)
 - [Gym preview video](http://127.0.0.1:5399/reviews/gym-repair/gym-contact-wip.mp4)
@@ -51,11 +51,14 @@ Brita and bag motion remain absent. Room holes, static fragments, approximate pa
 and imperfect cabinet/wall contact remain documented. This is the useful reviewed reference,
 with those limitations preserved. The accepted gym and its original assets are unchanged.
 
-Media lives in private bucket `wander-shared-797639045717`, outside Git. The verified delivery
-uses viewer/archive snapshot `2884fb59-fec1-4a16-8a37-bd6115a13f6e`; its viewer manifest is
-`viewer/snapshots/2884fb59-fec1-4a16-8a37-bd6115a13f6e.json`. All 65 updated/new viewer assets
-passed uploaded hash/size checks. Author evidence and retained attempts are under
-`evidence/kitchen-actor-pan-v4/` in the archive snapshot.
+Media lives in private bucket `wander-shared-797639045717`, outside Git. The current surroundings
+delivery uses viewer/archive snapshot `1a852341-85b3-4179-8ab6-cb964dc5d504`; its viewer manifest is
+`viewer/snapshots/1a852341-85b3-4179-8ab6-cb964dc5d504.json`. All six new/updated viewer files passed
+remote checksum/size checks and fresh-download hashing. The 16,951 unaffected viewer entries and
+all 28,303 prior archive entries are preserved. New evidence is under
+`evidence/kitchen-room-context-v1/`. The earlier actor repair, spending receipts and accepted gym
+remain preserved from snapshot `2884fb59-fec1-4a16-8a37-bd6115a13f6e` and its
+`evidence/kitchen-actor-pan-v4/` archive namespace.
 
 For follow-up work, read the [reusable kitchen workflow](kitchen-workflow.md),
 [delivery and validation record](kitchen-continuation.md), [object contract](objects.md),

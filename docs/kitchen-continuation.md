@@ -327,3 +327,11 @@ a playback loop. Full decoding passes, duration is 50.730 seconds, and all 2,380
 packet hashes, PTS/DTS, durations and priming values match. The preview labels the surroundings
 as inferred and retains the original-recording inset. Local filtering, coverage, walking and
 preview evidence is under `.context/evidence/kitchen-room-coverage/`.
+
+Publication is verified in viewer/archive snapshot `1a852341-85b3-4179-8ab6-cb964dc5d504` in
+`wander-shared-797639045717`. The six new/updated viewer files match their remote SHA-256,
+byte sizes and freshly downloaded contents. All 16,951 unaffected viewer entries and 28,303
+prior archive entries remain unchanged. Filtering scripts, source bindings, comparisons and
+609 preview captures are retained under `evidence/kitchen-room-context-v1/`; the focused publish
+had no scanner exclusions. Local verification is
+`.context/evidence/kitchen-room-coverage/publication-verification.json`.
