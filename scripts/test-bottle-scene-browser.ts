@@ -23,6 +23,8 @@ await mkdir(output, { recursive: true });
 const liveVoice = process.env.WANDER_TEST_LIVE_VOICE === '1';
 if (liveVoice && !process.env.OPENAI_API_KEY) throw new Error('Live voice requires a server key.');
 const providerChecks: Array<{ status: number; code?: string; param?: string }> = [];
+// The default empty environment proves Enter VR remains usable when voice setup cannot mint a
+// secret. The metered provider call exists only behind WANDER_TEST_LIVE_VOICE=1.
 const middleware = createBottleAgentMiddleware(liveVoice ? process.env : {}, {
   fetch: async (url, init) => {
     const response = await fetch(url, init);
@@ -55,6 +57,7 @@ await new Promise<void>((resolve) => backend.listen(0, '127.0.0.1', resolve));
 const address = backend.address();
 if (!address || typeof address === 'string') throw new Error('No middleware test port');
 const backendOrigin = `http://127.0.0.1:${address.port}`;
+let voiceSessionRequests = 0;
 const browser = await chromium.launch({
   channel: 'chrome',
   headless: true,
@@ -132,6 +135,7 @@ try {
   }
   await page.route('**/api/bottle-agent/*', async (route) => {
     const request = route.request();
+    if (new URL(request.url()).pathname.endsWith('/session')) voiceSessionRequests++;
     const response = await fetch(`${backendOrigin}${new URL(request.url()).pathname}`, {
       method: request.method(),
       headers: { Origin: backendOrigin, 'Content-Type': 'application/json' },
@@ -193,63 +197,37 @@ try {
   assert.equal(initial.state.playing, true);
   assert.equal(initial.state.sceneId, 'elevator');
   assert.equal(await page.evaluate(() => window.wander.video.loop), false);
+  assert.equal(
+    await page.evaluate(
+      () =>
+        (window.wander as SceneDiagnostics).scene.getObjectByName('interaction-controls') ===
+        undefined,
+    ),
+    true,
+    'The floating interaction toolbar must not be present',
+  );
   const snapshot = () =>
     page.evaluate(() => (window.wander as SceneDiagnostics).interaction.snapshot());
-  const select = async (action: string) => {
-    await page.evaluate((action) => {
-      const w = window.wander as SceneDiagnostics;
-      const T = w.THREE;
-      const session = w.spark.renderer.xr.getSession() as SyntheticSession;
-      const source = session.inputSources[1];
-      const button = w.interaction.controls.group.children.find(
-        (o) => o.userData.action === action,
-      )!;
-      const target = button.getWorldPosition(new T.Vector3());
-      const head = w.spark.renderer.xr.getCamera().getWorldPosition(new T.Vector3());
-      const origin = head.clone().add(new T.Vector3(0.08, -0.12, -0.06).multiplyScalar(w.upm));
-      const matrix = new T.Matrix4()
-        .lookAt(origin, target, new T.Vector3(0, 1, 0))
-        .setPosition(origin);
-      const rig = w.scene.getObjectByName('xr-rig')!;
-      matrix.premultiply(rig.matrixWorld.clone().invert());
-      const position = new T.Vector3(),
-        rotation = new T.Quaternion(),
-        scale = new T.Vector3();
-      matrix.decompose(position, rotation, scale);
-      source.targetRaySpace._matrix = new Float32Array(
-        new T.Matrix4().compose(position, rotation, new T.Vector3(1, 1, 1)).elements,
-      );
-    }, action);
-    await frames(3);
-    await page.evaluate(async () => {
-      const session = window.wander.spark.renderer.xr.getSession() as SyntheticSession;
-      await new Promise<void>((resolve) =>
-        session.requestAnimationFrame((_time, frame) => {
-          session.dispatchEvent({
-            type: 'selectstart',
-            inputSource: session.inputSources[1],
-            frame,
-          } as unknown as Event);
-          session.dispatchEvent({
-            type: 'selectend',
-            inputSource: session.inputSources[1],
-            frame,
-          } as unknown as Event);
-          resolve();
-        }),
-      );
-    });
-    await frames(3);
-  };
-  await select('pause');
+  await page.waitForFunction(
+    (liveVoice) => {
+      const state = (window.wander as SceneDiagnostics).interaction.snapshot();
+      return liveVoice
+        ? state.voiceConnected
+        : !state.voiceStatus.startsWith('Connecting') && state.voiceStatus !== 'Mic off';
+    },
+    liveVoice,
+    { timeout: 30000 },
+  );
+  assert.equal((await snapshot()).voiceConnected, liveVoice);
+  assert.equal(voiceSessionRequests, 1, 'Enter VR must start one local microphone/session attempt');
+  await page.evaluate(() => (window.wander as SceneDiagnostics).interaction.control('pause'));
   const paused = await snapshot();
-  assert.equal(paused.playing, false, 'Controller ray must operate Pause');
+  assert.equal(paused.playing, false, 'Diagnostic pause setup must stop the recording');
   await frames(12);
   assert.equal((await snapshot()).recordingTime, paused.recordingTime);
-  await select('replay');
-  assert.equal((await snapshot()).playing, true);
-  assert.ok((await snapshot()).recordingTime < 1);
-  console.log('VR controls pause and replay the recording');
+  await page.evaluate(() => window.wander.play(true));
+  await page.waitForFunction(() => window.wander.playing);
+  console.log('Missing voice configuration does not block Enter VR or initial playback');
 
   await page.evaluate(() => window.wander.setTime(window.wander.dur - 0.25));
   await page.waitForFunction(() => !window.wander.playing);
@@ -259,7 +237,7 @@ try {
   assert.ok(ended.recordingTime > 9);
   console.log('Recording reaches its end once and remains stopped');
 
-  await select('reset');
+  await page.evaluate(() => (window.wander as SceneDiagnostics).interaction.replay(false));
   await page.evaluate(() => window.wander.setTime(2));
   // Anchor independently from the packaged head sidecar, transformed by the rendered person.
   const anchor = await page.evaluate(async () => {
@@ -293,7 +271,77 @@ try {
     );
     await frames(6);
   };
+  const armLiveAudio = async () => {
+    if (!liveVoice) return;
+    await page.waitForFunction(() => {
+      const internals = (window.wander as SceneDiagnostics).interaction as unknown as {
+        client: { audio: AudioContext | null; gain: GainNode | null; session: unknown };
+      };
+      return !!internals.client.audio && !!internals.client.gain && !!internals.client.session;
+    });
+    await page.evaluate(() => {
+      const internals = (window.wander as SceneDiagnostics).interaction as unknown as {
+        client: {
+          audio: AudioContext;
+          gain: GainNode;
+          session: {
+            transport: {
+              on(name: string, callback: (event: Record<string, unknown>) => void): void;
+            };
+          };
+        };
+      };
+      const analyzer = internals.client.audio.createAnalyser();
+      const measurement = {
+        analyzer,
+        gain: internals.client.gain,
+        completed: false,
+        peak: 0,
+        timer: 0,
+      };
+      measurement.gain.connect(measurement.analyzer);
+      const samples = new Float32Array(analyzer.fftSize);
+      measurement.timer = window.setInterval(() => {
+        analyzer.getFloatTimeDomainData(samples);
+        for (const sample of samples)
+          measurement.peak = Math.max(measurement.peak, Math.abs(sample));
+      }, 20);
+      internals.client.session.transport.on('*', (event) => {
+        if (event.type === 'response.done') measurement.completed = true;
+      });
+      (window as unknown as { __liveVoiceAudio?: typeof measurement }).__liveVoiceAudio =
+        measurement;
+    });
+  };
+  const measureLiveAudio = async () => {
+    if (!liveVoice) return null;
+    return page.evaluate(async () => {
+      const measurement = (
+        window as unknown as {
+          __liveVoiceAudio: {
+            analyzer: AnalyserNode;
+            gain: GainNode;
+            completed: boolean;
+            peak: number;
+            timer: number;
+          };
+        }
+      ).__liveVoiceAudio;
+      const start = performance.now();
+      while (
+        performance.now() - start < 12000 &&
+        (!measurement.completed || measurement.peak < 0.0001)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      clearInterval(measurement.timer);
+      measurement.gain.disconnect(measurement.analyzer);
+      Reflect.deleteProperty(window, '__liveVoiceAudio');
+      return { completed: measurement.completed, peak: measurement.peak };
+    });
+  };
   await headAt(0.55);
+  await armLiveAudio();
   await page.evaluate(() => window.wander.play(true));
   await headAt(0.34);
   assert.equal(
@@ -329,18 +377,6 @@ try {
   await page.screenshot({ path: `${output}/approached-xr.png` });
   console.log('Close approach interrupts playback; approved facing changes the paused body');
 
-  await select('microphone');
-  await page.waitForFunction(
-    () => {
-      const state = (window.wander as SceneDiagnostics).interaction.snapshot();
-      return (
-        state.voiceConnected ||
-        (!state.voiceStatus.startsWith('Connecting') && state.voiceStatus !== 'Mic off')
-      );
-    },
-    null,
-    { timeout: 30000 },
-  );
   if (liveVoice) {
     assert.equal(
       (await snapshot()).voiceConnected,
@@ -351,49 +387,59 @@ try {
         rtc: await page.evaluate(() => (window as unknown as VoiceProbeWindow).__voiceChecks),
       }),
     );
-    const voice = await page.evaluate(async () => {
-      const scene = (window.wander as SceneDiagnostics).interaction;
-      const internals = scene as unknown as {
-        client: {
-          audio: AudioContext;
-          gain: GainNode;
-          session: {
-            transport: {
-              on(name: string, callback: (event: Record<string, unknown>) => void): void;
-            };
-          };
-        };
-      };
-      const analyzer = internals.client.audio.createAnalyser();
-      internals.client.gain.connect(analyzer);
-      const samples = new Float32Array(analyzer.fftSize);
-      let peak = 0;
-      let completed = false;
-      internals.client.session.transport.on('*', (event) => {
-        if (event.type === 'response.done') completed = true;
-      });
-      const start = performance.now();
-      while (performance.now() - start < 12000 && (!completed || peak < 0.0001)) {
-        analyzer.getFloatTimeDomainData(samples);
-        for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      internals.client.gain.disconnect(analyzer);
-      return { completed, peak };
-    });
+    const voice = await measureLiveAudio();
     await writeFile(`${output}/live-voice.json`, JSON.stringify(voice, null, 2));
-    assert.ok(voice.completed && voice.peak > 0.0001, JSON.stringify(voice));
-    console.log(
-      'Live provider: ephemeral credential, SDK connection, generated audio through spatial graph',
-    );
-    await select('end');
-    assert.equal((await snapshot()).voiceConnected, false);
+    assert.ok(voice && voice.completed && voice.peak > 0.0001, JSON.stringify(voice));
+    console.log('Live provider: auto-started voice and generated audio through the spatial graph');
   } else {
     assert.equal((await snapshot()).voiceConnected, false);
     console.log('Missing voice configuration is visible without blocking local interaction');
   }
 
-  await select('reset');
+  const setXrButton = async (hand: 'left' | 'right', index: number, pressed: boolean) => {
+    await page.evaluate(
+      ({ hand, index, pressed }) => {
+        window.__fakeXR.buttons[hand][index] = pressed ? 1 : 0;
+      },
+      { hand, index, pressed },
+    );
+    await frames(4);
+  };
+  await page.evaluate(() => {
+    for (const hand of ['left', 'right'] as const) {
+      for (let index = 0; index < 6; index++) window.__fakeXR.buttons[hand][index] ??= 0;
+    }
+  });
+  await setXrButton('left', 4, false);
+  const beforeReplay = await snapshot();
+  await setXrButton('left', 4, true);
+  const replayed = await snapshot();
+  assert.equal(replayed.lastEvent, 'replayed');
+  assert.equal(replayed.epoch, beforeReplay.epoch + 1, 'Left X must replay once on press');
+  assert.equal(replayed.playing, true);
+  assert.ok(replayed.recordingTime < 1);
+  assert.equal(
+    await page.evaluate(
+      () =>
+        (window.wander as SceneDiagnostics).scene.getObjectByName('interaction-facing-person') ===
+        undefined,
+    ),
+    true,
+    'Replay must restore the paused-facing transform',
+  );
+  await frames(12);
+  const heldX = await snapshot();
+  assert.equal(heldX.epoch, replayed.epoch, 'Holding X must not repeat Replay');
+  await setXrButton('left', 4, false);
+  await setXrButton('right', 4, true);
+  assert.equal((await snapshot()).epoch, replayed.epoch, 'Right A must not replay');
+  await setXrButton('right', 4, false);
+  await setXrButton('left', 4, true);
+  assert.equal((await snapshot()).epoch, replayed.epoch + 1, 'X must rearm after release');
+  await setXrButton('left', 4, false);
+  console.log('Left X replays once per press; right A is ignored; replay clears paused facing');
+
+  await page.evaluate(() => (window.wander as SceneDiagnostics).interaction.replay(false));
   assert.equal((await snapshot()).activePersonId, null);
   assert.equal(
     await page.evaluate(

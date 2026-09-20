@@ -193,7 +193,10 @@ const stream = () => {
   tracks.push(track);
   return { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
 };
-function setup(action: (name: string, args: unknown) => string | Promise<string> = () => 'ok') {
+function setup(
+  action: (name: string, args: unknown) => string | Promise<string> = () => 'ok',
+  expired?: () => void,
+) {
   const statuses: string[] = [];
   const actions: string[] = [];
   const speaking: boolean[] = [];
@@ -206,6 +209,7 @@ function setup(action: (name: string, args: unknown) => string | Promise<string>
   };
   const client = new BottleAgentClient({
     identity: () => identity,
+    expired,
     status: (value) => statuses.push(value),
     speaking: (value) => speaking.push(value),
     speechStarted: () => {
@@ -232,8 +236,11 @@ function setup(action: (name: string, args: unknown) => string | Promise<string>
     },
   };
 }
-async function connected(action?: (name: string, args: unknown) => string | Promise<string>) {
-  const fixture = setup(action);
+async function connected(
+  action?: (name: string, args: unknown) => string | Promise<string>,
+  expired?: () => void,
+) {
+  const fixture = setup(action, expired);
   const promise = fixture.client.connect();
   await tick();
   const peer = Peer.instances.at(-1)!;
@@ -288,6 +295,82 @@ afterEach(() => {
 });
 
 describe('SDK bottle voice lifecycle and local response authority', () => {
+  test('connect starts capture and audio unlock synchronously before XR can consume the gesture', async () => {
+    const resumed = deferred<void>();
+    const events: string[] = [];
+    class GestureAudio extends Audio {
+      override resume() {
+        events.push('audio');
+        return resumed.promise;
+      }
+    }
+    replace('AudioContext', GestureAudio);
+    replace('navigator', {
+      mediaDevices: {
+        getUserMedia: async () => {
+          events.push('microphone');
+          return stream();
+        },
+      },
+    });
+    const { client } = setup();
+    const pending = client.connect();
+    // No microtask has run: the parent can request immersive XR right here.
+    expect(events).toEqual(['audio', 'microphone']);
+    expect(requests).toHaveLength(0);
+    await tick();
+    expect(requests).toHaveLength(0);
+    client.disconnect();
+    await pending;
+    expect(stopped).toBe(1);
+    resumed.resolve();
+    await tick();
+    expect(requests).toHaveLength(0);
+  });
+
+  test('normal session expiry offers renewal once after cleanup; stops and failures never do', async () => {
+    const callbacks = new Map<number, () => void>();
+    replace('setTimeout', (callback: () => void, milliseconds: number) => {
+      callbacks.set(milliseconds, callback);
+      return milliseconds;
+    });
+    replace('clearTimeout', () => {});
+    let expirations = 0;
+    const expired = () => {
+      expirations++;
+      expect(Audio.instances.at(-1)!.closed).toBe(true);
+      expect(Peer.instances.at(-1)!.closed).toBe(true);
+    };
+    const first = await connected(undefined, expired);
+    const firstCap = callbacks.get(180_000)!;
+    firstCap();
+    firstCap();
+    expect(expirations).toBe(1);
+    expect(first.client.connected).toBe(false);
+    expect(stopped).toBe(1);
+    const second = await connected(undefined, expired);
+    const secondCap = callbacks.get(180_000)!;
+    second.client.disconnect();
+    secondCap();
+    expect(expirations).toBe(1);
+    const third = await connected(undefined, expired);
+    const thirdCap = callbacks.get(180_000)!;
+    third.peer.connectionState = 'failed';
+    third.peer.onconnectionstatechange?.();
+    thirdCap();
+    expect(expirations).toBe(1);
+    expect(stopped).toBe(3);
+    replace('fetch', async (url: string) =>
+      String(url).startsWith('/api')
+        ? Response.json({ value: 'ek_fixture' })
+        : Response.json({ error: { code: 'credit_balance_exhausted' } }, { status: 429 }),
+    );
+    const failed = setup(undefined, expired);
+    await failed.client.connect();
+    expect(expirations).toBe(1);
+    expect(stopped).toBe(4);
+  });
+
   test('SDK config acknowledgement gates readiness; connection never greets during playback', async () => {
     const { client } = setup();
     client.notify({ event: 'watching' }, false);
@@ -433,7 +516,7 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     expect(JSON.stringify(logs)).not.toContain('ek_fixture');
   });
 
-  test('other SDP failures stay generic and are not mislabeled as an ended conversation', async () => {
+  test('other SDP 429 failures identify account quota or rate limits without exposing details', async () => {
     replace('fetch', async (url: string) =>
       String(url).startsWith('/api')
         ? Response.json({ value: 'ek_fixture' })
@@ -444,7 +527,9 @@ describe('SDK bottle voice lifecycle and local response authority', () => {
     );
     const { client, statuses } = setup();
     await client.connect();
-    expect(statuses.at(-1)).toBe('Could not start voice. Try the microphone control again.');
+    expect(statuses.at(-1)).toBe(
+      'Voice provider HTTP 429: account quota or rate limit · microphone off',
+    );
     expect(statuses.join(' ')).not.toContain('sk-test-provider-detail');
     expect(statuses).not.toContain('Conversation ended · microphone off.');
     expect(stopped).toBe(1);
