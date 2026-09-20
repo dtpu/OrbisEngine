@@ -32,6 +32,7 @@
 //   ?xrhands=0      hide the illustrative controller gloves and tracked hands
 //   ?xrbody=0       hide the estimated first-person body
 //   ?xrlod=          splat budget while presenting (default 500000, Spark's own WebXR figure)
+//   ?xrworldlod=0    preserve the desktop scene's LoD choice instead of enabling VR budgeting
 //   ?xradapt=0       disable the closed loop that lowers that budget when frames run long
 //   ?xrfps=          frame rate the loop holds the budget against (default 72)
 //   ?xrfoveation=    three's fixed foveation, 0 none .. 1 max (default 1)
@@ -51,6 +52,7 @@ import type { BottleScene, InteractionHand } from '../interaction/bottle-scene';
 import { createQuestView } from './quest-view';
 import { ReplayButton } from './replay-button';
 import { createSceneSidebar, type SceneSidebarClip } from './scene-sidebar';
+import { sceneUsesLod, xrVignetteAmount } from './render-policy';
 
 type Wander = {
   spark: { lodSplatCount?: number };
@@ -178,12 +180,12 @@ export async function initXR({
   // Spark only has a budget to spend if the LoD slice is running at all; the baked-colour and
   // observation-confidence paths need the plain packed array and turn it off (fourd.html: lodOn).
   const p = wander.params;
-  const lodOn =
-    p.lod === '1' || (p.lod !== '0' && !p.bakedweights && !(p.obs && +(p.obsfade ?? 0) > 0));
+  const lodOn = sceneUsesLod(q);
   const deskLod = wander.spark.lodSplatCount;
   const xrLod = Math.max(MIN_BUDGET, num('xrlod', 500_000));
   const adapt = q.get('xradapt') !== '0' && lodOn;
   const targetMs = 1000 / Math.max(30, num('xrfps', 72));
+  const edgeFade = num('edgefade', 1);
   let budget = xrLod;
 
   // ---- rig ---------------------------------------------------------------------------------------
@@ -384,7 +386,6 @@ export async function initXR({
     walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
     walkReferenceSpace = renderer.xr.getReferenceSpace();
     walkReferenceSpace?.addEventListener('reset', resetPhysicalWalk);
-    vel.set(0, 0, 0);
     snapLatch = false;
     aimingPrev = false;
     blink = 0;
@@ -515,7 +516,6 @@ export async function initXR({
   const SNAP = num('xrturn', 30) * DEG;
   const SPEED = num('xrspeed', 1.4) * upm; // m/s -> world units/s
   const EYE = (q.get('walk') === '1' && wander.walk?.eye) || num('xreye', 1.6) * upm; // walk mode: the desktop's own eye-height rule
-  const ACCEL = 9;
   const DEAD = 0.2;
   const TURN_DEAD = 0.15;
   const BLINK = 0.12; // seconds of black over a teleport or a snap turn
@@ -552,8 +552,7 @@ export async function initXR({
   const fwd = new THREE.Vector3(),
     right = new THREE.Vector3(),
     want = new THREE.Vector3();
-  const vel = new THREE.Vector3(),
-    step = new THREE.Vector3(),
+  const step = new THREE.Vector3(),
     nrm = new THREE.Vector3();
   const groundFrom = new THREE.Vector3();
   const physicalStep = new THREE.Vector3();
@@ -618,7 +617,6 @@ export async function initXR({
     report.groundFloor = groundFloor;
     targetOk = false;
     report.teleportValid = false;
-    vel.set(0, 0, 0);
     avatarBody?.reset();
     blink = 1;
   }
@@ -647,10 +645,9 @@ export async function initXR({
     right.set(Math.cos(headYaw), 0, -Math.sin(headYaw));
     want.addScaledVector(fwd, -sticks.moveY).addScaledVector(right, sticks.moveX);
     want.clampLength(0, 1).multiplyScalar(SPEED);
-    // Critically damped rather than instant velocity: no lurch on push, no dead stop on release.
-    vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
-    if (vel.lengthSq() < 1e-10) vel.set(0, 0, 0);
-    step.addScaledVector(vel, dt);
+    // Apply this frame's analog input directly, including reversals and release.
+    // Inertia here makes joystick travel trail behind the user's hand.
+    step.addScaledVector(want, dt);
   }
 
   function moveRig(dt: number) {
@@ -701,7 +698,6 @@ export async function initXR({
   } as typeof renderer.render;
 
   function suppressLocomotion() {
-    vel.set(0, 0, 0);
     step.set(0, 0, 0);
     physicalWalk.reset();
     aimingPrev = false;
@@ -981,10 +977,12 @@ export async function initXR({
     // Nothing here resists; it only tells you.
     const e = wander.clampOn ? THREE.MathUtils.clamp(wander.edgeAt(head), 0, 1) : 0;
     blink = Math.max(0, blink - dt / BLINK);
-    vignette.set(Math.max(e * e * (3 - 2 * e), blink));
+    const vignetteAmount = xrVignetteAmount(e, blink, edgeFade);
+    vignette.set(vignetteAmount);
 
     if (adapt) adaptBudget();
     report.edge = +e.toFixed(2);
+    report.vignette = +vignetteAmount.toFixed(3);
   }
 
   // Closed loop on the splat budget. Every measurement in this repo was taken on a desktop GPU and
