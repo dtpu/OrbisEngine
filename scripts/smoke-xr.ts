@@ -1,9 +1,10 @@
 // Simulated WebXR smoke check; this does not measure Quest frame rate.
+import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 const B = 'http://127.0.0.1:5399';
 const browser = await chromium.launch({
   channel: 'chrome',
-  headless: false,
+  headless: process.env.XR_HEADLESS === '1',
   args: ['--autoplay-policy=no-user-gesture-required'],
 });
 try {
@@ -45,6 +46,9 @@ try {
   }));
   console.log('post', JSON.stringify(post, null, 1));
   console.log('errors', errs.slice(0, 8));
+  assert.equal(post.presenting, true, 'the simulated VR session must start');
+  assert.ok(post.frames > 0, 'the simulated session must render frames');
+  assert.equal(post.camParent, 'xr-rig');
 } finally {
   await browser.close();
 }
