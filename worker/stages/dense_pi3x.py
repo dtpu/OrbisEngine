@@ -6,7 +6,8 @@ surface limitation remains explicit. All chunks share a measured similarity fram
 """
 
 from __future__ import annotations
-import argparse, gc, hashlib, json, os, shutil, sys, time
+import argparse, gc, hashlib, json, math, os, shutil, subprocess, sys, tempfile, time
+from fractions import Fraction
 from pathlib import Path
 import numpy as np
 
@@ -129,6 +130,385 @@ def fit_ray_intrinsics(rays, valid, source_size):
     )
 
 
+# Frames whose own rays fitted a pinhole. Every other frame is filled from this clip's median
+# K, so the median has to come from most of the clip: below half of it the intrinsics are no
+# longer a measurement of this camera and no frame's projection can be trusted.
+MIN_INTRINSIC_FIT_FRACTION = 0.5
+
+
+def require_intrinsic_fits(fitted, total, fraction=MIN_INTRINSIC_FIT_FRACTION):
+    """Refuse a solve whose intrinsics would mostly be borrowed from other frames."""
+    fitted, total = int(fitted), int(total)
+    if total < 1:
+        raise ValueError("No solved camera frames to fit intrinsics for")
+    if fitted < 1 or fitted < fraction * total:
+        raise ValueError(
+            f"Only {fitted} of {total} frames ({fitted / total:.1%}) fitted a pinhole to their "
+            f"Pi3X rays; below {fraction:.0%} the clip median is not a measurement of this "
+            "camera, so no frame's intrinsics are usable"
+        )
+    return fitted / total
+
+
+def median_intrinsics(entries):
+    """This clip's own median K, for a frame whose rays would not fit one.
+
+    A dark, blurred or transition frame can leave too few confident rays for a pinhole fit,
+    yet the camera did not change lens for that frame: the frames that did fit describe the
+    same optics. The result is flagged per camera entry and never reported as a fit, and it
+    carries no per-frame residual because none was measured.
+    """
+    if not entries:
+        raise ValueError("No fitted intrinsics to take a median of")
+    sizes = {tuple(entry["image_size"]) for entry in entries}
+    sources = {tuple(entry["source_image_size"]) for entry in entries}
+    if len(sizes) != 1 or len(sources) != 1:
+        raise ValueError("Fitted intrinsics disagree about the image size")
+    (w, h), (sw, sh) = sizes.pop(), sources.pop()
+    stack = np.array([entry["intrinsics"] for entry in entries], float)
+    K = np.eye(3)
+    for row, column in ((0, 0), (1, 1), (0, 2), (1, 2)):
+        K[row, column] = float(np.median(stack[:, row, column]))
+    residuals = [
+        float(entry["intrinsic_fit_pixel_rmse"])
+        for entry in entries
+        if entry.get("intrinsic_fit_pixel_rmse") is not None
+    ]
+    return dict(
+        intrinsics=K.tolist(),
+        source_intrinsics=(np.diag([sw / w, sh / h, 1.0]) @ K).tolist(),
+        image_size=[int(w), int(h)],
+        source_image_size=[int(sw), int(sh)],
+        intrinsic_fit_pixel_rmse=None,
+        intrinsics_method=(
+            f"Per-parameter median of the {len(entries)} frames in this clip whose rays did fit "
+            "a zero-skew pinhole; this frame's own rays did not. Same camera, estimated, not a "
+            "fit of this frame and not supplied calibration."
+        ),
+        intrinsicsMedianFrames=len(entries),
+        intrinsicsMedianPixelRmse=float(np.median(residuals)) if residuals else None,
+    )
+
+
+DECODE_OPENCV = "opencv-sequential"
+DECODE_FFMPEG = "ffmpeg-rawvideo"
+
+TIMES_PTS = "ffprobe-pts"
+TIMES_POS_MSEC = "opencv-pos-msec"
+TIMES_AVERAGE_FPS = "index-over-average-fps"
+
+SELECT_PTS_SLOTS = "decoded-pts-slots"
+SELECT_CONTAINER_INDEX = "container-index-over-average-fps"
+
+# One second of samples at this stage's minimum 12 fps. Fewer than this is not a camera path
+# anyone can walk along, so a source that decodes to less has failed rather than come up short.
+MIN_OUTPUT_SAMPLES = 12
+
+# A file that stops decoding before half the frames its container advertises is truncated or
+# corrupt. Reconstructing the prefix and presenting it as the clip would hide that.
+MIN_DECODED_SOURCE_FRACTION = 0.5
+
+# Output slots with no decoded source frame of their own. A few are a stalled variable-rate
+# source; many mean the source cannot supply the requested independent frame rate at all.
+# FFmpeg's fps filter fills such a gap by duplicating a neighbour, and a duplicate is not an
+# independent reconstruction, so the slot is skipped and counted instead.
+MIN_OUTPUT_SLOT_FILL = 0.95
+
+
+def opencv_first_frame(cv2, video):
+    """Can OpenCV's bundled libavcodec open this file and hand back its first frame?"""
+    cap = cv2.VideoCapture(str(video))
+    try:
+        opened = bool(cap.isOpened())
+        first = bool(cap.read()[0]) if opened else False
+    finally:
+        cap.release()
+    return opened, first
+
+
+def choose_decode_backend(opened, first_frame):
+    """OpenCV unless it cannot produce a frame.
+
+    AV1 and some 10-bit HEVC files open cleanly through OpenCV -- frame count, size and rate
+    all read back -- and then fail on every single read, because the bundled libavcodec has no
+    software decoder for them. That is a property of the decoder, not of the clip, so the
+    fallback is chosen from observed behaviour rather than from the codec name.
+    """
+    if opened and first_frame:
+        return DECODE_OPENCV, "OpenCV decoded the first frame"
+    if not opened:
+        return DECODE_FFMPEG, "OpenCV could not open the source"
+    return DECODE_FFMPEG, "OpenCV opened the source but could not decode its first frame"
+
+
+def usable_timestamps(values):
+    """Are these per-frame seconds a real, ordered decoder timeline?"""
+    try:
+        stamps = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return False
+    if len(stamps) < 2 or not all(math.isfinite(stamp) for stamp in stamps):
+        return False
+    return all(b > a for a, b in zip(stamps, stamps[1:]))
+
+
+def decoded_timeline(frames, pts_seconds=None, pos_msec_seconds=None, average_fps=None):
+    """Seconds per decoded frame, relative to the first decoded frame, plus their provenance.
+
+    The decoder's own timestamps describe a variable-rate source; index divided by the
+    container's average rate only describes a constant-rate one. Whichever is used is named
+    in the output so a reader never has to guess which it got.
+    """
+    frames = int(frames)
+    for values, label in ((pts_seconds, TIMES_PTS), (pos_msec_seconds, TIMES_POS_MSEC)):
+        if values is None or len(values) < frames or frames < 2:
+            continue
+        stamps = list(values)[:frames]
+        if usable_timestamps(stamps):
+            return [float(stamp) - float(stamps[0]) for stamp in stamps], label
+    average_fps = float(average_fps or 0)
+    if not math.isfinite(average_fps) or average_fps <= 0 or frames < 2:
+        raise ValueError(
+            f"No usable decoder timestamps for {frames} frames and no positive average rate"
+        )
+    return [index / average_fps for index in range(frames)], TIMES_AVERAGE_FPS
+
+
+def output_slots(times, fps):
+    """The frame FFmpeg's fps filter would retain in each output slot, from the same timestamps.
+
+    The filter rounds every decoded frame's relative timestamp into an output slot and writes
+    the last input that landed there. Reproducing that rule from the decoded timestamps keeps
+    the solver's samples on the frames the cleaner's `resample_source` keeps, instead of on
+    whatever `round(time * average_fps)` happens to address in a variable-rate file.
+    """
+    fps = float(fps)
+    latest = {}
+    for index, seconds in enumerate(times):
+        latest[int(math.floor(float(seconds) * fps + 0.5))] = index
+    slots = sorted(latest)
+    if not slots:
+        return [], 0
+    return [latest[slot] for slot in slots], slots[-1] - slots[0] + 1 - len(slots)
+
+
+def container_samples(frames, average_fps, fps):
+    """Index-addressed samples from container metadata alone, when no timestamps survive."""
+    frames, average_fps, fps = int(frames), float(average_fps), float(fps)
+    requested = np.arange(int(np.ceil(frames / average_fps * fps))) / fps
+    indices = np.clip(np.round(requested * average_fps).astype(int), 0, frames - 1)
+    if len(np.unique(indices)) != len(indices):
+        raise ValueError("Source frame rate below requested independent output density")
+    return [int(index) for index in indices]
+
+
+def sample_plan(fps, frames, average_fps, pts_seconds=None, pos_msec_seconds=None):
+    """Which source frames this solve will reconstruct, and where their times came from."""
+    times, label = decoded_timeline(frames, pts_seconds, pos_msec_seconds, average_fps)
+    if label == TIMES_AVERAGE_FPS:
+        samples = container_samples(frames, average_fps, fps)
+        empty, selection = 0, SELECT_CONTAINER_INDEX
+    else:
+        samples, empty = output_slots(times, fps)
+        selection = SELECT_PTS_SLOTS
+    return dict(
+        samples=samples,
+        times=[times[index] for index in samples],
+        timestampSource=label,
+        sampleSelection=selection,
+        emptyOutputSlots=empty,
+        plannedSamples=len(samples),
+    )
+
+
+def clamp_plan(
+    plan,
+    decodable,
+    container_frames,
+    fps,
+    minimum=MIN_OUTPUT_SAMPLES,
+    source_fraction=MIN_DECODED_SOURCE_FRACTION,
+    slot_fill=MIN_OUTPUT_SLOT_FILL,
+):
+    """Cut the plan back to the frames that actually decoded, and refuse a broken source.
+
+    A container can advertise more frames than a decoder will ever hand back. Dropping the
+    samples behind that tail is a disclosure, not a failure, so the counts are returned for
+    the metadata rather than raised; only an unreadable or truncated file raises.
+    """
+    fps, decodable, container_frames = float(fps), int(decodable), int(container_frames)
+    if decodable < 2:
+        raise RuntimeError(f"Only {decodable} source frames decode; the source is unreadable")
+    if container_frames > 0 and decodable < source_fraction * container_frames:
+        raise RuntimeError(
+            f"Only {decodable} of the {container_frames} frames the container declares decode "
+            f"({decodable / container_frames:.1%}); below {source_fraction:.0%} the file is "
+            "truncated or corrupt and its prefix is not the clip"
+        )
+    kept = [int(index) for index in plan["samples"] if int(index) < decodable]
+    dropped = len(plan["samples"]) - len(kept)
+    if len(kept) < minimum:
+        raise RuntimeError(
+            f"Only {len(kept)} of {len(plan['samples'])} planned samples decode from "
+            f"{decodable} decodable source frames; this stage needs at least {minimum}"
+        )
+    times = [float(second) for second in plan["times"][: len(kept)]]
+    slots = int(math.floor(times[-1] * fps + 0.5)) + 1
+    if len(kept) < slot_fill * slots:
+        raise RuntimeError(
+            f"Only {len(kept)} of {slots} output slots at {fps:g} fps have a decoded source "
+            f"frame of their own ({len(kept) / slots:.1%}); below {slot_fill:.0%} the source "
+            "cannot supply the requested independent frame rate"
+        )
+    return dict(
+        plan,
+        samples=kept,
+        times=times,
+        containerFrames=container_frames,
+        decodableFrames=decodable,
+        droppedTailSamples=dropped,
+        emptyOutputSlots=slots - len(kept),
+        outputSlotFill=len(kept) / slots,
+    )
+
+
+def probe_source(video):
+    """FFprobe's view of the stream, including every decoded presentation timestamp.
+
+    FFprobe decodes, so its frame list is the decodable truth the container may contradict,
+    and its timestamps are the same ones `wander_worker.source_timing` binds the cleaner to.
+    A missing or unreadable ffprobe is not fatal; the caller falls back and says so.
+    """
+    if not shutil.which("ffprobe"):
+        return {}
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,codec_name,avg_frame_rate,nb_frames"
+        ":stream_side_data=rotation:frame=pts_time",
+        "-of",
+        "json",
+        str(video),
+    ]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, check=True)
+        document = json.loads(done.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    stream = (document.get("streams") or [{}])[0]
+    stamps = []
+    for frame in document.get("frames") or []:
+        try:
+            stamps.append(float(frame["pts_time"]))
+        except (KeyError, TypeError, ValueError):
+            stamps = []
+            break
+    try:
+        average = float(Fraction(stream.get("avg_frame_rate") or "0/1"))
+    except (ValueError, ZeroDivisionError):
+        average = 0.0
+    rotation = 0
+    for side in stream.get("side_data_list") or []:
+        try:
+            rotation = int(float(side["rotation"])) % 360
+        except (KeyError, TypeError, ValueError):
+            continue
+    return dict(
+        width=int(stream.get("width") or 0),
+        height=int(stream.get("height") or 0),
+        codec=stream.get("codec_name") or "",
+        averageFps=average,
+        containerFrames=int(stream.get("nb_frames") or 0),
+        rotation=rotation,
+        pts=stamps,
+    )
+
+
+def decode_opencv(cv2, video, wanted, sink):
+    """Decode forward with grab/retrieve, converting only the frames the solve wants.
+
+    Nothing seeks. `CAP_PROP_POS_FRAMES` cannot reach the last frames of a variable-rate file
+    -- on the soccer clip every index from 706 on fails while all 712 decode in order -- and a
+    sequential pass also counts what really decodes instead of trusting the container.
+    """
+    cap = cv2.VideoCapture(str(video))
+    ordinal, stamps = 0, []
+    try:
+        while cap.grab():
+            stamps.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+            if ordinal in wanted:
+                ok, bgr = cap.retrieve()
+                if not ok:
+                    break
+                sink(ordinal, bgr)
+            ordinal += 1
+    finally:
+        cap.release()
+    return ordinal, stamps[:ordinal]
+
+
+def decode_ffmpeg(video, width, height, wanted, sink):
+    """Raw frames straight out of ffmpeg, for codecs OpenCV's libavcodec cannot decode.
+
+    Full resolution and no re-encode, so the frames are the source's own pixels and the single
+    resize the intrinsics undo stays the one OpenCV performs for both backends. Display
+    rotation is left unapplied on purpose: OpenCV does not apply it either, and the recorded
+    source size has to describe the same pixels whichever backend produced them.
+    """
+    width, height = int(width), int(height)
+    if width < 1 or height < 1:
+        raise RuntimeError("The ffmpeg fallback needs the source frame size")
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-noautorotate",
+        "-i",
+        str(video),
+        "-map",
+        "0:v:0",
+        # Without this ffmpeg makes the rawvideo output constant-rate by duplicating frames,
+        # which would shift every ordinal the plan was built from.
+        "-fps_mode",
+        "passthrough",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-",
+    ]
+    frame_bytes = width * height * 3
+    ordinal = 0
+    with tempfile.TemporaryFile() as errors:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors)
+        try:
+            while True:
+                buffer = proc.stdout.read(frame_bytes)
+                if len(buffer) < frame_bytes:
+                    break
+                if ordinal in wanted:
+                    frame = np.frombuffer(buffer, np.uint8).reshape(height, width, 3).copy()
+                    sink(ordinal, frame)
+                ordinal += 1
+        finally:
+            proc.stdout.close()
+            proc.wait()
+        errors.seek(0)
+        message = errors.read().decode("utf-8", errors="replace").strip()[-2000:]
+    if ordinal < 1:
+        raise RuntimeError(
+            f"ffmpeg decoded no frames from {video}; the image needs a decoder for this "
+            f"codec. ffmpeg said: {message or '(nothing)'}"
+        )
+    return ordinal, []
+
+
 def main():
     # Kept out of module scope so the pure gap helpers above import under plain numpy.
     import cv2
@@ -155,32 +535,77 @@ def main():
     temp = out / "batch-input"
     temp.mkdir(exist_ok=True)
     t0 = time.time()
-    cap = cv2.VideoCapture(a.video)
-    srcfps = cap.get(cv2.CAP_PROP_FPS)
-    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = count / srcfps
-    if not np.isfinite(srcfps) or srcfps <= 0 or count < 2:
+    probe = probe_source(a.video)
+    opened, first_frame = opencv_first_frame(cv2, a.video)
+    backend, backend_reason = choose_decode_backend(opened, first_frame)
+    with_cap = cv2.VideoCapture(a.video)
+    source_size = (
+        int(probe.get("width") or with_cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+        int(probe.get("height") or with_cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+    )
+    srcfps = float(probe.get("averageFps") or with_cap.get(cv2.CAP_PROP_FPS) or 0)
+    container = int(probe.get("containerFrames") or with_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    with_cap.release()
+    if min(source_size) < 1 or not np.isfinite(srcfps) or srcfps <= 0:
         raise ValueError("Invalid source video metadata")
-    source_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    requested = np.arange(int(np.ceil(duration * a.fps))) / a.fps
-    indices = np.clip(np.round(requested * srcfps).astype(int), 0, count - 1)
-    if len(np.unique(indices)) != len(indices):
-        raise ValueError("Source frame rate below requested independent output density")
-    times = indices / srcfps
-    N = len(indices)
-    for i, idx in enumerate(indices):
-        file = framesdir / f"f_{i:06d}.jpg"
+    pts = probe.get("pts") or []
+    horizon = len(pts) if len(pts) >= 2 else container
+    stamps = []
+    if len(pts) < 2 and backend == DECODE_OPENCV:
+        # No ffprobe timestamps: decode once without keeping anything, for the decoder's own
+        # clock and for the frame count the container may be lying about.
+        horizon, stamps = decode_opencv(cv2, a.video, set(), lambda *_: None)
+    if horizon < 2:
+        raise ValueError("Invalid source video metadata")
+    plan = sample_plan(a.fps, horizon, srcfps, pts_seconds=pts, pos_msec_seconds=stamps)
+    wanted = {source: sample for sample, source in enumerate(plan["samples"])}
+    # A resumed run reuses f_NNNNNN.jpg by sample number. If this run samples different source
+    # frames than the last one did, those files are pictures of other moments, and the cached
+    # anchor prediction was made from them, so both go.
+    fingerprint = json.dumps(dict(fps=a.fps, backend=backend, samples=plan["samples"]))
+    planfile = framesdir / "plan.json"
+    if planfile.exists() and planfile.read_text() != fingerprint:
+        for stale in framesdir.glob("f_*.jpg"):
+            stale.unlink()
+        (out / "anchors.npz").unlink(missing_ok=True)
+        print("sample selection changed; discarded the cached frames and anchors", flush=True)
+    planfile.write_text(fingerprint)
+    print(
+        f"decode backend {backend} ({backend_reason}); {len(plan['samples'])} samples over "
+        f"{horizon} frames, times from {plan['timestampSource']}",
+        flush=True,
+    )
+
+    def keep(source, bgr):
+        file = framesdir / f"f_{wanted[source]:06d}.jpg"
         if file.exists():
-            continue
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-        ok, bgr = cap.read()
-        if not ok:
-            raise RuntimeError(f"Decode failed: {idx}")
+            return
         if bgr.shape[1] > 1024:
             bgr = cv2.resize(bgr, (1024, round(bgr.shape[0] * 1024 / bgr.shape[1])))
         cv2.imwrite(str(file), bgr, [cv2.IMWRITE_JPEG_QUALITY, 96])
-    cap.release()
-    files = sorted(framesdir.glob("f_*.jpg"))
+
+    if backend == DECODE_OPENCV:
+        decodable, _ = decode_opencv(cv2, a.video, set(wanted), keep)
+    else:
+        decodable, _ = decode_ffmpeg(a.video, *source_size, set(wanted), keep)
+    plan = clamp_plan(plan, decodable, container, a.fps)
+    duration = (container or decodable) / srcfps
+    indices = np.array(plan["samples"], int)
+    times = np.array(plan["times"], float)
+    N = len(indices)
+    files = [framesdir / f"f_{i:06d}.jpg" for i in range(N)]
+    for stray in sorted(framesdir.glob("f_*.jpg")):
+        if stray not in set(files):
+            stray.unlink()
+    missing = [file.name for file in files if not file.exists()]
+    if missing:
+        raise RuntimeError(f"{len(missing)} sampled frames were never written: {missing[:5]}")
+    if plan["droppedTailSamples"]:
+        print(
+            f"container declares {container} frames, {decodable} decode; dropped "
+            f"{plan['droppedTailSamples']} sample(s) past the decodable tail",
+            flush=True,
+        )
     import torch
 
     sys.path.insert(0, a.repo)
@@ -245,6 +670,7 @@ def main():
     log = []
     point_counts = []
     gaps = []
+    intrinsic_gaps = []
     home, home_frame = None, None
     camera_dir = out / "camera-batches"
     camera_dir.mkdir(exist_ok=True)
@@ -301,13 +727,30 @@ def main():
                 print(f"no person at {times[i]:.3f}s ({len(xyz)} points)", flush=True)
             point_counts.append(len(xyz))
             camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)
+            try:
+                optics = fit_ray_intrinsics(p["rays"][j], p["valid"][j], source_size)
+                optics["intrinsicsSource"] = "fit"
+            except ValueError as error:
+                # One frame's rays are not the clip's camera. A dark, blurred or transition
+                # frame can starve the fit; the pose is still measured, so the frame is
+                # recorded here and filled from the clip median once every batch has run.
+                optics = dict(intrinsicsSource="clip-median")
+                intrinsic_gaps.append(
+                    dict(
+                        sample=int(i),
+                        sourceIndex=int(indices[i]),
+                        time=float(times[i]),
+                        reason=str(error),
+                    )
+                )
+                print(f"no intrinsic fit at {times[i]:.3f}s ({error})", flush=True)
             cams[i] = dict(
                 position=camera[:3, 3].tolist(),
                 time=float(times[i]),
                 sourceIndex=int(indices[i]),
                 camera_to_world=camera.tolist(),
                 world_to_camera=np.linalg.inv(camera).tolist(),
-                **fit_ray_intrinsics(p["rays"][j], p["valid"][j], source_size),
+                **optics,
             )
             if i == 0:
                 np.savez_compressed(
@@ -335,6 +778,13 @@ def main():
         del p, pm, full
         gc.collect()
         torch.cuda.empty_cache()
+    fitted = [c for c in cams if c and c["intrinsicsSource"] == "fit"]
+    fit_fraction = require_intrinsic_fits(len(fitted), N)
+    if intrinsic_gaps:
+        fallback = median_intrinsics(fitted)
+        for record in intrinsic_gaps:
+            cams[record["sample"]].update(fallback)
+        print(f"filled {len(intrinsic_gaps)} frames from the clip median K", flush=True)
     meta = dict(
         backend="pi3x-dense-anchors",
         frames=[f"frame_{i:03d}.ply" for i in range(N)],
@@ -347,6 +797,36 @@ def main():
         people_only=True,
         home_distance=home,
         homeDistanceFrame=home_frame,
+        decodeBackend=backend,
+        decodeBackendReason=backend_reason,
+        sourceCodec=probe.get("codec", ""),
+        sourceRotationDegrees=int(probe.get("rotation") or 0),
+        containerFrames=plan["containerFrames"],
+        decodableFrames=plan["decodableFrames"],
+        droppedTailSamples=plan["droppedTailSamples"],
+        emptyOutputSlots=plan["emptyOutputSlots"],
+        outputSlotFill=plan["outputSlotFill"],
+        sampleSelection=plan["sampleSelection"],
+        timestampSource=plan["timestampSource"],
+        decodedSpanSeconds=float(times[-1] - times[0]),
+        decodeNote=(
+            "Frames were decoded in order, never seeked to. `decodableFrames` is what actually "
+            "decoded; `containerFrames` is what the container declares, and any difference is "
+            "the tail dropped in `droppedTailSamples`. `timestamps` are relative to the first "
+            f"decoded frame and come from {plan['timestampSource']}. Any container display "
+            "rotation is left unapplied, as it always has been; each camera's "
+            "`source_image_size` describes the coded pixels the intrinsics were fitted to."
+        ),
+        intrinsicsFallbackFrames=intrinsic_gaps,
+        intrinsicsFallbackCount=len(intrinsic_gaps),
+        intrinsicsFitCount=len(fitted),
+        intrinsicsFitFraction=fit_fraction,
+        minIntrinsicFitFraction=MIN_INTRINSIC_FIT_FRACTION,
+        intrinsicsNote=(
+            "Cameras carry `intrinsicsSource`: `fit` is this frame's own rays, `clip-median` is "
+            "the per-parameter median of the frames that did fit, used where a frame had too "
+            "few valid rays. Poses are measured in both cases."
+        ),
         **person_gap_summary(gaps, N),
         sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
         seconds=time.time() - t0,
