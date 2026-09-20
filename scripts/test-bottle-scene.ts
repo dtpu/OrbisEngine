@@ -52,12 +52,21 @@ afterEach(() => {
   originals.clear();
 });
 
-function fixture(startTime = 1) {
+function fixture(startTime = 1, params = new URLSearchParams()) {
   const scene = new THREE.Scene();
+  const meshUpdates = new Map<string, { generator: number; version: number }>();
   const people: InteractionPerson[] = ['thrower', 'receiver'].map((id, track) => {
+    const updates = { generator: 0, version: 0 };
+    meshUpdates.set(id, updates);
     const group = new THREE.Group();
     group.position.set(track ? 2 : 0, 0, -2);
     const pmesh = Object.assign(new THREE.Object3D(), {
+      updateGenerator() {
+        updates.generator++;
+      },
+      updateVersion() {
+        updates.version++;
+      },
       getBoundingBox: () =>
         new THREE.Box3(new THREE.Vector3(-0.1, 0, -0.1), new THREE.Vector3(0.1, 1.08, 0.1)),
     });
@@ -118,7 +127,7 @@ function fixture(startTime = 1) {
     objects: [bottle],
     stature: 1,
     sceneId: 'fixture',
-    params: new URLSearchParams(),
+    params,
     time: () => time,
     playing: () => playing,
     play: (next) => {
@@ -145,6 +154,7 @@ function fixture(startTime = 1) {
     frame,
     setTime,
     host,
+    meshUpdates,
     setBlocked: (value: boolean) => {
       blocked = value;
     },
@@ -169,7 +179,9 @@ const speechStarted = (runtime: BottleScene) =>
 
 function voiceFixture(runtime: BottleScene) {
   const client = (runtime as unknown as { client: BottleAgentClient }).client;
-  const options = (client as unknown as { options: { expired(): void } }).options;
+  const options = (
+    client as unknown as { options: { expired(): void; speaking(value: boolean): void } }
+  ).options;
   let connected = false;
   let attempts = 0;
   const pending: Array<() => void> = [];
@@ -182,6 +194,7 @@ function voiceFixture(runtime: BottleScene) {
     connected = false;
   };
   return {
+    speaking: (value: boolean) => options.speaking(value),
     attempts: () => attempts,
     async settle(success = true) {
       connected = success;
@@ -457,5 +470,194 @@ describe('BottleScene real-physics interaction integration', () => {
     expect(state.bottle.velocity[2]).toBeCloseTo(0, 8);
     expect(state.bottle.position[0]).toBeGreaterThan(bottle.samplePosition(1.5).x);
     expect(state.bottle.position[1]).toBeLessThan(bottle.samplePosition(1.5).y);
+  });
+});
+
+const animationPose = (runtime: BottleScene, personId = 'thrower') =>
+  runtime.snapshot().animations.find((item) => item.personId === personId)?.pose;
+const zeroAnimation = { pitch: 0, yaw: 0, roll: 0, breath: 0, weight: 0, mode: 'off' as const };
+const modifiers = (person: InteractionPerson) =>
+  (person.pmesh as unknown as { objectModifiers?: unknown[] }).objectModifiers ?? [];
+
+function conversationFixture(params = new URLSearchParams()) {
+  const setup = fixture(0.5, params);
+  setup.people[0].group.position.set(0, 0, -1.2);
+  setup.people[1].group.position.set(4, 0, -4);
+  setup.frame();
+  const tick = (count = 72) => {
+    for (let i = 0; i < count; i++) setup.frame();
+  };
+  return { ...setup, tick };
+}
+
+describe('BottleScene conversation animation lifecycle', () => {
+  test('normal playback and the explicit animation opt-out leave source meshes alone', () => {
+    for (const disabled of [false, true]) {
+      const setup = conversationFixture(new URLSearchParams(disabled ? 'interactAnimation=0' : ''));
+      setup.tick();
+      expect(setup.host.playing()).toBe(true);
+      expect(setup.runtime.snapshot().animations.every((item) => item.pose === null)).toBe(true);
+      expect(setup.meshUpdates.get('thrower')).toEqual({ generator: 0, version: 0 });
+      if (disabled) {
+        expect(setup.runtime.interrupt('approached', 'thrower')).toBe(true);
+        setup.tick();
+        expect(setup.host.playing()).toBe(false);
+        expect(animationPose(setup.runtime)).toBe(null);
+        expect(modifiers(setup.people[0])).toHaveLength(0);
+        expect(setup.meshUpdates.get('thrower')).toEqual({ generator: 0, version: 0 });
+      }
+    }
+  });
+
+  test('selected paused person listens, speaks and listens again without moving recorded state', () => {
+    const { runtime, people, frame, tick, host, meshUpdates, bottle } = conversationFixture();
+    const voice = voiceFixture(runtime);
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    expect(animationPose(runtime)).toMatchObject({ mode: 'listening', weight: 1 });
+    expect(animationPose(runtime, 'receiver')).toBe(null);
+    expect(modifiers(people[0])).toHaveLength(1);
+    expect(meshUpdates.get('thrower')!.generator).toBe(1);
+    expect(meshUpdates.get('thrower')!.version).toBeGreaterThan(0);
+    const pausedTime = host.time();
+    const groupPosition = people[0].group.getWorldPosition(new THREE.Vector3()).toArray();
+    const groupRotation = people[0].group.getWorldQuaternion(new THREE.Quaternion()).toArray();
+    const bodyScale = people[0].group.scale.toArray();
+    const bottleState = runtime.snapshot().bottle;
+    const listening = animationPose(runtime)!;
+    voice.speaking(true);
+    frame([], 0);
+    expect(animationPose(runtime)).toEqual({ ...listening, mode: 'speaking' });
+    tick();
+    const speaking = animationPose(runtime)!;
+    expect(speaking.mode).toBe('speaking');
+    expect(speaking.pitch).not.toBe(listening.pitch);
+    voice.speaking(false);
+    frame([], 0);
+    expect(animationPose(runtime)).toEqual({ ...speaking, mode: 'listening' });
+    tick();
+    expect(animationPose(runtime)).toMatchObject({ mode: 'listening', weight: 1 });
+    expect(host.time()).toBe(pausedTime);
+    expect(host.playing()).toBe(false);
+    expect(people[0].group.getWorldPosition(new THREE.Vector3()).toArray()).toEqual(groupPosition);
+    expect(people[0].group.getWorldQuaternion(new THREE.Quaternion()).toArray()).toEqual(
+      groupRotation,
+    );
+    expect(people[0].group.scale.toArray()).toEqual(bodyScale);
+    expect(people[0].frame).toBe(0);
+    expect(runtime.snapshot().bottle).toEqual(bottleState);
+    expect(bottle.interactionOwned).toBe(true);
+  });
+
+  test('addressing another person fades the previous overlay out without transferring the bottle', () => {
+    const { runtime, people, tick, frame } = conversationFixture();
+    people[0].group.position.set(1.5, 0, -1);
+    people[1].group.position.set(0, 0, -1);
+    frame();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    const owner = runtime.snapshot().bottle.personOwner;
+    expect(animationPose(runtime)!.weight).toBe(1);
+    expect(speechStarted(runtime)).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('receiver');
+    frame();
+    expect(animationPose(runtime)!.mode).toBe('off');
+    expect(animationPose(runtime)!.weight).toBeGreaterThan(0);
+    expect(animationPose(runtime)!.weight).toBeLessThan(1);
+    expect(animationPose(runtime, 'receiver')!.mode).toBe('listening');
+    tick();
+    expect(animationPose(runtime)).toEqual(zeroAnimation);
+    expect(animationPose(runtime, 'receiver')!.weight).toBe(1);
+    expect(runtime.snapshot().bottle.personOwner).toBe(owner);
+  });
+
+  test('replay removes the overlay and exactly restores the recorded transform', () => {
+    const { runtime, people, tick, frame, host } = conversationFixture();
+    const position = people[0].group.position.toArray();
+    const rotation = people[0].group.quaternion.toArray();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    expect(modifiers(people[0])).toHaveLength(1);
+    runtime.replay();
+    expect(animationPose(runtime)).toBe(null);
+    expect(modifiers(people[0])).toHaveLength(0);
+    expect(people[0].group.position.toArray()).toEqual(position);
+    expect(people[0].group.quaternion.toArray()).toEqual(rotation);
+    expect(host.time()).toBe(0);
+    expect(host.playing()).toBe(true);
+    frame();
+    expect(animationPose(runtime)).toBe(null);
+    expect(modifiers(people[0])).toHaveLength(0);
+  });
+
+  test('starting source transport clears the overlay before a new recorded frame renders', () => {
+    const { runtime, tick, frame, host } = conversationFixture();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    expect(animationPose(runtime)!.weight).toBe(1);
+    host.play(true);
+    expect(animationPose(runtime)).toEqual(zeroAnimation);
+    frame();
+    expect(animationPose(runtime)).toEqual(zeroAnimation);
+  });
+
+  test('session exit and hidden XR/document reset immediately, then fade in from zero on return', () => {
+    for (const lifecycle of ['session', 'visibility', 'document'] as const) {
+      const { runtime, tick, frame, host, meshUpdates } = conversationFixture();
+      expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+      tick();
+      const updates = meshUpdates.get('thrower')!.version;
+      if (lifecycle === 'session') runtime.sessionEnd();
+      else if (lifecycle === 'document') {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        runtime.visibilityChanged(true);
+      } else runtime.visibilityChanged(false);
+      expect(animationPose(runtime)).toEqual(zeroAnimation);
+      expect(meshUpdates.get('thrower')!.version).toBeGreaterThan(updates);
+      tick();
+      expect(animationPose(runtime)).toEqual(zeroAnimation);
+      if (lifecycle === 'session') runtime.sessionStart();
+      else {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+        runtime.visibilityChanged(true);
+      }
+      expect(animationPose(runtime)).toEqual(zeroAnimation);
+      frame();
+      expect(animationPose(runtime)!.mode).toBe('listening');
+      expect(animationPose(runtime)!.weight).toBeGreaterThan(0);
+      expect(animationPose(runtime)!.weight).toBeLessThan(0.02);
+      expect(host.playing()).toBe(false);
+      expect(host.time()).toBe(0.5);
+    }
+  });
+
+  test('a hidden person resets immediately and reappears from a neutral pose', () => {
+    const { runtime, people, tick, frame } = conversationFixture();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    people[0].group.visible = false;
+    frame();
+    expect(animationPose(runtime)).toEqual(zeroAnimation);
+    people[0].group.visible = true;
+    frame();
+    expect(animationPose(runtime)!.weight).toBeGreaterThan(0);
+    expect(animationPose(runtime)!.weight).toBeLessThan(0.02);
+  });
+
+  test('leaving conversation range fades out without changing the paused recording or owner', () => {
+    const { runtime, head, tick, frame, host } = conversationFixture();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    tick();
+    const owner = runtime.snapshot().bottle.personOwner;
+    head.z = 3;
+    frame();
+    expect(animationPose(runtime)!.mode).toBe('off');
+    expect(animationPose(runtime)!.weight).toBeGreaterThan(0);
+    expect(animationPose(runtime)!.weight).toBeLessThan(1);
+    tick();
+    expect(animationPose(runtime)).toEqual(zeroAnimation);
+    expect(host.time()).toBe(0.5);
+    expect(host.playing()).toBe(false);
+    expect(runtime.snapshot().bottle.personOwner).toBe(owner);
   });
 });
