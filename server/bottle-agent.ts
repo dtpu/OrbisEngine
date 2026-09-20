@@ -7,6 +7,8 @@ const BASE = '/api/bottle-agent';
 const MAX_BODY_BYTES = 2048;
 const WINDOW_MS = 60_000;
 const MAX_SESSIONS = 4;
+// The cast opens one session per voice; both members of its bounded pair may start together.
+const MAX_CONCURRENT_SESSIONS = 2;
 
 type SceneContext = {
   sceneId: string;
@@ -159,7 +161,7 @@ export function createBottleAgentMiddleware(
   const now = options.now ?? Date.now;
   const timeoutMs = options.timeoutMs ?? 10_000;
   let attempts: number[] = [];
-  let inFlight = false;
+  let inFlight = 0;
 
   return async (req: IncomingMessage, res: ServerResponse, next: () => void): Promise<void> => {
     const path = req.url?.split('?')[0];
@@ -220,13 +222,13 @@ export function createBottleAgentMiddleware(
       return;
     }
     attempts = attempts.filter((time) => now() - time < WINDOW_MS);
-    if (inFlight || attempts.length >= MAX_SESSIONS) {
+    if (inFlight >= MAX_CONCURRENT_SESSIONS || attempts.length >= MAX_SESSIONS) {
       res.setHeader('Retry-After', '60');
       json(res, 429, { error: 'Please wait before starting another voice session.' });
       return;
     }
     attempts.push(now());
-    inFlight = true;
+    inFlight++;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const disconnected = () => controller.abort();
@@ -271,7 +273,7 @@ export function createBottleAgentMiddleware(
     } finally {
       clearTimeout(timer);
       res.off('close', disconnected);
-      inFlight = false;
+      inFlight--;
     }
   };
 }
