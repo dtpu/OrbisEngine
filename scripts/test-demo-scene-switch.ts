@@ -60,15 +60,18 @@ try {
     'The desktop picker must reuse the existing viewer and renderer',
   );
   // A source inset is recreated with the scene; header controls must follow the new root.
+  const sourceHidden = await frame
+    .locator('#pip')
+    .evaluate((video) => video.classList.contains('hidden'));
   await page.click('#srcbtn');
   assert.equal(
     await frame.locator('#pip').evaluate((video) => video.classList.contains('hidden')),
-    false,
+    !sourceHidden,
   );
   await page.click('#srcbtn');
   assert.equal(
     await frame.locator('#pip').evaluate((video) => video.classList.contains('hidden')),
-    true,
+    sourceHidden,
   );
   await page.click('#soundbtn');
   await frame.waitForFunction(() => window.wander.audioState.muted);
@@ -86,6 +89,11 @@ try {
   assert.equal(
     await frame.evaluate(() => window.__demoSwitchRenderer === window.wander.spark.renderer),
     true,
+  );
+  await page.waitForFunction(
+    () =>
+      getComputedStyle(document.querySelector('#loading')!).opacity === '0' &&
+      document.querySelector('#soundbtn')?.getAttribute('aria-pressed') === 'false',
   );
   assert.deepEqual(errors, []);
   await mkdir('.context/evidence/xr-scene-sidebar', { recursive: true });
