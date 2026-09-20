@@ -82,7 +82,11 @@ test('warming downloads each blob once and reports the pinned snapshot', async (
       return f.sha256;
     },
   };
-  const result = await warmAssets(cache, { paths: ['/worlds/a-4d/person/frame_000.ply'] });
+  const one = await warmAssets(cache, { paths: ['/worlds/a-4d/person/frame_000.ply'] });
+  assert.equal(one.paths, 1, '--path selects exactly the file it names');
+  assert.equal(one.blobs, 1);
+  downloaded.length = 0;
+  const result = await warmAssets(cache, { prefixes: ['/worlds/a-4d/'] });
   assert.deepEqual(result, {
     snapshot: 'viewer/snapshots/pinned.json',
     paths: 3,

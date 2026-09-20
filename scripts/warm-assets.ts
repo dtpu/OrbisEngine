@@ -71,7 +71,8 @@ export async function warmAssets(
   let wanted: string[];
   if (selection.all) wanted = Object.keys(catalog.files).sort();
   else {
-    const named = new Set(selection.paths ?? []);
+    // Only what a scene names is expanded to its world directory; --path means that one file.
+    const named = new Set<string>();
     const scenes = selection.scenes ?? [];
     if (scenes.length) {
       const [demoHtml, fourdHtml] = await Promise.all([
@@ -82,6 +83,7 @@ export async function warmAssets(
       for (const paths of presetPaths(fourdHtml, ids).values()) for (const p of paths) named.add(p);
     }
     wanted = selectPaths(catalog, named);
+    for (const p of selection.paths ?? []) if (Object.hasOwn(catalog.files, p)) wanted.push(p);
     for (const prefix of selection.prefixes ?? [])
       for (const p of Object.keys(catalog.files)) if (p.startsWith(prefix)) wanted.push(p);
     wanted = [...new Set(wanted)].sort();

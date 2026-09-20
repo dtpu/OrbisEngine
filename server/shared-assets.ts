@@ -38,21 +38,6 @@ export interface BlobCache {
   cacheDir: string;
   destroy(): void;
 }
-// A path can hold different bytes in different snapshots, so a path alone may never be cached for
-// long. A request that names its content may: `snap` is the pinned snapshot id (snapshots are
-// immutable) and `v` is a sha256 prefix of the blob itself. Anything else gets a session-length
-// max-age, which is still safe because one server run serves one pinned snapshot.
-const IMMUTABLE = 'private, max-age=31536000, immutable';
-const SESSION = 'private, max-age=600';
-export function snapshotId(snapshot: string) {
-  return snapshot.replace(/^viewer\/snapshots\//, '').replace(/\.json$/, '');
-}
-export function cacheControl(query: URLSearchParams, sha256: string, snapshot: string) {
-  const v = query.get('v');
-  if (v && /^[a-f0-9]{8,64}$/.test(v) && sha256.startsWith(v)) return IMMUTABLE;
-  if (query.get('snap') === snapshotId(snapshot)) return IMMUTABLE;
-  return SESSION;
-}
 /** Application code and documents; everything else is looked up in the catalog. */
 export function appPath(pathname: string) {
   return (
@@ -76,9 +61,6 @@ export function parseRange(header: string | undefined, size: number): ByteRange 
   )
     return false;
   return { start, end };
-}
-export function assetQuery(url: string) {
-  return new URLSearchParams(url.slice(url.indexOf('?') + 1 || url.length));
 }
 export function assetPath(url: string) {
   try {
@@ -226,10 +208,7 @@ export function sharedAssets(
       }
       const etag = `"${f.sha256}"`;
       res.setHeader('ETag', etag);
-      res.setHeader(
-        'Cache-Control',
-        cacheControl(assetQuery(req.url || '/'), f.sha256, c.snapshot),
-      );
+      res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
       res.setHeader('X-Wander-Asset-Source', 's3');
       res.setHeader('X-Wander-Snapshot', c.snapshot);
       res.setHeader('Accept-Ranges', 'bytes');
@@ -290,60 +269,6 @@ export function sharedAssets(
       server.middlewares.use(middleware);
       server.httpServer?.once('close', () => blobs.destroy());
     },
-    // Binds every asset fetch to the pinned snapshot so repeat loads need no revalidation. The page
-    // itself is never cached, so a restart on a new snapshot immediately changes every asset URL.
-    transformIndexHtml: {
-      // `post`: Vite indexes the page's own inline modules first, so injecting never renumbers them.
-      order: 'post' as const,
-      async handler(html: string) {
-        if (local) return html;
-        let id: string;
-        try {
-          id = snapshotId((await catalog()).snapshot);
-        } catch {
-          return html; // no credentials: the page still loads and reports the asset failure
-        }
-        return {
-          html,
-          tags: [
-            {
-              tag: 'script',
-              injectTo: 'head-prepend' as const,
-              children: versionShim(id),
-            },
-          ],
-        };
-      },
-    },
     middleware,
   };
-}
-
-/** Appends ?snap=<id> to same-origin asset fetches. Classic inline script: it must run before the
- * viewer's module graph. `?assetver=0` turns it off. Media elements keep their plain URLs. */
-export function versionShim(id: string) {
-  return `(function () {
-  var snap = ${JSON.stringify(id)};
-  try {
-    if (new URLSearchParams(location.search).get('assetver') === '0') return;
-  } catch (e) {
-    return;
-  }
-  var base = window.fetch;
-  if (typeof base !== 'function') return;
-  window.fetch = function (input, init) {
-    try {
-      if (typeof input === 'string' || input instanceof URL) {
-        var url = new URL(input, location.href);
-        var p = url.pathname;
-        var app = /^\\/(?:src|node_modules|@[^/]+|api)(?:\\/|$)/.test(p) || p === '/' || /^\\/[^/]+\\.html$/.test(p);
-        if (url.origin === location.origin && !app && !url.searchParams.has('snap')) {
-          url.searchParams.set('snap', snap);
-          input = url.href;
-        }
-      }
-    } catch (e) {}
-    return base.call(this, input, init);
-  };
-})();`;
 }
