@@ -60,7 +60,11 @@ adb reverse tcp:5399 tcp:5399
 ```
 
 In Meta Browser open `http://localhost:5399/demo.html?xr=1`, start playback, and select **Enter VR**.
-Default movement is teleport with snap turning; `?xr=1&xrmove=smooth` enables smooth locomotion.
+Default movement is teleport with snap turning. `?xr=1&xrmove=smooth` enables smooth walking
+with the left joystick and continuous turning with the right joystick. Right-stick turning has a
+15% deadzone, stops on release, and turns at 90 degrees/second at full deflection. Add
+`&xrturnspeed=60` to adjust that rate (0–180 degrees/second), or `&xrturnmode=snap` to keep
+snap turning while walking smoothly. `&xrturn=0` disables joystick turning in either mode.
 Measure the physical headset's frame rate before demonstrating it. Simulated XR tests check code
 paths only. The desktop viewer is the fallback when headset performance is inadequate.
 
@@ -159,6 +163,7 @@ bun run test:audio-browser
 bun run test:audio-package
 bun run test:person-motion
 bun run test:static-colliders
+bun scripts/test-xr-turning-browser.ts
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
@@ -168,6 +173,9 @@ The formatted inline scripts in `demo.html` and `fourd.html` still use JavaScrip
 The audio browser check needs installed Chrome. With the live demo running, use `bun run smoke:xr`
 for a simulated XR smoke check and `bun run capture:shared /absolute/evidence/directory` for
 S3-backed viewer captures. Walk collision captures accept `--out` for an evidence directory.
+The turning browser check also needs that server. After building, run
+`XR_TEST_DIST=dist bun scripts/test-xr-turning-browser.ts` to test this checkout's compiled code
+while using the running server for scene assets. Evidence stays under `.context/evidence/`.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
 Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
 checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)
