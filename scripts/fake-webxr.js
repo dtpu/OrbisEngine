@@ -11,12 +11,18 @@
 //   ?fakexr=1            install it
 //   ?fakew= ?fakeh=      per-eye resolution (default 2064x2208, Quest 3 native)
 //   ?fakevfov=           vertical field of view in degrees (default 96, Quest 3's)
+//   ?fakefloor=0         deny local-floor to exercise the seated reference-space fallback
 //
-// window.__fakeXR is the driver: .head {x,y,z,yaw} in METRES of reference space, .axes.left/.right
+// window.__fakeXR is the driver: .head {x,y,z,yaw,pitch} in METRES of reference space, .axes.left/.right
 // as xr-standard thumbsticks, .frames the frame times the session has served.
 (() => {
   const P = new URLSearchParams(location.search);
   if (P.get('fakexr') !== '1') return;
+  // The synthetic session renders to an ordinary framebuffer. Native makeXRCompatible waits
+  // for a real XR device, which would prevent this fixture from starting on desktop Chrome.
+  for (const context of [WebGLRenderingContext, WebGL2RenderingContext]) {
+    context.prototype.makeXRCompatible = async function () {};
+  }
   const n = (k, d) => (P.get(k) == null || isNaN(+P.get(k)) ? d : +P.get(k));
   const EW = n('fakew', 2064),
     EH = n('fakeh', 2208),
@@ -24,18 +30,38 @@
     IPD = 0.063;
 
   const drv = {
-    head: { x: 0, y: 1.6, z: 0, yaw: 0 },
+    head: { x: 0, y: 1.6, z: 0, yaw: 0, pitch: 0 },
     axes: { left: [0, 0, 0, 0], right: [0, 0, 0, 0] },
+    buttons: { left: [0, 0], right: [0, 0] },
     frames: [],
     presenting: false,
   };
   window.__fakeXR = drv;
 
-  // Column-major 4x4 for a yaw-only pose, which is all a scripted head needs.
-  const pose = (x, y, z, yaw) => {
+  // Column-major head pose: yaw followed by pitch, without changing the eye midpoint.
+  const pose = (x, y, z, yaw, pitch = 0) => {
     const c = Math.cos(yaw),
-      s = Math.sin(yaw);
-    return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, x, y, z, 1]);
+      s = Math.sin(yaw),
+      cp = Math.cos(pitch),
+      sp = Math.sin(pitch);
+    return new Float32Array([
+      c,
+      0,
+      -s,
+      0,
+      s * sp,
+      cp,
+      c * sp,
+      0,
+      s * cp,
+      -sp,
+      c * cp,
+      0,
+      x,
+      y,
+      z,
+      1,
+    ]);
   };
   const mul = (a, b) => {
     // a * b, both column-major
@@ -123,7 +149,7 @@
     }
     getViewerPose() {
       const h = drv.head;
-      const base = pose(h.x, h.y, h.z, h.yaw);
+      const base = pose(h.x, h.y, h.z, h.yaw, h.pitch);
       const pm = proj(
         VFOV,
         EW / EH,
@@ -184,7 +210,13 @@
         get axes() {
           return drv.axes[handedness] ?? [0, 0, 0, 0];
         },
-        buttons: [],
+        get buttons() {
+          return drv.buttons[handedness].map((value) => ({
+            value,
+            pressed: value > 0.5,
+            touched: value > 0,
+          }));
+        },
         mapping: 'xr-standard',
         connected: true,
       },
@@ -197,13 +229,16 @@
       this.mode = mode;
       this.environmentBlendMode = 'opaque';
       this.visibilityState = 'visible';
-      this.enabledFeatures = (init?.optionalFeatures ?? []).filter((f) => f === 'local-floor');
+      this.enabledFeatures = (init?.optionalFeatures ?? []).filter(
+        (f) => f === 'local-floor' && P.get('fakefloor') !== '0',
+      );
       this.renderState = { baseLayer: null, depthNear: 0.1, depthFar: 1000, layers: undefined };
       this.inputSources = [source('left', -0.2), source('right', 0.2)];
       this._cbs = [];
       this._raf = 0;
       this._ended = false;
       this._last = 0;
+      this._inputsReported = false;
     }
     updateRenderState(s) {
       Object.assign(this.renderState, s);
@@ -220,6 +255,10 @@
     _pump(t) {
       this._raf = 0;
       if (this._ended) return;
+      if (!this._inputsReported) {
+        this._inputsReported = true;
+        this.dispatchEvent({ type: 'inputsourceschange', added: this.inputSources, removed: [] });
+      }
       if (this._last) drv.frames.push(t - this._last);
       this._last = t;
       const cbs = this._cbs;

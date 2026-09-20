@@ -152,3 +152,99 @@ The user's subsequent report of absent objects is accurate for the earlier kitch
 It does not yet render the handled pan, kettle or bag. Do not describe it as complete object
 reconstruction. The review entry now distinguishes the new repair from the earlier empty-object
 scene. Pending source/hand-contact validation of further props remains separate work.
+
+## Continued object repair and authorized actor job
+
+The third pan hypothesis improves held-out centre errors to 3.10, 5.07 and 7.66 pixels at
+672-pixel source width. All 17 sampled mesh-handle proximity checks meet 0.05 body-heights.
+The real viewer renders the inferred held pan through 16.033 seconds, then switches to the
+retained observed counter pan. Exactly 2,678 source-selected Gaussian points were separated
+from the room for that timed static layer; all other room points are unchanged. Nineteen source
+views, two displaced views and four-direction walking were inspected. The mesh has invented
+appearance and approximate tilt, especially around 13 seconds; uncertain early tracking and
+other static remnants remain. This is an object-repair experiment, not whole-kitchen acceptance.
+
+Its full 609-frame preview preserves all 2,380 original AAC packet payloads, timestamps, durations
+and priming values. Exactly one cook and one pan layer are visible at every captured sample.
+Preview SHA-256: `32f64af62ae8cf80333e667e50fcdb17d4e10aa858e088005010d42292d94352`.
+
+Source inspection identifies the pouring object as a water-filter pitcher, correcting the earlier
+kettle label. The third pitcher hypothesis passes only 3/6 independent projection checks and
+fails pickup; the bag's third hypothesis also fails projection/contact/coverage. Both remain
+excluded from the delivered scene, with all attempts and review-only artifacts retained.
+
+The spending audit verified 24 existing logs and seven completed historical kitchen apps.
+Their observed $0.74521365 is already included in earlier workspace billing and must not be added
+again. Earlier overwritten failures and incomplete billing prevent certifying the original $27
+remainder. This does not establish that it is exhausted.
+
+The user subsequently authorized **up to $10 additional Modal spend** for the concrete saved-actor
+repair: reuse the early canonical for the final 50 samples plus sample 0 as a control, then preserve
+the 559 existing early outputs. This approval covers that corrective job and necessary cache setup;
+it does not reset other attempts or authorize automatic retries. A fresh read-only preflight now
+finds another session's completed LHM, native-body, DINO and face-model caches in `austin-jian547`.
+Reuse them; do not duplicate setup or stop the other session's jobs.
+
+The tested animation wrapper now preserves a fixed world scale, supports a 600-second execution
+limit and durably checkpoints generated outputs with input hashes and a recovery receipt. Eight
+new offline checks plus 35 existing recovery/accounting checks pass. A sparse 51-sample export
+must remain partial until its intended IDs, control output and explicit full-clip merge are verified.
+
+## Saved-appearance repair execution
+
+The explicitly authorized corrective job ran once in `austin-jian547`: app
+`ap-YkBOW5PfyeiaBghCN0qTdj`, call `fc-01M2Y5ZXA4MWYFJZHFNSWJAAXY`.
+It reused completed shared model caches, with no additional setup submission. The bounded
+worker finished in 55.774 seconds, reporting a compute estimate of $0.023229. This excludes
+final hashing/commit, transfer and storage; provider billing for this app has not posted.
+Keep the $2.249888 reservation against the additional $10 authorization until reconciliation.
+Other sessions' jobs and costs remain separate. No retry was submitted.
+
+All 51 intended outputs were recovered with verified hashes. The worker correctly reports
+partial full-grid coverage because its saved seeds contain only sample 0 and samples 559–608.
+After the original packaging transform, the control PLY is byte-identical to the retained
+first frame. Every tail frame has 40,000 finite Gaussians; colour, opacity and scale attributes
+are bit-identical to the early canonical. A fresh candidate references all 559 original early
+frames and their unchanged compact motion, then appends 50 new frames. Its lossless tail
+motion SHA-256 is `0195d7c19bad78b4eed956fe379d44bb0a51a3079e6bb79c55505fbaaff761b8`.
+
+The early floor placement is unchanged. The tail's independently measured fixed camera-centred
+factor is 1.125916; opaque low-point floor residual RMS is 0.01596 body-heights, maximum 0.04328.
+Source-camera pixels remain unchanged to numerical precision. These are geometric proxies,
+not proof of anatomical, cabinet or wall contact.
+
+The `b2c36c3` main build passed nine source-camera checks, including both sides of the appearance
+handover, and two full-body opposing views. James retains the same saved appearance, with one
+visible cook. Four-direction walking remains available; backward travel is 0.827 body-heights in
+1.8 seconds, with a forward stop near the counter. Pitcher/bag motion, room holes, stretched
+static fragments and imperfect articulation/contact still prevent whole-kitchen acceptance.
+No headset validation is claimed. Evidence and the deterministic merge script are archived
+under the actor-repair delivery evidence namespace rather than committed as generated assets.
+
+## Late door motion and final preview
+
+The original source keeps the freezer open to its final frame, but the door progressively swings
+partly closed. It genuinely occludes James around 46.49–46.575 seconds. The second local door
+candidate preserves opening samples 0–474 and both pan tracks, replacing the indefinite late hold
+with source-measured angles. At 50.497 seconds, corner RMS improves from 64.55 to 4.75 pixels at
+672-pixel review width. Only four of six independent checkpoints pass when uncertainty counts as
+failure; near-edge-on 41 seconds, clipped 46.49 seconds and final camera alignment remain deficient.
+The track holds its last measured angle after 50.497 seconds. It is a better inspection candidate,
+not an accepted door reconstruction. No further door hypothesis or paid call was submitted.
+
+The combined preview is `/reviews/kitchen-continuation/actor-pan-door-preview.mp4`, SHA-256
+`0006f67d0c3451079f26eaebfc70749456e85ce157f69bc66617fad865a83c22` (19,926,597 bytes).
+It contains 609 viewer captures, with one visible cook and one pan layer at every sample. The first
+474 captures are verified unchanged; later samples were recaptured after the actor/door changes.
+All 2,380 original AAC packet payloads, timestamps, durations and priming values are identical.
+Full decoding and playback pass; video ends within one 1/12288-second tick of 50.73 seconds.
+The earlier previews and every accepted gym dependency remain unchanged.
+
+Eleven source-camera checks on the `aa08f23` main build confirm the revised door loads alongside
+the pan and actor. Original floor/walking limitations remain. Another session subsequently took
+port 5399 from a separate checkout; it was left running. A separate local static preview at
+[port 5401](http://127.0.0.1:5401/reviews/gym-kitchen/picker-local.html?clip=kitchen-repair)
+serves the committed viewer build and verified local media, using the existing shared viewer for
+unchanged baseline clips. The portable picker retains all eleven cards. This preview uses no Vite
+restart and exposes only public media/build files. Shared-storage review pages use the normal
+`/fourd.html` from the teammate's checkout.

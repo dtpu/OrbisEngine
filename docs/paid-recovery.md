@@ -69,9 +69,21 @@ reuses matching local files, and refuses conflicting local files. Each transfer 
 file. Failed or partial outputs remain available with explicit status and are not promoted to a
 complete reconstruction. Original prepared inputs remain outside the generated-output checkpoint.
 A running or unavailable checkpoint remains unresolved; recovery does not submit inference.
-This durable checkpoint path belongs to `modal_lhm.py`. Multiperson animation through
-`modal_multiperson.py::animate` retains local outputs but does not yet produce these recovery
-receipts; an existing destination therefore stops for manual inspection.
+Both `modal_lhm.py` and `modal_multiperson.py::animate` use this checkpoint and recovery path.
+Multiperson animation records input hashes before submission and the call ID before waiting.
+An existing output destination stops before another submission; recover its receipt instead.
+
+Saved-track animation accepts `--fixed-world-scale` to retain a measured positive scale below 10
+without fitting depth again. `--execution-timeout` selects a provider limit of 1–3600 seconds;
+omitting it retains the existing 3600-second default. Explicit limits also cap CPU at four physical
+cores and memory at 64 GiB. The subprocess stops before the provider deadline to reserve up to
+60 seconds for output hashing and volume commit. Hard kills or failed commits can still leave an
+unresolved checkpoint and must not trigger resubmission.
+
+A sparse saved-pose input retains its full source grid. Exporting all intended non-null seeds does
+not mean the full recording was reconstructed: the recovery manifest stays partial and the local
+command exits with that status after downloading outputs. Validate exact intended sample IDs and
+hashes before explicitly merging them with retained outputs. The wrapper never fills missing poses.
 
 After inspecting saved provider or recovery evidence, reconcile the corresponding ledger claim:
 

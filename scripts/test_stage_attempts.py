@@ -847,27 +847,23 @@ class PaidRunIntegrationTests(unittest.TestCase):
                     output.mkdir(exist_ok=True)
                 retained = output / "retained.ply" if directory else output
                 retained.write_bytes(b"previously paid output")
-                with ExitStack() as stack:
-                    stack.enter_context(
-                        patch.object(
-                            self.pipeline,
-                            "world_mode",
-                            return_value={"mode": "multi-image", "frames": [0]},
-                        )
-                    )
-                    if method == "clean_multi":
-                        # The fixture's cameras.json carries no sourceSha256, so stand in for the
-                        # real binding step; this subtest checks retained outputs, not timing.
-                        stack.enter_context(
-                            patch.object(
-                                self.pipeline,
-                                "multi_source_selection",
-                                return_value={"frames": [{"frameIndex": 0}]},
-                            )
-                        )
-                    provider = stack.enter_context(patch.object(run_clip, "run"))
-                    with self.assertRaisesRegex(run_clip.QualityStop, "retained"):
-                        getattr(self.pipeline, method)()
+                with (
+                    patch.object(
+                        self.pipeline,
+                        "world_mode",
+                        return_value={"mode": "multi-image", "frames": [0]},
+                    ),
+                    # This test isolates retained-output protection; source/camera
+                    # correspondence has its own decoded-frame fixture tests.
+                    patch.object(
+                        self.pipeline,
+                        "multi_source_selection",
+                        return_value={"frames": [{"frameIndex": 0}]},
+                    ),
+                    patch.object(run_clip, "run") as provider,
+                    self.assertRaisesRegex(run_clip.QualityStop, "retained"),
+                ):
+                    getattr(self.pipeline, method)()
                 provider.assert_not_called()
                 self.assertEqual(retained.read_bytes(), b"previously paid output")
         self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
@@ -899,7 +895,9 @@ class PaidRunIntegrationTests(unittest.TestCase):
             output = self.root / operation
             command = self.command(output)
 
-            def provider(_cmd, _log, **kwargs):
+            def provider(
+                _cmd, _log, *, raised=raised, output=output, reported_error=reported_error, **kwargs
+            ):
                 self.assertEqual(kwargs["attempts"], 1)
                 self.assertTrue(kwargs["append"])
                 if raised:
