@@ -287,3 +287,25 @@ Evidence is private under `.context/evidence/kitchen-aisle/` in the kitchen walk
 These are desktop checks, not headset evidence. The separate XR `walk.advance` diagnostic still
 has an existing support-height smoothing issue on slightly inclined boxes; that path was not
 changed here. Previously recorded inferred-room, object and actor-contact limitations remain.
+
+### Open counter entrance
+
+The later report exposed a gap beside the earlier dog-leg test route: at X=3, walking toward
+Z=-1 stopped near Z=0.06 with no occupied cells. The inferred floor bridge covered only the
+narrow outer aisle, leaving the visibly open approach outside the navigation footprint.
+The revised private `room-access/colliders-open-entry.json` extends that bridge toward the
+counter, retaining its far edge, fitted floor plane, three bodies and all obstacle checks.
+This support is inferred geometry; no rendered room, actor or prop asset was changed.
+
+The kitchen catalog now uses `selected-scenes/kitchen-open-entry.json`. Both new manifests
+are published in `viewer/snapshots/f87c64c4-7113-43d7-acf9-182e59e65a1d.json` in
+`wander-shared-797639045717`; downloaded SHA-256 and sizes match local files, and all 18,047
+entries from the previously pinned snapshot remain unchanged. The new collider SHA-256 is
+`e5695967f1a2130324a8bbca18af91c4657144029d34c962fe75449eb56c7682`.
+
+The regression now includes the previously blocked straight approach, alternate aisle positions,
+the return trip, an occupied countertop approach and map/outer-boundary probes. Twelve keyboard
+waypoints passed in the standalone viewer. The direct countertop approach still stops outside
+occupied cells after about 0.186 body-heights. Evidence, including the failing baseline, is under
+`.context/evidence/kitchen-open-aisle/` in the kitchen walk worktree. Fixtures may specify
+`expectedParams` so a test fails if the viewer did not load its intended collider candidate.

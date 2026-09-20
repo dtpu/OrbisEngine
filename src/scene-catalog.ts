@@ -102,7 +102,7 @@ export const CLIPS: SceneClip[] = [
     caveat:
       'Brita and carried bag motion remain absent. Interiors, unseen surfaces and parts of door/lid motion are inferred. Small items remain blurry; seams and imperfect contact remain.',
     srctxt: 'Original 50.73-second kitchen recording, preserving audio and timing.',
-    sceneManifest: '/reviews/gym-kitchen/selected-scenes/kitchen-repair.json',
+    sceneManifest: '/reviews/gym-kitchen/selected-scenes/kitchen-open-entry.json',
   },
 ];
 
