@@ -244,6 +244,7 @@
         background: var(--ink);
       }
       .thumb {
+        position: relative;
         width: 84px;
         aspect-ratio: 16 / 9;
         border-radius: 6px;
@@ -251,7 +252,8 @@
         background: var(--surface-2);
         margin-top: 4px;
       }
-      .thumb canvas {
+      .thumb canvas,
+      .thumb video {
         display: block;
         width: 100%;
         height: 100%;
@@ -553,6 +555,40 @@
       }
       #loadretry:hover {
         background: #000;
+      }
+
+      /* Narrow viewports: keep Play, Source clip and Reset reachable by shrinking the rail and
+         dropping the key hints before the bar outgrows the stage. */
+      @media (max-width: 1280px) {
+        :root {
+          --rail: 260px;
+        }
+        .tagline {
+          display: none;
+        }
+        .ctitle {
+          font-size: 18px;
+        }
+      }
+      @media (max-width: 1100px) {
+        .keys {
+          display: none;
+        }
+        .keys + .sep {
+          display: none;
+        }
+      }
+      @media (max-width: 860px) {
+        #bar {
+          max-width: calc(100% - 32px);
+          white-space: normal;
+          flex-wrap: wrap;
+          justify-content: center;
+          border-radius: 20px;
+        }
+        .sep {
+          display: none;
+        }
       }
 
       /* recorded reel */
@@ -1348,6 +1384,14 @@
                 e.target.closest?.('button, input, textarea, select, a'))
             )
               return;
+            // `[` toggles the rail here and must not reach the viewer's own `[` action, so it is
+            // handled before the swallow list that otherwise suppresses it.
+            if (e.code === 'BracketLeft') {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              toggleRail();
+              return;
+            }
             if (SWALLOW.has(e.code)) {
               e.stopImmediatePropagation();
               e.preventDefault();
@@ -1367,11 +1411,6 @@
               e.stopImmediatePropagation();
               e.preventDefault();
               toggleHud();
-              return;
-            }
-            if (e.code === 'BracketLeft') {
-              e.preventDefault();
-              toggleRail();
               return;
             }
             if (e.code === 'Escape') {
