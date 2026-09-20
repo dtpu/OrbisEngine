@@ -77,6 +77,16 @@ adb reverse tcp:5399 tcp:5399
 ```
 
 In Meta Browser open `http://localhost:5399/demo.html?xr=1`, start playback, and select **Enter VR**.
+The desktop demo includes a small **Quest view** window showing the active headset's left-eye
+scene. Open both devices through the same local demo server, then enter VR on the Quest. The
+preview follows head and joystick movement, including the in-scene hands and body. It does not
+include Meta system menus or audio. Minimize the window to stop receiving; capture pauses when
+no visible window is watching. The local relay retains only the latest image in memory, with
+no recording. The window fits the headset image's proportions; use **Expand Quest view** for a
+larger view. Capture and display target 60 frames per second at up to 512 pixels; the panel shows
+the actual displayed rate. Speed depends on headset rendering, encoding and the connection, and
+cannot exceed the headset's rendered frame rate. Capture overlaps the preceding upload, with
+at most one following frame and no accumulating queue. `xrview=0` disables sharing from the headset.
 Default movement is teleport with snap turning. `?xr=1&xrmove=smooth` enables smooth walking
 with the left joystick and continuous turning with the right joystick. Right-stick turning has a
 15% deadzone, stops on release, and turns at 90 degrees/second at full deflection. Add
@@ -227,6 +237,12 @@ runs the authoring-scale regression alone. Simulated captures stay under `.conte
 The turning browser check also needs that server. After building, run
 `XR_TEST_DIST=dist bun run test:xr-turning` to test this checkout's compiled code
 while using the running server for scene assets. Evidence stays under `.context/evidence/`.
+`bun test ./scripts/test-quest-view.ts` checks the spectator relay's ownership, expiry and upload
+limits. `bun scripts/test-quest-view-panel-browser.ts` checks the preview window's connection and
+visibility states. After building, `bun scripts/test-quest-view-browser.ts` checks real rendered
+pixels through the encoder, relay and panel with synthetic XR input on an isolated local server.
+Native Quest capture still needs a headset check; main-thread canvas encoding can stall during
+immersive sessions, so JPEG encoding runs in a dedicated worker.
 `bun run capture:audio` exercises the real demo's audio; set `AUDIO_OUT` for its evidence path.
 Compact animation is lossless by default; see [person motion](docs/person-motion.md) for integrity
 checks, original-PLY fallback and explicit quantization opt-in. The [kitchen review](docs/kitchen-review.md)
