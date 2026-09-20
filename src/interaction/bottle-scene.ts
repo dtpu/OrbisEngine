@@ -895,8 +895,31 @@ export class BottleScene {
         head,
         forward,
         this.host.stature * parsePersonSize(this.host.params.get('personsize')),
+        this.heldPropPositions(person),
+        dt,
       );
     }
+  }
+
+  private heldPropPositions(person: InteractionPerson): THREE.Vector3[] {
+    const held: THREE.Vector3[] = [];
+    const state = this.physics.snapshot();
+    if (this.attached?.person === person && ['recorded', 'returned'].includes(state.mode))
+      held.push(from(state.position));
+    for (const object of this.host.objects) {
+      if (object === this.bottle || !object.group.visible) continue;
+      const handheld =
+        object.meta.objectClass === 'thrown' ||
+        segments(object.meta).some(
+          (span) => span.parent === person.id && /wrist|hand/i.test(span.jointName ?? ''),
+        );
+      if (
+        handheld &&
+        recordedState(object.meta, object.track.fps, this.host.time(), []).owner === person.id
+      )
+        held.push(object.mesh.getWorldPosition(new THREE.Vector3()));
+    }
+    return held;
   }
 
   private character() {
@@ -964,10 +987,11 @@ export class BottleScene {
       voiceStatus: this.voiceStatus,
       voiceErrorCode: this.client.lastProviderErrorCode,
       microphoneMuted: this.muted,
-      poseType: 'paused recording; whole-body facing and invented head/chest conversation motion',
+      poseType: 'paused recording; facing and invented head/chest/arm conversation motion',
       animations: this.host.people.map((person) => ({
         personId: person.id,
         pose: this.animations.get(person.id)?.motion.snapshot() ?? null,
+        armFreedom: this.animations.get(person.id)?.splats.armFreedom ?? null,
       })),
       returnType: 'assisted target, not animated reach',
       availableActions: this.interrupted

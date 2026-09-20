@@ -96,8 +96,10 @@ the measured object and person manifests, rather than per-clip runtime constants
 [objects](objects.md) for their timing, coordinate, and evidence limits.
 
 Whole-body facing rotates a paused recorded group about its current anchor. The selected person
-also breathes subtly and nods while listening, with more active head gestures during authorized
-generated voice playback. Those gestures blend between listening and speaking over half a second;
+also breathes subtly and nods while listening, with more active head gestures and alternating
+shoulder/elbow beats during authorized generated voice playback. The arms rest while listening;
+speaking includes brief pauses between gestures. Those gestures blend between listening and speaking
+over half a second;
 switching people or leaving conversation range fades the previous overlay out. Replay, scene
 disposal, hiding VR, and leaving VR restore the original splats. `?interactAnimation=0` disables
 this overlay while retaining facing and bottle handling.
@@ -105,14 +107,20 @@ this overlay while retaining facing and bottle handling.
 This is invented procedural motion, not a reconstruction of what the filmed person said or did.
 Although reconstruction uses a skeleton, the viewer's PLY/motion packages contain baked Gaussian
 poses, without runtime bones or skinning weights. A GPU modifier uses the current head anchor and
-approximate neck/chest regions to add small rotations and breathing; it does not advance the source
+approximate neck/chest/arm regions to add small rotations and breathing; it does not advance the source
 timeline or alter stored frames. Head motion on each axis stays below three degrees and chest
-displacement below 0.0021 body-heights. The lower body and separately packaged props retain their poses. Regions
-are approximate, so this is suited to the existing upright people; unusual poses, especially a hand
-over the face, need separate visual review. Source projection and other splat modifiers are preserved.
+displacement below 0.0021 body-heights. Shoulder forward swing stays below 0.16 radians and elbow
+flex below 0.38 radians, with a small outward shoulder rotation. The lower body and separately
+packaged props retain their poses. A person's held bottle or wrist/hand-attached prop pins the
+nearer arm; a prop near the body centre conservatively pins both. When the visitor takes the prop,
+that arm blends back into gesturing. This does not animate a catch or change bottle ownership.
+Arm regions taper out above the hips to avoid moving a leaning person's thighs. Regions and joints
+are approximate, so this suits upright people with their arms by their sides;
+crossed or raised arms, hands over the face, and loose clothing may distort and need separate
+visual review. Source projection and other splat modifiers are preserved.
 
-There is no controllable walking, reaching, eye movement, lip sync, or real character rig. Generated
-voice is spatialized at the selected anchor; the original clip only supplies its recorded mix, not
+There is no controllable walking, targeted reaching, finger motion, eye movement, lip sync, or
+exported character rig. Generated voice is spatialized at the selected anchor; the original clip only supplies its recorded mix, not
 isolated character speech.
 
 The shared voice prompt speaks in first person as the selected fictional character, using their
@@ -155,8 +163,9 @@ With that opt-in, `WANDER_TEST_VOICE_WAV=/path/to/owned-speech.wav` injects a lo
 into the test microphone and checks real provider VAD, source pause, and two consecutive replies.
 
 `bun run test:conversation-browser` checks real elevator Gaussian rendering with synthetic voice
-state transitions and no provider calls. It compares neutral and speaking pixels, checks that the
-lower body stays fixed, and requires exact restoration after disabling the overlay. It supports
+state transitions and no provider calls. It compares neutral and speaking pixels, independently
+checks each arm at peak gesture (including the pinned bottle hand), checks that the lower body
+stays fixed, and requires exact restoration after disabling the overlay. It supports
 the same `VIEWER_BUILD_DIR=dist` route; `CONVERSATION_PERSON=1` checks the second person. It saves private evidence under
 `.context/evidence/conversation-animation/`. This is desktop GPU evidence, not headset performance
 or a new live voice-provider check. Motion/lifecycle tests also cover frame-rate independence,

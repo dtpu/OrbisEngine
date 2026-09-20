@@ -475,7 +475,18 @@ describe('BottleScene real-physics interaction integration', () => {
 
 const animationPose = (runtime: BottleScene, personId = 'thrower') =>
   runtime.snapshot().animations.find((item) => item.personId === personId)?.pose;
-const zeroAnimation = { pitch: 0, yaw: 0, roll: 0, breath: 0, weight: 0, mode: 'off' as const };
+const zeroAnimation = {
+  pitch: 0,
+  yaw: 0,
+  roll: 0,
+  breath: 0,
+  leftShoulder: 0,
+  rightShoulder: 0,
+  leftElbow: 0,
+  rightElbow: 0,
+  weight: 0,
+  mode: 'off' as const,
+};
 const modifiers = (person: InteractionPerson) =>
   (person.pmesh as unknown as { objectModifiers?: unknown[] }).objectModifiers ?? [];
 
@@ -489,6 +500,115 @@ function conversationFixture(params = new URLSearchParams()) {
   };
   return { ...setup, tick };
 }
+
+const armFreedom = (runtime: BottleScene, personId = 'thrower') =>
+  runtime.snapshot().animations.find((item) => item.personId === personId)!.armFreedom!;
+
+function placeRecordedBottle(setup: ReturnType<typeof conversationFixture>, x: number) {
+  setup.bottle.samplePosition = () => new THREE.Vector3(x, 0.8, -1.1);
+  setup.setTime(setup.host.time());
+}
+
+describe('BottleScene held-prop arm ownership', () => {
+  test('a recorded held bottle pins its side, with both arms pinned for a central attachment', () => {
+    for (const x of [-0.18, 0, 0.18]) {
+      const setup = conversationFixture();
+      placeRecordedBottle(setup, x);
+      expect(setup.runtime.interrupt('approached', 'thrower')).toBe(true);
+      voiceFixture(setup.runtime).speaking(true);
+      setup.tick();
+      expect(setup.runtime.snapshot().bottle.personOwner).toBe('thrower');
+      const [left, right] = armFreedom(setup.runtime);
+      if (x <= 0) expect(left).toBe(0);
+      else expect(left).toBeGreaterThan(0.99);
+      if (x >= 0) expect(right).toBe(0);
+      else expect(right).toBeGreaterThan(0.99);
+    }
+  });
+
+  test('a visitor grab gradually frees the holding arm while the source stays paused', () => {
+    const setup = conversationFixture();
+    const { runtime, frame, tick, host, bottle } = setup;
+    const voice = voiceFixture(runtime);
+    placeRecordedBottle(setup, -0.18);
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    voice.speaking(true);
+    tick();
+    expect(armFreedom(runtime)[0]).toBe(0);
+    const palm = bottle.mesh.getWorldPosition(new THREE.Vector3());
+    frame([hand(palm, false)]);
+    frame([hand(palm, true)]);
+    expect(runtime.snapshot().bottle).toMatchObject({ mode: 'held', holder: 'right' });
+    const released = armFreedom(runtime)[0];
+    expect(released).toBeGreaterThan(0);
+    expect(released).toBeLessThan(0.2);
+    // The grab invalidates stale generated output; a fresh reply may now gesture.
+    voice.speaking(true);
+    for (let i = 0; i < 72; i++) frame([hand(palm, true)]);
+    expect(armFreedom(runtime)[0]).toBeGreaterThan(0.99);
+    expect(animationPose(runtime)!.mode).toBe('speaking');
+    expect(runtime.snapshot().bottle.holder).toBe('right');
+    expect(host.time()).toBe(0.5);
+    expect(host.playing()).toBe(false);
+  });
+
+  test('a bottle held by the other person leaves the active speaker free to gesture', () => {
+    const setup = conversationFixture();
+    setup.setTime(3.5);
+    placeRecordedBottle(setup, 0);
+    expect(setup.runtime.interrupt('approached', 'thrower')).toBe(true);
+    setup.tick();
+    expect(setup.runtime.snapshot().bottle.personOwner).toBe('receiver');
+    expect(setup.runtime.snapshot().activePersonId).toBe('thrower');
+    for (const freedom of armFreedom(setup.runtime)) expect(freedom).toBeGreaterThan(0.99);
+  });
+
+  test('non-thrown wrist props pin their owner, while spine props and another owner do not', () => {
+    for (const attachment of [
+      { id: 'cup', parent: 'thrower', jointName: 'rightWrist', pinsRight: true },
+      { id: 'backpack', parent: 'thrower', jointName: 'spine', pinsRight: false },
+      { id: 'other-cup', parent: 'receiver', jointName: 'rightWrist', pinsRight: false },
+    ]) {
+      const setup = conversationFixture();
+      placeRecordedBottle(setup, -0.18);
+      const group = new THREE.Group();
+      const mesh = new THREE.Object3D();
+      mesh.position.set(0.18, 0.8, -1.1);
+      group.add(mesh);
+      setup.host.scene.add(group);
+      setup.host.objects.push({
+        id: attachment.id,
+        label: attachment.id,
+        meta: {
+          objectClass: 'attached',
+          pose: {
+            segments: [
+              {
+                kind: 'attached',
+                fromSourceFrame: 0,
+                toSourceFrame: 40,
+                parent: attachment.parent,
+                jointName: attachment.jointName,
+              },
+            ],
+          },
+        },
+        track: { fps: 10 },
+        group,
+        mesh,
+        interactionOwned: false,
+        samplePosition: () => new THREE.Vector3(0.18, 0.8, -1.1),
+      });
+      setup.host.scene.updateMatrixWorld(true);
+      expect(setup.runtime.interrupt('approached', 'thrower')).toBe(true);
+      setup.tick();
+      const [left, right] = armFreedom(setup.runtime);
+      expect(left).toBe(0);
+      if (attachment.pinsRight) expect(right).toBe(0);
+      else expect(right).toBeGreaterThan(0.99);
+    }
+  });
+});
 
 describe('BottleScene conversation animation lifecycle', () => {
   test('normal playback and the explicit animation opt-out leave source meshes alone', () => {

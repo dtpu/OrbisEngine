@@ -5,8 +5,20 @@ import {
   type ConversationPose,
 } from '../src/interaction/conversation-motion';
 
-const channels = ['pitch', 'yaw', 'roll', 'breath', 'weight'] as const;
-const zero: ConversationPose = { pitch: 0, yaw: 0, roll: 0, breath: 0, weight: 0, mode: 'off' };
+const arms = ['leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow'] as const;
+const channels = ['pitch', 'yaw', 'roll', 'breath', 'weight', ...arms] as const;
+const zero: ConversationPose = {
+  pitch: 0,
+  yaw: 0,
+  roll: 0,
+  breath: 0,
+  weight: 0,
+  leftShoulder: 0,
+  rightShoulder: 0,
+  leftElbow: 0,
+  rightElbow: 0,
+  mode: 'off',
+};
 
 function advance(motion: ConversationMotion, seconds: number, mode: ConversationMode, fps = 60) {
   for (let i = 0; i < Math.round(seconds * fps); i++) motion.update(1 / fps, mode);
@@ -32,6 +44,10 @@ describe('invented conversation overlay', () => {
       roll: 0.025,
       breath: 0.0025,
       weight: 1,
+      leftShoulder: 0.16,
+      rightShoulder: 0.16,
+      leftElbow: 0.38,
+      rightElbow: 0.38,
     };
     for (let frame = 0; frame < 36000; frame++) {
       const mode = (['off', 'listening', 'speaking'] as const)[Math.floor(frame / 173) % 3];
@@ -41,6 +57,7 @@ describe('invented conversation overlay', () => {
         expect(Math.abs(pose[channel])).toBeLessThanOrEqual(limits[channel]);
       }
       expect(pose.weight).toBeGreaterThanOrEqual(0);
+      for (const arm of arms) expect(pose[arm]).toBeGreaterThanOrEqual(0);
     }
   });
 
@@ -56,6 +73,9 @@ describe('invented conversation overlay', () => {
           expect(Math.abs(pose[channel] - previous[channel])).toBeLessThan(0.006);
         }
         expect(Math.abs(pose.breath - previous.breath)).toBeLessThan(0.0002);
+        for (const arm of arms) {
+          expect(Math.abs(pose[arm] - previous[arm])).toBeLessThan(0.04);
+        }
         previous = pose;
       }
     }
@@ -101,6 +121,59 @@ describe('invented conversation overlay', () => {
     expect(speaking.head).toBeGreaterThan(listening.head * 2);
     expect(listening.chest).toBeGreaterThan(0.001);
     expect(speaking.chest).toBeGreaterThan(0.001);
+  });
+
+  test('speaking alternates visible arm beats with pauses while listening rests', () => {
+    const motion = new ConversationMotion('gestures');
+    advance(motion, 1, 'speaking');
+    let leftBeats = 0;
+    let rightBeats = 0;
+    let restFrames = 0;
+    let previousSide = '';
+    let switches = 0;
+    let previous = motion.snapshot();
+    for (let frame = 0; frame < 1200; frame++) {
+      const pose = motion.update(1 / 60, 'speaking');
+      for (const arm of arms) {
+        expect(Math.abs(pose[arm] - previous[arm])).toBeLessThan(0.025);
+      }
+      const left = pose.leftShoulder > 0.1 && pose.leftElbow > 0.24;
+      const right = pose.rightShoulder > 0.1 && pose.rightElbow > 0.24;
+      expect(left && right).toBe(false);
+      if (left) leftBeats++;
+      if (right) rightBeats++;
+      const side = left ? 'left' : right ? 'right' : '';
+      if (side && side !== previousSide) {
+        switches++;
+        previousSide = side;
+      }
+      if (arms.every((arm) => pose[arm] === 0)) restFrames++;
+      previous = pose;
+    }
+    expect(leftBeats).toBeGreaterThan(100);
+    expect(rightBeats).toBeGreaterThan(100);
+    expect(switches).toBeGreaterThan(10);
+    expect(restFrames).toBeGreaterThan(80);
+
+    const switched = motion.update(0, 'listening');
+    for (const arm of arms) expect(switched[arm]).toBe(previous[arm]);
+    advance(motion, 0.5, 'listening');
+    for (let frame = 0; frame < 600; frame++) {
+      const pose = motion.update(1 / 60, 'listening');
+      for (const arm of arms) expect(pose[arm]).toBe(0);
+    }
+  });
+
+  test('arm gestures share the half-second activation and exact fade-out', () => {
+    const motion = new ConversationMotion('arm-fade');
+    const halfway = advance(motion, 0.25, 'speaking');
+    expect(halfway.weight).toBeCloseTo(0.5, 12);
+    for (const arm of arms) {
+      expect(halfway[arm]).toBeLessThanOrEqual(arm.endsWith('Shoulder') ? 0.08 : 0.19);
+    }
+    expect(advance(motion, 0.25, 'speaking').weight).toBeCloseTo(1, 12);
+    expect(advance(motion, 0.25, 'off').weight).toBeCloseTo(0.5, 12);
+    expect(advance(motion, 0.3, 'off')).toEqual(zero);
   });
 
   test('invalid and negative deltas freeze time; a stalled frame advances at most 0.1 seconds', () => {

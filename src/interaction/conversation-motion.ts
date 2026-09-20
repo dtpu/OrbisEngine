@@ -5,6 +5,11 @@ export interface ConversationPose {
   pitch: number;
   yaw: number;
   roll: number;
+  /** Invented forward shoulder swing and elbow flexion, in radians. */
+  leftShoulder: number;
+  rightShoulder: number;
+  leftElbow: number;
+  rightElbow: number;
   /** Additive chest displacement in body-heights. */
   breath: number;
   weight: number;
@@ -14,7 +19,18 @@ export interface ConversationPose {
 const FADE_SECONDS = 0.5;
 
 function zeroPose(): ConversationPose {
-  return { pitch: 0, yaw: 0, roll: 0, breath: 0, weight: 0, mode: 'off' };
+  return {
+    pitch: 0,
+    yaw: 0,
+    roll: 0,
+    leftShoulder: 0,
+    rightShoulder: 0,
+    leftElbow: 0,
+    rightElbow: 0,
+    breath: 0,
+    weight: 0,
+    mode: 'off',
+  };
 }
 
 /** Invented conversational motion, not recovered performance, a skeleton or lip sync.
@@ -64,6 +80,17 @@ export class ConversationMotion {
     // A slow envelope separates the listening nods. Speech adds a second cadence,
     // without using audio words or claiming to reconstruct the recorded speaker.
     const nod = (0.5 + 0.5 * Math.sin(t * 0.9 + p)) ** 2;
+    // Alternate explanatory beats, with a short rest between arms. Squaring the
+    // positive lobe gives each beat a smooth start and finish; listening rests.
+    const beat = Math.sin(t * 2.4 + p);
+    const leftGesture =
+      this.speaking *
+      Math.max(0, (beat - 0.18) / 0.82) ** 2 *
+      (0.8 + 0.2 * Math.sin(t * 0.7 + p) ** 2);
+    const rightGesture =
+      this.speaking *
+      Math.max(0, (-beat - 0.18) / 0.82) ** 2 *
+      (0.8 + 0.2 * Math.sin(t * 0.7 + p + 1.2) ** 2);
     this.pose = {
       pitch:
         this.listening * 0.022 * nod * Math.sin(t * 3.1 + p) +
@@ -75,6 +102,10 @@ export class ConversationMotion {
         this.listening * 0.006 * Math.sin(t * 1.1 + p * 3) +
         this.speaking * 0.018 * Math.sin(t * 1.7 + p * 3),
       breath: weight * 0.002 * Math.sin(t * 1.5 + p),
+      leftShoulder: 0.16 * leftGesture,
+      rightShoulder: 0.16 * rightGesture,
+      leftElbow: 0.38 * leftGesture,
+      rightElbow: 0.38 * rightGesture,
       weight,
       mode,
     };

@@ -70,8 +70,10 @@ A bottle locator makes the recorded prop easier to find; an invented, clearer bo
 when interacting and follows the visitor's grip when held.
 
 Voice needs a private `OPENAI_API_KEY` on the local Vite server. The browser receives a short-lived
-session secret; static build output cannot create one. Recorded bodies stay paused apart from an
-automatic whole-body turn: there is no new walking, reach, eye, or lip animation. See
+session secret; static build output cannot create one. During conversation, paused people face the
+visitor, breathe, nod, and make small alternating shoulder/elbow gestures while speaking. A hand
+holding a packaged prop stays still; these are approximate procedural gestures, with no new walking,
+catching, finger, eye, or lip animation. See
 [interactive bottle prototype](docs/interactive-world.md) for manifest, head-anchor, and
 verification limits.
 
