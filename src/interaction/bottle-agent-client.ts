@@ -19,6 +19,8 @@ type Options = {
   action: (name: string, args: unknown) => string | Promise<string>;
   speaking: (value: boolean) => void;
   speechStarted: () => boolean;
+  /** Normal session-cap cleanup only; failures and explicit stops never request renewal. */
+  expired?: () => void;
 };
 type ToolCall = Parameters<OpenAIRealtimeWebRTC['sendFunctionCallOutput']>[0];
 type ClientEvent = Parameters<OpenAIRealtimeWebRTC['sendEvent']>[0];
@@ -58,15 +60,21 @@ const instructions = [
   'Only face_player, show_return_target, and offer_replay are supported. Wait for a successful',
   'tool result before claiming an action happened. A target is only a visual guide.',
   'Never claim to catch, throw, or return the bottle without a confirmed viewer event.',
-  'Offering replay never starts playback; the visitor must use the manual Replay control.',
+  'Offering replay never starts playback; the visitor must press X on the left controller.',
 ].join(' ');
 
 function setupFailureMessage(error: unknown): string {
   // SDK error events wrap an Error, while connect() rejects with that Error directly.
   // Inspect only for a known condition; provider details never become UI text or logs.
   let detail = error;
+  let rateLimited = false;
   for (let depth = 0; depth < 3 && detail && typeof detail === 'object'; depth++) {
-    const record = detail as { code?: unknown; message?: unknown; error?: unknown };
+    const record = detail as {
+      code?: unknown;
+      message?: unknown;
+      error?: unknown;
+      status?: unknown;
+    };
     const message = typeof record.message === 'string' ? record.message.slice(0, 4096) : '';
     if (
       record.code === 'credit_balance_exhausted' ||
@@ -75,11 +83,14 @@ function setupFailureMessage(error: unknown): string {
     ) {
       return 'Server OpenAI account needs credits · microphone off';
     }
+    rateLimited ||=
+      record.status === 429 || /Realtime call request failed with status 429\b/i.test(message);
     detail = record.error;
   }
+  if (rateLimited) return 'Voice provider HTTP 429: account quota or rate limit · microphone off';
   return error instanceof DOMException && error.name === 'NotAllowedError'
     ? 'Microphone permission was declined. Enable access and try again.'
-    : 'Could not start voice. Try the microphone control again.';
+    : 'Could not start voice. Re-enter VR to retry.';
 }
 
 /** Permissioned microphone conversation; the recording retains its own transport. */
@@ -135,22 +146,29 @@ export class BottleAgentClient {
     });
     this.options.status('Connecting · allow microphone access');
     this.timer = setTimeout(() => {
-      if (current()) this.fail('Connection timed out. Try the microphone control again.');
+      if (current()) this.fail('Connection timed out. Re-enter VR to retry.');
     }, 25_000);
     const start = async () => {
       try {
         const audio = new AudioContext();
         this.audio = audio;
-        await audio.resume();
-        if (!current()) return;
-        const microphone = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        if (!current()) {
-          microphone.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        this.microphone = microphone;
+        // Start both permissioned browser operations within the Enter VR gesture.
+        // The caller can immediately request XR without awaiting network setup.
+        const resume = audio.resume();
+        const capture = navigator.mediaDevices
+          .getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          })
+          .then((microphone) => {
+            if (!current()) {
+              microphone.getTracks().forEach((track) => track.stop());
+              return null;
+            }
+            this.microphone = microphone;
+            return microphone;
+          });
+        const [microphone] = await Promise.all([capture, resume]);
+        if (!current() || !microphone) return;
         microphone.getAudioTracks().forEach((track) => (track.enabled = !this.muted));
         const response = await fetch('/api/bottle-agent/session', {
           method: 'POST',
@@ -163,7 +181,7 @@ export class BottleAgentClient {
           this.fail(
             response.status === 503
               ? 'The character needs the server’s OpenAI connection configured.'
-              : 'Could not connect. Try the microphone control again.',
+              : 'Could not connect. Re-enter VR to retry.',
           );
           return;
         }
@@ -217,7 +235,10 @@ export class BottleAgentClient {
           tools: [
             ['face_player', 'Face the visitor if currently possible.'],
             ['show_return_target', 'Show the available bottle receiving target.'],
-            ['offer_replay', 'Offer the manual Replay control without starting playback.'],
+            [
+              'offer_replay',
+              'Tell the visitor to press X on the left controller to replay, without starting playback.',
+            ],
           ].map(([name, description]) =>
             tool({
               name,
@@ -281,7 +302,7 @@ export class BottleAgentClient {
           if (!current()) return;
           this.fail(
             this.ready
-              ? 'Voice connection failed. Try the microphone control again.'
+              ? 'Voice connection failed. Re-enter VR to retry.'
               : setupFailureMessage(event),
           );
         });
@@ -299,7 +320,9 @@ export class BottleAgentClient {
         this.ready = true;
         if (this.timer) clearTimeout(this.timer);
         this.timer = setTimeout(() => {
-          if (current()) this.fail('Three-minute conversation ended · microphone off.');
+          if (!current()) return;
+          this.fail('Three-minute conversation ended · microphone off.');
+          this.options.expired?.();
         }, 180_000);
         this.settleConnection?.();
         this.settleConnection = null;

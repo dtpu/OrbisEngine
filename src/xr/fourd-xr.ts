@@ -49,6 +49,7 @@ import { PhysicalWalk, parseWalkGain } from './physical-walk';
 import { raycastWalkFloor } from './teleport';
 import type { BottleScene, InteractionHand } from '../interaction/bottle-scene';
 import { createQuestView } from './quest-view';
+import { ReplayButton } from './replay-button';
 
 type Wander = {
   spark: { lodSplatCount?: number };
@@ -163,6 +164,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const upm = Math.max(1e-4, num('xrscale', wander.upm || 1));
   const mode = q.get('xrmove') === 'smooth' ? 'smooth' : 'teleport';
   const physicalWalk = new PhysicalWalk(parseWalkGain(q.get('xrwalkgain')));
+  const replayButton = new ReplayButton();
   const requestedTurnMode = q.get('xrturnmode');
   const turnMode =
     requestedTurnMode === 'smooth' || requestedTurnMode === 'snap'
@@ -279,6 +281,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
           return;
         }
         try {
+          wander.interaction?.startVoice();
           // local-floor is not granted by default; ask, then believe the answer. With it the world's
           // own floor meets the real one and standing up means something. Without it the session is
           // seated and the head starts ?xreye= above the floor, which is the honest fallback.
@@ -289,7 +292,17 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
           floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
           renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
           await renderer.xr.setSession(session);
+          const visibility = () =>
+            wander.interaction?.visibilityChanged(session.visibilityState === 'visible');
+          session.addEventListener('visibilitychange', visibility);
+          session.addEventListener(
+            'end',
+            () => session.removeEventListener('visibilitychange', visibility),
+            { once: true },
+          );
+          visibility();
         } catch (err) {
+          wander.interaction?.stopVoice();
           note('VR unavailable: ' + (err instanceof Error ? err.message : String(err)));
         }
       })(),
@@ -311,6 +324,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   };
 
   renderer.xr.addEventListener('sessionstart', () => {
+    replayButton.reset();
     btn.textContent = 'Exit VR';
     home.copy(camera.position);
     homeQ.copy(camera.quaternion);
@@ -419,18 +433,6 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       c.aiming = false;
     });
     grip.addEventListener('selectstart', () => {
-      grip.updateWorldMatrix(true, false);
-      const origin = grip.getWorldPosition(new THREE.Vector3());
-      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(
-        grip.getWorldQuaternion(new THREE.Quaternion()),
-      );
-      if (wander.interaction?.select(origin, direction)) {
-        c.aiming = false;
-        aimingPrev = false;
-        targetOk = false;
-        marker.set(null, false);
-        return;
-      }
       c.aiming = mode === 'teleport';
     });
     grip.addEventListener('selectend', () => {
@@ -724,18 +726,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         const held = controllers.find((c) => c.aiming);
         const aiming = !!held || sticks.moveY < -0.5;
         const src = (held ?? controllers[0]).grip;
-        const overMenu =
-          wander.interaction?.hover(
-            src.getWorldPosition(new THREE.Vector3()),
-            new THREE.Vector3(0, 0, -1).applyQuaternion(
-              src.getWorldQuaternion(new THREE.Quaternion()),
-            ),
-          ) ?? false;
-        if (overMenu) {
-          targetOk = false;
-          marker.set(null, false);
-        }
-        if (aiming && !overMenu && aim(src)) {
+        if (aiming && aim(src)) {
           marker.set(target, targetOk);
           for (const c of controllers) {
             c.ray.visible = c.grip === src;
@@ -749,42 +740,14 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         if (aimingPrev && !aiming) commit();
         aimingPrev = aiming;
       }
-      if (wander.interaction) {
-        // Menu pointing also works in smooth locomotion, without holding a teleport trigger.
-        const pointed = controllers.find((controller) => {
-          if (!controller.source || !controller.grip.visible) return false;
-          return wander.interaction!.controls.hit(
-            controller.grip.getWorldPosition(new THREE.Vector3()),
-            new THREE.Vector3(0, 0, -1).applyQuaternion(
-              controller.grip.getWorldQuaternion(new THREE.Quaternion()),
-            ),
-          );
-        });
-        const pointer = pointed ?? controllers[0];
-        wander.interaction.hover(
-          pointer.grip.getWorldPosition(new THREE.Vector3()),
-          new THREE.Vector3(0, 0, -1).applyQuaternion(
-            pointer.grip.getWorldQuaternion(new THREE.Quaternion()),
-          ),
-        );
-        for (const controller of controllers) {
-          if (mode === 'smooth') controller.ray.visible = false;
-          if (controller === pointed) {
-            controller.ray.visible = true;
-            controller.ray.scale.setScalar(
-              controller.grip
-                .getWorldPosition(tmpV)
-                .distanceTo(wander.interaction.controls.group.position) / upm,
-            );
-          }
-        }
-      }
     }
 
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
 
     if (!wander.possess && wander.interaction) {
+      const session = renderer.xr.getSession();
+      if (session && replayButton.update(session.inputSources)) wander.interaction.replay();
       const inputs: InteractionHand[] = [];
       for (const controller of controllers) {
         const source = controller.source;
