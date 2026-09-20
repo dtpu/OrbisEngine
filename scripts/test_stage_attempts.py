@@ -272,6 +272,30 @@ class CommandIdentityTests(unittest.TestCase):
         path.write_text(content)
         return path
 
+    def test_clean_mask_bytes_bind_retry_identity_across_renames(self):
+        masks = self.root / "masks.npz"
+        masks.write_bytes(b"reviewed source-bound masks")
+        command = [
+            run_clip.MODAL,
+            "run",
+            "worker/modal_clean_video.py",
+            "--clip",
+            "source.mp4",
+            "--masks-in",
+            str(masks),
+            "--out",
+            str(self.root / "clean.mp4"),
+        ]
+        first, _, _ = command_identity(command, run_clip.ROOT)
+        renamed = self.root / "same-masks.npz"
+        renamed.write_bytes(masks.read_bytes())
+        command[command.index("--masks-in") + 1] = str(renamed)
+        same, _, _ = command_identity(command, run_clip.ROOT)
+        self.assertEqual(first, same)
+        renamed.write_bytes(b"changed source-bound masks")
+        changed, _, _ = command_identity(command, run_clip.ROOT)
+        self.assertNotEqual(first, changed)
+
     def test_every_runner_paid_worker_command_shape_has_an_identity_policy(self):
         modal = "/modal"
         out = self.root / "out"

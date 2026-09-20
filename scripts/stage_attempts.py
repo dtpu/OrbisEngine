@@ -57,6 +57,7 @@ CODE_FILES = {
     "worker/modal_clean_video.py": ("worker/wander_worker/masks.py",),
     "worker/modal_motion.py": (
         "worker/stages/dense_pi3x.py",
+        "worker/stages/pi3x_support.py",
         "worker/wander_worker/masks.py",
         "worker/wander_worker/ply.py",
     ),
@@ -100,6 +101,7 @@ NUMBER_FLAGS = {
 }
 TEXT_FLAGS = {"--experiment", "--mask-backend", "--alignment", "--depth-roi", "--refine-prompt"}
 INPUT_FLAGS = {
+    "--masks-in",
     "--image",
     "--cameras",
     "--depth-reference",
