@@ -1206,7 +1206,14 @@ class Pipeline:
                 "--swap-test",
                 "--json-out",
                 str(self.ctx / "identity.json"),
-            ],
+            ]
+            # Audit the people being reconstructed against each other: a fragment of the same
+            # person, or a spectator, is not a rival identity.
+            + (
+                ["--only-tracks", ",".join(str(i) for i in range(self.people_limit))]
+                if getattr(self, "people_limit", 0)
+                else []
+            ),
             cwd=ROOT,
             env=dict(os.environ, **LOCAL_ENV),
             stdout=subprocess.PIPE,
