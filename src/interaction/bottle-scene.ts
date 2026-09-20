@@ -1,8 +1,12 @@
 import * as THREE from 'three';
+import type { SplatMesh } from '@sparkjsdev/spark';
 import { BottlePhysics, type Vec3 } from './bottle-physics';
 import { ApproachDetector } from './approach';
 import { BottleAgentClient } from './bottle-agent-client';
 import { BottleVisual } from './bottle-visual';
+import { ConversationMotion } from './conversation-motion';
+import { ConversationSplats } from './conversation-splats';
+import { parsePersonSize } from '../person-size';
 import {
   nearestHeldTime,
   parseHeadTrack,
@@ -80,6 +84,10 @@ export class BottleScene {
   private readonly armedHands = new Set<string>();
   private readonly saved: SavedTransform[] = [];
   private readonly pivots = new Map<string, THREE.Group>();
+  private readonly animations = new Map<
+    string,
+    { motion: ConversationMotion; splats: ConversationSplats; mesh: THREE.Object3D }
+  >();
   private readonly fetchAbort = new AbortController();
   private readonly marker: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private readonly speaker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
@@ -497,6 +505,7 @@ export class BottleScene {
   }
 
   private restore() {
+    this.resetAnimations(true);
     for (const item of this.saved) {
       item.parent.add(item.object);
       item.object.position.copy(item.position);
@@ -620,6 +629,7 @@ export class BottleScene {
   }
   transportChanged(playing: boolean) {
     this.client.setPlayback(playing);
+    if (playing) this.resetAnimations();
   }
   sessionStart() {
     this.xrActive = true;
@@ -636,6 +646,7 @@ export class BottleScene {
   }
   private suspend() {
     this.stopVoice();
+    this.resetAnimations();
     this.host.play(false);
     this.hands.clear();
     this.armedHands.clear();
@@ -803,6 +814,7 @@ export class BottleScene {
     if (target) this.marker.position.copy(target);
     this.marker.quaternion.copy(rotation);
     const anchor = this.active && this.anchor(this.active);
+    this.updateAnimations(dt);
     this.speaker.visible = !!anchor && this.speaking;
     if (anchor) {
       this.speaker.position.copy(anchor).add(new THREE.Vector3(0, 0.1 * this.host.stature, 0));
@@ -824,6 +836,67 @@ export class BottleScene {
       dt,
       elapsed: now / 1000,
     });
+  }
+
+  private resetAnimations(dispose = false) {
+    for (const animation of this.animations.values()) {
+      animation.motion.reset();
+      animation.splats.reset();
+      if (dispose) animation.splats.dispose();
+    }
+    if (dispose) this.animations.clear();
+  }
+
+  private updateAnimations(dt: number) {
+    const enabled =
+      this.host.params.get('interactAnimation') !== '0' &&
+      this.interrupted &&
+      !this.host.playing() &&
+      this.xrVisible &&
+      !document.hidden;
+    if (!enabled && this.animations.size === 0) return;
+    for (const person of this.host.people) {
+      const head = this.anchor(person);
+      const forward = head && this.forward(person);
+      const selected = enabled && person === this.active && this.canAddress(person, true);
+      const mesh = person.pmesh ?? person.meshes?.[person.frame];
+      let animation = this.animations.get(person.id);
+      if (animation && animation.mesh !== mesh) {
+        animation.splats.dispose();
+        this.animations.delete(person.id);
+        animation = undefined;
+      }
+      if (
+        !animation &&
+        selected &&
+        head &&
+        forward &&
+        mesh &&
+        'updateGenerator' in mesh &&
+        'updateVersion' in mesh
+      ) {
+        animation = {
+          mesh,
+          motion: new ConversationMotion(person.id),
+          splats: new ConversationSplats(mesh as SplatMesh),
+        };
+        this.animations.set(person.id, animation);
+      }
+      if (!animation) continue;
+      if (!head || !forward) {
+        animation.motion.reset();
+        animation.splats.reset();
+        continue;
+      }
+      const mode = selected ? (this.speaking ? 'speaking' : 'listening') : 'off';
+      const pose = animation.motion.update(dt, mode);
+      animation.splats.update(
+        pose,
+        head,
+        forward,
+        this.host.stature * parsePersonSize(this.host.params.get('personsize')),
+      );
+    }
   }
 
   private character() {
@@ -891,7 +964,11 @@ export class BottleScene {
       voiceStatus: this.voiceStatus,
       voiceErrorCode: this.client.lastProviderErrorCode,
       microphoneMuted: this.muted,
-      poseType: 'paused recorded pose; automatic whole-body facing only',
+      poseType: 'paused recording; whole-body facing and invented head/chest conversation motion',
+      animations: this.host.people.map((person) => ({
+        personId: person.id,
+        pose: this.animations.get(person.id)?.motion.snapshot() ?? null,
+      })),
       returnType: 'assisted target, not animated reach',
       availableActions: this.interrupted
         ? ['face_player', 'show_return_target', 'offer_replay']
