@@ -18,22 +18,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import motion_silhouette as ms
 import motion_jitter as mj
 import person_masks_tight as pmt
-from sequence_frames import index_of_source
 
 CACHE = Path(".context/pose/masks")
 
 
 def seed_boxes(world, cams, seq, hw):
-    # Exact sample lookup, never nearest: a track can start late and have gaps (creed-v2 begins at
-    # sample 22), and the nearest frame to a sample the tracker recorded him ABSENT from is a seed
-    # box drawn around a person who is not in that source frame.
-    at = index_of_source(seq)
+    src = list(seq["sourceIndices"])
     out = {}
     for c in cams:
         fi = c["sourceIndex"]
-        k = at.get(fi)
-        if k is None:
-            continue
+        k = int(np.argmin(np.abs(np.array(src) - fi)))
         v = PlyData.read(Path(world) / "person" / seq["frames"][k])["vertex"].data
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sc = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
@@ -58,21 +52,7 @@ def audit_world(world, clip, n=16, subsample=30000):
     hw = tuple(cams[0]["source_image_size"][::-1]) if "source_image_size" in cams[0] else None
     if hw and hw[0] < hw[1] * 0.3:
         hw = tuple(cams[0]["source_image_size"])
-    # Spread the n audited frames over the samples this person EXISTS in. On a dense track that is
-    # every camera, so the picks are the ones this has always made; on a sparse one it is the
-    # difference between 16 measurements and 16 attempts at frames he was never reconstructed in.
-    at = index_of_source(seq)
-    present = [c for c in cams if c["sourceIndex"] in at]
-    if not present:
-        raise RuntimeError(
-            f"{world}: no camera sample matches the person's sourceIndices "
-            f"({seq.get('sourceIndices', [])[:3]}...); the cameras and the person are not the "
-            f"same solve"
-        )
-    pick = [
-        present[i]
-        for i in np.linspace(0, len(present) - 1, min(n, len(present))).round().astype(int)
-    ]
+    pick = [cams[i] for i in np.linspace(0, len(cams) - 1, min(n, len(cams))).round().astype(int)]
     seeds = seed_boxes(world, pick, seq, hw)
     idx = [c["sourceIndex"] for c in pick if c["sourceIndex"] in seeds]
     CACHE.mkdir(parents=True, exist_ok=True)
