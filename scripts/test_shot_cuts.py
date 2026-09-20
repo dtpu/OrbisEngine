@@ -351,6 +351,109 @@ def fixture_h_flash(saturating: bool = False):
     return frames, []
 
 
+DOUBLED_CUT_FRAME = 2 * (CUT_FRAME // 2)  # the container frame the doubled fixture cuts on
+
+
+def fixture_i_duplicated_frames():
+    """I. A hard cut in 30 fps content carried in a 60 fps container: every frame is doubled.
+
+    This is what a phone or a broadcast conversion hands the detector, and it used to defeat the
+    ORB stage outright: the frame "before" the cut could be the cut frame's own duplicate, which
+    matches itself perfectly and clears the cut. The cut is on content frame CUT_FRAME // 2, which
+    is container frame DOUBLED_CUT_FRAME.
+    """
+    half = CUT_FRAME // 2
+    first = panorama(311, 1400, 600, warm=True)
+    second = panorama(317, 1400, 600, warm=False)
+    head = _shaky(first, ramp(60.0, [(half, 2.2)]), [140.0] * half, 312, 1.8)
+    n = FIXTURE_FRAMES // 2 - half
+    tail = _shaky(second, ramp(300.0, [(n, 2.4)]), [200.0] * n, 318, 1.8)
+    doubled = [f for frame in head + tail for f in (frame, frame.copy())]
+    return doubled, [DOUBLED_CUT_FRAME]
+
+
+def _dim(frame, gain: float = 0.11, lift: float = 5.0):
+    """Crush a frame into the bottom of the range: a night exterior, not a graded image."""
+    import numpy as np
+
+    return np.clip(frame.astype(np.float32) * gain + lift, 0, 255).astype(np.uint8)
+
+
+def fixture_j_dark_cut():
+    """J. A hard cut between two dark low-contrast shots, which the scene score cannot see.
+
+    ffmpeg's score is a mean absolute difference: squeeze the picture into fifteen grey levels and
+    a splice between two unrelated places scores like nothing happening. Four of the real labelled
+    cuts were missed exactly this way, so the fixture asserts the score really is under the gate as
+    well as asserting the cut is found.
+    """
+    first = panorama(331, 1400, 600, warm=True)
+    second = panorama(347, 1400, 600, warm=False)
+    head = _shaky(first, ramp(60.0, [(CUT_FRAME, 1.0)]), [140.0] * CUT_FRAME, 332, 1.2)
+    n = FIXTURE_FRAMES - CUT_FRAME
+    tail = _shaky(second, ramp(300.0, [(n, 1.1)]), [200.0] * n, 348, 1.2)
+    return [_dim(f) for f in head + tail], [CUT_FRAME]
+
+
+FADE_FRAMES = 12  # each side of the fade in fixture K
+
+
+def fixture_k_fade_to_black():
+    """K. Two shots joined by a fade out to black and a fade up out of it.
+
+    Nothing in the frame-pair evidence can see this: the scene score reads the per-frame luma step
+    as nothing happening, and `carry` is a normalised correlation, so a dimmer copy of the frame
+    before still correlates with it. It has to be found as a ramp, and reported as the region it
+    occupies, or one of the two shots keeps a stretch of frames with no picture in them.
+    """
+    import numpy as np
+
+    pano_a = panorama(353, 1400, 600, warm=True)
+    pano_b = panorama(359, 1400, 600, warm=False)
+    hold = CUT_FRAME - FADE_FRAMES
+    head = _shaky(pano_a, ramp(60.0, [(hold + FADE_FRAMES, 1.2)]), [140.0] * CUT_FRAME, 354, 1.2)
+    n = FIXTURE_FRAMES - CUT_FRAME
+    tail = _shaky(pano_b, ramp(300.0, [(n, 1.3)]), [200.0] * n, 360, 1.2)
+    frames = []
+    for i, f in enumerate(head):
+        k = i - hold
+        scale = 1.0 if k < 0 else max(1.0 - (k + 1) / FADE_FRAMES, 0.0)
+        frames.append((f.astype(np.float32) * scale).astype(np.uint8))
+    for i, f in enumerate(tail):
+        scale = min((i + 1) / FADE_FRAMES, 1.0)
+        frames.append((f.astype(np.float32) * scale).astype(np.uint8))
+    return frames, [CUT_FRAME]
+
+
+def fixture_l_occlusion_returns():
+    """L. Two frames of something crossing hard against the lens, and the view comes back.
+
+    A player, a bludger or an arm blacks out most of the frame for a frame or two. The pair either
+    side of it looks exactly like a cut; the only thing that says otherwise is that the view is
+    back a few frames later, which is what `returns` is for.
+    """
+    import cv2
+    import numpy as np
+
+    pano = panorama(367, 1400, 600)
+    frames = _shaky(pano, ramp(60.0, [(FIXTURE_FRAMES, 1.1)]), [140.0] * FIXTURE_FRAMES, 368, 1.5)
+    for k, i in enumerate((CUT_FRAME, CUT_FRAME + 1)):
+        layer = frames[i].copy()
+        cx = int(FIXTURE_WIDTH * (0.35 + 0.30 * k))
+        cv2.ellipse(
+            layer,
+            (cx, FIXTURE_HEIGHT // 2),
+            (FIXTURE_WIDTH, FIXTURE_HEIGHT // 2 + 40),
+            0,
+            0,
+            360,
+            (18, 16, 22),
+            -1,
+        )
+        frames[i] = np.clip(layer, 0, 255).astype(np.uint8)
+    return frames, []
+
+
 FIXTURES = {
     "A_slow_pan": fixture_a_slow_pan,
     "B_whip_pan": fixture_b_whip_pan,
@@ -362,14 +465,21 @@ FIXTURES = {
     "G_grain": fixture_g_grain,
     "H_flash": fixture_h_flash,
     "H_flash_saturating": lambda: fixture_h_flash(saturating=True),
+    "I_duplicated_frames": fixture_i_duplicated_frames,
+    "J_dark_cut": fixture_j_dark_cut,
+    "K_fade_to_black": fixture_k_fade_to_black,
+    "L_occlusion_returns": fixture_l_occlusion_returns,
 }
+# A fixture whose container runs at a different rate than its content says so here.
+FIXTURE_RATES = {"I_duplicated_frames": 2 * FIXTURE_FPS}
 
 
 def build(name: str, directory: Path) -> tuple[Path, list[float]]:
     """Render and encode one fixture; returns its path and the exact times of its cuts."""
     frames, cut_frames = FIXTURES[name]()
-    path = encode(frames, directory / f"{name}.mp4")
-    return path, [n / FIXTURE_FPS for n in cut_frames]
+    rate = FIXTURE_RATES.get(name, FIXTURE_FPS)
+    path = encode(frames, directory / f"{name}.mp4", rate)
+    return path, [n / rate for n in cut_frames]
 
 
 # ---------------------------------------------------------------- tests
@@ -381,8 +491,9 @@ CONTINUOUS = [
     "G_grain",
     "H_flash",
     "H_flash_saturating",
+    "L_occlusion_returns",
 ]
-CUTS = ["D_cut_places", "E_cut_same_place", "F_cut_in_motion"]
+CUTS = ["D_cut_places", "E_cut_same_place", "F_cut_in_motion", "I_duplicated_frames", "J_dark_cut"]
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 # Comfortably above CARRY_CARRIES: these cases are not marginal, and a test that only just passed
 # would not say what it means to say.
@@ -466,7 +577,7 @@ class CutClipTests(unittest.TestCase):
                 video, expected = Clips.get(name)
                 cuts = [c for c in shot_cuts.detect_cuts(video) if c["cut"]]
                 self.assertEqual(len(cuts), 1, f"{name}: {[c['time'] for c in cuts]}")
-                off = abs(cuts[0]["time"] - expected[0]) * FIXTURE_FPS
+                off = abs(cuts[0]["time"] - expected[0]) * FIXTURE_RATES.get(name, FIXTURE_FPS)
                 self.assertLessEqual(
                     off,
                     1.0001,
@@ -537,6 +648,329 @@ class ReportContractTests(unittest.TestCase):
             doc = json.loads(out.read_text())
             self.assertEqual(done.returncode, int(not doc["continuous"]), done.stdout)
         return done.returncode
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are needed to render the fixtures")
+class PairFetchTests(unittest.TestCase):
+    """The frame pair a cut is judged on has to be that pair, and nothing else.
+
+    Fetching it by TIME cannot do that: a printed timestamp does not name a frame boundary exactly,
+    and one frame of slip puts a frame of the outgoing shot on the incoming side, where it matches
+    the outgoing shot perfectly and clears the cut. These tests hold the fetch to the frame index.
+    """
+
+    def small(self, frame):
+        import cv2
+
+        return cv2.resize(
+            frame, (shot_cuts.THUMB_WIDTH, shot_cuts.THUMB_HEIGHT), interpolation=cv2.INTER_AREA
+        )
+
+    def test_a_fetched_frame_is_the_frame_that_was_asked_for(self):
+        video, _ = Clips.get("D_cut_places")
+        times, scores, thumbs, stamps = shot_cuts.scene_pass(video)
+        wanted = {10, CUT_FRAME - 1, CUT_FRAME, CUT_FRAME + 1, 70}
+        got = shot_cuts.frames_at(video, wanted, stamps)
+        self.assertEqual(set(got), wanted)
+        for i in sorted(wanted):
+            here = shot_cuts.carry(thumbs[i], self.small(got[i]))
+            self.assertGreater(here, 0.97, f"frame {i} is not the frame the scoring pass saw")
+            for neighbour in (i - 1, i + 1):
+                if 0 <= neighbour < len(thumbs):
+                    self.assertGreater(
+                        here,
+                        shot_cuts.carry(thumbs[neighbour], self.small(got[i])),
+                        f"frame {i} matches its neighbour {neighbour} better than itself",
+                    )
+
+    def test_the_pair_across_a_cut_is_one_frame_of_each_shot(self):
+        video, _ = Clips.get("D_cut_places")
+        times, scores, thumbs, stamps = shot_cuts.scene_pass(video)
+        got = shot_cuts.frames_at(video, {CUT_FRAME - 1, CUT_FRAME}, stamps)
+        across = shot_cuts.orb_fraction(got[CUT_FRAME - 1], got[CUT_FRAME])
+        self.assertIsNotNone(across)
+        self.assertLess(across, shot_cuts.CUT_MATCH_MAX, "the pair straddling the cut matched")
+        inside = shot_cuts.frames_at(video, {CUT_FRAME - 2, CUT_FRAME - 1}, stamps)
+        within = shot_cuts.orb_fraction(inside[CUT_FRAME - 2], inside[CUT_FRAME - 1])
+        self.assertGreater(within, shot_cuts.CUT_MATCH_MAX, "a pair inside one shot did not match")
+
+    def test_a_duplicated_frame_is_not_its_own_predecessor(self):
+        video, _ = Clips.get("I_duplicated_frames")
+        times, scores, thumbs, stamps = shot_cuts.scene_pass(video)
+        # The incoming shot's first content frame is container frames n and n + 1; the outgoing
+        # shot's last is n - 2 and n - 1. The frame before the second copy is the FIRST copy, which
+        # is the same picture, so the pair has to reach back past it.
+        n = DOUBLED_CUT_FRAME
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, n + 1), n - 1)
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, n), n - 1)
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, n - 1), n - 3)
+
+    def test_a_failed_pair_fetch_says_so_instead_of_blaming_the_footage(self):
+        """A second decode that does not come back must not read as "too blurred to judge"."""
+        video, _ = Clips.get("D_cut_places")
+
+        def refuse(*args, **kwargs):
+            raise RuntimeError("frame 44 came back with pts 99, not the 45 the scoring pass saw")
+
+        original = shot_cuts.frames_at
+        shot_cuts.frames_at = refuse
+        try:
+            judged = [c for c in shot_cuts.detect_cuts(video) if "matchedAgainstFrame" in c]
+        finally:
+            shot_cuts.frames_at = original
+        self.assertTrue(judged, "no candidate reached the ORB stage, so nothing was tested")
+        for c in judged:
+            self.assertIn("came back with pts", c["matchFailed"])
+            self.assertIn("could not be fetched", c["why"])
+            self.assertNotIn("too blurred", c["why"])
+            self.assertIsNone(c["match"])
+
+    def test_the_duplicated_container_cut_is_judged_on_the_right_pair(self):
+        video, expected = Clips.get("I_duplicated_frames")
+        cuts = [c for c in shot_cuts.detect_cuts(video) if c["cut"]]
+        self.assertEqual(len(cuts), 1, f"{[c['time'] for c in cuts]}")
+        self.assertLess(cuts[0]["matchedAgainstFrame"], cuts[0]["frame"])
+        self.assertIsNotNone(cuts[0]["match"])
+        self.assertLess(cuts[0]["match"], shot_cuts.CUT_MATCH_MAX)
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are needed to render the fixtures")
+class DarkCutTests(unittest.TestCase):
+    """A cut the scene score cannot see at all must still be found."""
+
+    def test_the_scene_score_really_is_under_the_gate(self):
+        video, expected = Clips.get("J_dark_cut")
+        times, scores, thumbs, stamps = shot_cuts.scene_pass(video)
+        self.assertLess(
+            max(scores),
+            shot_cuts.SCENE_CANDIDATE,
+            "the dark fixture is not dark enough to test the second gate",
+        )
+
+    def test_the_carry_gate_finds_it_anyway(self):
+        video, expected = Clips.get("J_dark_cut")
+        cuts = [c for c in shot_cuts.detect_cuts(video) if c["cut"]]
+        self.assertEqual(len(cuts), 1, f"{[c['time'] for c in cuts]}")
+        self.assertAlmostEqual(cuts[0]["time"], expected[0], delta=1.5 / FIXTURE_FPS)
+        self.assertLess(cuts[0]["carry"], shot_cuts.CARRY_CANDIDATE)
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are needed to render the fixtures")
+class FadeTests(unittest.TestCase):
+    """A fade is a region, and neither shot may contain it."""
+
+    def test_the_fade_is_found_as_a_region(self):
+        video, expected = Clips.get("K_fade_to_black")
+        report = shot_cuts.cut_report(video, score=False)
+        self.assertEqual(len(report["fades"]), 1, report["fades"])
+        fade = report["fades"][0]
+        self.assertEqual(fade["through"], "black")
+        self.assertGreaterEqual(fade["frames"], 2 * FADE_FRAMES - 2)
+        cuts = report["cuts"]
+        self.assertEqual([c["kind"] for c in cuts], ["fade"], [c["why"] for c in cuts])
+        self.assertAlmostEqual(cuts[0]["fadeStart"], fade["start"], places=3)
+        self.assertAlmostEqual(cuts[0]["time"], fade["end"], places=3)
+
+    def test_neither_shot_holds_the_faded_frames(self):
+        video, expected = Clips.get("K_fade_to_black")
+        report = shot_cuts.cut_report(video, score=False)
+        fade = report["fades"][0]
+        self.assertEqual(report["shotCount"], 2, report["shots"])
+        self.assertLessEqual(report["shots"][0]["end"], fade["start"] + 1e-6)
+        self.assertGreaterEqual(report["shots"][1]["start"], fade["end"] - 1e-6)
+        self.assertGreater(fade["end"] - fade["start"], 0.5 * FADE_FRAMES / FIXTURE_FPS)
+
+    def test_a_hard_cut_to_a_black_card_is_not_a_fade(self):
+        """One frame of black is an edit; FADE_MIN_FRAMES of ramp is a fade."""
+        video, _ = Clips.get("D_cut_places")
+        self.assertEqual(shot_cuts.cut_report(video, score=False)["fades"], [])
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are needed to render the fixtures")
+class OcclusionTests(unittest.TestCase):
+    """Something crossing the lens for two frames is not an edit, because the view comes back."""
+
+    def test_the_occlusion_is_a_candidate_and_is_cleared(self):
+        video, _ = Clips.get("L_occlusion_returns")
+        found = shot_cuts.detect_cuts(video)
+        near = [c for c in found if abs(c["frame"] - CUT_FRAME) <= 3]
+        self.assertTrue(near, "the occlusion did not even become a candidate")
+        self.assertEqual([c for c in found if c["cut"]], [])
+        self.assertTrue(
+            any(c["returns"] is not None and c["returns"] >= shot_cuts.CARRY_RETURNS for c in near),
+            f"cleared for the wrong reason: {[(c['frame'], c['why']) for c in near]}",
+        )
+
+
+class EvaluationTests(unittest.TestCase):
+    """The scoring harness itself, on written-out reports and labels. No video, no ffmpeg."""
+
+    def truth(self, **over):
+        base = dict(
+            video="x.mp4",
+            fps=25.0,
+            cuts=[
+                dict(time=1.00, kind="hard", confidence="high"),
+                dict(time=2.00, kind="hard", confidence="high"),
+                dict(time=3.00, kind="hard", confidence="medium"),
+                dict(time=8.00, kind="fade-out-to-black", confidence="high"),
+            ],
+            reviewedNonCuts=[dict(time=5.0)],
+            unclear=[dict(time=6.0)],
+        )
+        base.update(over)
+        return base
+
+    def report(self, times, fades=()):
+        cuts = []
+        for t in times:
+            cuts.append(dict(time=t, frame=int(t * 25), kind="hard", carry=0.2, score=0.3))
+        for start, end in fades:
+            cuts.append(
+                dict(
+                    time=end,
+                    frame=int(end * 25),
+                    kind="fade",
+                    fadeStart=start,
+                    carry=0.2,
+                    score=0.01,
+                )
+            )
+        return dict(video="x.mp4", cuts=sorted(cuts, key=lambda c: c["time"]))
+
+    def test_a_hit_inside_the_tolerance_and_a_miss_outside_it(self):
+        got = shot_cuts.evaluate_truth(self.report([1.04, 2.20]), self.truth())
+        self.assertEqual(got["hits"], 1)  # 1.04 is one frame off; 2.20 is five
+        self.assertEqual([m["time"] for m in got["missed"]], [2.00])
+        self.assertEqual([f["time"] for f in got["falsePositives"]], [2.20])
+        self.assertEqual(got["recall"], 0.5)
+
+    def test_a_medium_label_is_neither_a_hit_nor_a_false_positive(self):
+        got = shot_cuts.evaluate_truth(self.report([1.0, 2.0, 3.0]), self.truth())
+        self.assertEqual((got["hits"], got["required"], got["optional"]), (2, 2, 1))
+        self.assertEqual(got["falsePositives"], [])
+        self.assertEqual((got["precision"], got["recall"]), (1.0, 1.0))
+
+    def test_a_fade_matches_a_label_anywhere_inside_its_region(self):
+        got = shot_cuts.evaluate_truth(self.report([1.0, 2.0], fades=[(7.5, 8.6)]), self.truth())
+        self.assertEqual(got["optional"], 1)
+        self.assertEqual(got["falsePositives"], [])
+        self.assertEqual(got["required"], 2, "a fade label is not required of the cut detector")
+
+    def test_windows_score_only_what_is_inside_them(self):
+        got = shot_cuts.evaluate_truth(
+            self.report([1.0, 2.0, 9.9]), self.truth(), windows=[[0.5, 2.5]]
+        )
+        self.assertEqual((got["detections"], got["required"], got["hits"]), (2, 2, 2))
+        self.assertEqual(got["falsePositives"], [])
+
+    def test_verified_only_ignores_detections_nobody_looked_at(self):
+        strict = shot_cuts.evaluate_truth(self.report([1.0, 4.4]), self.truth())
+        self.assertEqual([f["time"] for f in strict["falsePositives"]], [4.4])
+        loose = shot_cuts.evaluate_truth(self.report([1.0, 4.4]), self.truth(), verified_only=True)
+        self.assertEqual(loose["falsePositives"], [])
+        self.assertEqual(loose["detections"], 1)
+
+    def test_a_reviewed_non_cut_is_a_false_positive(self):
+        got = shot_cuts.evaluate_truth(self.report([1.0, 2.0, 5.0]), self.truth())
+        self.assertEqual([f["time"] for f in got["falsePositives"]], [5.0])
+        self.assertEqual(got["precision"], round(2 / 3, 3))
+
+
+class DuplicateFrameTests(unittest.TestCase):
+    """previous_distinct, on made-up thumbnails. No video, no ffmpeg.
+
+    The ORB stage is only as good as the frame it compares against, and in a container running at
+    twice its content's rate the frame before a candidate is the candidate again.
+    """
+
+    def series(self, seeds: list[int]):
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        pictures = {
+            s: rng.integers(0, 255, (shot_cuts.THUMB_HEIGHT, shot_cuts.THUMB_WIDTH), dtype="uint8")
+            for s in set(seeds)
+        }
+        return np.stack([pictures[s] for s in seeds])
+
+    def test_the_previous_frame_is_the_previous_frame_when_none_repeat(self):
+        thumbs = self.series([1, 2, 3, 4, 5])
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 4), 3)
+
+    def test_a_doubled_container_reaches_back_past_the_duplicate(self):
+        """[A, A, B, B, C, C]: the frame before each second copy is its own first copy."""
+        thumbs = self.series([1, 1, 2, 2, 3, 3])
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 5), 3)
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 4), 3)
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 3), 1)
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 2), 1)
+
+    def test_a_frozen_run_reaches_back_to_the_last_moving_frame(self):
+        thumbs = self.series([1, 2, 3, 3, 3, 3])
+        self.assertEqual(shot_cuts.previous_distinct(thumbs, 5), 1)
+
+
+class SuppressNeighbourTests(unittest.TestCase):
+    """One camera move accuses several frames; one edit is one of them. No video, no ffmpeg."""
+
+    def record(self, time: float, carry: float) -> dict:
+        return dict(time=time, frame=int(time * 30), carry=carry, cut=True, why="a cut")
+
+    def test_a_run_inside_the_gap_collapses_to_its_least_carrying_frame(self):
+        run = [self.record(10.0, 0.40), self.record(10.03, 0.12), self.record(10.06, 0.33)]
+        shot_cuts.suppress_neighbours(run)
+        self.assertEqual([r["cut"] for r in run], [False, True, False])
+        self.assertIn("10.03", run[0]["why"])
+
+    def test_cuts_further_apart_than_the_gap_all_stand(self):
+        run = [self.record(10.0, 0.40), self.record(10.0 + 2 * shot_cuts.MIN_CUT_SECONDS, 0.12)]
+        shot_cuts.suppress_neighbours(run)
+        self.assertEqual([r["cut"] for r in run], [True, True])
+
+    def test_records_are_taken_in_time_order_whatever_order_they_arrive_in(self):
+        run = [self.record(10.06, 0.33), self.record(10.0, 0.40), self.record(10.03, 0.12)]
+        shot_cuts.suppress_neighbours(run)
+        self.assertEqual([r["cut"] for r in run], [False, False, True])
+
+
+class ShotsFromCutsTests(unittest.TestCase):
+    """The segments between the cuts, on written-out cuts. No video, no ffmpeg."""
+
+    def fade(self, start: float, end: float) -> dict:
+        return dict(time=end, frame=int(end * 30), kind="fade", fadeStart=start, carry=0.1)
+
+    def hard(self, time: float) -> dict:
+        return dict(time=time, frame=int(time * 30), kind="hard", carry=0.1)
+
+    def test_a_hard_cut_starts_the_next_shot_on_its_own_frame(self):
+        shots = shot_cuts.shots_from_cuts([self.hard(4.0)], 10.0, 1.5)
+        self.assertEqual([(s["start"], s["end"]) for s in shots], [(0.0, 4.0), (4.0, 10.0)])
+
+    def test_neither_shot_either_side_of_a_fade_holds_its_frames(self):
+        shots = shot_cuts.shots_from_cuts([self.fade(4.0, 5.0)], 10.0, 1.5)
+        self.assertEqual([(s["start"], s["end"]) for s in shots], [(0.0, 4.0), (5.0, 10.0)])
+
+    def test_a_fade_that_opens_the_clip_leaves_no_empty_shot_in_front_of_it(self):
+        shots = shot_cuts.shots_from_cuts([self.fade(0.0, 0.7)], 10.0, 1.5)
+        self.assertEqual([(s["start"], s["end"]) for s in shots], [(0.7, 10.0)])
+        self.assertEqual([s["index"] for s in shots], [0])
+
+    def test_a_fade_that_closes_the_clip_leaves_no_empty_shot_behind_it(self):
+        shots = shot_cuts.shots_from_cuts([self.fade(9.2, 10.0)], 10.0, 1.5)
+        self.assertEqual([(s["start"], s["end"]) for s in shots], [(0.0, 9.2)])
+
+    def test_a_frozen_card_is_flagged_static_and_moving_footage_is_not(self):
+        times = [i / 30 for i in range(300)]
+        changes = [0.0] + [3.0 if i < 150 else 0.001 for i in range(1, 300)]
+        shots = shot_cuts.shots_from_cuts([self.hard(5.0)], 10.0, 1.5, times, changes)
+        self.assertEqual([s.get("static") for s in shots], [False, True])
+        self.assertLess(shots[1]["change"], shot_cuts.STATIC_CHANGE)
+        self.assertGreater(shots[0]["change"], shot_cuts.STATIC_CHANGE)
+
+    def test_a_shot_is_not_flagged_static_without_the_series_to_say_so(self):
+        shots = shot_cuts.shots_from_cuts([self.hard(5.0)], 10.0, 1.5)
+        self.assertEqual([("change" in s or "static" in s) for s in shots], [False, False])
 
 
 class IsolationTests(unittest.TestCase):
