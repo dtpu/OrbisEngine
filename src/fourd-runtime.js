@@ -9,6 +9,7 @@ import { loadPreparedWorld } from '/src/prepared-world-loader.ts';
 import { createStanceResolver } from '/src/person-stance.ts';
 import { personVisibility } from '/src/person-visibility.ts';
 import { countGridFootprintContacts } from '/src/walk-collision.ts';
+import { interpolateBottleFloor } from '/src/interaction/bottle-floor.ts';
 import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
 import {
   parseStaticColliders,
@@ -53,6 +54,8 @@ export async function createFourD({ search, renderer, root, scope }) {
   };
   const st = element('st');
   const q = new URLSearchParams(search);
+  let interactionOn = q.get('interact') === '1';
+  let interaction = null;
   // ?demo=corridor: judge preset (clean image world, final alignment, camera behind/above the elder)
   const DEMOS = {
     corridor: {
@@ -2672,11 +2675,36 @@ export async function createFourD({ search, renderer, root, scope }) {
         const O = {
           id: od.id,
           label: od.label,
+          meta: od,
+          track,
+          interactionOwned: false,
           ev: od.evidence || {},
           kind: a.kind || 'proxy',
           group: g,
           mesh,
+          samplePosition(tt) {
+            const x = THREE.MathUtils.clamp(tt * bfps - f0, 0, n - 1);
+            const i = Math.floor(x),
+              j = Math.min(n - 1, i + 1),
+              u = x - i;
+            const position = new THREE.Vector3()
+              .fromArray(track.positions[i])
+              .lerp(new THREE.Vector3().fromArray(track.positions[j]), u);
+            let dy = 0;
+            if (drift && track.sampleIndex) {
+              const sample =
+                track.sampleIndex[i] + (track.sampleIndex[j] - track.sampleIndex[i]) * u;
+              const k = Math.floor(sample),
+                next = Math.min(drift.length - 1, k + 1);
+              dy = (drift[k] ?? 0) + ((drift[next] ?? 0) - (drift[k] ?? 0)) * (sample - k);
+            }
+            g.updateWorldMatrix(true, false);
+            position.applyMatrix4(g.matrixWorld);
+            position.y += pos0[1] + tr[1] + dy - g.position.y;
+            return position;
+          },
           step(tt) {
+            if (O.interactionOwned) return;
             const x = THREE.MathUtils.clamp(tt * bfps - f0, 0, n - 1),
               i = Math.floor(x),
               j = Math.min(n - 1, i + 1),
@@ -3007,6 +3035,7 @@ export async function createFourD({ search, renderer, root, scope }) {
     });
   };
   video.crossOrigin = 'anonymous';
+  video.loop = !interactionOn;
   video.autoplay = false;
   const sceneAudio = new FourDAudio(
     video,
@@ -3079,8 +3108,11 @@ export async function createFourD({ search, renderer, root, scope }) {
     interpMs = ms;
   }
   function setTime(sec) {
+    if (interaction && !interaction.canPlay) return;
     sceneAudio.invalidate();
-    t = normalizePlaybackTime(sec, dur);
+    t = interactionOn
+      ? THREE.MathUtils.clamp(sec, 0, Math.max(0, dur - 0.001))
+      : normalizePlaybackTime(sec, dur);
     if (videoOk && Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
     applyTime();
   }
@@ -3089,7 +3121,9 @@ export async function createFourD({ search, renderer, root, scope }) {
     return frame;
   }
   function play(p = true) {
+    if (p && interaction && !interaction.canPlay) return;
     playing = p && scope.active && !scope.disposed;
+    interaction?.transportChanged(playing);
     if (!playing) {
       ++playGeneration;
       sceneAudio.invalidate();
@@ -3560,6 +3594,36 @@ export async function createFourD({ search, renderer, root, scope }) {
       cell.floor = support;
     return cell;
   }
+  function interactionFloorAt(x, z) {
+    if (!walkGrid) {
+      const floor = sampleFloor(x, z);
+      return Number.isFinite(floor) ? floor : null;
+    }
+    const cell = walkCell(x, z, Infinity);
+    if (Number.isFinite(cell.floor)) return cell.floor;
+    const k = walkIdx(x, z);
+    if (k < 0) return null;
+    const i = k % walkGrid.width,
+      j = (k - i) / walkGrid.width;
+    const neighbours = [];
+    for (let dj = -1; dj <= 1; dj++)
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const ni = i + di,
+          nj = j + dj;
+        if (ni >= 0 && ni < walkGrid.width && nj >= 0 && nj < walkGrid.height)
+          neighbours.push(walkGrid.floor[nj * walkGrid.width + ni]);
+      }
+    // The grid has sparse one-cell omissions in otherwise measured floor coverage. Unlike the
+    // walker, which carries its previous height across those cells, a loose bottle needs a support
+    // plane. Fill only a one-cell interior omission with two neighbouring measurements that agree
+    // within one grid cell of vertical change. Wider holes and all outside cells stay unsupported.
+    return interpolateBottleFloor(
+      { floor: cell.floor, inside: !!cell.inside, distance: cell.dist },
+      neighbours,
+      Math.min(WALK_STEP_UP, walkGrid.cell),
+    );
+  }
   function walkBandMask(h) {
     // the solid bins a body standing on floor h would occupy
     // Classify a bin by its centre. Rounding the lower edge down includes a tread whose
@@ -3680,7 +3744,8 @@ export async function createFourD({ search, renderer, root, scope }) {
       dy < 0 ? Math.max(dy, -WALK_FALL_MPS * upm * dt) : dy * Math.min(1, dt / WALK_RISE_S);
     prevPos.y = camera.position.y;
   }
-  if (walkOn) {
+  // Loose props need the same measured support and obstacles even in the authoring camera mode.
+  if (walkOn || interactionOn) {
     const cu =
       q.get('collision') ||
       (() => {
@@ -3714,6 +3779,8 @@ export async function createFourD({ search, renderer, root, scope }) {
       walkGrid = buildWalkGrid(probe, floorY, s0.x, s0.z);
       if (probe !== world) probe.dispose();
     }
+  }
+  if (walkOn) {
     if (walkGrid) {
       // the box grows to the floor the grid knows (plus the hull): a preset box is a free-camera
       // measurement and can end short of a staircase; a preset with no box gets this one
@@ -4520,13 +4587,29 @@ export async function createFourD({ search, renderer, root, scope }) {
     if (playing) {
       if (videoOk) {
         if (!video.paused && !video.seeking) {
-          if (video.currentTime >= dur) {
+          if (interactionOn && (video.ended || video.currentTime >= dur - 0.001)) {
+            t = Math.min(video.currentTime, dur - 0.001);
+            play(false);
+            interaction?.ended();
+          } else if (video.currentTime >= dur) {
             video.currentTime %= dur;
             sceneAudio.invalidate();
           }
-          t = video.currentTime % dur;
+          if (playing)
+            t = interactionOn ? Math.min(video.currentTime, dur - 0.001) : video.currentTime % dur;
         }
-      } else if (!videoUrl || videoUrl === '0' || video.error) t = (t + dt) % dur;
+        if (interactionOn && video.ended) {
+          t = Math.min(video.currentTime, dur - 0.001);
+          play(false);
+          interaction?.ended();
+        }
+      } else if (!videoUrl || videoUrl === '0' || video.error) {
+        t = interactionOn ? Math.min(t + dt, dur - 0.001) : (t + dt) % dur;
+        if (interactionOn && t >= dur - 0.001) {
+          play(false);
+          interaction?.ended();
+        }
+      }
       applyTime();
     }
     if (possess) possessApply(dt);
@@ -4743,6 +4826,66 @@ export async function createFourD({ search, renderer, root, scope }) {
     },
   };
 
+  if (interactionOn) {
+    const objectId = q.get('interactObject');
+    const bottle = objects.find((object) =>
+      objectId ? object.id === objectId : object.meta.objectClass === 'thrown',
+    );
+    if (bottle) {
+      const { BottleScene } = await import('/src/interaction/bottle-scene.ts');
+      scope.abort.signal.throwIfAborted();
+      interaction = new BottleScene(
+        {
+          scene,
+          people,
+          objects,
+          stature: walkStature || collisionStature || 1.7 * upm,
+          sceneId: q.get('demo') || manifest?.clip || 'scene',
+          params: q,
+          time: () => t,
+          playing: () => playing,
+          play,
+          seek: setTime,
+          floorAt(x, z) {
+            return interactionFloorAt(x, z);
+          },
+          blockedAt(position, radius) {
+            const center = new THREE.Vector3(...position);
+            const foot = center.clone().add(new THREE.Vector3(0, -radius, 0));
+            if (staticColliders.some((box) => capsuleIntersects(box, foot, 2 * radius, radius)))
+              return true;
+            if (!walkGrid) return false;
+            const lo = Math.max(0, Math.floor((center.y - radius - walkGrid.y0) / walkGrid.bin));
+            const hi = Math.min(
+              WALK_BINS - 1,
+              Math.floor((center.y + radius - walkGrid.y0) / walkGrid.bin),
+            );
+            let mask = 0;
+            for (let bin = lo; bin <= hi; bin++) mask |= 1 << bin;
+            return (
+              countGridFootprintContacts(
+                walkGrid,
+                center.x,
+                center.z,
+                radius,
+                (index) => !!(walkGrid.solid[index] & mask),
+              ) > 0
+            );
+          },
+        },
+        bottle,
+      );
+      api.interaction = interaction;
+      scope.onDispose(() => interaction.dispose());
+    } else {
+      interactionOn = false;
+      video.loop = true;
+      console.info(
+        'Interaction unavailable: this scene has no selected, separately loaded thrown object.',
+      );
+    }
+  }
+
   let activation = null;
   let activationTask = null;
   function deactivate() {
@@ -4750,6 +4893,7 @@ export async function createFourD({ search, renderer, root, scope }) {
     const current = activation;
     activation = null;
     scope.active = false;
+    interaction?.sessionEnd();
     play(false);
     sceneAudio.setSuspended(true);
     walkMap?.setOpen(false);
@@ -4810,8 +4954,16 @@ export async function createFourD({ search, renderer, root, scope }) {
           renderer.render = audioRender;
         });
         // Entering VR is an explicit playback action, including after a previous session paused on exit.
-        current.listen(renderer.xr, 'sessionstart', () => play(true));
-        current.listen(renderer.xr, 'sessionend', () => play(false));
+        current.listen(renderer.xr, 'sessionstart', () => {
+          if (interaction) interaction.sessionStart();
+          else play(true);
+        });
+        current.listen(renderer.xr, 'sessionend', () => {
+          interaction?.sessionEnd();
+          play(false);
+        });
+        // A scene switch keeps the native XR session, so no sessionstart event will fire.
+        if (interaction && renderer.xr.isPresenting) interaction.sessionStart();
         if (xrModule) {
           const xrBinding = await xrModule.initXR({
             renderer,
@@ -4828,12 +4980,14 @@ export async function createFourD({ search, renderer, root, scope }) {
             renderer.render = audioRender;
           });
           current.abort.signal.throwIfAborted();
+          if (interaction && renderer.xr.isPresenting) interaction.startVoice(false);
         }
         last = performance.now();
         fpsN = 0;
         fpsT = 0;
         renderer.setAnimationLoop(animate);
-        play(renderer.xr.isPresenting || !q.has('pause'));
+        if (!interaction || !renderer.xr.isPresenting)
+          play(renderer.xr.isPresenting || !q.has('pause'));
       })();
       const ready = task.catch((error) => {
         if (activation === current) deactivate();
