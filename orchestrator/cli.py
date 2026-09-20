@@ -406,16 +406,35 @@ def waiting_on(step: str, done: set[str], people: int = 1, multiperson: bool = F
     return [need for need in needs_of(step, people, multiperson) if need not in done]
 
 
+def in_flight(journal) -> dict[str, str]:
+    """Steps started and not yet finished, by attempt."""
+    running: dict[str, str] = {}
+    for entry in journal.entries():
+        step = entry.data.get("step")
+        if entry.kind == "step.started" and step:
+            running[step] = entry.data.get("attempt", "")
+        elif entry.kind == "step.finished" and step:
+            running.pop(step, None)
+    return running
+
+
 def command_ready(context: RunContext, args: argparse.Namespace) -> int:
     done = completed(context)
     journal = context.journal()
     people, many = graph_shape(context)
+    running = in_flight(journal)
     ready, blocked = [], []
     for name in plan_for(context):
         if name in done:
             continue
         (blocked if waiting_on(name, done, people, many) else ready).append(name)
+    if running:
+        print("already running (you do not have to wait for these):")
+        for name in running:
+            print(f"  {name}")
+        print()
     print("ready to run now:")
+    ready = [name for name in ready if name not in running]
     if not ready:
         print("  (nothing — everything is either done or waiting on something)")
     for name in ready:
@@ -434,6 +453,11 @@ def command_ready(context: RunContext, args: argparse.Namespace) -> int:
         "\nThis is what the run directory says, and it is advice, not a gate: run something "
         "else if you have a reason to."
     )
+    if ready:
+        print(
+            "Start all of these that are independent before you stop -- something already "
+            "running is not a reason to wait."
+        )
     return 0
 
 
