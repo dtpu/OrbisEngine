@@ -156,6 +156,21 @@ class RunThroughTests(unittest.TestCase):
         self.assertIsNone(outcome.finished)
         self.assertEqual(runs_needing_work(self.runs), [], "a waiting run is not picked up again")
 
+    def test_a_turn_with_work_in_flight_is_not_a_dead_end(self):
+        """Stopping while a ten-minute step runs is correct, and not the same as giving up."""
+        run_dir = self.open()
+        session = RunSession(
+            "run-1",
+            run_dir,
+            HarnessAgent(self.agent('subprocess.run(["wander", "step", "clean"])')),
+        )
+        outcome = session.work(turns=2)
+        self.assertGreaterEqual(outcome.running + outcome.steps_run, 1)
+        self.assertNotIn(
+            "without running a step",
+            " ".join(e.data.get("text", "") for e in Journal(run_dir).entries()),
+        )
+
     def test_a_turn_that_decides_nothing_stops_rather_than_repeating(self):
         run_dir = self.open()
         session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
@@ -209,7 +224,9 @@ class RunThroughTests(unittest.TestCase):
         RunSession("run-1", run_dir, HarnessAgent(self.agent("pass"))).turn()
         skill = (run_dir / "AGENTS.md").read_text()
         self.assertIn("wander ready", skill)
-        self.assertIn("Ending your turn is the normal thing to do", skill)
+        self.assertIn("Start everything that is ready", skill, "it should not serialise")
+        self.assertIn("not a reason to wait", skill)
+        self.assertIn("codex exec", skill, "the looking is delegated, not waited on")
         self.assertIn("never wrap a command in a timeout", skill, "no babysitting")
 
     def test_every_planned_step_is_one_the_catalogue_describes(self):
