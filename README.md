@@ -56,10 +56,11 @@ The opt-in elevator prototype is available locally at
 [fourd.html?demo=elevator&interact=1&xr=1](http://127.0.0.1:5399/fourd.html?demo=elevator&interact=1&xr=1).
 It starts the recorded exchange normally in VR, then a deliberate close approach, directed
 microphone speech, or a valid bottle grip pauses the recording for local bottle handling and an
-explicitly fictional generated voice. The immersive panel provides microphone, Replay,
-Pause/Continue, Reset, and End voice controls; there is no text chat. Replay restores and plays the
-recorded state while retaining the visitor's pose and current voice history. Reset restores it
-paused. Neither a returned bottle nor VR re-entry restarts or loops the recording.
+explicitly fictional generated voice. Enter VR also starts the OpenAI microphone connection,
+subject to headset permission. Press **X on the left controller** to replay; there is no floating
+control bar or text chat. Replay restores and plays the recorded state while retaining the
+visitor's pose and the current connection's voice history. Neither a returned bottle nor VR re-entry
+restarts or loops the recording.
 
 Voice needs a private `OPENAI_API_KEY` on the local Vite server. The browser receives a short-lived
 session secret; static build output cannot create one. Recorded bodies stay paused apart from an
