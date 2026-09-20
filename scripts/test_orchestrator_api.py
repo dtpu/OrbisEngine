@@ -358,7 +358,7 @@ class ReviewSidebarTests(unittest.TestCase):
             self.repository,
             Runs(self.root / "runs"),
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
-            review_workspace_root=self.root,
+            review_workspace_root=self.root / "runs",
         )
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
@@ -374,10 +374,14 @@ class ReviewSidebarTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, response.text)
 
-    def transcript(self, node_id="clean", attempt_id="run-1:2:1"):
-        path = self.root / "run-1" / "reviews" / node_id / attempt_id / "transcript.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    def transcript(self, run_id="run-1", name=None):
+        """The one transcript a run has, in the directory that run.json points at."""
+        import json as _json
+
+        run_dir = self.root / "runs" / (name or run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run.json").write_text(_json.dumps({"runId": run_id, "name": name or run_id}))
+        return run_dir / "transcript.jsonl"
 
     def test_messages_are_listed_in_order(self):
         for text in ("first", "second"):
@@ -405,10 +409,10 @@ class ReviewSidebarTests(unittest.TestCase):
                 (item["nodeId"], item["attemptId"], item["finished"])
                 for item in listing["transcripts"]
             ],
-            [("clean", "run-1:2:1", False)],
+            [("agent", "run-1", False)],
         )
         first = self.client.get(
-            "/api/pipeline/runs/run-1/reviews/clean/run-1:2:1/transcript", headers=AUTH
+            "/api/pipeline/runs/run-1/reviews/agent/run-1/transcript", headers=AUTH
         ).json()
         self.assertEqual(
             [event["type"] for event in first["events"]], ["thread.started", "turn.started"]
@@ -419,7 +423,7 @@ class ReviewSidebarTests(unittest.TestCase):
         with path.open("a") as stream:
             stream.write('{"type":"item.completed","item":{"type":"agent_message","text":"hi"}')
         held = self.client.get(
-            f"/api/pipeline/runs/run-1/reviews/clean/run-1:2:1/transcript?after={first['offset']}",
+            f"/api/pipeline/runs/run-1/reviews/agent/run-1/transcript?after={first['offset']}",
             headers=AUTH,
         ).json()
         self.assertEqual(held["events"], [])
@@ -428,7 +432,7 @@ class ReviewSidebarTests(unittest.TestCase):
             stream.write("}\nnot json\n")
         (path.parent / "decision.json").write_text("{}")
         rest = self.client.get(
-            f"/api/pipeline/runs/run-1/reviews/clean/run-1:2:1/transcript?after={first['offset']}",
+            f"/api/pipeline/runs/run-1/reviews/agent/run-1/transcript?after={first['offset']}",
             headers=AUTH,
         ).json()
         self.assertEqual(rest["events"][0]["item"]["text"], "hi")
@@ -439,17 +443,16 @@ class ReviewSidebarTests(unittest.TestCase):
         # A re-review truncates the file; a stale offset must restart from the top.
         path.write_text('{"type":"thread.started","thread_id":"again"}\n')
         again = self.client.get(
-            f"/api/pipeline/runs/run-1/reviews/clean/run-1:2:1/transcript?after={rest['offset']}",
+            f"/api/pipeline/runs/run-1/reviews/agent/run-1/transcript?after={rest['offset']}",
             headers=AUTH,
         ).json()
         self.assertTrue(again["reset"])
         self.assertEqual(again["events"][0]["thread_id"], "again")
 
     def test_recent_transcripts_span_runs_newest_first(self):
-        older = self.transcript("clean", "run-1:2:1")
+        older = self.transcript("run-1")
         older.write_text("{}\n")
-        other = self.root / "run-2" / "reviews" / "pi3x" / "run-2:3:1" / "transcript.jsonl"
-        other.parent.mkdir(parents=True)
+        other = self.transcript("run-2")
         other.write_text("{}\n")
         import os
 
@@ -457,23 +460,31 @@ class ReviewSidebarTests(unittest.TestCase):
         listing = self.client.get("/api/pipeline/reviews", headers=AUTH).json()
         self.assertEqual(
             [(item["runId"], item["nodeId"]) for item in listing["transcripts"]],
-            [("run-2", "pi3x"), ("run-1", "clean")],
+            [("run-2", "agent"), ("run-1", "agent")],
         )
         limited = self.client.get("/api/pipeline/reviews?limit=1", headers=AUTH).json()
         self.assertEqual(len(limited["transcripts"]), 1)
 
-    def test_transcript_paths_cannot_escape_the_workspace(self):
+    def test_a_transcript_can_only_be_a_run_that_exists(self):
+        """The run id is the lookup now, so it is the thing that has to be safe.
+
+        The node and attempt in the path are vestigial -- there is one session per run -- and
+        are ignored rather than joined onto a filesystem path, which is why a dotted segment
+        there cannot reach anything.
+        """
         self.transcript().write_text("{}\n")
         for node in ("../..", "..", "clean/../../etc"):
             response = self.client.get(
-                f"/api/pipeline/runs/run-1/reviews/{node}/run-1:2:1/transcript", headers=AUTH
+                f"/api/pipeline/runs/run-1/reviews/{node}/anything/transcript", headers=AUTH
             )
-            # Starlette collapses dotted segments onto other routes (405) or rejects them.
-            self.assertIn(response.status_code, {404, 405, 422}, node)
-        missing = self.client.get(
-            "/api/pipeline/runs/run-1/reviews/clean/run-1:9:9/transcript", headers=AUTH
-        )
-        self.assertEqual(missing.status_code, 404)
+            # Starlette collapses dotted segments onto other routes (405) or rejects them;
+            # what must never happen is reading a file outside the runs root.
+            self.assertIn(response.status_code, {200, 404, 405, 422}, node)
+        for run_id in ("run-nope", "../../etc", "."):
+            missing = self.client.get(
+                f"/api/pipeline/runs/{run_id}/reviews/agent/x/transcript", headers=AUTH
+            )
+            self.assertIn(missing.status_code, {404, 405, 422}, run_id)
         unauthenticated = self.client.get("/api/pipeline/runs/run-1/reviews")
         self.assertEqual(unauthenticated.status_code, 401)
 
