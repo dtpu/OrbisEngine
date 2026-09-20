@@ -313,6 +313,39 @@ def probe(clip: Path) -> dict:
     )
 
 
+def clean_sample_count(clip: Path, fps: float) -> int:
+    """Count the actual frames FFmpeg emits for the clean worker's FPS filter.
+
+    `nb_frames` is container metadata and can disagree with decoded frames. Framemd5 is a
+    compact decoded stream, so this observes the same `fps` selection without retaining images.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(clip),
+            "-map",
+            "0:v:0",
+            "-vf",
+            f"fps={fps}",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "framemd5",
+            "-",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    count = sum(line.startswith(b"0,") for line in result.stdout.splitlines())
+    if not count:
+        raise ValueError("FFmpeg emitted no sampled frames for --clean-masks validation")
+    return count
+
+
 def body_stats(ply: Path) -> tuple[float, float]:
     """(body height, feet y) of frame 0 from the opaque splats, the numbers fourd.html derives."""
     import numpy as np
@@ -563,7 +596,10 @@ class Pipeline:
 
     def clean_flags(self):
         a = self.a
-        return [
+        clean_masks = getattr(a, "clean_masks", None)
+        if clean_masks and a.moved_mask:
+            raise ValueError("--clean-masks cannot be combined with --moved-mask")
+        flags = [
             "--fps",
             str(a.fps),
             "--width",
@@ -576,7 +612,50 @@ class Pipeline:
             str(a.bottom_extra),
             "--lama-px",
             str(a.lama_px),
-        ] + (["--moved-mask"] if a.moved_mask else [])
+        ]
+        if clean_masks:
+            self.validate_clean_masks(Path(clean_masks))
+            flags += ["--masks-in", str(Path(clean_masks).resolve())]
+        return flags + (["--moved-mask"] if a.moved_mask else [])
+
+    def validate_clean_masks(self, path: Path):
+        """Require packed masks for this source's observed FFmpeg sampling before any Modal call."""
+        import numpy as np
+
+        if not path.is_file():
+            raise ValueError(f"--clean-masks is not a file: {path}")
+        try:
+            with np.load(path, allow_pickle=False) as archive:
+                packed = archive["masks"]
+                declared = archive["shape"] if "shape" in archive.files else None
+        except (OSError, ValueError, KeyError) as error:
+            raise ValueError(f"Invalid --clean-masks archive {path}: {error}") from error
+        expected_height, expected_width = self.info["height"], self.info["width"]
+        expected_packed_width = math.ceil(expected_width / 8)
+        if packed.dtype != np.uint8 or packed.ndim != 3:
+            raise ValueError(
+                "--clean-masks masks must be a three-dimensional uint8 packed-bit array"
+            )
+
+        expected_shape = (
+            clean_sample_count(self.clip, self.a.fps),
+            expected_height,
+            expected_packed_width,
+        )
+        if tuple(packed.shape) != expected_shape:
+            raise ValueError(
+                "--clean-masks shape "
+                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
+            )
+        if declared is not None and tuple(declared.tolist()) != (
+            expected_shape[0],
+            expected_height,
+            expected_width,
+        ):
+            raise ValueError(
+                "--clean-masks shape metadata does not match the observed sampled frame count "
+                "and source dimensions"
+            )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
@@ -2908,6 +2987,12 @@ def main():
         help="clean everything that MOVED, not just the person: cast shadow, carried "
         "object, passer-by. Off by default, so every existing run is unchanged.",
     )
+    ap.add_argument(
+        "--clean-masks",
+        metavar="PATH",
+        help="packed uint8 NPZ masks for the exact observed FFmpeg --fps sampling; skips the "
+        "clean worker's segmentation, dilation, and contact-margin extension",
+    )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)
     ap.add_argument(
@@ -2994,6 +3079,10 @@ def main():
         help="keep this run local; normally outputs are archived privately without viewer promotion",
     )
     a = ap.parse_args()
+    if a.clean_masks and a.moved_mask:
+        ap.error("--clean-masks cannot be combined with --moved-mask")
+    if a.clean_masks and a.orchestrated:
+        ap.error("--clean-masks is currently supported by the direct runner only")
     if a.orchestrated:
         from run_pipeline import main as run_orchestrated
 

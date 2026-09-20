@@ -11,6 +11,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -40,16 +41,27 @@ class BriefTests(unittest.TestCase):
     def brief(self, journal: Journal) -> str:
         return render_brief("run-1", self.root, "demo", journal, "Get this clip through.")
 
-    def test_the_brief_says_what_the_steps_are_and_what_they_cost(self):
+    def test_the_brief_is_the_situation_and_points_at_the_tools(self):
+        """What a step is for belongs in the standing instructions, not in every turn."""
         text = self.brief(Journal(self.root))
-        self.assertIn("`marble_video`", text)
-        self.assertIn("costs money", text)
-        self.assertIn("1600 credits", text)
-        self.assertIn("`dilate` = 20", text, "the agent is told the value it is running at")
+        self.assertIn("wander ready", text)
+        self.assertIn("end your turn", text)
+        self.assertIn("Not done yet:", text)
 
-    def test_the_brief_says_the_order_is_a_suggestion(self):
-        text = self.brief(Journal(self.root))
-        self.assertIn("suggestion, not a schedule", text)
+    def test_the_standing_instructions_carry_the_job(self):
+        from orchestrator.session import SKILL_SOURCE
+
+        skill = SKILL_SOURCE.read_text()
+        self.assertIn("1600", skill, "the price of a world is in the standing instructions")
+        self.assertIn("exit code of zero means the command ran", skill)
+        self.assertIn("wander ask", skill)
+
+    def test_what_a_step_costs_is_a_command_away(self):
+        """The brief no longer lists nineteen steps; `wander show` has the detail."""
+        from orchestrator.steps import STEPS
+
+        self.assertTrue(STEPS["marble_video"].paid)
+        self.assertEqual(STEPS["clean"].parameters["properties"]["dilate"]["default"], 20)
 
     def test_what_has_happened_is_carried_into_the_next_turn(self):
         journal = Journal(self.root)
@@ -120,6 +132,11 @@ class RunThroughTests(unittest.TestCase):
         outcome = session.work(turns=2)
         self.assertEqual(outcome.finished, "blocked")
         journal = Journal(run_dir)
+        # The step runs on its own, so its outcome lands after the agent's turn is over.
+        for _ in range(200):
+            if journal.last_status("clean"):
+                break
+            time.sleep(0.1)
         # The clip is four bytes, so the real stage really does fail.
         self.assertEqual(journal.last_status("clean"), "failed")
         finished = [e for e in journal.entries() if e.kind == "step.finished"][0]
@@ -161,6 +178,39 @@ class RunThroughTests(unittest.TestCase):
         self.assertTrue(Path(described["source"]).is_file())
         self.assertNotEqual(described["source"], str(self.clip), "the run keeps its own copy")
         self.assertEqual(described["options"]["marble"], "none")
+
+    def test_a_step_runs_on_its_own_and_the_turn_ends(self):
+        """An agent watching a ten-minute GPU step is a session held open to do nothing."""
+        run_dir = self.open()
+        session = RunSession(
+            "run-1",
+            run_dir,
+            HarnessAgent(
+                self.agent(
+                    'out = subprocess.run(["wander", "step", "clean"], capture_output=True, text=True)\n'
+                    'assert "end your turn" in out.stdout, out.stdout\n'
+                )
+            ),
+        )
+        outcome = session.turn()
+        journal = Journal(run_dir)
+        started = [e for e in journal.entries() if e.kind == "step.started"]
+        self.assertEqual(len(started), 1, "the step was started")
+        self.assertEqual(outcome.steps_run, 1)
+        # The child journals its own finish, after the agent's turn is over.
+        for _ in range(200):
+            if journal.last_status("clean"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(journal.last_status("clean"), "failed", "the four-byte clip really fails")
+
+    def test_the_standing_instructions_arrive_where_the_agent_will_read_them(self):
+        run_dir = self.open()
+        RunSession("run-1", run_dir, HarnessAgent(self.agent("pass"))).turn()
+        skill = (run_dir / "AGENTS.md").read_text()
+        self.assertIn("wander ready", skill)
+        self.assertIn("Ending your turn is the normal thing to do", skill)
+        self.assertIn("never wrap a command in a timeout", skill, "no babysitting")
 
     def test_every_planned_step_is_one_the_catalogue_describes(self):
         from orchestrator.steps import planned_steps
