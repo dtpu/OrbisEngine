@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from orchestrator.contracts import NodeStatus, Run, StageDefinition
 from orchestrator.database import Base
-from orchestrator.graph import instantiate_graph
+from orchestrator.graph import instantiate_graph, rebuild_expanded_node
 from orchestrator.repository import PipelineRepository
 from orchestrator.stages import GraphOptions
 from orchestrator.workflows.run import restore_state, snapshot_state
@@ -271,6 +271,66 @@ class ExpandedNodeTests(unittest.TestCase):
         self.assertIn(target, revived.nodes)
         self.assertEqual(
             revived.nodes[target].definition.id, self.graph.nodes[target].definition.id
+        )
+
+    def test_a_rebuilt_node_takes_todays_stage_definition(self):
+        """A stage definition fixed after a run expanded has to reach that run.
+
+        lhm_frozen never declared the clip every legacy command opens. Rebuilding expanded
+        nodes from the copy stored at expansion time froze the omission into every run that
+        had got that far, so the fix could not be deployed into them -- the stage went on
+        failing to build its command until the clip was started again from nothing.
+        """
+        created = self.expand()
+        frozen = next(node for node in created if node.startswith("lhm_frozen"))
+        stored = snapshot_state(
+            self.graph, paused=False, canceled=False, agent_retries={}, retry_parameters={}
+        )["nodes"][frozen]
+        # The run as it was: no run inputs declared, and the wiring it discovered for itself.
+        stale = dict(stored["definition"])
+        stale["inputs"] = {
+            name: binding
+            for name, binding in stale["inputs"].items()
+            if binding["source"] == "stage_output"
+        }
+        self.assertNotIn("source", stale["inputs"], "precondition: the stale copy lacks the clip")
+
+        node = rebuild_expanded_node(
+            frozen,
+            "lhm_frozen",
+            stale,
+            dependencies=tuple(stored["dependencies"]),
+            branch_key=stored["branch_key"],
+        )
+        self.assertEqual(node.definition.inputs["source"].source, "run_input")
+        self.assertEqual(node.definition.inputs["source"].role, "source_video")
+        # The run's own wiring survives: no registry knows which person this node reads.
+        prepared = node.definition.inputs["prepared_person"]
+        self.assertEqual(prepared.source, "stage_output")
+        self.assertTrue(prepared.stage_id.startswith("person_prep:"))
+
+    def test_a_rebuilt_join_keeps_the_producers_it_found(self):
+        """package_people is wired to one motion node per person, which no registry knows."""
+        self.expand()
+        stored = snapshot_state(
+            self.graph, paused=False, canceled=False, agent_retries={}, retry_parameters={}
+        )["nodes"]["package_people"]
+        node = rebuild_expanded_node(
+            "package_people",
+            "package_people",
+            stored["definition"],
+            dependencies=tuple(stored["dependencies"]),
+        )
+        wired = {
+            name: binding.stage_id
+            for name, binding in node.definition.inputs.items()
+            if binding.source == "stage_output"
+        }
+        self.assertTrue(any(v.startswith("lhm_motion:") for v in wired.values()), wired)
+        self.assertNotIn(
+            "lhm_motion",
+            set(wired.values()),
+            "the base graph's unexpanded producer must not come back",
         )
 
     def test_a_rebuilt_node_keeps_its_progress(self):
