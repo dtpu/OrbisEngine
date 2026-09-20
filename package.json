@@ -19,6 +19,7 @@
     "test:static-colliders": "bun test ./scripts/test-static-colliders.ts",
     "test:audio-browser": "bun scripts/test-fourd-audio-browser.ts",
     "smoke:xr": "bun scripts/smoke-xr.ts",
+    "test:xr-locomotion": "bun test ./scripts/test-xr-physical-walk.ts && bun scripts/test-xr-locomotion-browser.ts",
     "capture:shared": "bun scripts/capture-shared-demo.ts",
     "capture:walk": "bun scripts/capture-walk-attack.ts",
     "capture:collision": "bun scripts/capture-walk-collide.ts",
