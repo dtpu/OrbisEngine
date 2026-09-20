@@ -27,6 +27,16 @@ Existing result paths are retained. LHM destinations with compatible recovery re
 read-only recovery; legacy or incompatible destinations stop for inspection. Other paid stages
 need retained-output inspection and, when justified, a fresh candidate with the same ledger.
 A successful subprocess is recorded as a completed execution, not a visual quality verdict.
+
+If the user explicitly authorizes one exception after three terminal executions, author tooling
+can call `StageAttempts.authorize_one_extra(source, operation, evidence, reason)`. This records
+a hash-bound approval artifact, canonical source, logical stage and the prior three attempt IDs.
+Only that scope may execute a fourth time; a fifth, reused approval, unresolved prior execution,
+or changed approval file is rejected. The ordinary limit remains three, history is never reset,
+and this is an operator-recorded authorization rather than authenticated user identity. It does
+not raise the spending cap or authorize a different source/stage. Older clients that cannot read
+a fourth claim fail closed; use the updated accounting code in every process sharing that ledger.
+
 Additional selected shots share their original source's allowance and are treated as retries of
 the same stage. Automatic `--all-shots` processing can therefore stop after the first shot;
 review subsequent shots separately with distinct hypotheses instead of changing the source hash.
