@@ -159,6 +159,14 @@ class ReviewDecision:
 
 # How many times the agent may send one stage back on its own. After this it must ask, so the
 # operator confirms before it tries again rather than the loop deciding for itself.
+# A stage or review says it is alive every 20 seconds while it works. Without a heartbeat
+# timeout, a worker that dies mid-stage is only noticed when the stage's own timeout expires,
+# and a Marble stage's is four hours: the run sits still for all of them with nothing running.
+# The allowance is far longer than the interval on purpose. Hashing and archiving a large
+# attempt is a single step that cannot report progress, and a stage wrongly declared dead is
+# started again -- which for a paid stage is a second charge. Ten minutes still turns four
+# hours of nothing into ten.
+HEARTBEAT_TIMEOUT = timedelta(seconds=600)
 AGENT_RETRY_CAP = 3
 
 
@@ -533,6 +541,7 @@ class GenerationWorkflow:
                         start_to_close_timeout=timedelta(
                             seconds=node.definition.resources.timeout_seconds
                         ),
+                        heartbeat_timeout=HEARTBEAT_TIMEOUT,
                         retry_policy=TemporalRetryPolicy(
                             maximum_attempts=node.definition.retry.automatic_attempts
                         ),
@@ -600,6 +609,7 @@ class GenerationWorkflow:
                                 ),
                                 task_queue="external_api",
                                 start_to_close_timeout=timedelta(seconds=1800),
+                                heartbeat_timeout=HEARTBEAT_TIMEOUT,
                                 retry_policy=TemporalRetryPolicy(maximum_attempts=1),
                                 result_type=ReviewDecision,
                             )
