@@ -1,6 +1,6 @@
-"""Sandboxed coding-agent integration."""
+"""The coding agent that drives a run, and the harness that keeps it alive."""
 
 from .contracts import AgentResult, AgentTaskPacket
-from .sandbox import ContainerAgent, SandboxPolicy
+from .harness import HarnessAgent, HarnessPolicy
 
-__all__ = ["AgentResult", "AgentTaskPacket", "ContainerAgent", "SandboxPolicy"]
+__all__ = ["AgentResult", "AgentTaskPacket", "HarnessAgent", "HarnessPolicy"]

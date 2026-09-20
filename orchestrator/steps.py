@@ -14,7 +14,9 @@ be in flight.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def knob(kind: str, default: Any, description: str, **bounds: Any) -> dict[str, Any]:
@@ -298,6 +300,22 @@ OBJECT_SHAPE_PARAMETERS = tunables(
 )
 
 
+class RunOptions(BaseModel):
+    """What a run was asked for. The same names the dashboard has always sent.
+
+    These are run-wide: every legacy command for this run carries them, unlike a step's own
+    knobs which the agent sets per call.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    marble: Literal["video", "image", "multi", "both", "none"] = "video"
+    people: int = Field(default=1, ge=1, le=16)
+    all_people: bool = False
+    objects: bool = True
+    finetune: bool = False
+
+
 @dataclass(frozen=True)
 class Step:
     """One thing the pipeline can be asked to do.
@@ -487,26 +505,64 @@ STEPS: dict[str, Step] = {
 }
 
 
-def suggested_order(names: list[str] | None = None) -> list[str]:
-    """The catalogue's steps, each after the ones it says it wants.
+def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
+    """The steps this run probably wants, in an order that holds together.
 
-    Advice for the brief. A cycle or an unknown name is the catalogue's problem, not the
-    agent's, so this raises rather than quietly emitting an order that cannot be run.
+    A suggestion, shown in the dashboard so a run is not an empty page and given to the agent
+    as a starting point. The agent may run something not on this list, and the journal adds a
+    row when it does.
+    """
+    if options is None:
+        options = RunOptions()
+    elif isinstance(options, dict):
+        options = RunOptions.model_validate(options)
+    wanted = ["pi3x", "frame_align", "tracks", "person_prep", "lhm_frozen", "lhm_motion"]
+    many = options.all_people or options.people > 1
+    wanted.append("package_people" if many else "package")
+    if options.marble == "none":
+        wanted.insert(0, "clean")
+    else:
+        wanted = ["clean", "world_prompt", f"marble_{options.marble}", *wanted]
+        wanted += ["scale_fit", "place_fit", "anchors", "verify"]
+        if options.finetune:
+            wanted.append("finetune")
+    if options.objects:
+        wanted.append("objects")
+    return suggested_order([name for name in dict.fromkeys(wanted) if name in STEPS])
+
+
+# The many-person packager stands in for the single-person one: a step that wants "package"
+# done is satisfied by either.
+SAME_AS = {"package_people": "package"}
+
+
+def suggested_order(names: list[str] | None = None) -> list[str]:
+    """The given steps, each after the ones it says it wants.
+
+    Advice for the brief and for the dashboard. Ties are broken by the order they were asked
+    for rather than by name, so a plan reads the way its author meant it to. A cycle or an
+    unknown name is the catalogue's problem, not the agent's, so this raises rather than
+    quietly emitting an order that cannot be run.
     """
     wanted = list(STEPS) if names is None else list(names)
     unknown = sorted(set(wanted) - set(STEPS))
     if unknown:
         raise KeyError(f"not steps this pipeline has: {', '.join(unknown)}")
+    satisfied_by = {SAME_AS.get(name, name) for name in wanted} | set(wanted)
     ordered: list[str] = []
+    done: set[str] = set()
     while len(ordered) < len(wanted):
         ready = [
             name
             for name in wanted
-            if name not in ordered
-            and all(need in ordered or need not in wanted for need in STEPS[name].after)
+            if name not in done
+            and all(need in done or need not in satisfied_by for need in STEPS[name].after)
         ]
         if not ready:
-            remaining = sorted(set(wanted) - set(ordered))
+            remaining = [name for name in wanted if name not in done]
             raise ValueError(f"steps wait on each other: {', '.join(remaining)}")
-        ordered.extend(sorted(ready))
+        for name in ready:
+            ordered.append(name)
+            done.add(name)
+            done.add(SAME_AS.get(name, name))
     return ordered
