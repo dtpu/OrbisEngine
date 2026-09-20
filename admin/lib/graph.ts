@@ -134,6 +134,48 @@ export function dependenciesOf(node: RunNode): string[] {
   return dependencyIds(node);
 }
 
+/**
+ * Each stage's dependencies with the ones it already inherits removed.
+ *
+ * A stage often names every upstream it needs, not just the nearest: `clean_review` waits on
+ * `clean` and on `admission`, though `clean` waits on `admission` too. Drawing that second edge
+ * states nothing new and costs a line across the width of the graph. Dropping the implied ones
+ * leaves the shape of the work, and every stage still runs after everything it named.
+ */
+export function directDependencies(nodes: RunNode[]): Map<string, string[]> {
+  const known = new Set(nodes.map((node) => node.id));
+  const parents = new Map(
+    nodes.map((node) => [node.id, dependencyIds(node).filter((id) => known.has(id))]),
+  );
+  // Seeding the cache before filling it also stops a cycle from recursing forever; a real
+  // pipeline graph is acyclic, and a cyclic one simply keeps a few edges it could have dropped.
+  const ancestorCache = new Map<string, Set<string>>();
+  function ancestors(id: string): Set<string> {
+    const cached = ancestorCache.get(id);
+    if (cached) return cached;
+    const all = new Set<string>();
+    ancestorCache.set(id, all);
+    for (const parent of parents.get(id) ?? []) {
+      all.add(parent);
+      for (const older of ancestors(parent)) all.add(older);
+    }
+    return all;
+  }
+
+  return new Map(
+    nodes.map((node) => {
+      const declared = parents.get(node.id) ?? [];
+      return [
+        node.id,
+        declared.filter(
+          (dependency) =>
+            !declared.some((other) => other !== dependency && ancestors(other).has(dependency)),
+        ),
+      ];
+    }),
+  );
+}
+
 export function stagesWaitingOnYou(run: PipelineRun): RunNode[] {
   return run.nodes.filter((node) => node.status === 'waiting_human');
 }

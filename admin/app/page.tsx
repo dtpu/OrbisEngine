@@ -156,15 +156,13 @@ function RunRow({ run, shot, now }: { run: PipelineRun; shot: boolean; now: numb
     isWaitingOnUpstream(node.status, node.blockedReason),
   ).length;
   const blocked = (counts.blocked ?? 0) - neverRan;
-  const tally = [
-    `${done} of ${run.nodes.length} done`,
-    running ? `${running} running` : null,
-    counts.failed ? `${counts.failed} failed` : null,
-    blocked > 0 ? `${blocked} blocked` : null,
-    neverRan ? `${neverRan} never ran` : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
+  const tally: { key: string; tone: string; text: string }[] = [
+    { key: 'done', tone: 'done', text: `${done}/${run.nodes.length} done` },
+    ...(running ? [{ key: 'running', tone: 'active', text: `${running} running` }] : []),
+    ...(counts.failed ? [{ key: 'failed', tone: 'bad', text: `${counts.failed} failed` }] : []),
+    ...(blocked > 0 ? [{ key: 'blocked', tone: 'bad', text: `${blocked} blocked` }] : []),
+    ...(neverRan ? [{ key: 'never', tone: 'idle', text: `${neverRan} never ran` }] : []),
+  ];
 
   return (
     <Link className={`run${shot ? ' run--shot' : ''}`} href={`/runs/${encodeURIComponent(run.id)}`}>
@@ -185,7 +183,13 @@ function RunRow({ run, shot, now }: { run: PipelineRun; shot: boolean; now: numb
       </span>
       <span className="run__progress">
         <StageStrip nodes={run.nodes} compact />
-        <span className="run__tally">{tally}</span>
+        <span className="run__tally">
+          {tally.map((count) => (
+            <span key={count.key} className={`run__count run__count--${count.tone}`}>
+              {count.text}
+            </span>
+          ))}
+        </span>
       </span>
       <span className="run__when">
         <span>{formatWhen(run.createdAt, now)}</span>
@@ -242,25 +246,33 @@ export default function Page() {
         ) : null}
 
         {gates.length > 0 ? (
-          <div className="gates" role="region" aria-label="Waiting on you">
-            {gates.map(({ run, node }) => (
-              <Link
-                key={`${run.id}/${node.id}`}
-                className="gate"
-                href={`/runs/${encodeURIComponent(run.id)}?stage=${encodeURIComponent(node.id)}`}
-              >
-                <Status status={node.status} blockedReason={node.blockedReason} />
-                <span className="gate__what">
-                  <strong>{node.definition.title}</strong>
-                  <span className="gate__where">
-                    {' '}
-                    in <span className="mono">{run.id}</span>
+          <section className="waiting-on-you" aria-labelledby="gates-title">
+            <div className="section-head">
+              <h2 className="section-title" id="gates-title">
+                Waiting on you
+              </h2>
+              <span className="count">{gates.length}</span>
+            </div>
+            <div className="gates">
+              {gates.map(({ run, node }) => (
+                <Link
+                  key={`${run.id}/${node.id}`}
+                  className="gate"
+                  href={`/runs/${encodeURIComponent(run.id)}?stage=${encodeURIComponent(node.id)}`}
+                >
+                  <Status status={node.status} blockedReason={node.blockedReason} />
+                  <span className="gate__what">
+                    <strong>{node.definition.title}</strong>
+                    <span className="gate__where">
+                      {' '}
+                      in <span className="mono">{run.id}</span>
+                    </span>
                   </span>
-                </span>
-                <span className="gate__cta">Review</span>
-              </Link>
-            ))}
-          </div>
+                  <span className="gate__cta">Review</span>
+                </Link>
+              ))}
+            </div>
+          </section>
         ) : null}
 
         <div className="section-head">
@@ -280,11 +292,11 @@ export default function Page() {
             <div className="runs__head" aria-hidden="true">
               <span>Run</span>
               <span>Stages</span>
-              <span style={{ textAlign: 'right' }}>Started</span>
-              <span style={{ textAlign: 'right' }}>State</span>
+              <span className="right">Started</span>
+              <span>State</span>
             </div>
             {parents.map((parent) => (
-              <div key={parent.id}>
+              <div className="runs__group" key={parent.id}>
                 <RunRow run={parent} shot={false} now={now} />
                 {(runs ?? [])
                   .filter((run) => run.parentRunId === parent.id)

@@ -22,7 +22,6 @@ dependencies = [
     "numba",
     "plyfile",
     "sqlalchemy>=2.0,<3",
-    "temporalio>=1.18,<2",
     "trimesh",
     "uvicorn>=0.37,<1",
 ]
@@ -38,7 +37,6 @@ orchestrator = [
     "psycopg[binary]>=3.2,<4",
     "python-multipart>=0.0.20,<1",
     "sqlalchemy>=2.0,<3",
-    "temporalio>=1.18,<2",
     "uvicorn>=0.37,<1",
 ]
 # Local masks and pose-artifact readers; no LHM/Pi3/gsplat GPU worker environment.
