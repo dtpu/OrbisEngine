@@ -19,6 +19,10 @@ from orchestrator.repository import PipelineRepository
 from orchestrator.stages import GraphOptions
 from orchestrator.workflows.run import restore_state, snapshot_state
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from resume_run import requeue
+
 RUN_ID = "run-state"
 SHA = "c" * 64
 
@@ -208,6 +212,37 @@ class ExpandedNodeTests(unittest.TestCase):
             self.assertEqual(rebuilt.dependencies, original.dependencies)
             self.assertEqual(rebuilt.branch_key, original.branch_key)
             self.assertEqual(rebuilt.definition.id, original.definition.id)
+
+    def test_requeueing_a_stage_clears_what_it_produced(self):
+        """Resuming exists for a run whose scheduler was lost; --rerun for one whose stage was.
+
+        A stage that succeeded on the code of the day but produced the wrong thing has to run
+        again, and everything downstream has to follow from the new result, so its selected
+        attempt goes with it rather than being left for a dependent to read.
+        """
+        self.graph.select_attempt(
+            "tracks",
+            "attempt:tracks",
+            {
+                contract.role: (f"artifact:tracks:{contract.role}",)
+                for contract in self.graph.nodes["tracks"].definition.outputs.values()
+            },
+        )
+        self.repository.save_run_state(
+            RUN_ID,
+            snapshot_state(
+                self.graph, paused=False, canceled=False, agent_retries={}, retry_parameters={}
+            ),
+        )
+        self.assertEqual(requeue(self.repository, RUN_ID, ["tracks", "nonesuch"]), ["tracks"])
+        stored = self.repository.load_run_state(RUN_ID)["nodes"]["tracks"]
+        self.assertEqual(stored["status"], "queued")
+        self.assertIsNone(stored["selected_attempt_id"])
+        self.assertEqual(stored["selected_artifacts"], {})
+
+        revived = instantiate_graph(self.options)
+        restore_state(revived, self.repository.load_run_state(RUN_ID), {}, {})
+        self.assertEqual(revived.nodes["tracks"].status, NodeStatus.QUEUED)
 
     def test_a_definition_that_arrives_as_a_model_is_rebuilt_too(self):
         """Temporal's workflow sandbox rebuilds the modules a workflow imports.
