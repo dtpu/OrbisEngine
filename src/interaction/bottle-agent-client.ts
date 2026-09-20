@@ -6,12 +6,14 @@ import {
 } from '@openai/agents/realtime';
 import type { Quaternion, Vector3 } from 'three';
 import { sceneCharacterInstructions } from './character-prompt';
+import { isCharacterVoice, type CharacterVoice } from './character-voice';
 
 export type AgentIdentity = {
   sceneId: string;
   personId: string;
   personLabel: string;
   objectId: string;
+  voice?: CharacterVoice;
 };
 
 type Options = {
@@ -20,6 +22,8 @@ type Options = {
   action: (name: string, args: unknown) => string | Promise<string>;
   speaking: (value: boolean) => void;
   speechStarted: () => boolean;
+  canRespond?: () => boolean;
+  failed?: (message: string) => void;
   /** Normal session-cap cleanup only; failures and explicit stops never request renewal. */
   expired?: () => void;
 };
@@ -143,6 +147,8 @@ export class BottleAgentClient {
     this.providerErrorCode = null;
     this.pendingReaction = pendingReaction && !this.playing;
     const generation = this.generation;
+    const identity = { ...this.options.identity() };
+    const voice = identity.voice ?? 'ash';
     const current = () => generation === this.generation;
     const abort = new AbortController();
     this.abort = abort;
@@ -178,7 +184,7 @@ export class BottleAgentClient {
         const response = await fetch('/api/bottle-agent/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.options.identity()),
+          body: JSON.stringify({ ...identity, voice }),
           signal: abort.signal,
         });
         if (!current()) return;
@@ -190,10 +196,17 @@ export class BottleAgentClient {
           );
           return;
         }
-        const secret: { value?: string; model?: string } = await response.json();
+        const secret: { value?: string; model?: string; voice?: unknown } = await response.json();
         if (!current()) return;
         if (!/^ek_[A-Za-z0-9_-]{1,512}$/.test(secret.value ?? '')) {
           this.fail('Invalid conversation credentials.');
+          return;
+        }
+        if (
+          secret.voice !== undefined &&
+          (!isCharacterVoice(secret.voice) || secret.voice !== voice)
+        ) {
+          this.fail('Character voice configuration changed. Re-enter VR to retry.');
           return;
         }
         const remote = document.createElement('audio');
@@ -223,7 +236,7 @@ export class BottleAgentClient {
           },
         });
         this.transport = transport;
-        transport.allowResponse = () => current() && this.ready && !this.playing;
+        transport.allowResponse = () => current() && this.allowed(this.epoch);
         transport.finishTool = (call, output) => {
           const entry = this.calls.get(call.callId);
           if (!current() || !this.allowed(entry?.epoch) || !entry || entry.completed) return;
@@ -236,7 +249,7 @@ export class BottleAgentClient {
         const agent = new RealtimeAgent({
           name: 'Scene character',
           instructions: sceneCharacterInstructions(),
-          voice: 'marin',
+          voice,
           tools: [
             ['face_player', 'Face the visitor if currently possible.'],
             ['show_return_target', 'Show the available bottle receiving target.'],
@@ -294,7 +307,7 @@ export class BottleAgentClient {
                   interruptResponse: false,
                 },
               },
-              output: { voice: 'marin' },
+              output: { voice },
             },
             providerData: { max_output_tokens: 256 },
           },
@@ -331,7 +344,7 @@ export class BottleAgentClient {
         if (this.timer) clearTimeout(this.timer);
         this.timer = setTimeout(() => {
           if (!current()) return;
-          this.fail('Three-minute conversation ended · microphone off.');
+          this.fail('Three-minute conversation ended · microphone off.', true);
           this.options.expired?.();
         }, 180_000);
         this.settleConnection?.();
@@ -349,7 +362,9 @@ export class BottleAgentClient {
   }
 
   private allowed(epoch: number | undefined) {
-    return this.ready && !this.playing && epoch === this.epoch;
+    return (
+      this.ready && !this.playing && epoch === this.epoch && (this.options.canRespond?.() ?? true)
+    );
   }
 
   private send(event: ClientEvent) {
@@ -429,7 +444,7 @@ export class BottleAgentClient {
   }
 
   private requestResponse() {
-    if (!this.ready || this.playing || this.busy || this.speechStarting || this.speech) return;
+    if (!this.allowed(this.epoch) || this.busy || this.speechStarting || this.speech) return;
     if (this.inFlightKey) {
       this.pendingReaction = true;
       return;
@@ -586,9 +601,10 @@ export class BottleAgentClient {
     ears.upZ.value = up.z;
   }
 
-  private fail(message: string) {
+  private fail(message: string, expired = false) {
     this.disconnect();
     this.options.status(message);
+    if (!expired) this.options.failed?.(message);
   }
 
   disconnect() {
