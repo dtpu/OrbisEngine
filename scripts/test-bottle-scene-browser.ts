@@ -20,6 +20,7 @@ type SyntheticSession = XRSession & {
 };
 type VoiceProbeWindow = Window & { __voiceChecks: Array<Record<string, unknown>> };
 const output = resolve('.context/evidence/bottle-agent');
+const viewerOrigin = new URL(process.env.VIEWER_URL || 'http://127.0.0.1:5399').origin;
 await mkdir(output, { recursive: true });
 const liveVoice = process.env.WANDER_TEST_LIVE_VOICE === '1';
 const speechFixture = process.env.WANDER_TEST_VOICE_WAV;
@@ -61,7 +62,7 @@ await new Promise<void>((resolve) => backend.listen(0, '127.0.0.1', resolve));
 const address = backend.address();
 if (!address || typeof address === 'string') throw new Error('No middleware test port');
 const backendOrigin = `http://127.0.0.1:${address.port}`;
-let voiceSessionRequests = 0;
+const requestedVoices: string[] = [];
 const browser = await chromium.launch({
   channel: 'chrome',
   headless: true,
@@ -179,7 +180,7 @@ try {
   const build = process.env.VIEWER_BUILD_DIR;
   if (build) {
     const root = resolve(build);
-    await page.route('http://127.0.0.1:5399/**', async (route) => {
+    await page.route(`${viewerOrigin}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
       const file = resolve(root, `.${path}`);
       if (
@@ -200,7 +201,8 @@ try {
   }
   await page.route('**/api/bottle-agent/*', async (route) => {
     const request = route.request();
-    if (new URL(request.url()).pathname.endsWith('/session')) voiceSessionRequests++;
+    if (new URL(request.url()).pathname.endsWith('/session'))
+      requestedVoices.push(request.postDataJSON().voice);
     const response = await fetch(`${backendOrigin}${new URL(request.url()).pathname}`, {
       method: request.method(),
       headers: { Origin: backendOrigin, 'Content-Type': 'application/json' },
@@ -214,7 +216,7 @@ try {
   });
   await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
   await page.goto(
-    `http://127.0.0.1:5399/fourd.html?demo=elevator&xr=1&interact=1&walk=1&fakexr=1&fakew=512&fakeh=512&xradapt=0&xrmove=${process.env.WANDER_TEST_XR_MOVE === 'smooth' ? 'smooth' : 'teleport'}`,
+    `${viewerOrigin}/fourd.html?demo=elevator&xr=1&interact=1&walk=1&fakexr=1&fakew=512&fakeh=512&xradapt=0&xrmove=${process.env.WANDER_TEST_XR_MOVE === 'smooth' ? 'smooth' : 'teleport'}`,
     { timeout: 120000 },
   );
   await page.waitForFunction(
@@ -247,6 +249,7 @@ try {
     };
   });
   await writeFile(`${output}/initial.json`, JSON.stringify(initial, null, 2));
+  assert.equal(initial.state.character?.voice, 'ash', 'Viewer must load the current voice cast');
   console.log('Normal initial playback, isolated opt-in controls, and single-pass source');
   await page.screenshot({ path: `${output}/initial-xr.png` });
   await page
@@ -348,7 +351,12 @@ try {
     { timeout: 30000 },
   );
   assert.equal((await snapshot()).voiceConnected, liveVoice);
-  assert.equal(voiceSessionRequests, 1, 'Enter VR must start one local microphone/session attempt');
+  assert.ok(requestedVoices.includes('ash'), 'Enter VR must prepare the first character voice');
+  assert.ok(requestedVoices.every((voice) => voice === 'ash' || voice === 'echo'));
+  assert.equal(new Set(requestedVoices).size, requestedVoices.length, 'No duplicate voice setup');
+  // An unavailable backend cancels both captures, possibly before the second permission resolves.
+  if (liveVoice) assert.deepEqual([...requestedVoices].sort(), ['ash', 'echo']);
+  else assert.ok(requestedVoices.length >= 1 && requestedVoices.length <= 2);
   await page.evaluate(() => (window.wander as SceneDiagnostics).interaction.control('pause'));
   const paused = await snapshot();
   assert.equal(paused.playing, false, 'Diagnostic pause setup must stop the recording');
@@ -404,26 +412,32 @@ try {
     if (!liveVoice) return;
     await page.waitForFunction(() => {
       const internals = (window.wander as SceneDiagnostics).interaction as unknown as {
-        client: { audio: AudioContext | null; gain: GainNode | null; session: unknown };
+        client: {
+          activeClient: { audio: AudioContext | null; gain: GainNode | null; session: unknown };
+        };
       };
-      return !!internals.client.audio && !!internals.client.gain && !!internals.client.session;
+      const client = internals.client.activeClient;
+      return !!client.audio && !!client.gain && !!client.session;
     });
     await page.evaluate(() => {
       const internals = (window.wander as SceneDiagnostics).interaction as unknown as {
         client: {
-          audio: AudioContext;
-          gain: GainNode;
-          session: {
-            transport: {
-              on(name: string, callback: (event: Record<string, unknown>) => void): void;
+          activeClient: {
+            audio: AudioContext;
+            gain: GainNode;
+            session: {
+              transport: {
+                on(name: string, callback: (event: Record<string, unknown>) => void): void;
+              };
             };
           };
         };
       };
-      const analyzer = internals.client.audio.createAnalyser();
+      const client = internals.client.activeClient;
+      const analyzer = client.audio.createAnalyser();
       const measurement = {
         analyzer,
-        gain: internals.client.gain,
+        gain: client.gain,
         completed: false,
         reply: '',
         peak: 0,
@@ -436,7 +450,7 @@ try {
         for (const sample of samples)
           measurement.peak = Math.max(measurement.peak, Math.abs(sample));
       }, 20);
-      internals.client.session.transport.on('*', (event) => {
+      client.session.transport.on('*', (event) => {
         if (
           ['response.output_audio_transcript.done', 'response.audio_transcript.done'].includes(
             String(event.type),
@@ -900,7 +914,7 @@ try {
   // The same build must keep the established looping viewer outside the experiment.
   await page.evaluate(async () => window.wander.spark.renderer.xr.getSession()!.end());
   await page.goto(
-    'http://127.0.0.1:5399/fourd.html?demo=elevator&xr=1&fakexr=1&fakew=256&fakeh=256&xradapt=0&pause=1',
+    `${viewerOrigin}/fourd.html?demo=elevator&xr=1&fakexr=1&fakew=256&fakeh=256&xradapt=0&pause=1`,
     { timeout: 120000 },
   );
   await page.waitForFunction(
@@ -922,7 +936,7 @@ try {
   console.log('Standard viewer still loops and starts playback on VR entry');
 
   await page.evaluate(async () => window.wander.spark.renderer.xr.getSession()!.end());
-  await page.goto('http://127.0.0.1:5399/fourd.html?demo=elevator&interact=1&walk=0&pause=1', {
+  await page.goto(`${viewerOrigin}/fourd.html?demo=elevator&interact=1&walk=0&pause=1`, {
     timeout: 120000,
   });
   await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });
