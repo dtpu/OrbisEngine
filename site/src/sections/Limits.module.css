@@ -1,0 +1,25 @@
+.wrap {
+  max-width: 720px;
+}
+
+.title {
+  margin-top: var(--space-3);
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin-top: var(--space-3);
+  color: var(--muted);
+}
+
+.list {
+  list-style: none;
+  margin: var(--space-6) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.item {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--rule);
+}

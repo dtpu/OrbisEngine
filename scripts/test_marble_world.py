@@ -197,7 +197,7 @@ class MarbleContracts(unittest.TestCase):
         )
         self.assertEqual(self.requests[3][3]["headers"]["Content-Type"], "image/jpeg")
 
-    def test_video_payload_does_not_gain_image_only_fields(self):
+    def test_video_payload_without_prompt_keeps_automatic_captioning(self):
         self.invoke("video", "submit", self.mp4)
         self.assertEqual(
             self.generated(),
@@ -218,7 +218,7 @@ class MarbleContracts(unittest.TestCase):
         self.assertNotIn("[fixture]", text)
         self.assertIn("world world-1 https://example.invalid/world metric_scale_factor", text)
 
-    def test_video_uses_reviewed_prompt_and_records_exact_submitted_input(self):
+    def test_video_uses_explicit_prompt_as_is_and_records_exact_submitted_input(self):
         prompt = self.root / "video-prompt.json"
         prompt.write_text(json.dumps({"text_prompt": "The recorded kitchen has a central island"}))
         self.invoke("video", "submit", self.mp4, "--prompt-file", prompt, "--model", "marble-1.1")
@@ -226,7 +226,7 @@ class MarbleContracts(unittest.TestCase):
         self.assertEqual(
             request["world_prompt"]["text_prompt"], "The recorded kitchen has a central island"
         )
-        self.assertNotIn("disable_recaption", request["world_prompt"])
+        self.assertTrue(request["world_prompt"]["disable_recaption"])
         self.assertNotIn("reconstruct_images", request["world_prompt"])
         upload = next(r for r in self.requests if r[0] == "PUT")
         self.assertEqual(upload[3]["raw"], self.mp4.read_bytes())
@@ -241,6 +241,12 @@ class MarbleContracts(unittest.TestCase):
             receipt["request_sha256"],
             hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest(),
         )
+
+    def test_video_empty_prompt_keeps_automatic_captioning(self):
+        self.invoke("video", "submit", self.mp4, "--prompt", "")
+        prompt = self.generated()["world_prompt"]
+        self.assertNotIn("text_prompt", prompt)
+        self.assertNotIn("disable_recaption", prompt)
 
     def test_documented_upload_id_and_required_headers_are_used(self):
         def documented_call(method, path, body=None, **kwargs):

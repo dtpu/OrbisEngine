@@ -96,11 +96,11 @@ source PNG bytes. Nonmonotonic or missing PTS, approximate camera-time mismatche
 unsafe evidence paths and changed bytes block. Different decoder/encoder versions can change PNG
 bytes and require new evidence even when the images appear similar.
 
-This catches inconsistent labels at this boundary; it does not repair upstream resampling or
-prove that a camera matrix was estimated from that exact source frame. Camera correspondence and
-registration remain explicitly estimated and unverified. The kitchen source/resampling mismatch
-in [the kitchen review](kitchen-review.md) remains unresolved. Existing approximate reports are not
-automatically migrated into acceptance evidence. Hashes bind assertions and detect mutation; they
+This catches inconsistent labels at this boundary; it does not prove that a camera matrix was
+estimated from that exact source frame. New cleaning and multi-image selection also retain actual
+decoded source ordinals/PTS and verify selected image hashes; see [the kitchen review](kitchen-review.md).
+Camera correspondence and registration remain explicitly estimated and unverified. Existing
+approximate reports are not automatically migrated into acceptance evidence. Hashes bind assertions and detect mutation; they
 are not signatures or independent proof that a supplied render is authentic. A genuine reviewer
 and trustworthy capture environment remain prerequisites.
 
@@ -134,7 +134,7 @@ six live calibration requests did not establish a valid candidate, Austin's harn
 offline, and this integration's kitchen request returned 429 without a verdict. No new paid call is
 authorized or required by this code.
 
-Separately, propagate actual source indices/PTS through cleaning, selection and camera estimation,
-then measure held-out registration and off-axis/temporal quality. Only a subsequent explicitly
+Cleaning and selection now propagate actual source indices/PTS. Camera estimation still needs
+equivalent provenance, followed by held-out registration and off-axis/temporal review. Only a subsequent explicitly
 bounded design should consider changed-hypothesis repairs or whole-scene promotion. Passing the
 synthetic offline tests proves contract behavior, not live judge accuracy or scene quality.
