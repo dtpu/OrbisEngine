@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy as TemporalRetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from orchestrator.contracts import NodeStatus, StageDefinition, StageKind
+    from orchestrator.contracts import NodeStatus, StageKind
     from orchestrator.graph import (
         BranchArtifact,
         GraphNode,
@@ -295,10 +295,16 @@ def restore_state(
             definition = value.get("definition")
             if not definition:
                 continue
+            if hasattr(definition, "model_dump"):
+                # Temporal's workflow sandbox rebuilds the modules a workflow imports, so a
+                # StageDefinition built outside it is not the class GraphNode validates
+                # against, however identical it looks. Hand over the plain fields and let the
+                # node build its own.
+                definition = definition.model_dump(mode="json")
             node = GraphNode(
                 id=node_id,
                 stage_type=value.get("stage_type") or node_id,
-                definition=StageDefinition.model_validate(definition),
+                definition=definition,
                 dependencies=tuple(value.get("dependencies") or ()),
                 parent_node_id=value.get("parent_node_id"),
                 branch_key=value.get("branch_key"),

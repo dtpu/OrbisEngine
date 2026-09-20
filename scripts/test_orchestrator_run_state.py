@@ -1,5 +1,6 @@
 """A run's progress is rows, not a replay log, so it survives losing its scheduler."""
 
+import importlib.util
 import shutil
 import sys
 import tempfile
@@ -11,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from orchestrator.contracts import NodeStatus, Run
+from orchestrator.contracts import NodeStatus, Run, StageDefinition
 from orchestrator.database import Base
 from orchestrator.graph import instantiate_graph
 from orchestrator.repository import PipelineRepository
@@ -135,6 +136,19 @@ class RunStateRoundTripTests(unittest.TestCase):
             self.repository.save_run_state("no-such-run", {"nodes": {}})
 
 
+def alien(definition: dict):
+    """The same StageDefinition, built by a separately loaded copy of its module.
+
+    This is what Temporal's workflow sandbox hands back: a class with the same name and the
+    same fields that is not the one anything else validates against.
+    """
+    specification = importlib.util.find_spec("orchestrator.contracts")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    assert module.StageDefinition is not StageDefinition, "the copy is the original"
+    return module.StageDefinition.model_validate(definition)
+
+
 class ExpandedNodeTests(unittest.TestCase):
     """Nodes a run creates by expanding a stage must survive losing the scheduler."""
 
@@ -194,6 +208,28 @@ class ExpandedNodeTests(unittest.TestCase):
             self.assertEqual(rebuilt.dependencies, original.dependencies)
             self.assertEqual(rebuilt.branch_key, original.branch_key)
             self.assertEqual(rebuilt.definition.id, original.definition.id)
+
+    def test_a_definition_that_arrives_as_a_model_is_rebuilt_too(self):
+        """Temporal's workflow sandbox rebuilds the modules a workflow imports.
+
+        A StageDefinition constructed outside the sandbox is then a different class from the
+        one GraphNode validates against, however identical it looks, and passing it through
+        raised "Input should be a valid dictionary or instance of StageDefinition" for an
+        instance of exactly that. The whole run crash-looped on restore. Whatever the state
+        carries, it has to come back as a node.
+        """
+        created = self.expand()
+        target = created[0]
+        stored = snapshot_state(
+            self.graph, paused=False, canceled=False, agent_retries={}, retry_parameters={}
+        )
+        stored["nodes"][target]["definition"] = alien(stored["nodes"][target]["definition"])
+        revived = instantiate_graph(self.options)
+        restore_state(revived, stored, {}, {})
+        self.assertIn(target, revived.nodes)
+        self.assertEqual(
+            revived.nodes[target].definition.id, self.graph.nodes[target].definition.id
+        )
 
     def test_a_rebuilt_node_keeps_its_progress(self):
         created = self.expand()
