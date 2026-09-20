@@ -151,3 +151,60 @@ test('failed S3 auth never falls back to local media or exposes the error detail
     );
   }
 });
+test('a stalled blob download is abandoned and fetched again', async () => {
+  const data = Buffer.from('0123456789');
+  const sha = createHash('sha256').update(data).digest('hex');
+  const key = `viewer/blobs/${sha}`;
+  let blobCalls = 0;
+  const s3 = {
+    async send(command: GetObjectCommand) {
+      if (command.input.Key! === key) {
+        blobCalls++;
+        if (blobCalls > 1) return { Body: Readable.from(data) };
+        // first attempt sends half the file and then goes quiet for good
+        let sent = false;
+        return {
+          Body: new Readable({
+            read() {
+              if (!sent) this.push(data.subarray(0, 5));
+              sent = true;
+            },
+          }),
+        };
+      }
+      const value = command.input.Key!.endsWith('latest.json')
+        ? { snapshot: 'viewer/snapshots/test.json' }
+        : {
+            schema: 'wander.shared/1',
+            files: {
+              '/worlds/a/frame_000.ply': {
+                key,
+                size: data.length,
+                sha256: sha,
+                contentType: 'application/octet-stream',
+              },
+            },
+          };
+      return { ETag: '"catalog"', Body: { transformToString: async () => JSON.stringify(value) } };
+    },
+    destroy() {},
+  };
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'wander-cache-'));
+  const plugin = sharedAssets({}, { s3, cacheDir: dir, stallMs: 50 });
+  const server = createServer((req, res) => plugin.middleware(req, res, () => res.end()));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const response = await fetch(url + '/worlds/a/frame_000.ply', {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '0123456789');
+    assert.equal(blobCalls, 2);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await rm(dir, { recursive: true, force: true });
+  }
+});
