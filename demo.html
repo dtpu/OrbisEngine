@@ -136,17 +136,6 @@
         line-height: 1;
         padding-top: 2px;
       }
-      .tagline {
-        font-size: 13.5px;
-        color: var(--mute);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .tagline b {
-        font-weight: 500;
-        color: var(--ink-2);
-      }
       .spacer {
         flex: 1;
       }
@@ -593,9 +582,6 @@
         :root {
           --rail: 260px;
         }
-        .tagline {
-          display: none;
-        }
         .ctitle {
           font-size: 18px;
         }
@@ -612,58 +598,16 @@
           display: none;
         }
       }
-
-      /* recorded reel */
-      #reelwrap {
-        inset: 0;
-        z-index: 9;
-        background: var(--bg);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-      }
-      #reelwrap.on {
-        display: flex;
-      }
-      #reelvid {
-        max-width: 92%;
-        max-height: 86%;
-        border-radius: 12px;
-        background: #000;
-      }
-      #reelclose {
-        position: absolute;
-        top: 24px;
-        right: 24px;
-        height: 34px;
-        padding: 0 14px;
-        border-radius: 999px;
-        border: 1px solid var(--line-2);
-        font-weight: 500;
-        font-size: 13px;
-        color: var(--ink-2);
-      }
-      #reelclose:hover {
-        background: var(--surface);
-        color: var(--ink);
-      }
     </style>
   </head>
   <body>
-    <div id="shell">
+    <div id="shell" class="norail">
       <header>
-        <button class="railbtn" id="railbtn" aria-label="Hide scene list" aria-expanded="true">
+        <button class="railbtn" id="railbtn" aria-label="Show scene list" aria-expanded="false">
           <span></span><span></span><span></span>
         </button>
         <div class="wordmark">Wander</div>
-        <div class="vrule"></div>
-        <div class="tagline">
-          One ordinary video clip in.
-          <b>A place you can walk around in, with the people still moving.</b>
-        </div>
         <div class="spacer"></div>
-        <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
         <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
         <button class="hbtn" id="questviewbtn">Quest view</button>
         <div class="hmenu">
@@ -736,11 +680,6 @@
           <div id="loadbar" class="indet"><i></i></div>
           <div id="loadmsg" role="status" aria-live="polite">loading…</div>
           <button id="loadretry" hidden>Retry scene</button>
-        </div>
-
-        <div class="ov" id="reelwrap">
-          <video id="reelvid" controls playsinline></video>
-          <button class="panel" id="reelclose">Close</button>
         </div>
       </main>
     </div>
@@ -1164,7 +1103,7 @@
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#f7f7f8;color:#1e1d22;
       border:1px solid #fff;border-radius:12px;padding:11px 13px;font-size:11px}
     #hint{display:none!important}
-    #audio-credit{right:16px!important;bottom:24px!important;padding:6px 10px!important;border-radius:999px!important;
+    #audio-credit{right:16px!important;bottom:84px!important;padding:6px 10px!important;border-radius:999px!important;
       background:#f0f0f2f2!important;color:#4b4a52!important;border:1px solid #f8f8f9;font:11.5px system-ui!important}
     #audio-credit a{color:#1e1d22!important}
     #pip{left:24px!important;right:auto!important;bottom:86px!important;width:300px!important;
@@ -1301,7 +1240,7 @@
 
       /* ---------------- HUD + rail ---------------- */
       let hudOn = false,
-        railOn = true;
+        railOn = false;
       function toggleHud(v) {
         hudOn = v === undefined ? !hudOn : v;
         try {
@@ -1481,12 +1420,7 @@
               e.preventDefault();
               return;
             }
-            if (
-              doc === document &&
-              FORWARD.has(e.code) &&
-              ready &&
-              !$('reelwrap').classList.contains('on')
-            ) {
+            if (doc === document && FORWARD.has(e.code) && ready) {
               e.preventDefault();
               forward(e);
               return;
@@ -1499,7 +1433,6 @@
             }
             if (e.code === 'Escape') {
               setHelp(false);
-              closeReel();
               return;
             }
             const n = /^Digit([1-9])$/.exec(e.code);
@@ -1536,34 +1469,6 @@
           { passive: false },
         );
       }
-
-      /* ---------------- recorded reel fallback ---------------- */
-      const REEL = '/reel-65s.mp4';
-      fetch(REEL, { method: 'HEAD' })
-        .then((r) => {
-          if (r.ok && !(r.headers.get('content-type') || '').startsWith('text/html'))
-            $('reelbtn').hidden = false;
-        })
-        .catch(() => {});
-      $('reelbtn').addEventListener('click', () => {
-        api()?.play(false);
-        $('reelvid').src = REEL;
-        $('reelwrap').classList.add('on');
-        $('reelvid')
-          .play()
-          .catch(() => {});
-      });
-      function closeReel() {
-        if (!$('reelwrap').classList.contains('on')) return;
-        $('reelvid').pause();
-        $('reelvid').removeAttribute('src');
-        $('reelvid').load();
-        $('reelwrap').classList.remove('on');
-      }
-      $('reelclose').addEventListener('click', closeReel);
-      $('reelwrap').addEventListener('click', (e) => {
-        if (e.target === $('reelwrap')) closeReel();
-      });
 
       /* ---------------- boot ---------------- */
       const want = new URLSearchParams(location.search).get('clip');
