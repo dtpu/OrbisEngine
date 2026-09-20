@@ -17,12 +17,15 @@ Enter VR starts the recording normally and opens the OpenAI voice connection. Al
 access when the headset asks; it stays available while this VR session is visible. The source stops,
 including its recorded audio, when one locally validated event occurs:
 
-- Move deliberately and very close to a visible person while facing them. The default sensor is
-  0.30 body-heights, has a 0.4-second dwell, requires visitor movement, and does not re-arm until
-  departure beyond 0.45 body-heights. A person walking past a stationary visitor does not trigger
-  it.
-- Address a nearby, faced person through the microphone. Speech has no typed-chat fallback.
-- Squeeze near the visible bottle. The reach check uses the controller and bottle paths between
+- Move deliberately toward a visible person while facing them. The default sensor is
+  0.95 body-heights with a 0.3-second dwell and at least 0.035 body-heights of visitor approach.
+  Starting nearby works without backing away first; after firing, departure beyond 1.28
+  body-heights rearms that person. A person walking past a stationary visitor does not trigger it.
+- Address a nearby, faced person through the microphone, up to 1.8 body-heights away. During an
+  existing conversation the limit is 2.52 body-heights and looking down at the bottle is allowed.
+  Clearly addressing another person changes the speaker without changing bottle ownership.
+  Obstructed and hidden people remain unavailable. Speech has no typed-chat fallback.
+- Squeeze within 0.12 body-heights of the visible bottle. The reach check uses the controller and bottle paths between
   frames plus known floor and obstacle geometry, so a fast crossing is not accepted through a wall.
 
 There is no floating control panel. Press **X on the left controller** to replay the recording;
@@ -36,6 +39,13 @@ near a recorded held pose: a successful return attaches the bottle to that pause
 the recording paused. It is not an animated catch, hand closure, or new body motion. A miss stays
 available for pickup; press X to restore an out-of-reach bottle.
 
+A pulsing ring and yellow beacon locate the bottle during playback and after release. During
+interaction a cyan bottle with an orange cap replaces the source prop, centered in the visitor's
+grip when held; its marker hides in the hand. This is invented appearance, scaled from manifest
+dimensions and clamped to 0.09–0.12 body-heights tall for visibility, with a narrow profile that
+leaves the glove visible. The locator stays upright when the bottle rotates. It does not replace measured
+positions or enlarge the physics collider. The source bottle returns on replay.
+
 Replay restores the recorded bottle, people, and source time to the start and plays once. It keeps
 the visitor's headset position and orientation; an existing voice session keeps its conversation
 history while it receives the reset state. Returning the bottle, ending playback, reconnecting
@@ -46,7 +56,8 @@ an interruption, press X to restore the recorded exchange.
 
 The recording, bottle, and voice session have separate ownership. The viewer freezes the recorded
 people at an interruption. It samples a recorded airborne bottle's current position and velocity
-into local physics instead of suspending it. An accepted agent action can only face the paused body,
+into local physics instead of suspending it. The selected person smoothly turns toward the visitor
+locally while in conversation range. An accepted agent action can only face the paused body,
 show the return target, or offer the manual Replay control. It cannot move a person, declare a
 catch, teleport the bottle, or start playback.
 
@@ -61,6 +72,12 @@ Whole-body facing rotates a paused recorded group about its current anchor. Ther
 walking, reaching, eye movement, lip sync, or real character rig. Generated voice is spatialized at
 the selected anchor; the original clip only supplies its recorded mix, not isolated character
 speech.
+
+The shared voice prompt speaks in first person as the selected fictional character, using their
+manifest role, current activity, and a per-person conversational style. Replies are short ordinary
+dialogue without assistant introductions or action narration. Direct questions about whether the
+character is real receive a truthful answer. The prompt does not invent actual identities or
+recorded memories and cannot grant actions beyond the local viewer's tools.
 
 ## Local voice setup
 
@@ -90,19 +107,23 @@ smoke test and requires `OPENAI_API_KEY` in that test process's environment.
 
 On 2026-09-20 the real-asset browser check verified close approach interrupting advancing playback,
 source-audio pause, controller X replay, a grip and short throw into the assisted return region,
-whole-body facing, reset of the facing transform, and paused VR re-entry. A comparison against the
+automatic smooth whole-body facing, reset of the facing transform, and paused VR re-entry.
+The expanded range, locator, rotated controller grip alignment, and recorded/proxy bottle visibility
+passed in the actual viewer; screenshots were reviewed with the held bottle clear of the source
+actor. The final focused interaction suite contains 88 passing tests. A comparison against the
 source footage confirmed the basic held-pose target; this is not a precise new wrist reconstruction.
 The ordinary viewer still loops when the experiment is absent. Focused tests, existing XR/audio/
 collision regressions, TypeScript/build, and repository formatting were checked separately.
 
 The first live provider check returned HTTP 429 `credit_balance_exhausted`. After switching the
 private local credential on 2026-09-20, the live browser test connected successfully and measured
-generated audio through the spatial output graph. The full live interaction browser check passed.
+generated audio through the spatial output graph. The full live interaction browser check passed;
+the revised prompt produced a short scene-specific greeting without an assistant introduction.
 SDK lifecycle/audio-gate unit checks use mocked transport.
 
-A connected Quest entered an earlier build in a real immersive session and granted microphone
-permission. The updated page is loaded there, but the headset was asleep during the new credential
-check. Successful generated speech has therefore been measured in the browser, not heard on the
-headset. Controller comfort, hand tracking, source-soundtrack echo rejection, perceived latency,
+A connected Quest entered a real immersive session and granted microphone permission. The new
+credential connected successfully; live microphone samples, outgoing audio, accepted speech events,
+and completed provider responses were observed on the headset. This establishes the connection,
+not perceived speech quality. Controller comfort, hand tracking, source-soundtrack echo rejection, perceived latency,
 and spatial sound still need headset testing. Screenshots and measurements stay in ignored
 `.context/evidence/bottle-agent/`.

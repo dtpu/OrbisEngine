@@ -104,6 +104,7 @@ function fixture(startTime = 1) {
   scene.add(bottle.group);
   let time = startTime;
   let playing = false;
+  let blocked = false;
   let runtime: BottleScene;
   const setTime = (next: number) => {
     time = next;
@@ -126,7 +127,7 @@ function fixture(startTime = 1) {
     },
     seek: setTime,
     floorAt: () => 0,
-    blockedAt: () => false,
+    blockedAt: () => blocked,
   };
   runtime = new BottleScene(host, bottle);
   instances.push(runtime);
@@ -135,13 +136,29 @@ function fixture(startTime = 1) {
   const rotation = new THREE.Quaternion();
   const frame = (hands: InteractionHand[] = [], dt = 1 / 72) =>
     runtime.frame(head, rotation, hands, dt);
-  return { runtime, bottle, people, head, rotation, frame, setTime, host };
+  return {
+    runtime,
+    bottle,
+    people,
+    head,
+    rotation,
+    frame,
+    setTime,
+    host,
+    setBlocked: (value: boolean) => {
+      blocked = value;
+    },
+  };
 }
 
-const hand = (position: THREE.Vector3, squeeze: boolean): InteractionHand => ({
+const hand = (
+  position: THREE.Vector3,
+  squeeze: boolean,
+  rotation = new THREE.Quaternion(),
+): InteractionHand => ({
   id: 'right',
   position: position.clone(),
-  rotation: new THREE.Quaternion(),
+  rotation: rotation.clone(),
   squeeze,
 });
 
@@ -272,25 +289,126 @@ describe('BottleScene real-physics interaction integration', () => {
     }
   });
 
-  test('the active character remains addressable when another eligible person is nearer', () => {
-    const { runtime, people, frame, head, rotation } = fixture(0.5);
-    people[0].group.position.set(0, 0, -0.6);
-    people[1].group.position.set(0.05, 0, -0.3);
+  test('initial voice needs a visible, nearby, unobstructed person within 1.8 body-heights', () => {
+    const { runtime, people, frame, rotation, setBlocked } = fixture(0.5);
+    people[0].group.position.set(0, 0, -1.2);
+    people[1].group.position.set(4, 0, -4);
     frame();
-    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
-    expect(speechStarted(runtime)).toBe(true);
-    expect(runtime.snapshot().activePersonId).toBe('thrower');
-    // Locked selection must still reject a hidden, distant, or unaddressed target.
     people[0].group.visible = false;
     expect(speechStarted(runtime)).toBe(false);
     people[0].group.visible = true;
-    head.z = 1;
+    people[0].group.position.z = -1.81;
     frame();
     expect(speechStarted(runtime)).toBe(false);
-    head.z = 0;
+    people[0].group.position.z = -1.2;
+    setBlocked(true);
+    frame();
+    expect(speechStarted(runtime)).toBe(false);
+    setBlocked(false);
     rotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
     frame();
     expect(speechStarted(runtime)).toBe(false);
+    rotation.identity();
+    frame();
+    expect(speechStarted(runtime)).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('thrower');
+  });
+
+  test('continuing speech permits looking away to 2.52 body-heights and can switch to a clearly addressed person', () => {
+    const { runtime, bottle, people, frame, head, rotation } = fixture(0.5);
+    people[0].group.position.set(1.5, 0, -1);
+    people[1].group.position.set(0, 0, -1);
+    frame();
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    const firstCharacter = runtime.snapshot().character;
+    const beforeSwitch = runtime.snapshot().bottle.position;
+    expect(speechStarted(runtime)).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('receiver');
+    expect(runtime.snapshot().bottle.position).toEqual(beforeSwitch);
+    expect(runtime.snapshot().bottle.personOwner).toBe('thrower');
+    expect(runtime.snapshot().character?.role).toBe('receiver');
+    expect(runtime.snapshot().character?.style).not.toBe(firstCharacter?.style);
+
+    head.z = 1.4;
+    rotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    frame();
+    expect(speechStarted(runtime)).toBe(true);
+    head.z = 1.53;
+    frame();
+    expect(speechStarted(runtime)).toBe(false);
+    expect(bottle.interactionOwned).toBe(true);
+  });
+
+  test('a closer person in the same direction does not steal the current conversation', () => {
+    const { runtime, people, frame } = fixture(0.5);
+    people[0].group.position.set(0, 0, -0.6);
+    people[1].group.position.set(0.05, 0, -0.3);
+    frame();
+    runtime.interrupt('approached', 'thrower');
+    expect(speechStarted(runtime)).toBe(true);
+    expect(runtime.snapshot().activePersonId).toBe('thrower');
+  });
+
+  test('automatic facing turns the paused body smoothly and replay restores its recorded transform', () => {
+    const { runtime, people, head, frame } = fixture(0.5);
+    people[0].group.position.set(0, 0, -1.2);
+    head.set(1.2, 1, 0);
+    frame();
+    const before = people[0].group.getWorldQuaternion(new THREE.Quaternion()).toArray();
+    const beforePosition = people[0].group.getWorldPosition(new THREE.Vector3());
+    expect(runtime.interrupt('approached', 'thrower')).toBe(true);
+    frame([], 0.1);
+    const pivot = people[0].group.parent;
+    const after = people[0].group.getWorldQuaternion(new THREE.Quaternion()).toArray();
+    expect(pivot?.name).toBe('interaction-facing-thrower');
+    expect(after).not.toEqual(before);
+    expect(new THREE.Quaternion(...before).angleTo(new THREE.Quaternion(...after))).toBeLessThan(
+      0.161,
+    );
+    expect(
+      people[0].group.getWorldPosition(new THREE.Vector3()).distanceTo(beforePosition),
+    ).toBeLessThan(1e-8);
+    expect(runtime.snapshot().playing).toBe(false);
+    runtime.replay();
+    expect(people[0].group.parent?.name).not.toBe('interaction-facing-thrower');
+    expect(people[0].group.getWorldQuaternion(new THREE.Quaternion()).toArray()).toEqual(before);
+  });
+
+  test('the visible locator becomes a rotated held proxy and replay restores the source bottle', () => {
+    const { runtime, bottle, frame } = fixture(0.5);
+    frame();
+    const scene = bottle.group.parent!;
+    const visual = scene.getObjectByName('bottle-interaction-visual')!;
+    const proxy = scene.getObjectByName('interaction-bottle-proxy')!;
+    const locator = scene.getObjectByName('interaction-bottle-locator')!;
+    expect(visual.visible).toBe(true);
+    expect(locator.visible).toBe(true);
+    expect(proxy.visible).toBe(false);
+    expect(bottle.mesh.visible).toBe(true);
+
+    const grip = bottle.mesh.getWorldPosition(new THREE.Vector3());
+    const rotation = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0),
+      Math.PI / 2,
+    );
+    frame([hand(grip, false, rotation)]);
+    frame([hand(grip, true, rotation)]);
+    expect(runtime.snapshot().bottle.mode).toBe('held');
+    expect(proxy.visible).toBe(true);
+    expect(locator.visible).toBe(false);
+    expect(bottle.mesh.visible).toBe(false);
+    expect(proxy.getWorldPosition(new THREE.Vector3()).distanceTo(grip)).toBeLessThan(1e-8);
+    expect(
+      Math.abs(proxy.getWorldQuaternion(new THREE.Quaternion()).dot(rotation)),
+    ).toBeGreaterThan(0.9999);
+
+    runtime.replay();
+    expect(bottle.mesh.visible).toBe(true);
+    expect(proxy.visible).toBe(false);
+    frame();
+    expect(bottle.mesh.visible).toBe(true);
+    expect(proxy.visible).toBe(false);
+    expect(locator.visible).toBe(true);
   });
 
   test('Replay restores a lost mesh, recorded ownership, and a fresh character selection', () => {
@@ -319,10 +437,10 @@ describe('BottleScene real-physics interaction integration', () => {
   test('a close approach hands airborne source velocity to physics and pauses the recording', () => {
     const { runtime, people, head, frame, bottle, host } = fixture(1.5);
     people[0].group.position.set(0, 0, -0.6);
-    head.z = 0.3;
+    head.z = 1;
     frame([], 0.1); // Outside the exit zone, so a visitor approach may arm.
-    head.z = -0.35;
-    frame([], 0.2);
+    head.z = 0.15; // Still 0.75 body-heights away; the old close-only threshold rejected this.
+    frame([], 0.1);
     expect(runtime.snapshot().interrupted).toBe(false);
     frame([], 0.2);
     const state = runtime.snapshot();

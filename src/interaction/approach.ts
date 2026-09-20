@@ -10,6 +10,8 @@ export type ApproachDetectorOptions = {
   minApproachDistance?: number;
   /** Minimum horizontal cosine between the visitor forward vector and the target direction. */
   facingCos?: number;
+  /** Allow a deliberate approach from the spawn/reset position without first backing out. */
+  allowInitialApproach?: boolean;
 };
 
 type CandidateState = {
@@ -64,7 +66,12 @@ export class ApproachDetector {
         'Approach detection requires finite hysteresis, dwell, movement, and facing values',
       );
     }
-    this.options = { ...options, minApproachDistance, facingCos };
+    this.options = {
+      ...options,
+      minApproachDistance,
+      facingCos,
+      allowInitialApproach: options.allowInitialApproach ?? false,
+    };
   }
 
   reset(_position?: Vec3): void {
@@ -102,7 +109,7 @@ export class ApproachDetector {
       const state = this.states.get(candidate.id);
       if (!state) {
         this.states.set(candidate.id, {
-          armed: distance > this.options.exitDistance,
+          armed: this.options.allowInitialApproach || distance > this.options.exitDistance,
           armPosition: [...position],
           armDistance: distance,
         });
@@ -116,7 +123,11 @@ export class ApproachDetector {
     const active = this.active;
     if (active) {
       const current = measured.find(({ candidate }) => candidate.id === active.id);
-      if (!current || !this.canDwell(position, forward, current.candidate, current.distance)) {
+      if (
+        !current ||
+        !this.canDwell(position, forward, current.candidate, current.distance) ||
+        !this.hasApproached(position, current.distance, active)
+      ) {
         this.active = null;
       } else {
         active.dwellSeconds += deltaSeconds;
@@ -133,7 +144,11 @@ export class ApproachDetector {
     const next = measured
       .filter(({ candidate, distance }) => {
         const state = this.states.get(candidate.id)!;
-        return state.armed && this.canDwell(position, forward, candidate, distance);
+        return (
+          state.armed &&
+          this.hasApproached(position, distance, state) &&
+          this.canDwell(position, forward, candidate, distance)
+        );
       })
       .sort(
         (left, right) =>
@@ -176,8 +191,18 @@ export class ApproachDetector {
   private completedApproach(position: Vec3, distance: number, active: ActiveTarget): boolean {
     return (
       active.dwellSeconds >= this.options.dwellSeconds &&
-      horizontalDistance(position, active.armPosition) >= this.options.minApproachDistance &&
-      active.armDistance - distance >= this.options.minApproachDistance
+      this.hasApproached(position, distance, active)
+    );
+  }
+
+  private hasApproached(
+    position: Vec3,
+    distance: number,
+    armed: Pick<CandidateState, 'armPosition' | 'armDistance'>,
+  ) {
+    return (
+      horizontalDistance(position, armed.armPosition) >= this.options.minApproachDistance &&
+      armed.armDistance - distance >= this.options.minApproachDistance
     );
   }
 }
