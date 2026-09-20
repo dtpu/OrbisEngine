@@ -5,14 +5,25 @@
   margin-bottom: var(--space-6);
 }
 
+/* Phones and tablets: a horizontal, snap-scrolling strip (PLAN unit D). */
 .strip {
   list-style: none;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-4);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: var(--space-4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+
+.strip:focus-visible {
+  outline-offset: 4px;
 }
 
 .step {
+  flex: 0 0 min(280px, 80vw);
+  scroll-snap-align: start;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -72,16 +83,18 @@
   max-width: 60ch;
 }
 
-@media (min-width: 640px) {
-  .strip {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-6) var(--space-4);
-  }
-}
-
+/* Desktop: every step visible at once, no hidden overflow. */
 @media (min-width: 1024px) {
   .strip {
+    display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-6) var(--space-4);
+    overflow: visible;
+    scroll-snap-type: none;
+    padding-bottom: 0;
+  }
+
+  .step {
+    flex: none;
   }
 }
