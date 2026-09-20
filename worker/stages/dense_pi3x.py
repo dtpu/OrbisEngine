@@ -8,14 +8,58 @@ surface limitation remains explicit. All chunks share a measured similarity fram
 from __future__ import annotations
 import argparse, gc, hashlib, json, os, shutil, sys, time
 from pathlib import Path
-import cv2
 import numpy as np
-from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from wander_worker.masks import people_masks
-from wander_worker.ply import write_point_ply, home_distance
+
+# Fewer masked points than this is speckle -- a bag, a reflection, a sliver of a limb
+# at the frame edge -- not a body surface worth exporting. It is a property of the mask
+# and of Pi3X's point density, not of any one clip.
+MIN_PERSON_POINTS = 100
+
+
+def person_present(point_count, minimum=MIN_PERSON_POINTS):
+    """Does this frame's masked cloud hold a usable person surface?
+
+    Person absence is not a solve failure: the camera for the frame is still valid, the
+    people have simply walked out of the shot. Callers record a gap instead of aborting.
+    """
+    return int(point_count) >= int(minimum)
+
+
+def person_gap(sample, source_index, seconds, point_count):
+    """One entry of the solve metadata's `personAbsentFrames` list."""
+    return dict(
+        sample=int(sample),
+        sourceIndex=int(source_index),
+        time=float(seconds),
+        points=int(point_count),
+    )
+
+
+def person_gap_summary(gaps, count, minimum=MIN_PERSON_POINTS):
+    """Disclosure block naming every frame whose person cloud was too thin to export.
+
+    `personFrames` lists only the per-frame plys that actually exist; `frames` keeps its
+    original one-name-per-sample shape, so readers that need real files use this instead.
+    """
+    count = int(count)
+    ordered = sorted((dict(g) for g in gaps), key=lambda g: int(g["sample"]))
+    absent = {int(g["sample"]) for g in ordered}
+    return dict(
+        personAbsentFrames=ordered,
+        personAbsentCount=len(absent),
+        personPresentCount=count - len(absent),
+        personFrames=[f"frame_{i:03d}.ply" for i in range(count) if i not in absent],
+        minPersonPoints=int(minimum),
+        cameraOnly=count > 0 and len(absent) == count,
+        personGapNote=(
+            f"Frames with fewer than {int(minimum)} masked person points export no "
+            "frame_NNN.ply; their camera entry in cameras.json is still a measured pose. "
+            "Absence means nobody was observed in that frame, not a failed solve."
+        ),
+    )
 
 
 def similarity(src, dst):
@@ -86,6 +130,12 @@ def fit_ray_intrinsics(rays, valid, source_size):
 
 
 def main():
+    # Kept out of module scope so the pure gap helpers above import under plain numpy.
+    import cv2
+    from PIL import Image
+    from wander_worker.masks import people_masks
+    from wander_worker.ply import write_point_ply, home_distance
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
     ap.add_argument("--out", required=True)
@@ -180,7 +230,11 @@ def main():
     flip = np.array([1.0, -1.0, -1.0])
     zz = (base["points"][0] @ R0.T + t00)[..., 2]
     good = base["valid"][0] & (~base["people"][0]) & (zz > 0)
-    scale = 3 / np.median(zz[good])
+    scale = 3 / np.median(zz[good]) if good.any() else np.nan
+    if not np.isfinite(scale) or scale <= 0:
+        # A genuine solve failure: the anchor view has no confident scene geometry in
+        # front of the camera at all. Distinct from a frame with nobody in it.
+        raise RuntimeError(f"No valid static scene points in anchor view 0 ({int(good.sum())})")
     rng = np.random.default_rng(13)
     matches = []
     for j in range(len(anchors)):
@@ -190,6 +244,8 @@ def main():
     cams = [None] * N
     log = []
     point_counts = []
+    gaps = []
+    home, home_frame = None, None
     camera_dir = out / "camera-batches"
     camera_dir.mkdir(exist_ok=True)
     for lo in range(0, N, a.batch):
@@ -232,9 +288,17 @@ def main():
             xyz = p["points"][j][valid] @ R.T * s + t
             col = p["rgb"][j][valid]
             xyz = (xyz @ R0.T + t00) * scale * flip
-            if len(xyz) < 100:
-                raise RuntimeError(f"Person vanished at {times[i]}s ({len(xyz)} points)")
-            write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
+            present = person_present(len(xyz))
+            if present:
+                write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
+            else:
+                # Nobody in this frame. The camera below is still a measured pose, so the
+                # solve continues; only the person ply is withheld. A header-only ply would
+                # read as "person depth present" to the readers that check for these files,
+                # so the gap is a missing file plus an explicit record.
+                (out / f"frame_{i:03d}.ply").unlink(missing_ok=True)
+                gaps.append(person_gap(i, indices[i], times[i], len(xyz)))
+                print(f"no person at {times[i]:.3f}s ({len(xyz)} points)", flush=True)
             point_counts.append(len(xyz))
             camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)
             cams[i] = dict(
@@ -253,8 +317,10 @@ def main():
                     valid=p["valid"][j],
                     camera_to_world=camera,
                 )
-            if i == 0:
-                home = home_distance(xyz)
+            if present and home is None:
+                # Frame 0 when it has a person, as before; the first frame that does
+                # otherwise, because a clip may open before anyone walks in.
+                home, home_frame = home_distance(xyz), i
         log.append(
             dict(
                 first=lo,
@@ -280,6 +346,8 @@ def main():
         sourceIndices=indices.tolist(),
         people_only=True,
         home_distance=home,
+        homeDistanceFrame=home_frame,
+        **person_gap_summary(gaps, N),
         sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
         seconds=time.time() - t0,
         peakVRAMGB=torch.cuda.max_memory_allocated() / 1e9,
@@ -308,7 +376,11 @@ def main():
     )
     print(
         json.dumps(
-            {k: v for k, v in meta.items() if k not in ("frames", "timestamps", "sourceIndices")}
+            {
+                k: v
+                for k, v in meta.items()
+                if k not in ("frames", "personFrames", "timestamps", "sourceIndices")
+            }
         ),
         flush=True,
     )
