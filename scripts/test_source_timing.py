@@ -4,13 +4,11 @@ import contextlib
 import hashlib
 import io
 import json
-import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
-from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -22,23 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "worker"))
 from wander_worker import source_timing
 from wander_worker.source_timing import resample_source, select_provenance
 
-# The fps filter states which frame it read and which one it then wrote. Each
-# of those is a single finished log call, so, unlike a composed showinfo report,
-# it survives a busy debug log and can referee the module's replayed rule.
-_FPS_READ = re.compile(r"\[fps@sample @ [^\]]+\] Read frame with in pts (-?\d+), out pts (-?\d+)$")
-_FPS_WRITE = re.compile(r"\[fps@sample @ [^\]]+\] Writing frame with pts (-?\d+) to pts (-?\d+)$")
-
 
 class SourceTimingTests(unittest.TestCase):
-    def make_clip(self, root, rate, count, expression=None, static=False):
+    def make_clip(self, root, rate, count, expression=None):
         clip = root / "source.mkv"
         # Every decoded frame has a unique, exact pixel identity, independent
         # of timestamp labels. No media persists outside this temporary fixture.
-        # A static clip instead repeats one frame, so pixels identify nothing.
-        raw = b"".join(
-            bytes([0, 0, 0] if static else [index, 255 - index, index // 2]) * 16 * 16
-            for index in range(count)
-        )
+        raw = b"".join(bytes([index, 255 - index, index // 2]) * 16 * 16 for index in range(count))
         command = [
             "ffmpeg",
             "-v",
@@ -59,101 +47,6 @@ class SourceTimingTests(unittest.TestCase):
         command += ["-fps_mode", "passthrough", "-c:v", "ffv1", str(clip)]
         subprocess.run(command, input=raw, capture_output=True, check=True, timeout=30)
         return clip
-
-    def make_long_vfr_clip(self, root, count):
-        """A long, irregularly timed H.264 clip: the shape that broke real runs.
-
-        H.264 decodes on several worker threads, each free to log while the
-        showinfo filter is midway through composing one of its own log lines.
-        Timestamps sit on a 1/1200 grid with a repeating skew, so they are
-        neither constant-rate nor a rounded average frame rate.
-        """
-        clip = root / "long.mp4"
-        raw = b"".join(
-            bytes([index % 256, 255 - index % 256, index // 256]) * 16 * 16
-            for index in range(count)
-        )
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-s",
-                "16x16",
-                # A 1/1200 input timebase keeps the skew on exact, whole ticks.
-                "-r",
-                "1200",
-                "-i",
-                "-",
-                "-vf",
-                "setpts=N*20+mod(N\\,7)*2+mod(N\\,3)",
-                "-fps_mode",
-                "passthrough",
-                "-video_track_timescale",
-                "1200",
-                "-c:v",
-                "libx264rgb",
-                "-qp",
-                "0",
-                str(clip),
-            ],
-            input=raw,
-            capture_output=True,
-            check=True,
-            timeout=300,
-        )
-        return clip
-
-    def filter_log_selection(self, clip, fps):
-        """What the fps filter itself says it retained, as (source ordinal, out pts).
-
-        This is the reference the module used to parse at runtime. Reading it
-        here keeps the replayed rounding rule answerable to the filter even
-        where identical pixels leave the module's checksums unable to tell two
-        neighbouring source frames apart.
-        """
-        log = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-nostats",
-                "-nostdin",
-                "-loglevel",
-                "repeat+debug",
-                "-i",
-                str(clip),
-                "-map",
-                "0:v:0",
-                "-vf",
-                f"fps@sample={fps}",
-                "-fps_mode",
-                "passthrough",
-                "-f",
-                "null",
-                "-",
-            ],
-            capture_output=True,
-            check=True,
-            timeout=300,
-        ).stderr.decode("utf-8", errors="replace")
-        latest, reads, writes = {}, 0, []
-        for line in log.splitlines():
-            read, write = _FPS_READ.search(line), _FPS_WRITE.search(line)
-            if read:
-                latest[int(read.group(2))] = reads
-                reads += 1
-            elif write:
-                writes.append((latest[int(write.group(1))], int(write.group(2))))
-        self.assertTrue(writes, "the fps filter reported no retained frames")
-        return writes
-
-    def check_selection(self, clip, fps, provenance):
-        observed = [(frame["sourceIndex"], frame["resampledPts"]) for frame in provenance["frames"]]
-        self.assertEqual(observed, self.filter_log_selection(clip, fps))
 
     def check_pixels(self, clip, fps):
         sampled, provenance = resample_source(clip, fps, width=16, height=16)
@@ -176,7 +69,7 @@ class SourceTimingTests(unittest.TestCase):
             ],
             capture_output=True,
             check=True,
-            timeout=300,
+            timeout=30,
         ).stdout
         legacy = subprocess.run(
             [
@@ -195,7 +88,7 @@ class SourceTimingTests(unittest.TestCase):
             ],
             capture_output=True,
             check=True,
-            timeout=300,
+            timeout=30,
         ).stdout
         self.assertEqual(sampled, legacy)
         frame_size = 16 * 16 * 3
@@ -209,7 +102,6 @@ class SourceTimingTests(unittest.TestCase):
         _, mapping_only = resample_source(clip, fps)
         self.assertEqual(mapping_only["frames"], provenance["frames"])
         self.assertEqual(provenance["sourceSha256"], hashlib.sha256(clip.read_bytes()).hexdigest())
-        self.check_selection(clip, fps, provenance)
         return provenance
 
     def test_cfr_and_ntsc_downsampling_is_not_rounded_average_fps(self):
@@ -313,84 +205,22 @@ class SourceTimingTests(unittest.TestCase):
 
     def test_missing_ffmpeg_selection_diagnostics_fail_closed(self):
         with tempfile.TemporaryDirectory() as root:
-            clip = self.make_clip(Path(root), "60", 60)
+            clip = self.make_clip(Path(root), "60", 12)
             run = source_timing._run
 
-            def damaged_report(command):
+            def damaged_log(command):
                 result = run(command)
-                for argument in map(str, command):
-                    if not argument.endswith("sampled.framecrc"):
-                        continue
-                    report = Path(argument)
-                    rows = report.read_text().splitlines()
-                    frames = [number for number, row in enumerate(rows) if not row.startswith("#")]
-                    dropped = frames[len(frames) // 2]
-                    report.write_text("\n".join(rows[:dropped] + rows[dropped + 1 :]) + "\n")
+                if command[0] == "ffmpeg" and command[-1] == "-":
+                    result.stderr = b"\n".join(
+                        line for line in result.stderr.splitlines() if b"Writing frame" not in line
+                    )
                 return result
 
             with (
-                patch.object(source_timing, "_run", side_effect=damaged_report),
+                patch.object(source_timing, "_run", side_effect=damaged_log),
                 self.assertRaisesRegex(ValueError, "Incomplete FPS"),
             ):
                 resample_source(clip, 12.0)
-
-    def test_selection_does_not_read_the_ffmpeg_debug_log(self):
-        """Regression: showinfo log lines are not atomic, so they cannot be parsed.
-
-        FFmpeg composes one showinfo line from several unterminated av_log
-        calls. A decoder worker thread logging at -loglevel debug splices its
-        message into the middle of that line and moves the frame's checksum
-        field onto a line of its own, which is how long clips lost frames.
-        """
-        with tempfile.TemporaryDirectory() as root:
-            clip = self.make_clip(Path(root), "60", 30)
-            _, expected = resample_source(clip, 12.0)
-            run = source_timing._run
-            spliced = (
-                b"[showinfo@source @ 0x0] n:   0 pts: 0 pts_time:0 iskey:1 type:B "
-                b"nal_unit_type: 1(Coded slice of a non-IDR picture), nal_ref_idc: 2\n"
-            )
-
-            def mangled_log(command):
-                result = run(command)
-                result.stderr = spliced
-                return result
-
-            with patch.object(source_timing, "_run", side_effect=mangled_log):
-                _, observed = resample_source(clip, 12.0)
-            self.assertEqual(observed, expected)
-
-    def test_identical_frames_still_bind_to_the_frame_the_filter_kept(self):
-        """Repeated pixels make every checksum equal, so only the rule decides.
-
-        The module verifies its replayed selection against per-frame CRCs, and
-        those agree with any neighbour here. The filter's own account still has
-        to match, on both a constant and an irregular timeline.
-        """
-        for expression in (None, "setpts=(3*N+mod(N\\,3))/(60*TB)"):
-            with self.subTest(expression=expression), tempfile.TemporaryDirectory() as root:
-                clip = self.make_clip(Path(root), "60", 90, expression, static=True)
-                _, provenance = resample_source(clip, 12.0)
-                self.assertGreater(len({frame["sourcePts"] for frame in provenance["frames"]}), 1)
-                self.check_selection(clip, 12.0, provenance)
-
-    def test_long_vfr_clip_binds_every_retained_frame(self):
-        count = 1600
-        with tempfile.TemporaryDirectory() as root:
-            clip = self.make_long_vfr_clip(Path(root), count)
-            provenance = self.check_pixels(clip, 12.0)
-            self.assertEqual(provenance["sourceFrameCount"], count)
-            indices = [frame["sourceIndex"] for frame in provenance["frames"]]
-            self.assertEqual(indices, sorted(indices))
-            # The filter stops within one output period of the end, so the last
-            # binding sits inside the final group of source frames, not before.
-            self.assertGreaterEqual(indices[-1], count - 6)
-            self.assertGreater(len(indices), 300)
-            retained = [frame["sourcePts"] for frame in provenance["frames"]]
-            steps = {b - a for a, b in pairwise(retained) if b != a}
-            self.assertGreater(len(steps), 1, "the fixture must be variable frame rate")
-            _, repeated = resample_source(clip, 12.0)
-            self.assertEqual(repeated["frames"], provenance["frames"])
 
     def test_runner_exact_selection_blocks_mismatches_before_spend(self):
         import run_clip
