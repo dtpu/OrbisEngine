@@ -82,6 +82,27 @@ def plan_samples(cameras, seed_indices, seed_times, fps_out, src_fps, count, sta
     return indices, times, authority
 
 
+def requested_samples(indices, times, seed_poses, track_only):
+    """Which samples this run is asked to produce, and the source frame and time each one means.
+
+    A `--track-only` run animates one tracked person, and that person exists in the samples the
+    tracker found them in. The solve's other samples are the track's gaps -- it walked out of
+    shot, or nobody could be detected there -- not work this run was asked for and did not do,
+    and counting them as requested is what made a complete 90-of-96 track certify as partial
+    coverage. Which source frame and time a sample number stands for still comes from the
+    supplied cameras: the seed track decides which samples this person exists in, the cameras
+    stay the authority for what those samples address.
+    """
+    if seed_poses is not None and len(seed_poses) != len(indices):
+        raise ValueError("Seed poses and sampled source indices differ in length")
+    kept = []
+    for sample, (index, timestamp) in enumerate(zip(indices, times)):
+        if track_only and (seed_poses is None or seed_poses[sample] is None):
+            continue
+        kept.append((int(sample), int(index), float(timestamp)))
+    return kept
+
+
 def main():
     ap = argparse.ArgumentParser()
     for key in ("video", "canonical", "reference", "out", "model"):
@@ -192,6 +213,10 @@ def main():
         raise ValueError("Seed has no missing source poses to recover")
     if a.track_only and not seed:
         raise ValueError("Track mode requires the track's seed poses")
+    requested = requested_samples(
+        indices, times, seed["poses"] if seed else None, bool(a.track_only)
+    )
+    print(f"{len(requested)} of those samples are requested from this run", flush=True)
     estimator = (
         None
         if a.track_only
@@ -217,6 +242,7 @@ def main():
     poses = []
     records = []
     missing = []
+    gaps = []
     last_center = None
     for sample, (index, timestamp) in enumerate(zip(indices, times)):
         if seed and seed["poses"][sample] is not None:
@@ -234,7 +260,9 @@ def main():
             last_center = np.median(projected[:, :2] / projected[:, 2:3], axis=0) / wh
             continue
         if a.track_only:
-            missing.append(
+            # A gap in the track, not a sample this run was asked for: the tracker already
+            # decided this person is not in this sample, so nothing here was left undone.
+            gaps.append(
                 dict(
                     sample=sample,
                     sourceIndex=int(index),
@@ -491,6 +519,7 @@ def main():
         canonicalShapeFixed=True,
         frames=valid_records,
         missing=missing,
+        trackGaps=gaps,
     )
     (out / "motion.json").write_text(json.dumps(motion, indent=2))
     sequence = dict(
@@ -508,8 +537,16 @@ def main():
         decodeBackendReason=backend_reason,
         sourceSha256=source_sha,
         duration=duration,
-        requestedSamples=len(indices),
+        solvedSamples=len(indices),
+        requestedSamples=len(requested),
+        requestedSampleSemantics=(
+            "Samples this run was asked to animate. In track mode that is the tracked person's "
+            "own samples, taken from the seed track and addressed by the supplied cameras; the "
+            "solve's remaining samples are listed as trackGapSamples and were never requested, "
+            "because the tracker had already found this person absent from them."
+        ),
         missingPoseSamples=missing,
+        trackGapSamples=gaps,
         allRequestedSamplesReconstructed=not missing,
         canonicalStateSha256=hashlib.sha256(Path(a.canonical).read_bytes()).hexdigest(),
         poseRecovery=dict(
