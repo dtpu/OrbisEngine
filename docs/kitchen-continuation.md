@@ -266,3 +266,24 @@ geometry and contact limitations retained. The [reusable kitchen workflow](kitch
 captures that process and adds explicit prop inventory and interaction coverage before cleaning.
 Its procedures still include manual authoring and review; documenting them adds no automatic
 held-object reconstruction feature or authorization for future paid runs.
+
+## Main picker aisle regression
+
+The curated `kitchen-repair` entry already loads the reviewed room-access floor bridges, but
+main updated only their support height and kept the observed grid's outside boundary. Desktop
+walking therefore stopped at the end of the peninsula despite an unoccupied supported aisle.
+The runtime now unions reachable finite support with the navigation footprint. Occupancy,
+capsule sweeps, step limits and the existing camera bounds remain active; media is unchanged.
+
+The browser regression in `scripts/test-walk-support-browser.ts` accepts a private JSON fixture
+with `url`, X/Z `waypoints`, map/collision `probes` and an optional `blockedApproach`. Set
+`WALK_TEST_CONFIG` to that file and optionally `WALK_TEST_DIST` to a candidate build. It tests
+actual keyboard input in either the picker iframe or the standalone viewer and saves screenshots.
+The kitchen passed ten waypoints around the peninsula into the cooking aisle and back, with
+no occupied route samples. A direct countertop approach stopped after 0.168 body-heights;
+the aisle map probe became selectable while countertop and outside-grid probes remained refused.
+Evidence is private under `.context/evidence/kitchen-aisle/` in the kitchen walk worktree.
+
+These are desktop checks, not headset evidence. The separate XR `walk.advance` diagnostic still
+has an existing support-height smoothing issue on slightly inclined boxes; that path was not
+changed here. Previously recorded inferred-room, object and actor-contact limitations remain.
