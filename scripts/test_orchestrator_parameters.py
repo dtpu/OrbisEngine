@@ -3,17 +3,79 @@
 The legacy adapter used to forward only a nested ``cli`` key, which every stage schema forbids
 with ``additionalProperties: false``. Operator and agent retries therefore ran with defaults and
 produced byte-identical output, which looks like a stage that ignores its own tuning.
+
+The rest of these check the other half: a stage's overridable defaults are declared in its
+``parameter_schema``, so the reviewing agent can see what a stage ran with. A default written
+there that the underlying script does not have, or a knob it does not accept, would be a lie
+told to the agent in ``task.json``, so both are checked against the scripts themselves.
 """
 
+import ast
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from orchestrator.activities.adapters import legacy_parameter_flags, legacy_people_flags
+ROOT = Path(__file__).resolve().parents[1]
+
+from types import SimpleNamespace
+
+from orchestrator.activities.adapters import (
+    flags,
+    legacy_parameter_flags,
+    legacy_people_flags,
+    tuning,
+)
 from orchestrator.graph import instantiate_graph
 from orchestrator.stages import GraphOptions
+from orchestrator.stages.registry import stage_registry
+
+
+def script_arguments(name: str) -> dict[str, object]:
+    """Every ``--flag`` a script accepts, mapped to its argparse default.
+
+    Read from the source rather than by importing, because these scripts pull in torch and
+    friends at import time. A default named rather than written out is resolved against the
+    script's module-level constants; anything else is reported as unknown and not compared.
+    """
+    tree = ast.parse((ROOT / "scripts" / name).read_text())
+    constants = {
+        target.id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+    }
+    found: dict[str, object] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "add_argument":
+            continue
+        default: object = None
+        for keyword in node.keywords:
+            if keyword.arg == "default":
+                if isinstance(keyword.value, ast.Name) and keyword.value.id in constants:
+                    default = constants[keyword.value.id]
+                else:
+                    try:
+                        default = ast.literal_eval(keyword.value)
+                    except ValueError:
+                        default = UNKNOWN
+            if (
+                keyword.arg == "action"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value == "store_true"
+            ):
+                default = False
+        for argument in node.args:
+            if isinstance(argument, ast.Constant) and str(argument.value).startswith("--"):
+                found[argument.value] = default
+    return found
+
+
+UNKNOWN = object()
 
 
 class LegacyParameterFlagTests(unittest.TestCase):
@@ -68,6 +130,111 @@ class MultipersonFlagTests(unittest.TestCase):
 
     def test_missing_options_ask_for_nothing(self):
         self.assertEqual(legacy_people_flags({}), [])
+
+
+# Stage -> the script its adapter runs. A legacy stage reaches run_clip.py, which forwards the
+# declared names as --flags; the others call their script directly.
+LEGACY_STAGES = ("clean_first", "clean", "tracks", "scale_fit", "anchors", "finetune")
+DIRECT_STAGES = {
+    "object_detect": "detect_object_flights.py",
+    "object_lift": "lift_object_3d.py",
+    "object_describe": "describe_object.py",
+    "person_prep": "prepare_lhm_person.py",
+    "world_prompt": "world_prompt.py",
+}
+
+
+# A stage that deliberately runs a script away from the script's own default, and passes the
+# flag on every command to do it. The value here is the script's default, so a change to it
+# still fails this test and gets looked at rather than silently moving the stage.
+OVERRIDDEN_DEFAULTS = {("person_prep", "method"): "segformer"}
+
+
+def declared(stage_id: str) -> dict[str, dict]:
+    schema = stage_registry()[stage_id].parameter_schema or {}
+    return schema.get("properties", {})
+
+
+class DeclaredDefaultTests(unittest.TestCase):
+    """A declared default must be the value the stage would have used anyway.
+
+    If they drift, ``task.json`` tells the reviewing agent the stage ran at dilate 20 while it
+    really ran at 28, and the agent's next retry reasons from a number that was never true.
+    """
+
+    def test_every_knob_says_what_it_is_for(self):
+        for stage_id, stage in stage_registry().items():
+            for name, rule in (stage.parameter_schema or {}).get("properties", {}).items():
+                with self.subTest(stage=stage_id, parameter=name):
+                    self.assertTrue(rule.get("description"), "a knob with no description")
+                    self.assertIn("type", rule)
+
+    def test_legacy_defaults_match_run_clip(self):
+        arguments = script_arguments("run_clip.py")
+        for stage_id in LEGACY_STAGES:
+            for name, rule in declared(stage_id).items():
+                flag = "--" + name.replace("_", "-")
+                with self.subTest(stage=stage_id, parameter=name):
+                    self.assertIn(flag, arguments, f"run_clip.py has no {flag}")
+                    if "default" in rule and arguments[flag] is not UNKNOWN:
+                        self.assertEqual(rule["default"], arguments[flag])
+
+    def test_directly_called_scripts_accept_every_knob(self):
+        for stage_id, script in DIRECT_STAGES.items():
+            arguments = script_arguments(script)
+            for name, rule in declared(stage_id).items():
+                flag = "--" + name.replace("_", "-")
+                if stage_id == "world_prompt" and name == "samples":
+                    flag = "--n"  # world_prompt.py's own name for the sample count
+                with self.subTest(stage=stage_id, parameter=name):
+                    self.assertIn(flag, arguments, f"{script} has no {flag}")
+                    expected = OVERRIDDEN_DEFAULTS.get((stage_id, name), rule.get("default"))
+                    if "default" in rule and arguments[flag] is not UNKNOWN:
+                        self.assertEqual(expected, arguments[flag])
+
+    def test_admission_knobs_match_shot_cuts(self):
+        arguments = script_arguments("shot_cuts.py")
+        knobs = declared("admission")
+        self.assertEqual(knobs["cut_threshold"]["default"], arguments["--threshold"])
+        self.assertEqual(knobs["min_seconds"]["default"], arguments["--min-seconds"])
+
+    def test_an_optional_knob_has_no_default_rather_than_a_null_one(self):
+        """`scale0` and the reference `frame` mean "let the stage decide" when unset.
+
+        A null default would be rendered as a flag value of None by anything that reads
+        defaults, so the schema simply omits it and the adapter leaves the flag off.
+        """
+        self.assertNotIn("default", declared("scale_fit")["scale0"])
+        self.assertNotIn("default", declared("person_prep")["frame"])
+
+
+class ResolvedSettingTests(unittest.TestCase):
+    def context(self, stage_id: str, parameters: dict):
+        definition = stage_registry()[stage_id].model_dump(mode="json")
+        request = SimpleNamespace(definition=definition, parameters=parameters)
+        return SimpleNamespace(request=request)
+
+    def test_defaults_resolve_without_any_parameters(self):
+        settings = tuning(self.context("clean", {}))
+        self.assertEqual(settings["dilate"], 20)
+        self.assertEqual(settings["lama_px"], 960)
+        self.assertIs(settings["moved_mask"], False)
+
+    def test_one_override_leaves_the_rest_at_their_defaults(self):
+        settings = tuning(self.context("clean", {"dilate": 48}))
+        self.assertEqual(settings["dilate"], 48)
+        self.assertEqual(settings["bottom_extra"], 40)
+
+    def test_an_undeclared_name_is_ignored_rather_than_rendered(self):
+        settings = tuning(self.context("clean", {"hypothesis": "halo survives", "nonsense": 1}))
+        self.assertNotIn("hypothesis", settings)
+        self.assertNotIn("nonsense", settings)
+
+    def test_flags_render_booleans_bare_and_omit_what_is_unset(self):
+        self.assertEqual(
+            flags({"min_len": 6, "keep_all": True, "quiet": False, "frame": None}),
+            ["--keep-all", "--min-len", "6"],
+        )
 
 
 if __name__ == "__main__":
