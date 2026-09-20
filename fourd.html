@@ -137,6 +137,7 @@
   import { parseGaussianPly } from '/src/gaussian-ply.ts';
   import { createStanceResolver } from '/src/person-stance.ts';
   import { personVisibility } from '/src/person-visibility.ts';
+  import { countGridFootprintContacts } from '/src/walk-collision.ts';
   import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
   import {
     parseStaticColliders,
@@ -3668,14 +3669,13 @@
     if (!walkGrid) return n;
     const r = WALK_RADIUS_M * upm,
       mask = walkBandMask(h);
-    for (let dx = -r; dx <= r + 1e-9; dx += walkGrid.cell)
-      for (let dz = -r; dz <= r + 1e-9; dz += walkGrid.cell) {
-        const k = walkIdx(x + dx, z + dz);
-        if (k < 0) continue;
-        const f = walkGrid.floor[k],
-          m = f === f && f > h ? walkBandMask(f) : mask;
-        if (walkGrid.solid[k] & m) n++;
-      }
+    // Match the capsule's round footprint; a square adds invisible corner padding around
+    // furniture. Test the entire cell rectangle so thin contacts still block.
+    n += countGridFootprintContacts(walkGrid, x, z, r, (k) => {
+      const f = walkGrid.floor[k],
+        m = f === f && f > h ? walkBandMask(f) : mask;
+      return !!(walkGrid.solid[k] & m);
+    });
     return n;
   }
   // may the body stand at (x, z), coming from where it is now? only inside, unless that is closer to
