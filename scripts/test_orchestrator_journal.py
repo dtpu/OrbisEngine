@@ -209,6 +209,37 @@ class CommandTests(unittest.TestCase):
         finished = [e for e in journal.entries() if e.kind == "step.finished"][-1]
         self.assertTrue((self.run_dir / finished.data["log"]).is_file())
 
+    def test_our_own_flags_read_the_same_on_either_side_of_the_step(self):
+        """`rest` is a REMAINDER, so a flag after the name was forwarded to run_clip.py.
+
+        The agent wrote `wander step review --wait`, which is what the standing instructions
+        show, and run_clip.py rejected an argument it had never heard of.
+        """
+        from orchestrator.cli import build_parser, take_our_flags
+
+        after = build_parser().parse_args(["step", "clean", "--wait", "--dilate", "28"])
+        take_our_flags(after)
+        self.assertTrue(after.wait)
+        self.assertEqual(after.rest, ["--dilate", "28"])
+
+        before = build_parser().parse_args(["step", "--wait", "clean", "--dilate", "28"])
+        take_our_flags(before)
+        self.assertTrue(before.wait)
+        self.assertEqual(before.rest, ["--dilate", "28"])
+
+    def test_a_step_that_needs_a_key_this_run_lacks_says_which(self):
+        """Running it anyway spends a turn to be told by the stage, and a paid one, worse."""
+        from orchestrator.cli import missing_credentials
+
+        previous = os.environ.pop("WLT_API_KEY", None)
+        self.addCleanup(
+            lambda: (
+                os.environ.__setitem__("WLT_API_KEY", previous) if previous is not None else None
+            )
+        )
+        self.assertEqual(missing_credentials("marble_video"), ["WLT_API_KEY"])
+        self.assertEqual(missing_credentials("pi3x"), [], "Modal reads ~/.modal.toml")
+
     def test_asking_leaves_the_run_waiting_and_finishing_ends_it(self):
         main(["ask", "is this clip truncated?", "--step", "clean"])
         journal = Journal(self.run_dir)

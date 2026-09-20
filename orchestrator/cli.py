@@ -141,13 +141,49 @@ def step_environment(context: RunContext) -> dict[str, str]:
     }
 
 
+def missing_credentials(step: str) -> list[str]:
+    """Environment a step needs that this process does not have."""
+    described = STEPS.get(base_step(step))
+    if described is None:
+        return []
+    return [name for name in described.credentials if not os.environ.get(name)]
+
+
+# Flags that belong to `wander step` rather than to the stage it runs. `rest` is a REMAINDER,
+# so anything after the step name lands in it -- including these, which then reach run_clip.py
+# and are rejected. Writing them after the name is the natural thing to do and what the
+# standing instructions show, so take them back rather than failing on them.
+OURS = {"--wait": "wait", "--stream": "stream"}
+
+
+def take_our_flags(args: argparse.Namespace) -> None:
+    kept = []
+    for token in args.rest:
+        if token in OURS:
+            setattr(args, OURS[token], True)
+        else:
+            kept.append(token)
+    args.rest = kept
+
+
 def command_step(context: RunContext, args: argparse.Namespace) -> int:
+    take_our_flags(args)
     """Start a step. By default it runs on its own and this returns at once.
 
     A step can take ten minutes on a GPU, and an agent that sits watching one is an agent
     holding a session open to do nothing. So the work is detached and journalled by the child
     that runs it: start it, stop your turn, and you will be given another when it lands.
     """
+    absent = missing_credentials(args.step)
+    if absent:
+        # Running it anyway spends a turn to be told by the stage itself, and for a paid step
+        # an ambiguous failure is worse than none.
+        print(
+            f"{args.step} needs {', '.join(absent)} and this run does not have it. "
+            "That is an operator's to fix, not yours: `wander ask` for it.",
+            file=sys.stderr,
+        )
+        return 2
     if not args.wait:
         return detach(context, args)
     step = args.step
