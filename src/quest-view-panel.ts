@@ -13,21 +13,23 @@ export function mountQuestViewPanel({
   panel.id = `quest-view-${viewer}`;
   panel.className = 'quest-view-panel';
   panel.setAttribute('aria-label', 'Quest view');
-  panel.innerHTML = `<header><strong>Quest view</strong><span role="status" aria-live="polite"></span><span class="quest-view-rate" data-role="rate" aria-label="Displayed frame rate" hidden></span><span class="quest-view-actions"><button type="button" data-role="expand" aria-label="Expand Quest view">＋</button><button type="button" data-role="minimize" aria-label="Minimize Quest view">−</button></span></header><div class="quest-view-picture"><img alt="Live view from the Quest" hidden><p>Enter VR on the Quest to share its view.</p></div>`;
+  panel.innerHTML = `<header><strong>Quest view</strong><span role="status" aria-live="polite"></span><span class="quest-view-rate" data-role="rate" aria-label="Displayed frame rate" hidden></span><span class="quest-view-actions"><button type="button" data-role="expand" aria-label="Expand Quest view">Expand</button><button type="button" data-role="minimize" aria-label="Close Quest view">×</button></span></header><div class="quest-view-picture"><img alt="Live view from the Quest" hidden><p>Enter VR on the Quest to share its view.</p></div>`;
   const style = document.createElement('style');
   style.textContent = `
-    .quest-view-panel { position:absolute; z-index:12; right:16px; bottom:88px; width:min(380px,calc(100% - 32px)); max-height:calc(100% - 104px); overflow:hidden; color:#ece7dc; background:#121416; border:1px solid #766343; border-radius:12px; box-shadow:0 10px 32px #0008; font:12px/1.4 system-ui,sans-serif; }
+    .quest-view-panel { position:absolute; z-index:12; right:16px; bottom:88px; width:min(380px,calc(100% - 32px)); max-height:calc(100% - 104px); overflow:hidden; color:var(--ink,#1e1d22); background:var(--bg,#f0f0f2); border:1px solid var(--line-2,#d3d2d8); border-radius:14px; font:12px/1.4 var(--sans,system-ui,sans-serif); }
     .quest-view-panel[hidden], .quest-view-panel [hidden] { display:none !important; }
-    .quest-view-panel header { display:flex; align-items:center; gap:8px; height:46px; min-height:46px; box-sizing:border-box; padding:9px 10px 9px 13px; }
-    .quest-view-panel strong { flex-shrink:0; font-size:13px; white-space:nowrap; }
-    .quest-view-panel [role=status] { min-width:0; margin-left:auto; overflow:hidden; color:#c9b787; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-    .quest-view-rate { flex-shrink:0; color:#a7aaa8; font-size:10px; white-space:nowrap; }
-    .quest-view-actions { display:flex; flex-shrink:0; gap:5px; }
-    .quest-view-panel button { flex-shrink:0; width:28px; height:28px; padding:0; border:1px solid #645840; border-radius:6px; background:transparent; color:#ece7dc; font:18px/1 system-ui; cursor:pointer; }
-    .quest-view-panel button:focus-visible { outline:2px solid #e5c47b; outline-offset:2px; }
-    .quest-view-picture { position:relative; width:100%; height:auto; aspect-ratio:1 / 1; min-height:0; background:#080a0b; display:grid; place-items:center; overflow:hidden; }
-    .quest-view-picture img { width:100%; height:100%; object-fit:contain; position:absolute; inset:0; }
-    .quest-view-picture p { color:#a7aaa8; max-width:220px; padding:16px; margin:0; text-align:center; }
+    .quest-view-panel header { display:flex; align-items:center; gap:8px; height:46px; min-height:46px; box-sizing:border-box; padding:8px 8px 8px 14px; border-bottom:1px solid var(--line,#dcdbe0); }
+    .quest-view-panel strong { flex-shrink:0; font-size:11.5px; font-weight:600; letter-spacing:0.02em; color:var(--mute,#8b8996); white-space:nowrap; }
+    .quest-view-panel [role=status] { min-width:0; margin-left:auto; overflow:hidden; color:var(--mute,#8b8996); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+    .quest-view-rate { flex-shrink:0; color:var(--dim,#b3b1bb); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .quest-view-actions { display:flex; flex-shrink:0; gap:4px; }
+    .quest-view-panel button { flex-shrink:0; height:28px; min-width:28px; padding:0 8px; border:1px solid var(--line-2,#d3d2d8); border-radius:999px; background:transparent; color:var(--ink-2,#4b4a52); font:500 12px/1 var(--sans,system-ui,sans-serif); cursor:pointer; transition:background 0.15s; }
+    .quest-view-panel button[data-role="minimize"] { padding:0; font-size:17px; }
+    .quest-view-panel button:hover { background:var(--surface,#e8e8eb); color:var(--ink,#1e1d22); }
+    .quest-view-panel button:focus-visible { outline:2px solid var(--ink,#1e1d22); outline-offset:2px; }
+    .quest-view-picture { position:relative; width:100%; height:auto; aspect-ratio:1 / 1; min-height:0; background:var(--surface-2,#e0e0e4); display:grid; place-items:center; overflow:hidden; }
+    .quest-view-picture img { width:100%; height:100%; object-fit:contain; position:absolute; inset:0; background:#000; }
+    .quest-view-picture p { color:var(--mute,#8b8996); max-width:220px; padding:16px; margin:0; text-align:center; font-size:13px; }
     .quest-view-panel[data-expanded="true"] { width:min(540px,calc(100% - 32px)); }
     @media(max-width:520px) { .quest-view-panel { right:10px; width:min(380px,calc(100% - 20px)); } .quest-view-panel[data-expanded="true"] { width:min(540px,calc(100% - 20px)); } }
   `;
@@ -41,8 +43,9 @@ export function mountQuestViewPanel({
   const expand = panel.querySelector<HTMLButtonElement>('[data-role="expand"]')!;
   const minimize = panel.querySelector<HTMLButtonElement>('[data-role="minimize"]')!;
   toggle.setAttribute('aria-controls', panel.id);
-  toggle.setAttribute('aria-expanded', 'true');
-  let open = true;
+  toggle.setAttribute('aria-expanded', 'false');
+  panel.hidden = true;
+  let open = false;
   let expanded = false;
   let disposed = false;
   let generation = 0;
@@ -261,7 +264,7 @@ export function mountQuestViewPanel({
     expanded = !expanded;
     panel.dataset.expanded = String(expanded);
     expand.setAttribute('aria-label', expanded ? 'Reduce Quest view' : 'Expand Quest view');
-    expand.textContent = expanded ? '−' : '＋';
+    expand.textContent = expanded ? 'Reduce' : 'Expand';
     resizePanel();
   };
   const onVisibility = () => {
@@ -269,6 +272,9 @@ export function mountQuestViewPanel({
     setStatus('Waiting for Quest');
   };
   toggle.addEventListener('click', onToggle);
+  const syncToggle = () => toggle.classList.toggle('on', open);
+  const observer = new MutationObserver(syncToggle);
+  observer.observe(toggle, { attributes: true, attributeFilter: ['aria-expanded'] });
   minimize.addEventListener('click', onMinimize);
   expand.addEventListener('click', onExpand);
   document.addEventListener('visibilitychange', onVisibility);
@@ -278,6 +284,8 @@ export function mountQuestViewPanel({
     invalidate();
     clearTimeout(timer);
     resizeObserver.disconnect();
+    observer.disconnect();
+    toggle.classList.remove('on');
     panel.remove();
     style.remove();
     window.removeEventListener('resize', resizePanel);

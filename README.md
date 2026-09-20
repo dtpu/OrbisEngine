@@ -63,7 +63,7 @@ In Meta Browser open `http://localhost:5399/demo.html?xr=1`, start playback, and
 The desktop demo includes a small **Quest view** window showing the active headset's left-eye
 scene. Open both devices through the same local demo server, then enter VR on the Quest. The
 preview follows head and joystick movement, including the in-scene hands and body. It does not
-include Meta system menus or audio. Minimize the window to stop receiving; capture pauses when
+include Meta system menus or audio. Close the window to stop receiving; capture pauses when
 no visible window is watching. The local relay retains only the latest image in memory, with
 no recording. The window fits the headset image's proportions; use **Expand Quest view** for a
 larger view. Capture and display target 60 frames per second at up to 512 pixels; the panel shows
