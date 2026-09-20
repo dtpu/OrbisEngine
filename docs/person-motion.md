@@ -44,6 +44,14 @@ required frames cause a load error. A failed fallback sets `wander.people[i].loa
 its loading attempt (`settled`), and never reports ready. The demo wrapper displays the failure
 and offers reload. `?motiontrack=0` forces the original PLY path for comparisons.
 
+## Visibility after occlusion
+
+A person's `visibleSampleRuns` contains inclusive indices into the shared `people.json.timestamps`
+grid. Visibility starts at the first indexed timestamp and ends at the next shared timestamp after
+the run (or the shared duration). Compact PLY indices cannot identify these intervals after missing
+detections or a split track. Malformed or overlapping runs fail explicitly. This affects visibility
+only; each sequence retains its own pose timestamps and original PLY geometry.
+
 ## Optional quantization
 
 `--quantize` explicitly opts into lossy uint16 storage. The browser also requires

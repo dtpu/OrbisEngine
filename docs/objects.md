@@ -5,6 +5,10 @@ The current writer is `scripts/package_objects.py`; `fourd.html` plays its baked
 The automatic pipeline detects thrown objects. Other motion labels describe the contract,
 but do not imply that the pipeline can reconstruct arbitrary doors, bags, or vehicles.
 
+For cooking clips, follow the [kitchen workflow](kitchen-workflow.md): inventory handled props
+before cleaning, preserve their source observations, and review each interaction separately.
+The current kitchen is a useful reference with recorded gaps, including the missing Brita pitcher.
+
 ## Files and discovery
 
 A package normally lives beside the multiperson manifest:
@@ -171,6 +175,12 @@ A walkable box uses its finite local +Y face as support. Capsule collision and c
 checks also apply to nonwalkable boxes. An inferred conservative frame envelope can block empty
 space between real struts; declare that approximation in provenance. With no manifest, the existing
 occupancy-grid behavior is retained. Generated geometry and review evidence belong in private storage.
+
+Grid collision uses the same circular horizontal footprint as the walker capsule. It checks
+overlap with each occupied cell's full rectangle, so a diagonal corner outside the body's radius
+does not block an open route, while thin wall and column contacts still do. This does not remove
+occupied cells or extend the supported floor region. A stop beyond the last supported stair cell
+is a navigation boundary and needs separate floor evidence.
 
 These colliders constrain the viewer's walker. People and props still follow their baked animation;
 they are not rigid bodies and are not automatically pushed onto a seat. Correcting actor contact
