@@ -36,9 +36,13 @@ bun run prepare:worlds --url http://127.0.0.1:5399 /marble-lobby-clean.spz /marb
 Pass the world asset paths used by the scenes you want to accelerate. Preparation uses the
 installed Spark decoder and preserves its packed arrays, colour encoding, and detail tree exactly;
 it does not reduce scene detail. Verified outputs stay under `.context/prepared-worlds/` and are
-never uploaded. The source SHA-256 and installed Spark build identify each cache entry, so updated
-assets or dependencies cannot silently reuse stale data. Run the command again after such changes.
-`--force` rebuilds an existing entry.
+never uploaded. The source SHA-256 and a build identity covering installed Spark, the preparation client, and the
+prepared-world codec identify each cache entry. Updated assets, dependencies, preparation policy,
+or codec code cannot silently reuse stale data. Restart Vite and run the command again after code
+or dependency changes. `--force` rebuilds an existing entry by atomic replacement. Prepared HTTP
+responses revalidate with a SHA-256 ETag of the actual file bytes, so force replacements at the same
+URL invalidate browser copies. The server caches this digest by file identity (device, inode, size,
+and nanosecond modification/change times); unchanged files need no repeated hashing or download.
 
 Vite serves these optional files through `/api/prepared-world/v1/`. The viewer uses the original
 world if a prepared entry is missing, incompatible, or corrupt. Add `xrworldcache=0` to compare

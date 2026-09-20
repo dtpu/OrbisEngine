@@ -39,6 +39,15 @@
   #pip.hidden {
     display: none;
   }
+  #startup-error {
+    position: fixed;
+    inset: 16px 16px auto;
+    z-index: 10;
+    padding: 16px;
+    background: #211;
+    color: #fff;
+    font: 16px system-ui;
+  }
   /* phone: the HUD is 950 px of pre-formatted text and the PiP is 320 px wide, so both run off a
    narrow screen. Wrap one and shrink the other; nothing changes above 760 px. */
   @media (max-width: 760px) {
@@ -116,9 +125,16 @@
   // Available even if a module import or top-level asset load fails before the viewer API exists.
   window.__wanderStartupError = false;
   const reportStartupFailure = () => {
+    if (window.wander?.ready) return;
     window.__wanderStartupError = true;
-    if (!window.wander)
-      document.getElementById('st').textContent = 'Scene could not load. Reload to retry.';
+    let error = document.getElementById('startup-error');
+    if (!error) {
+      error = document.createElement('div');
+      error.id = 'startup-error';
+      error.setAttribute('role', 'alert');
+      document.body.append(error);
+    }
+    error.textContent = 'Scene could not load. Reload to retry.';
   };
   window.addEventListener(
     'error',
