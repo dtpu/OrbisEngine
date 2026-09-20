@@ -65,8 +65,8 @@ scene. Open both devices through the same local demo server, then enter VR on th
 preview follows head and joystick movement, including the in-scene hands and body. It does not
 include Meta system menus or audio. Close the window to stop receiving; capture pauses when
 no visible window is watching. The local relay retains only the latest image in memory, with
-no recording. The window fits the headset image's proportions; use **Expand Quest view** for a
-larger view. Capture and display target 60 frames per second at up to 512 pixels; the panel shows
+no recording. The window fits the headset image's proportions; drag its lower-left corner to
+resize it. Capture and display target 60 frames per second at up to 512 pixels; the panel shows
 the actual displayed rate. Speed depends on headset rendering, encoding and the connection, and
 cannot exceed the headset's rendered frame rate. Capture overlaps the preceding upload, with
 at most one following frame and no accumulating queue. `xrview=0` disables sharing from the headset.

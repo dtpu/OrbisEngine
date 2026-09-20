@@ -412,7 +412,7 @@
       #edgelab {
         left: 50%;
         transform: translateX(-50%);
-        bottom: 92px;
+        bottom: 24px;
         padding: 10px 16px;
         font-size: 13px;
         color: var(--ink-2);
@@ -431,32 +431,17 @@
         color: var(--mute);
       }
 
-      /* control bar */
-      #bar {
-        left: 50%;
-        transform: translateX(-50%);
-        bottom: 24px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px;
-        border-radius: 999px;
-        white-space: nowrap;
-      }
+      /* scene actions in the header */
       #play {
-        height: 38px;
-        padding: 0 18px;
-        border-radius: 999px;
         background: var(--pill);
+        border-color: var(--pill);
         color: #fff;
         font-weight: 600;
-        font-size: 13.5px;
-        transition:
-          background 0.15s,
-          opacity 0.15s;
       }
       #play:hover:not(:disabled) {
         background: #000;
+        border-color: #000;
+        color: #fff;
       }
       #play:disabled {
         opacity: 0.35;
@@ -464,30 +449,14 @@
       }
       #play.running {
         background: #fff;
+        border-color: var(--line-2);
         color: var(--ink);
-        box-shadow: inset 0 0 0 1px var(--line-2);
       }
-      .sep {
+      .vsep {
         width: 1px;
         height: 22px;
         background: var(--line-2);
-        margin: 0 6px;
-      }
-      .minibtn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        height: 38px;
-        padding: 0 14px;
-        border-radius: 999px;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--ink-2);
-        transition: background 0.15s;
-      }
-      .minibtn:hover {
-        background: var(--surface-2);
-        color: var(--ink);
+        margin: 0 -6px;
       }
 
       /* loading */
@@ -577,25 +546,13 @@
         background: #000;
       }
 
-      /* Narrow viewports: shrink the rail and let the bar wrap so its actions stay reachable. */
+      /* Narrow viewports: shrink the rail. */
       @media (max-width: 1280px) {
         :root {
           --rail: 260px;
         }
         .ctitle {
           font-size: 18px;
-        }
-      }
-      @media (max-width: 860px) {
-        #bar {
-          max-width: calc(100% - 32px);
-          white-space: normal;
-          flex-wrap: wrap;
-          justify-content: center;
-          border-radius: 20px;
-        }
-        .sep {
-          display: none;
         }
       }
     </style>
@@ -608,6 +565,12 @@
         </button>
         <div class="wordmark">Wander</div>
         <div class="spacer"></div>
+        <button class="hbtn" id="play" disabled>
+          <span id="playlabel">Play camera move</span>
+        </button>
+        <button class="hbtn" id="srcbtn">Source clip</button>
+        <button class="hbtn" id="resetbtn">Reset</button>
+        <div class="vsep"></div>
         <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
         <button class="hbtn" id="audiomodebtn" aria-pressed="false" hidden>Spatial dialogue</button>
         <button class="hbtn" id="questviewbtn">Quest view</button>
@@ -665,13 +628,6 @@
         <div class="ov panel" id="edgelab">
           <b>Edge of what was filmed.</b> Let go and it eases you back.
           <span><kbd>R</kbd> resets the view</span>
-        </div>
-
-        <div class="ov panel" id="bar">
-          <button id="play" disabled><span id="playlabel">Play camera move</span></button>
-          <div class="sep"></div>
-          <button class="minibtn" id="srcbtn">Source clip</button>
-          <button class="minibtn" id="resetbtn">Reset</button>
         </div>
 
         <div class="ov" id="loading">
@@ -1104,13 +1060,13 @@
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#f7f7f8;color:#1e1d22;
       border:1px solid #fff;border-radius:12px;padding:11px 13px;font-size:11px}
     #hint{display:none!important}
-    #audio-credit{right:16px!important;bottom:84px!important;padding:6px 10px!important;border-radius:999px!important;
+    #audio-credit{right:16px!important;bottom:24px!important;padding:6px 10px!important;border-radius:999px!important;
       background:#f0f0f2f2!important;color:#4b4a52!important;border:1px solid #f8f8f9;font:11.5px system-ui!important}
     #audio-credit a{color:#1e1d22!important}
-    #pip{left:24px!important;right:auto!important;bottom:86px!important;width:300px!important;
+    #pip{left:24px!important;right:auto!important;bottom:24px!important;width:300px!important;
       border:0!important;border-radius:12px;outline:1px solid #ffffff;background:#000}
     #pip.hidden{display:none}
-    body.wd-hud #pip{bottom:86px!important}
+    body.wd-hud #pip{bottom:24px!important}
     #xrBtn{top:20px!important;left:50%!important;right:auto!important;bottom:auto!important;
       transform:translateX(-50%)!important;min-height:38px!important;padding:0 18px!important;
       border:0!important;border-radius:999px!important;background:#2a292f!important;color:#fff!important;
@@ -1124,7 +1080,7 @@
       function setPlayLabel(running) {
         $('play').classList.toggle('running', running);
         $('playlabel').textContent = running
-          ? 'Playing — click or press a key to take over'
+          ? 'Playing — press any key to stop'
           : 'Play camera move';
       }
       function api() {
