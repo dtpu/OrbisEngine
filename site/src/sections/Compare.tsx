@@ -10,10 +10,12 @@ const hideBroken = (e: SyntheticEvent<HTMLImageElement>) => {
 
 type CompareScene = { id: string; caption: string };
 
+// Offsets are quoted in body-heights once each render pair is exported and measured against its
+// source frame. Until then the captions say so rather than stating a number nobody measured.
 const compareScenes: CompareScene[] = [
-  { id: 'elevator', caption: 'Viewpoint moved ~1.5 body-heights left of the camera.' },
-  { id: 'lobby', caption: 'Viewpoint moved ~2 body-heights forward, half a body-height up.' },
-  { id: 'gym', caption: 'Viewpoint moved ~1 body-height right and behind the camera.' },
+  { id: 'elevator', caption: 'Elevator. Viewpoint offset in body-heights: pending measurement.' },
+  { id: 'lobby', caption: 'Lobby. Viewpoint offset in body-heights: pending measurement.' },
+  { id: 'gym', caption: 'Gym. Viewpoint offset in body-heights: pending measurement.' },
 ];
 
 export default function Compare() {
