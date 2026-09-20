@@ -185,10 +185,16 @@ bun run test:audio-browser
 bun run test:audio-package
 bun run test:person-motion
 bun run test:static-colliders
+bun run test:walk-collision
+bun run test:walk-clearance-browser
 bun run test:xr-turning
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
+The walk-clearance browser check needs Chrome, the local server, and the shared kitchen assets.
+It exercises the reported kitchen corner with keyboard movement and checks that the adjacent
+counter still blocks. After building, `WALK_TEST_DIST=dist bun run test:walk-clearance-browser`
+uses this checkout's compiled viewer with the running server's scene assets.
 Use `bun run format` to apply pinned Ruff and Prettier formatting; `format:python` and
 `format:web` select one toolchain. Builds type-check the migrated TypeScript modules.
 The formatted inline scripts in `demo.html` and `fourd.html` still use JavaScript.
