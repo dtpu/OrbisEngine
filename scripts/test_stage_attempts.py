@@ -488,6 +488,26 @@ class CommandIdentityTests(unittest.TestCase):
         changed, _, _ = command_identity(command, self.root)
         self.assertNotEqual(first, changed)
 
+    def test_clean_masks_input_hash_changes_paid_command_identity(self):
+        masks = self.inputs / "reviewed-masks.npz"
+        masks.write_bytes(b"reviewed masks version one")
+        command = [
+            "/modal",
+            "run",
+            "worker/modal_clean_video.py",
+            "--clip",
+            str(self.inputs / "clip.mov"),
+            "--out",
+            str(self.root / "out" / "clean.mp4"),
+            "--masks-in",
+            str(masks),
+        ]
+        first, _, _ = command_identity(command, self.root)
+        masks.write_bytes(b"reviewed masks version two")
+        changed, _, _ = command_identity(command, self.root)
+        self.assertNotEqual(first, changed)
+        self.assertNotEqual(first["inputs"]["--masks-in"], changed["inputs"]["--masks-in"])
+
 
 class PaidRunIntegrationTests(unittest.TestCase):
     def setUp(self):

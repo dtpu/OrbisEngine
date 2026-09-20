@@ -27,6 +27,22 @@ from orchestrator.steps import STEPS, Step, suggested_order
 SESSION_FILE = "session.id"
 BRIEF_FILE = "BRIEF.md"
 BIN_DIR = "bin"
+# Codex reads AGENTS.md from the directory it runs in, and it runs in the run directory, so
+# the standing instructions arrive without anything having to hand them over.
+SKILL_FILE = "AGENTS.md"
+SKILL_SOURCE = Path(__file__).resolve().parent / "agent" / "SKILL.md"
+
+
+def install_skill(run_dir: Path) -> Path:
+    """Put the standing instructions where the agent's tooling will find them by itself.
+
+    Copied rather than linked, and rewritten every turn, so a run picks up a correction to how
+    the job works without being reopened -- and so a run directory carried somewhere else still
+    explains itself.
+    """
+    target = run_dir / SKILL_FILE
+    target.write_text(SKILL_SOURCE.read_text())
+    return target
 
 
 def install_wander(run_dir: Path) -> Path:
@@ -84,57 +100,26 @@ def render_brief(run_id: str, run_dir: Path, name: str, journal: Journal, goal: 
         "",
         goal,
         "",
+        f"How this job works is in `{SKILL_FILE}` beside this file. This is where the run has",
+        "got to.",
+        "",
         "## Where you are",
         "",
-        f"Everything for this run is in `{run_dir}`, and that directory is the run. The stages",
-        "write into it and read each other's output out of it; there is no artifact store to",
-        "move things through and nothing hydrates or freezes between steps. Look at the files.",
+        f"`{run_dir}` is the run. Everything the stages write is in it.",
         "",
-        "## Doing things",
+        "## What you can do now",
         "",
-        "```sh",
-        "wander status                 # what has been done, and what the steps are",
-        "wander step clean             # run a step, streaming its log",
-        "wander step clean --dilate 28 # same, with a flag passed to the stage",
-        'wander note "what you saw"    # write an observation into the run history',
-        'wander ask "..."              # stop and ask an operator, then end your turn',
-        'wander finish succeeded "..."  # the run is done',
-        "```",
-        "",
-        "Anything else you want to run, run it. Only `wander` commands go into the history, so",
-        "use the shell freely to look at files, decode frames and measure things, and use",
-        "`wander note` when you have learned something the next session should not have to",
-        "learn again. Give every command a timeout; if one hangs, kill it and find the answer",
-        "another way rather than starting it again the same way.",
-        "",
-        "## The steps",
-        "",
-        "This order is a suggestion, not a schedule. Run them in another order if you have a",
-        "reason to; run one again if you think it produced the wrong thing. The legacy pipeline",
-        "checks its own dependencies against what is really in the directory, so it will tell",
-        "you when something genuinely cannot run yet.",
+        "Run `wander ready` -- it reads the run directory and tells you what is unblocked, what",
+        "is waiting and on what. `wander show <step>` has one step's flags, their current",
+        "values and its history. Start work with `wander step <name>`, which returns at once,",
+        "and then end your turn: you will be given another when it finishes.",
         "",
     ]
-    for step_name in suggested_order():
-        step = STEPS[step_name]
-        lines.append(describe_step(step, step_name in done, journal.last_status(step_name)))
-        if step.caution:
-            lines.append(f"      {step.caution}")
-        lines.extend(parameter_lines(step))
-    lines += [
-        "",
-        "Move a default only when you can name the thing you saw and say why that value",
-        "addresses it. A tolerance or a guard you want to relax is a question for an operator,",
-        "not a flag to set.",
-        "",
-        "## Spending",
-        "",
-        "Steps marked **costs money** charge every time they run. A world generation is 1600",
-        "credits and a quality failure does not authorise a second one. If a paid step has",
-        "already been submitted, poll it rather than submitting again. When a paid step fails",
-        "ambiguously -- you cannot tell whether it charged -- stop and ask rather than guessing.",
-        "",
-    ]
+    outstanding = [name for name in suggested_order() if name not in done]
+    if outstanding:
+        lines += ["Not done yet: " + ", ".join(outstanding), ""]
+    if done:
+        lines += ["Done: " + ", ".join(sorted(done)), ""]
     if entries:
         lines += ["## What has happened", ""]
         for entry in entries[-25:]:
@@ -241,6 +226,7 @@ class RunSession:
         before = len([e for e in journal.entries() if e.kind == "step.started"])
         brief = render_brief(self.run_id, self.run_dir, self.described["name"], journal, self.goal)
         (self.run_dir / BRIEF_FILE).write_text(brief)
+        install_skill(self.run_dir)
         outcome = self.harness.run(
             None,
             self.run_dir,
