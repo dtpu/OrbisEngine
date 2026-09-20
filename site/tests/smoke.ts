@@ -224,6 +224,50 @@ const checks: Check[] = [
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
+  {
+    name: 'limits renders heading and 4 items with no console errors',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const h2 = await page.textContent('section#limits h2');
+        if (!h2?.includes('What Wander can\u2019t do yet.'))
+          throw new Error(`bad limits h2: ${h2}`);
+        const n = await page.$$eval('section#limits li', (els) => els.length);
+        if (n !== 4) throw new Error(`expected 4 limits, got ${n}`);
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
+  {
+    name: 'team renders 4 members with GitHub links',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const hrefs = await page.$$eval('section#team li a', (els) =>
+          els.map((a) => a.getAttribute('href')),
+        );
+        if (hrefs.length !== 4 || hrefs.some((h) => h !== 'https://github.com/dtpu/htn2026'))
+          throw new Error(`bad team links: ${hrefs.join(', ')}`);
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
+  {
+    name: 'cta is dark and has demo + code buttons',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        const theme = await page.getAttribute('section#cta', 'data-theme');
+        if (theme !== 'dark') throw new Error(`cta theme: ${theme}`);
+        const hrefs = await page.$$eval('section#cta a', (els) =>
+          els.map((a) => a.getAttribute('href')),
+        );
+        if (!hrefs.includes('/demo.html') || !hrefs.includes('https://github.com/dtpu/htn2026'))
+          throw new Error(`cta links: ${hrefs.join(', ')}`);
+      });
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
+    },
+  },
 ];
 
 let server: Bun.Subprocess | null = null;
