@@ -12,8 +12,8 @@
 // 2. HEAD MOTION IS NEVER DAMPED. The desktop soft boundary eases the camera to a stop at the edge
 //    of the measured region. Doing that to someone's head is a direct route to sickness (BRAIN
 //    section 6), so the same limits are enforced in two different ways: locomotion gets the soft
-//    gain, and physical leaning gets a vignette and nothing else. You can always lean out; the
-//    world only tells you that you have.
+//    gain, and physical leaning gets a vignette without resistance. Optional physical walk gain
+//    adds horizontal rig travel; it never changes the tracked pose. You can always lean out.
 //
 // 3. THE EDGE FADE IS DOM. fourd.html grades the edge with a CSS filter on the canvas and a fixed
 //    overlay div. Neither exists inside a headset - the session renders to its own framebuffer -
@@ -27,6 +27,9 @@
 // URL PARAMETERS (all no-ops without ?xr=1)
 //   ?xr=1            enable; adds an Enter VR button when the browser reports immersive-vr
 //   ?xrmove=         teleport (default) | smooth
+//   ?xrwalkgain=     physical horizontal travel multiplier, 1..2 (default 1)
+//   ?xrhands=0      hide the illustrative controller gloves and tracked hands
+//   ?xrbody=0       hide the estimated first-person body
 //   ?xrlod=          splat budget while presenting (default 500000, Spark's own WebXR figure)
 //   ?xradapt=0       disable the closed loop that lowers that budget when frames run long
 //   ?xrfps=          frame rate the loop holds the budget against (default 72)
@@ -39,6 +42,10 @@
 //   ?xrspeed=        smooth locomotion speed in m/s (default 1.4, a walk)
 //   ?xrpolyfill=1    force webxr-polyfill (phones, Cardboard); matches the rest of the repo
 import * as THREE from 'three';
+import { createAvatarBody } from './avatar-body';
+import { createAvatarHands } from './avatar-hands';
+import { PhysicalWalk, parseWalkGain } from './physical-walk';
+import { raycastWalkFloor } from './teleport';
 
 type Wander = {
   spark: { lodSplatCount?: number };
@@ -52,7 +59,18 @@ type Wander = {
   overshoot: number;
   edgeAt: (p: THREE.Vector3) => number;
   params: Record<string, string>;
-  walk?: { eye: number } | null; // fourd.html ?walk=1: eye height in world units, from the cast's mean stature
+  walk?: {
+    eye: number;
+    floor: number;
+    grid: { cell: number } | null;
+    cellAt: (
+      x: number,
+      z: number,
+      maximumSupport?: number,
+    ) => { floor: number; inside: boolean | number };
+    blockedAt: (x: number, z: number, floor?: number) => number;
+    advance: (from: THREE.Vector3, delta: THREE.Vector3, dt: number) => THREE.Vector3;
+  } | null;
   possess?: { head: THREE.Vector3; yaw: number } | null; // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
 };
 
@@ -140,6 +158,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // fourd.html had it. Scale converts the headset's metres into this world's units.
   const upm = Math.max(1e-4, num('xrscale', wander.upm || 1));
   const mode = q.get('xrmove') === 'smooth' ? 'smooth' : 'teleport';
+  const physicalWalk = new PhysicalWalk(parseWalkGain(q.get('xrwalkgain')));
   const requestedTurnMode = q.get('xrturnmode');
   const turnMode =
     requestedTurnMode === 'smooth' || requestedTurnMode === 'snap'
@@ -153,6 +172,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     : 90;
   const report: Record<string, unknown> = {
     mode,
+    walkGain: physicalWalk.gain,
     turnMode,
     turnSpeed,
     upm: +upm.toFixed(4),
@@ -169,6 +189,11 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   rig.name = 'xr-rig';
   rig.scale.setScalar(upm);
   scene.add(rig);
+
+  const avatarHands = q.get('xrhands') === '0' ? null : createAvatarHands(renderer, rig);
+  if (avatarHands) report.hands = avatarHands.state;
+  const avatarBody = q.get('xrbody') === '0' ? null : createAvatarBody(renderer, rig);
+  if (avatarBody) report.body = avatarBody.state;
 
   const vignette = buildVignette();
   const marker = buildMarker(upm);
@@ -236,6 +261,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   report.fbScale = fbScale;
 
   let floorRef = false;
+  let groundFloor = wander.walk?.floor ?? wander.floorY;
   btn.addEventListener(
     'click',
     () =>
@@ -250,7 +276,8 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
           // own floor meets the real one and standing up means something. Without it the session is
           // seated and the head starts ?xreye= above the floor, which is the honest fallback.
           const session = await xr.requestSession('immersive-vr', {
-            optionalFeatures: ['local-floor'],
+            optionalFeatures:
+              avatarHands || avatarBody ? ['local-floor', 'hand-tracking'] : ['local-floor'],
           });
           floorRef = session.enabledFeatures?.includes('local-floor') ?? false;
           renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
@@ -265,15 +292,31 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // (BRAIN section 6 rules out a continuous recentre; 0.2 Hz is the worst frequency there is).
   const home = camera.position.clone();
   const homeQ = camera.quaternion.clone();
-  const homeYaw = yawOf(homeQ);
+  let homeYaw = yawOf(homeQ);
   let anchored = false;
   const frames: number[] = [];
   let lastFrameStart = 0;
   let lastAdapt = 0;
+  let walkReferenceSpace: XRReferenceSpace | null = null;
+  const resetPhysicalWalk = () => {
+    physicalWalk.reset();
+    avatarBody?.reset();
+  };
 
   renderer.xr.addEventListener('sessionstart', () => {
     btn.textContent = 'Exit VR';
+    home.copy(camera.position);
+    homeQ.copy(camera.quaternion);
+    homeYaw = yawOf(homeQ);
     anchored = false;
+    groundFloor = wander.walk?.floor ?? wander.floorY;
+    report.groundFloor = groundFloor;
+    report.teleportTarget = null;
+    report.teleportValid = false;
+    targetOk = false;
+    physicalWalk.reset();
+    walkReferenceSpace = renderer.xr.getReferenceSpace();
+    walkReferenceSpace?.addEventListener('reset', resetPhysicalWalk);
     vel.set(0, 0, 0);
     snapLatch = false;
     aimingPrev = false;
@@ -307,6 +350,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
 
   renderer.xr.addEventListener('sessionend', () => {
     btn.textContent = 'Enter VR';
+    walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
+    walkReferenceSpace = null;
+    physicalWalk.reset();
     rig.remove(camera);
     camera.remove(vignette.mesh);
     for (const c of controllers) {
@@ -371,9 +417,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       ? 0
       : (THREE.MathUtils.clamp(v, -1, 1) - Math.sign(v) * dead) / (1 - dead);
 
-  const sticks = { moveX: 0, moveY: 0, turnX: 0, liftY: 0 };
+  const sticks = { moveX: 0, moveY: 0, turnX: 0 };
   function readSticks() {
-    sticks.moveX = sticks.moveY = sticks.turnX = sticks.liftY = 0;
+    sticks.moveX = sticks.moveY = sticks.turnX = 0;
     const session = renderer.xr.getSession();
     if (!session) return;
     for (const src of session.inputSources) {
@@ -384,7 +430,6 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       const y = Math.abs(a[3] ?? 0) > Math.abs(a[1] ?? 0) ? a[3] : a[1];
       if (src.handedness === 'right') {
         sticks.turnX = axis(x, turnMode === 'smooth' ? TURN_DEAD : DEAD);
-        sticks.liftY = -axis(y);
       } else {
         sticks.moveX = axis(x);
         sticks.moveY = axis(y);
@@ -403,6 +448,11 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const vel = new THREE.Vector3(),
     step = new THREE.Vector3(),
     nrm = new THREE.Vector3();
+  const groundFrom = new THREE.Vector3();
+  const physicalStep = new THREE.Vector3();
+  const bodyRigStart = new THREE.Vector3();
+  const bodyTravel = new THREE.Vector3();
+  const bodyInverseRotation = new THREE.Quaternion();
   const target = new THREE.Vector3(),
     tmpV = new THREE.Vector3(),
     tmpQ = new THREE.Quaternion();
@@ -416,16 +466,37 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const headOffset = (out: THREE.Vector3) =>
     out.copy(headLocal).multiplyScalar(upm).applyQuaternion(rig.quaternion);
 
-  /** The aim ray meets the floor plane. The ring is only offered where the recording still holds. */
+  /** Walk mode intersects known support, including stair levels; authoring mode uses its plane. */
   function aim(from: THREE.Object3D): boolean {
+    targetOk = false;
+    report.teleportTarget = null;
+    report.teleportValid = false;
     const o = from.getWorldPosition(tmpV);
     const d = new THREE.Vector3(0, 0, -1).applyQuaternion(from.getWorldQuaternion(tmpQ));
     if (d.y > -1e-3) return false;
-    const floorW = floorRef ? rig.position.y : wander.floorY;
-    const t = (floorW - o.y) / d.y;
-    if (t < 0 || t > 400 * upm) return false;
-    target.copy(o).addScaledVector(d, t);
-    targetOk = reachable(target);
+    const walk = wander.walk;
+    if (walk) {
+      const hit = raycastWalkFloor(
+        o,
+        d,
+        (x, z) => {
+          const cell = walk.cellAt(x, z, o.y);
+          return cell.inside ? cell.floor : NaN;
+        },
+        Math.min(walk.grid?.cell ?? 0.1 * upm, 0.1 * upm) / 2,
+        20 * upm,
+        target,
+      );
+      if (!hit) return false;
+      targetOk = reachable(target) && !walk.blockedAt(target.x, target.z, target.y);
+    } else {
+      const t = (groundFloor - o.y) / d.y;
+      if (t < 0 || t > 20 * upm) return false;
+      target.copy(o).addScaledVector(d, t);
+      targetOk = reachable(target);
+    }
+    report.teleportTarget = target.toArray();
+    report.teleportValid = targetOk;
     return true;
   }
 
@@ -434,7 +505,14 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     const off = headOffset(new THREE.Vector3());
     rig.position.x = target.x - off.x;
     rig.position.z = target.z - off.z;
-    if (!floorRef) rig.position.y = target.y + EYE - off.y;
+    // Move the reference floor by the landing height delta, retaining local-space eye/crouch pose.
+    rig.position.y += target.y - groundFloor;
+    groundFloor = target.y;
+    report.groundFloor = groundFloor;
+    targetOk = false;
+    report.teleportValid = false;
+    vel.set(0, 0, 0);
+    avatarBody?.reset();
     blink = 1;
   }
 
@@ -452,6 +530,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   function snapTurn(dir: number) {
     if (!SNAP) return;
     turnAroundHead(-dir * SNAP);
+    avatarBody?.reset();
     blink = 0.7;
   }
 
@@ -460,12 +539,17 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     fwd.set(-Math.sin(headYaw), 0, -Math.cos(headYaw));
     right.set(Math.cos(headYaw), 0, -Math.sin(headYaw));
     want.addScaledVector(fwd, -sticks.moveY).addScaledVector(right, sticks.moveX);
-    want.y += sticks.liftY * 0.5;
-    if (want.lengthSq() > 0) want.normalize().multiplyScalar(SPEED);
+    want.clampLength(0, 1).multiplyScalar(SPEED);
     // Critically damped rather than instant velocity: no lurch on push, no dead stop on release.
     vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
-    if (vel.lengthSq() < 1e-10) return;
-    step.copy(vel).multiplyScalar(dt);
+    if (vel.lengthSq() < 1e-10) vel.set(0, 0, 0);
+    step.addScaledVector(vel, dt);
+  }
+
+  function moveRig(dt: number) {
+    // Turning around an offset head translates the rig origin without walking. Start the body
+    // travel measurement after that pivot, so only accepted locomotion can animate a step.
+    bodyRigStart.copy(rig.position);
     // fourd.html's own soft boundary, applied to the RIG. Outward motion past the measured face is
     // scaled towards zero so you coast to a stop; inward motion is never damped, so it is always one
     // nudge back into the good region. The head is untouched by any of this.
@@ -478,6 +562,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
       if (onLeash) {
         const r0 = nearestOnPath(head);
         nrm.copy(head).sub(segBest);
+        nrm.y = 0; // The path leash may slow horizontal walking, never lift or lower the rig.
         if (nrm.lengthSq() > 1e-12) {
           nrm.normalize();
           const out = step.dot(nrm);
@@ -485,13 +570,21 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         }
       }
     }
-    rig.position.add(step);
+    if (wander.walk?.advance) {
+      groundFrom.set(head.x, groundFloor, head.z);
+      const next = wander.walk.advance(groundFrom, step, dt);
+      rig.position.x += next.x - groundFrom.x;
+      rig.position.y += next.y - groundFloor;
+      rig.position.z += next.z - groundFrom.z;
+      groundFloor = next.y;
+      report.groundFloor = groundFloor;
+    } else rig.position.add(step);
   }
 
   // ---- the frame ----------------------------------------------------------------------------------------
   // Wrapped rather than spliced into fourd.html's loop: at this point three has already read this
-  // frame's viewer pose into xr.getCamera() but has not yet composed it with the rig, so moving the
-  // rig here lands in the SAME frame it was computed for. No lag, and fourd.html keeps its loop.
+  // frame's eye poses but has not yet composed them with the rig, so moving the rig here lands in
+  // the SAME frame it was computed for. No lag, and fourd.html keeps its loop.
   const origRender = renderer.render.bind(renderer);
   renderer.render = function (sc: THREE.Object3D, cam: THREE.Camera) {
     if (renderer.xr.isPresenting && sc === scene && cam === camera) tick();
@@ -504,14 +597,24 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     if (lastFrameStart) frames.push(now - lastFrameStart);
     lastFrameStart = now;
 
+    avatarHands?.update();
+
     const frame = renderer.xr.getFrame();
     const referenceSpace = renderer.xr.getReferenceSpace();
     const pose = frame && referenceSpace ? frame.getViewerPose(referenceSpace) : null;
-    if (!pose) return;
+    if (!pose) {
+      physicalWalk.reset();
+      avatarBody?.reset();
+      return;
+    }
     // Three's array camera starts at the first eye, then shifts for the stereo frustum union.
-    // Use the runtime's actual viewer center as the turn pivot.
+    // Track the runtime's actual viewer center so head rotation cannot masquerade as a step.
     headMatrix.fromArray(pose.transform.matrix);
-    if (!headMatrix.elements.every(Number.isFinite)) return;
+    if (!headMatrix.elements.every(Number.isFinite)) {
+      physicalWalk.reset();
+      avatarBody?.reset();
+      return;
+    }
     headMatrix.decompose(headLocal, headQuaternion, headScale);
     const hf = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuaternion);
 
@@ -523,13 +626,18 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         homeYaw - Math.atan2(-hf.x, -hf.z),
       );
       const off = headOffset(tmpV);
-      rig.position.set(home.x - off.x, floorRef ? wander.floorY : home.y - off.y, home.z - off.z);
+      rig.position.set(
+        home.x - off.x,
+        floorRef ? groundFloor : groundFloor + EYE - off.y,
+        home.z - off.z,
+      );
     }
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
 
     if (wander.possess) {
+      physicalWalk.reset();
       // Possession: the rig follows the person's head so the viewer's eyes land on it. His yaw
       // reaches the rig only as snap turns through the blink (header point 2: never a smooth turn
       // of someone's head, never his pitch or roll); ?possessyaw=smooth opts into a continuous yaw.
@@ -565,9 +673,16 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         } else if (Math.abs(sticks.turnX) < 0.4) snapLatch = false;
       }
 
-      if (mode === 'smooth') {
-        travel(dt);
-      } else {
+      // The runtime's real head displacement remains untouched. Only extra gain and joystick
+      // displacement pass through the shared boundary/collision solver, in either movement mode.
+      headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
+      step.copy(physicalWalk.update(headLocal, rig.quaternion, upm, physicalStep));
+      if (mode === 'smooth') travel(dt);
+      moveRig(dt);
+      rig.updateMatrixWorld(true);
+      head.copy(headLocal).applyMatrix4(rig.matrixWorld);
+
+      if (mode === 'teleport') {
         // Aim with the left stick pushed forward, or with either trigger held. Release to go.
         const held = controllers.find((c) => c.aiming);
         const aiming = !!held || sticks.moveY < -0.5;
@@ -586,6 +701,27 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         if (aimingPrev && !aiming) commit();
         aimingPrev = aiming;
       }
+    }
+
+    rig.updateMatrixWorld(true);
+    head.copy(headLocal).applyMatrix4(rig.matrixWorld);
+
+    // The body consumes reference-space metres. Account for artificial travel so a planted foot
+    // stays in world space while the rig walks; head tracking is already included in headLocal.
+    // Possession has a recorded body of its own, so hide this illustrative observer body there.
+    avatarBody?.setSessionActive(!wander.possess);
+    if (avatarBody && !wander.possess) {
+      bodyTravel
+        .subVectors(rig.position, bodyRigStart)
+        .applyQuaternion(bodyInverseRotation.copy(rig.quaternion).invert())
+        .divideScalar(upm);
+      avatarBody.update({
+        headLocal,
+        headQuaternion,
+        floorY: (groundFloor - rig.position.y) / upm,
+        dt,
+        travel: bodyTravel,
+      });
     }
 
     // Grading. edgeAt is fourd.html's own measure - 0 inside the box, 1 at the hard limit - read off
