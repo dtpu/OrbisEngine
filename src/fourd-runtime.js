@@ -32,6 +32,8 @@ import {
 } from '@sparkjsdev/spark';
 
 import { disposeScene, SceneScope } from './scene-scope.js';
+import { ALL } from './scene-catalog.ts';
+import { resolveSceneConfig } from './scene-config.ts';
 
 // A cancelled asynchronous XR setup must finish cleanup before another scene uses its renderer.
 const rendererActivations = new WeakMap();
@@ -53,7 +55,12 @@ export async function createFourD({ search, renderer, root, scope }) {
     }
   };
   const st = element('st');
-  const q = new URLSearchParams(search);
+  const explicitQuery = new URLSearchParams(search);
+  // XR must keep the stereo-safe default ahead of manifest and legacy preset defaults.
+  if (explicitQuery.get('xr') === '1' && !explicitQuery.has('exact')) {
+    explicitQuery.set('exact', '0');
+  }
+  const q = await resolveSceneConfig(explicitQuery, ALL, scope);
   let interactionOn = q.get('interact') === '1';
   let interaction = null;
   // ?demo=corridor: judge preset (clean image world, final alignment, camera behind/above the elder)
