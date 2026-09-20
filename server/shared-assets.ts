@@ -31,7 +31,36 @@ export type AssetMiddleware = (
   next: Connect.NextFunction,
 ) => Promise<void>;
 export type SharedAssetsPlugin = Plugin & { middleware: AssetMiddleware };
-type PinnedCatalog = AssetCatalog & { snapshot: string };
+export type PinnedCatalog = AssetCatalog & { snapshot: string };
+export interface BlobCache {
+  catalog(): Promise<PinnedCatalog>;
+  cached(f: AssetEntry): Promise<string>;
+  cacheDir: string;
+  destroy(): void;
+}
+// A path can hold different bytes in different snapshots, so a path alone may never be cached for
+// long. A request that names its content may: `snap` is the pinned snapshot id (snapshots are
+// immutable) and `v` is a sha256 prefix of the blob itself. Anything else gets a session-length
+// max-age, which is still safe because one server run serves one pinned snapshot.
+const IMMUTABLE = 'private, max-age=31536000, immutable';
+const SESSION = 'private, max-age=600';
+export function snapshotId(snapshot: string) {
+  return snapshot.replace(/^viewer\/snapshots\//, '').replace(/\.json$/, '');
+}
+export function cacheControl(query: URLSearchParams, sha256: string, snapshot: string) {
+  const v = query.get('v');
+  if (v && /^[a-f0-9]{8,64}$/.test(v) && sha256.startsWith(v)) return IMMUTABLE;
+  if (query.get('snap') === snapshotId(snapshot)) return IMMUTABLE;
+  return SESSION;
+}
+/** Application code and documents; everything else is looked up in the catalog. */
+export function appPath(pathname: string) {
+  return (
+    /^\/(?:src|node_modules|@[^/]+|api)(?:\/|$)/.test(pathname) ||
+    pathname === '/' ||
+    /^\/[^/]+\.html$/.test(pathname)
+  );
+}
 export function parseRange(header: string | undefined, size: number): ByteRange | false | null {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header);
@@ -48,6 +77,9 @@ export function parseRange(header: string | undefined, size: number): ByteRange 
     return false;
   return { start, end };
 }
+export function assetQuery(url: string) {
+  return new URLSearchParams(url.slice(url.indexOf('?') + 1 || url.length));
+}
 export function assetPath(url: string) {
   try {
     const raw = decodeURIComponent(url.split('?')[0]);
@@ -63,11 +95,12 @@ export function assetPath(url: string) {
     return null;
   }
 }
-export function sharedAssets(
+/** The pinned snapshot and its verified content-addressed blob cache, shared by the dev-server
+ * middleware and the `assets:warm` pre-download command so both use one download path. */
+export function blobCache(
   env: StorageEnvironment = {},
   dependencies: SharedAssetDependencies = {},
-): SharedAssetsPlugin {
-  const local = env.WANDER_ASSETS_MODE === 'local';
+): BlobCache {
   const s3 = dependencies.s3 || client(env);
   const cacheDir = dependencies.cacheDir || path.join(ROOT, '.context/shared-assets/blobs');
   const stallMs = dependencies.stallMs ?? 30000;
@@ -141,6 +174,17 @@ export function sharedAssets(
       );
     return downloads.get(f.sha256)!;
   }
+  return { catalog, cached, cacheDir, destroy: () => s3.destroy() };
+}
+
+export function sharedAssets(
+  env: StorageEnvironment = {},
+  dependencies: SharedAssetDependencies = {},
+): SharedAssetsPlugin {
+  const local = env.WANDER_ASSETS_MODE === 'local';
+  const blobs = blobCache(env, dependencies);
+  const catalog = () => blobs.catalog();
+  const cached = (f: AssetEntry) => blobs.cached(f);
   async function middleware(req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) {
     if (local) return next();
     const pathname = assetPath(req.url || '/');
@@ -150,14 +194,8 @@ export function sharedAssets(
       return;
     }
     const status = pathname === '/api/shared-assets';
-    // These are application code requests; all public assets are looked up in the catalog.
-    if (
-      !status &&
-      (/^\/(?:src|node_modules|@[^/]+|api)(?:\/|$)/.test(pathname) ||
-        pathname === '/' ||
-        /^\/[^/]+\.html$/.test(pathname))
-    )
-      return next();
+    // Application code and documents keep Vite's own no-cache handling.
+    if (!status && appPath(pathname)) return next();
     if (!['GET', 'HEAD'].includes(req.method!)) {
       res.statusCode = 405;
       res.end();
@@ -188,7 +226,10 @@ export function sharedAssets(
       }
       const etag = `"${f.sha256}"`;
       res.setHeader('ETag', etag);
-      res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+      res.setHeader(
+        'Cache-Control',
+        cacheControl(assetQuery(req.url || '/'), f.sha256, c.snapshot),
+      );
       res.setHeader('X-Wander-Asset-Source', 's3');
       res.setHeader('X-Wander-Snapshot', c.snapshot);
       res.setHeader('Accept-Ranges', 'bytes');
@@ -247,8 +288,62 @@ export function sharedAssets(
     name: 'private-shared-assets',
     configureServer(server: ViteDevServer) {
       server.middlewares.use(middleware);
-      server.httpServer?.once('close', () => s3.destroy());
+      server.httpServer?.once('close', () => blobs.destroy());
+    },
+    // Binds every asset fetch to the pinned snapshot so repeat loads need no revalidation. The page
+    // itself is never cached, so a restart on a new snapshot immediately changes every asset URL.
+    transformIndexHtml: {
+      // `post`: Vite indexes the page's own inline modules first, so injecting never renumbers them.
+      order: 'post' as const,
+      async handler(html: string) {
+        if (local) return html;
+        let id: string;
+        try {
+          id = snapshotId((await catalog()).snapshot);
+        } catch {
+          return html; // no credentials: the page still loads and reports the asset failure
+        }
+        return {
+          html,
+          tags: [
+            {
+              tag: 'script',
+              injectTo: 'head-prepend' as const,
+              children: versionShim(id),
+            },
+          ],
+        };
+      },
     },
     middleware,
   };
+}
+
+/** Appends ?snap=<id> to same-origin asset fetches. Classic inline script: it must run before the
+ * viewer's module graph. `?assetver=0` turns it off. Media elements keep their plain URLs. */
+export function versionShim(id: string) {
+  return `(function () {
+  var snap = ${JSON.stringify(id)};
+  try {
+    if (new URLSearchParams(location.search).get('assetver') === '0') return;
+  } catch (e) {
+    return;
+  }
+  var base = window.fetch;
+  if (typeof base !== 'function') return;
+  window.fetch = function (input, init) {
+    try {
+      if (typeof input === 'string' || input instanceof URL) {
+        var url = new URL(input, location.href);
+        var p = url.pathname;
+        var app = /^\\/(?:src|node_modules|@[^/]+|api)(?:\\/|$)/.test(p) || p === '/' || /^\\/[^/]+\\.html$/.test(p);
+        if (url.origin === location.origin && !app && !url.searchParams.has('snap')) {
+          url.searchParams.set('snap', snap);
+          input = url.href;
+        }
+      }
+    } catch (e) {}
+    return base.call(this, input, init);
+  };
+})();`;
 }
