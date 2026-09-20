@@ -56,9 +56,12 @@ Once joint control works, add idle and walk motion, transitions, navigation, and
 An agent can then select these actions. A skeleton by itself supplies neither locomotion nor
 convincing bottle contact. A simple rigged stand-in can test those mechanics earlier, but would
 be an illustrative replacement rather than the reconstructed person's original appearance.
-Exact retained source-state availability for the elevator cast must be verified independently
-of the existence of the generic LHM export pipeline. No conversion or headset performance has
-been demonstrated by this investigation.
+The local elevator sample archive contains both cast tracks and motion sidecars, but no
+`canonical-state.pt`, `source-poses.pt`, or GLB/FBX rig export. A canonical state is retained for
+one kitchen reconstruction; that is not the elevator cast. Recover the matching elevator state
+from the original author outputs before attempting an appearance-preserving export. If that
+state cannot be recovered, regenerating it may change the person's appearance. No conversion
+or headset performance has been demonstrated by this investigation.
 
 ## Suggested first experience
 
