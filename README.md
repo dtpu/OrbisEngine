@@ -110,14 +110,6 @@ uv run --locked --group inference scripts/run_clip.py \
 **Clips that work:** one continuous shot, 5 to 15 seconds, people at least 150 px tall, some
 sideways camera movement, decent light.
 
-## Limits
-
-- Anything the camera never saw is generated. It can look plausible and be wrong.
-- Faces under about 64 px tall in the source come out invented.
-- A dark clip, or one with almost no camera movement, fails.
-- Smoke, fire and water do not reconstruct from one camera.
-- Cuts are not handled. It processes one continuous shot at a time.
-
 ## More
 
 - [Developing](docs/DEVELOPING.md): code map, checks, Quest options, pipeline flags, repo history.
