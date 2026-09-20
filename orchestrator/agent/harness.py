@@ -391,10 +391,13 @@ class HarnessAgent:
 
 
 def _halt(process: subprocess.Popen) -> None:
-    """Stop a harness and everything it started.
+    """Stop a harness and everything it started, and do not return until it is gone.
 
     The agent's own child processes are what usually hang, and they are not the process we
-    spawned, so this signals the whole group the harness was given.
+    spawned, so this signals the whole group the harness was given. Signalling a group is not
+    atomic with waiting on one member of it: the direct child is reaped while a command it
+    started is still dying, and a harness that returned then had not stopped -- its leftovers
+    still held the workspace the next attempt was about to write into.
     """
     for stop in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -403,6 +406,20 @@ def _halt(process: subprocess.Popen) -> None:
             process.kill()
         try:
             process.wait(timeout=10)
-            return
         except subprocess.TimeoutExpired:
             continue
+        if _group_gone(process.pid, timeout=5):
+            return
+
+
+def _group_gone(group: int, *, timeout: float) -> bool:
+    """Whether every process in ``group`` has exited, waiting up to ``timeout`` for it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.killpg(group, 0)
+        except (ProcessLookupError, PermissionError):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
