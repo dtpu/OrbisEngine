@@ -93,7 +93,16 @@ class RunLifecycleActivities:
 
     @activity.defn(name="load_run_state")
     def load_run_state(self, request: RunStateInput) -> RunState:
-        """Read back a run's progress so a new scheduler can continue it."""
+        """Read back a run's progress so a new scheduler can continue it.
+
+        A scheduler starting is the run being worked on, so this is also where a run that had
+        already finished stops saying so. Every workflow start passes through here, whichever
+        way it was resumed.
+        """
+        try:
+            self.repository.reopen_run(request.run_id)
+        except KeyError:
+            pass  # a child run's rows are written by register_run, which may not have run yet
         stored = self.repository.load_run_state(request.run_id)
         if stored is None:
             return RunState()
