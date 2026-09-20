@@ -47,6 +47,18 @@ not damage the main view or walking route. Label invented appearance and unobser
   Persist attempts across resume and candidate renaming; never reset counters. A reviewing agent
   that wants a further attempt stops and asks the operator rather than deciding for itself; the
   orchestrator enforces this as `AGENT_RETRY_CAP` in `orchestrator/workflows/run.py`.
+- A retry must move something the stage actually reads. Each stage declares its overridable
+  defaults in its `parameter_schema`, with the value it would otherwise use and a sentence on
+  what the knob does; the adapters read the schema, so an attempt's `task.json` shows the value
+  the stage really ran with and the reviewing agent is told the same. Anything not declared
+  cannot be set, and a stage refuses an attempt that names one. Tolerances and guards are
+  deliberately not declared: when the only way past a stage is to loosen one, that is a question
+  for the operator, not a retry.
+- A review that writes nothing for five minutes is interrupted and resumed in the same session
+  and asked what it was waiting on (`WANDER_REVIEW_IDLE`, `WANDER_REVIEW_NUDGES`). Being stuck is
+  an answer: `human.ask` leaves the stage waiting for an operator who can resume it, with the
+  attempt's outputs intact. Unanswered nudges end the review as stalled, which reaches the
+  operator the same way, naming the transcript. A silent review is not a passed one.
 - Rerunning a stage invalidates its downstream stages; rerun them.
 - Transport failures use a separate, finite request/backoff limit that accounts for SDK retries and
   every possible charge. A transport retry does not grant another quality attempt. Paid launch
