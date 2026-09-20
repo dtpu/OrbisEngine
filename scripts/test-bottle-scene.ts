@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import * as THREE from 'three';
+import type { BottleAgentClient } from '../src/interaction/bottle-agent-client';
 import {
   BottleScene,
   type BottleSceneHost,
@@ -148,6 +149,89 @@ const hand = (position: THREE.Vector3, squeeze: boolean): InteractionHand => ({
 // without opening capture, creating credentials, or replacing the voice client.
 const speechStarted = (runtime: BottleScene) =>
   (runtime as unknown as { onSpeech(): boolean }).onSpeech();
+
+function voiceFixture(runtime: BottleScene) {
+  const client = (runtime as unknown as { client: BottleAgentClient }).client;
+  const options = (client as unknown as { options: { expired(): void } }).options;
+  let connected = false;
+  let attempts = 0;
+  const pending: Array<() => void> = [];
+  Object.defineProperty(client, 'connected', { get: () => connected });
+  client.connect = () => {
+    attempts++;
+    return new Promise<void>((resolve) => pending.push(resolve));
+  };
+  client.disconnect = () => {
+    connected = false;
+  };
+  return {
+    attempts: () => attempts,
+    async settle(success = true) {
+      connected = success;
+      pending.shift()?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+    expire() {
+      connected = false;
+      options.expired();
+    },
+  };
+}
+
+describe('BottleScene automatic voice ownership', () => {
+  test('normal expiration renews while visible; replay does not reconnect and exit cancels renewal', async () => {
+    const { runtime } = fixture();
+    const voice = voiceFixture(runtime);
+    runtime.startVoice();
+    runtime.startVoice();
+    expect(voice.attempts()).toBe(1);
+    await voice.settle();
+    runtime.replay();
+    expect(voice.attempts()).toBe(1);
+    voice.expire();
+    expect(voice.attempts()).toBe(2);
+    await voice.settle();
+    runtime.sessionEnd();
+    voice.expire();
+    expect(voice.attempts()).toBe(2);
+  });
+
+  test('visibility resumes a healthy session once but never retries a failed connection', async () => {
+    const { runtime, host } = fixture();
+    const voice = voiceFixture(runtime);
+    runtime.startVoice();
+    await voice.settle();
+    runtime.visibilityChanged(false);
+    runtime.visibilityChanged(false);
+    voice.expire();
+    expect(voice.attempts()).toBe(1);
+    expect(host.playing()).toBe(false);
+    runtime.visibilityChanged(true);
+    expect(voice.attempts()).toBe(2);
+    await voice.settle(false);
+    runtime.visibilityChanged(false);
+    runtime.visibilityChanged(true);
+    expect(voice.attempts()).toBe(2);
+    expect(host.playing()).toBe(false);
+  });
+
+  test('a cancelled connection cannot clear a newer entry attempt', async () => {
+    const { runtime } = fixture();
+    const voice = voiceFixture(runtime);
+    runtime.startVoice();
+    runtime.sessionEnd();
+    runtime.startVoice();
+    runtime.sessionStart();
+    await voice.settle(false);
+    runtime.startVoice();
+    expect(voice.attempts()).toBe(2);
+    await voice.settle();
+    runtime.stopVoice();
+    voice.expire();
+    expect(voice.attempts()).toBe(2);
+  });
+});
 
 describe('BottleScene real-physics interaction integration', () => {
   test('a bottle crossing an armed stationary hand is caught during recorded-flight interruption', () => {
