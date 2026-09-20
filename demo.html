@@ -361,27 +361,6 @@
         color: var(--dim);
         font-variant-numeric: tabular-nums;
       }
-      .grouphead {
-        width: 100%;
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        padding: 22px 24px 6px;
-        border-top: 1px solid var(--line);
-        margin-top: 4px;
-        text-align: left;
-      }
-      .grouphead:hover {
-        color: var(--ink);
-      }
-      .grouphead .chev {
-        font-weight: 500;
-        color: var(--dim);
-      }
-      #spares .card .ctitle {
-        font-size: 18px;
-      }
-
       /* ---------------- stage ---------------- */
       #stage {
         position: relative;
@@ -615,16 +594,12 @@
           <span class="label">Scenes</span><span class="count" id="railcount"></span>
         </div>
         <div class="rowset" id="primary"></div>
-        <button class="grouphead label" id="moretoggle" aria-expanded="false">
-          Spares and experiments <span class="chev" id="morestate">Show</span>
-        </button>
-        <div class="rowset" id="spares" hidden></div>
       </nav>
 
       <main id="stage">
         <iframe
           id="frame"
-          allow="autoplay; fullscreen; xr-spatial-tracking"
+          allow="autoplay; fullscreen; xr-spatial-tracking; microphone"
           title="Wander viewer"
         ></iframe>
 
@@ -659,7 +634,7 @@
 
       // Scene descriptions reflect source review and matched viewer captures.
       // Refresh them when the selected scene changes; avoid unmeasured quality claims.
-      const { CLIPS, SPARES, ALL } = await import('/src/scene-catalog.ts');
+      const { CLIPS, ALL } = await import('/src/scene-catalog.ts');
 
       /* ---------------- rail ---------------- */
       const $ = (id) => document.getElementById(id);
@@ -749,15 +724,7 @@
       }
 
       CLIPS.forEach((c, i) => $('primary').appendChild(makeCard(c, i + 1)));
-      SPARES.forEach((c) => $('spares').appendChild(makeCard(c, '')));
       $('railcount').textContent = `${CLIPS.length}`;
-      $('moretoggle').addEventListener('click', () => {
-        const s = $('spares');
-        s.hidden = !s.hidden;
-        $('moretoggle').setAttribute('aria-expanded', String(!s.hidden));
-        $('morestate').textContent = s.hidden ? 'Show' : 'Hide';
-      });
-
       /* ---------------- stage ---------------- */
       const frame = $('frame');
       mountQuestViewPanel({
@@ -811,7 +778,12 @@
         if (WALK) options.set('walk', '1');
         const outer = new URLSearchParams(location.search);
         for (const [key, value] of outer)
-          if (key === 'audio' || key === 'personsize' || key.startsWith('xr'))
+          if (
+            key === 'audio' ||
+            key === 'personsize' ||
+            key.startsWith('xr') ||
+            key.startsWith('interact')
+          )
             options.set(key, value);
         if (loadScene) {
           // Session events report only the latest request. An older rejected promise

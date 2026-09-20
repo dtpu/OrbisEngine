@@ -1,17 +1,21 @@
 import { defineConfig, loadEnv } from 'vite';
 import { sharedAssets } from './server/shared-assets.ts';
+import { bottleAgent } from './server/bottle-agent.ts';
 import { questView } from './server/quest-view.ts';
 import { preparedWorlds, SPARK_BUILD_ID } from './server/prepared-worlds.ts';
 import path from 'node:path';
 
 export default defineConfig(({ mode }) => {
-  const environment = {
-    ...loadEnv(mode, process.cwd(), 'WANDER_'),
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('WANDER_'))),
-  };
+  // The voice agent reads `OPENAI_API_KEY`, so it needs the whole environment; everything
+  // else is given only the `WANDER_` keys it is meant to see.
+  const loaded = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
+  const environment = Object.fromEntries(
+    Object.entries(loaded).filter(([key]) => key.startsWith('WANDER_')),
+  );
   return {
     define: { __WANDER_SPARK_BUILD_ID__: JSON.stringify(SPARK_BUILD_ID) },
     plugins: [
+      bottleAgent(loaded),
       questView(),
       preparedWorlds(),
       sharedAssets({

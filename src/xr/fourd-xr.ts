@@ -47,7 +47,9 @@ import { createAvatarBody } from './avatar-body';
 import { createAvatarHands } from './avatar-hands';
 import { PhysicalWalk, parseWalkGain } from './physical-walk';
 import { raycastWalkFloor } from './teleport';
+import type { BottleScene, InteractionHand } from '../interaction/bottle-scene';
 import { createQuestView } from './quest-view';
+import { ReplayButton } from './replay-button';
 import { createSceneSidebar, type SceneSidebarClip } from './scene-sidebar';
 
 type Wander = {
@@ -77,6 +79,7 @@ type Wander = {
     advance: (from: THREE.Vector3, delta: THREE.Vector3, dt: number) => THREE.Vector3;
   } | null;
   possess?: { head: THREE.Vector3; yaw: number } | null; // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
+  interaction?: BottleScene;
 };
 
 export type XrInit = {
@@ -189,6 +192,7 @@ export async function initXR({
   const upm = Math.max(1e-4, num('xrscale', wander.upm || 1));
   const mode = q.get('xrmove') === 'smooth' ? 'smooth' : 'teleport';
   const physicalWalk = new PhysicalWalk(parseWalkGain(q.get('xrwalkgain')));
+  const replayButton = new ReplayButton();
   const requestedTurnMode = q.get('xrturnmode');
   const turnMode =
     requestedTurnMode === 'smooth' || requestedTurnMode === 'snap'
@@ -298,6 +302,21 @@ export async function initXR({
 
   let floorRef = renderer.xr.getSession()?.enabledFeatures?.includes('local-floor') ?? false;
   let groundFloor = wander.walk?.floor ?? wander.floorY;
+  let visibilitySession: XRSession | null = null;
+  const onVisibilityChange = () =>
+    wander.interaction?.visibilityChanged(visibilitySession?.visibilityState === 'visible');
+  const bindVisibility = () => {
+    const session = renderer.xr.getSession();
+    if (!session || session === visibilitySession) return;
+    visibilitySession?.removeEventListener('visibilitychange', onVisibilityChange);
+    visibilitySession = session;
+    session.addEventListener('visibilitychange', onVisibilityChange);
+    onVisibilityChange();
+  };
+  const unbindVisibility = () => {
+    visibilitySession?.removeEventListener('visibilitychange', onVisibilityChange);
+    visibilitySession = null;
+  };
   const onButtonClick = () =>
     void (async () => {
       if (disposed) return;
@@ -307,6 +326,8 @@ export async function initXR({
         return;
       }
       try {
+        // Start capture while this click still has browser gesture authority; failure below releases it.
+        wander.interaction?.startVoice();
         const session = await xr.requestSession('immersive-vr', {
           optionalFeatures:
             avatarHands || avatarBody ? ['local-floor', 'hand-tracking'] : ['local-floor'],
@@ -320,6 +341,7 @@ export async function initXR({
         renderer.xr.setReferenceSpaceType(floorRef ? 'local-floor' : 'local');
         await renderer.xr.setSession(session);
       } catch (err) {
+        wander.interaction?.stopVoice();
         if (!disposed)
           note('VR unavailable: ' + (err instanceof Error ? err.message : String(err)));
       }
@@ -345,8 +367,10 @@ export async function initXR({
   let sessionStartTimer = 0;
   const onSessionStart = () => {
     if (disposed) return;
+    replayButton.reset();
     floorRef = renderer.xr.getSession()?.enabledFeatures?.includes('local-floor') ?? floorRef;
     btn.textContent = sceneNavigation ? 'Exit VR · B: scenes · A: select' : 'Exit VR';
+    bindVisibility();
     home.copy(camera.position);
     homeQ.copy(camera.quaternion);
     homeYaw = yawOf(homeQ);
@@ -395,6 +419,7 @@ export async function initXR({
 
   const onSessionEnd = () => {
     window.clearTimeout(sessionStartTimer);
+    unbindVisibility();
     resumePlayback = false;
     sidebar?.close();
     btn.textContent = 'Enter VR';
@@ -428,6 +453,8 @@ export async function initXR({
   // ---- controllers -----------------------------------------------------------------------------------
   const controllers = [0, 1].map((i) => {
     const grip = renderer.xr.getController(i);
+    const handGrip = renderer.xr.getControllerGrip(i);
+    if (!handGrip.parent) rig.add(handGrip);
     const ray = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
@@ -446,9 +473,28 @@ export async function initXR({
     grip.add(ray); // grip is in metres inside the scaled rig, so the line is in metres too
     const c = {
       grip,
+      handGrip,
       ray,
       aiming: false,
       triggerHeld: false,
+      // The native controller stays connected across scene replacement. Share the slot identity
+      // with avatar-hands; inputSources order can differ after a controller reconnects.
+      source: (renderer.xr.isPresenting
+        ? 'wanderInputSource' in handGrip.userData
+          ? handGrip.userData.wanderInputSource
+          : (renderer.xr.getSession()?.inputSources[i] ?? null)
+        : null) as XRInputSource | null,
+      index: i,
+      onConnected(event: { data: XRInputSource }) {
+        c.source = event.data;
+        handGrip.userData.wanderInputSource = c.source;
+      },
+      onDisconnected() {
+        c.source = null;
+        handGrip.userData.wanderInputSource = null;
+        c.aiming = false;
+        c.triggerHeld = false;
+      },
       onSelectStart() {
         c.triggerHeld = true;
         c.aiming = mode === 'teleport' && !sidebarOpen && !teleportBlockedUntilRelease;
@@ -458,6 +504,8 @@ export async function initXR({
         c.aiming = false;
       },
     };
+    grip.addEventListener('connected', c.onConnected);
+    grip.addEventListener('disconnected', c.onDisconnected);
     grip.addEventListener('selectstart', c.onSelectStart);
     grip.addEventListener('selectend', c.onSelectEnd);
     return c;
@@ -862,6 +910,54 @@ export async function initXR({
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
 
+    if (!wander.possess && wander.interaction) {
+      const session = renderer.xr.getSession();
+      if (session && replayButton.update(session.inputSources)) wander.interaction.replay();
+      const inputs: InteractionHand[] = [];
+      for (const controller of controllers) {
+        const source = controller.source;
+        if (!source) continue;
+        let position: THREE.Vector3 | null = null;
+        let rotation: THREE.Quaternion | null = null;
+        let squeeze = (source.gamepad?.buttons[1]?.value ?? 0) > 0.55;
+        if (source.hand) {
+          const hand = renderer.xr.getHand(controller.index);
+          const index = hand.joints['index-finger-tip'],
+            thumb = hand.joints['thumb-tip'];
+          const palm = hand.joints['middle-finger-metacarpal'];
+          if (hand.visible && index?.visible && thumb?.visible && palm?.visible) {
+            position = palm.getWorldPosition(new THREE.Vector3());
+            rotation = palm.getWorldQuaternion(new THREE.Quaternion());
+            squeeze =
+              index
+                .getWorldPosition(new THREE.Vector3())
+                .distanceTo(thumb.getWorldPosition(new THREE.Vector3())) <
+              0.025 * upm;
+          }
+        } else if (controller.handGrip.visible) {
+          position = controller.handGrip.getWorldPosition(new THREE.Vector3());
+          rotation = controller.handGrip.getWorldQuaternion(new THREE.Quaternion());
+          // Place held props inside the glove's grip, with the cap clear of the fingers.
+          position.add(
+            new THREE.Vector3(0, 0.012, -0.025).multiplyScalar(upm).applyQuaternion(rotation),
+          );
+        }
+        if (position && rotation)
+          inputs.push({
+            id: source.handedness === 'none' ? String(controller.index) : source.handedness,
+            position,
+            rotation,
+            squeeze,
+          });
+      }
+      wander.interaction.frame(
+        head,
+        tmpQ.copy(rig.quaternion).multiply(headQuaternion),
+        inputs,
+        dt,
+      );
+    }
+
     // The body consumes reference-space metres. Account for artificial travel so a planted foot
     // stays in world space while the rig walks; head tracking is already included in headLocal.
     // Possession has a recorded body of its own, so hide this illustrative observer body there.
@@ -942,16 +1038,21 @@ export async function initXR({
       renderer.xr.removeEventListener('sessionend', onSessionEnd);
       walkReferenceSpace?.removeEventListener('reset', resetPhysicalWalk);
       btn.removeEventListener('click', onButtonClick);
+      unbindVisibility();
+      wander.interaction?.stopVoice();
       sidebar?.dispose();
       window.removeEventListener('wander:scenechange', onSceneChange);
       avatarHands?.dispose();
       avatarBody?.dispose();
       questView?.dispose();
       for (const c of controllers) {
+        c.grip.removeEventListener('connected', c.onConnected);
+        c.grip.removeEventListener('disconnected', c.onDisconnected);
         c.grip.removeEventListener('selectstart', c.onSelectStart);
         c.grip.removeEventListener('selectend', c.onSelectEnd);
         c.grip.remove(c.ray);
         rig.remove(c.grip);
+        rig.remove(c.handGrip);
         c.ray.geometry.dispose();
         c.ray.material.dispose();
       }
