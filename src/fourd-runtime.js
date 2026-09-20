@@ -65,6 +65,18 @@ export async function createFourD({ search, renderer, root, scope }) {
   let interaction = null;
   // ?demo=corridor: judge preset (clean image world, final alignment, camera behind/above the elder)
   const DEMOS = {
+    'img5594-video-baseline': {
+      world: '/marble-img5594-video-baseline-clean.spz',
+      person: '/worlds/img5594-video-baseline-4d/people.json',
+      video: '/clips/img5594-video-baseline/playback-original-audio.mp4',
+      place: '1',
+      rot: '0,0,0',
+      rotfix: '0',
+      feetmode: 'sfm',
+      feetlock: '0',
+      stance: '0',
+      camdrift: '0',
+    },
     corridor: {
       world: '/marble-corridor-clean-image.spz',
       floor: '-0.8101',
