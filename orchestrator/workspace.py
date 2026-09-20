@@ -14,6 +14,21 @@ from typing import Any
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
+# Files a stage's own tooling writes to coordinate itself, never outputs of the stage. A lock
+# is empty by design, and the emptiness check exists to catch an output that was truncated.
+INCIDENTAL_SUFFIXES = (".lock",)
+
+
+def is_output_file(path: Path) -> bool:
+    """Whether a file under an attempt can carry one of the stage's declared roles.
+
+    Both the QA validator and the freezer ask this, because they have to agree: a file one
+    counts and the other does not is how a stage passes its own checks and then hands the next
+    stage nothing (or, here, fails on a lock file the stage never meant to produce).
+    """
+    return path.is_file() and not path.is_symlink() and path.suffix not in INCIDENTAL_SUFFIXES
+
+
 def safe_id(value: str) -> str:
     if not SAFE_ID.fullmatch(value):
         raise ValueError(f"unsafe workspace identifier: {value!r}")
