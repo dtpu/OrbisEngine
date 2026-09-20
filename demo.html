@@ -136,17 +136,6 @@
         line-height: 1;
         padding-top: 2px;
       }
-      .tagline {
-        font-size: 13.5px;
-        color: var(--mute);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .tagline b {
-        font-weight: 500;
-        color: var(--ink-2);
-      }
       .spacer {
         flex: 1;
       }
@@ -181,6 +170,71 @@
       }
       .hbtn kbd {
         background: var(--bg);
+      }
+      .hbtn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .hbtn[hidden] {
+        display: none;
+      }
+      .hmenu {
+        position: relative;
+      }
+      .pop {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 10px);
+        z-index: 30;
+        width: 280px;
+        padding: 12px 16px 16px;
+        background: #fff;
+        border: 1px solid var(--line-2);
+        border-radius: 14px;
+        box-shadow: 0 10px 30px #1e1d2214;
+      }
+      .pop[hidden] {
+        display: none;
+      }
+      .pophead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .popclose {
+        width: 28px;
+        height: 28px;
+        margin-right: -6px;
+        border-radius: 999px;
+        font-size: 17px;
+        line-height: 1;
+        color: var(--ink-2);
+        transition: background 0.15s;
+      }
+      .popclose:hover {
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .keys {
+        margin: 0;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 9px 14px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .keys dt {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-weight: 600;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      .keys dd {
+        margin: 0;
+        color: var(--mute);
       }
 
       /* ---------------- rail ---------------- */
@@ -357,28 +411,11 @@
         color: var(--ink);
       }
 
-      /* source-clip caption. The viewer's own PIP is repositioned into this shell's layout
-   (position:fixed there = anchored to this stage), so nothing is decoded twice. */
-      #srccap {
-        left: 24px;
-        bottom: 250px;
-        width: 300px;
-        padding: 12px 14px 13px;
-        opacity: 0;
-        transition: opacity 0.2s;
-      }
-      #srccap .txt {
-        font-size: 13px;
-        line-height: 1.45;
-        color: var(--ink-2);
-        margin-top: 4px;
-      }
-
       /* edge of the filmed world */
       #edgelab {
         left: 50%;
         transform: translateX(-50%);
-        bottom: 92px;
+        bottom: 24px;
         padding: 10px 16px;
         font-size: 13px;
         color: var(--ink-2);
@@ -397,32 +434,17 @@
         color: var(--mute);
       }
 
-      /* control bar */
-      #bar {
-        left: 50%;
-        transform: translateX(-50%);
-        bottom: 24px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px;
-        border-radius: 999px;
-        white-space: nowrap;
-      }
+      /* scene actions in the header */
       #play {
-        height: 38px;
-        padding: 0 18px;
-        border-radius: 999px;
         background: var(--pill);
+        border-color: var(--pill);
         color: #fff;
         font-weight: 600;
-        font-size: 13.5px;
-        transition:
-          background 0.15s,
-          opacity 0.15s;
       }
       #play:hover:not(:disabled) {
         background: #000;
+        border-color: #000;
+        color: #fff;
       }
       #play:disabled {
         opacity: 0.35;
@@ -430,44 +452,14 @@
       }
       #play.running {
         background: #fff;
+        border-color: var(--line-2);
         color: var(--ink);
-        box-shadow: inset 0 0 0 1px var(--line-2);
       }
-      .sep {
+      .vsep {
         width: 1px;
         height: 22px;
         background: var(--line-2);
-        margin: 0 6px;
-      }
-      .keys {
-        display: flex;
-        gap: 18px;
-        font-size: 12.5px;
-        color: var(--mute);
-        padding: 0 4px;
-      }
-      .keys b {
-        font-weight: 600;
-        color: var(--ink-2);
-      }
-      .keys kbd + kbd {
-        margin-left: 2px;
-      }
-      .minibtn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        height: 38px;
-        padding: 0 14px;
-        border-radius: 999px;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--ink-2);
-        transition: background 0.15s;
-      }
-      .minibtn:hover {
-        background: var(--surface-2);
-        color: var(--ink);
+        margin: 0 -6px;
       }
 
       /* loading */
@@ -557,93 +549,65 @@
         background: #000;
       }
 
-      /* Narrow viewports: keep Play, Source clip and Reset reachable by shrinking the rail and
-         dropping the key hints before the bar outgrows the stage. */
+      /* Narrow viewports: shrink the rail. */
       @media (max-width: 1280px) {
         :root {
           --rail: 260px;
-        }
-        .tagline {
-          display: none;
         }
         .ctitle {
           font-size: 18px;
         }
       }
-      @media (max-width: 1100px) {
-        .keys {
-          display: none;
-        }
-        .keys + .sep {
-          display: none;
-        }
-      }
-      @media (max-width: 860px) {
-        #bar {
-          max-width: calc(100% - 32px);
-          white-space: normal;
-          flex-wrap: wrap;
-          justify-content: center;
-          border-radius: 20px;
-        }
-        .sep {
-          display: none;
-        }
-      }
-
-      /* recorded reel */
-      #reelwrap {
-        inset: 0;
-        z-index: 9;
-        background: var(--bg);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-      }
-      #reelwrap.on {
-        display: flex;
-      }
-      #reelvid {
-        max-width: 92%;
-        max-height: 86%;
-        border-radius: 12px;
-        background: #000;
-      }
-      #reelclose {
-        position: absolute;
-        top: 24px;
-        right: 24px;
-        height: 34px;
-        padding: 0 14px;
-        border-radius: 999px;
-        border: 1px solid var(--line-2);
-        font-weight: 500;
-        font-size: 13px;
-        color: var(--ink-2);
-      }
-      #reelclose:hover {
-        background: var(--surface);
-        color: var(--ink);
-      }
     </style>
   </head>
   <body>
-    <div id="shell">
+    <div id="shell" class="norail">
       <header>
-        <button class="railbtn" id="railbtn" aria-label="Hide scene list" aria-expanded="true">
+        <button class="railbtn" id="railbtn" aria-label="Show scene list" aria-expanded="false">
           <span></span><span></span><span></span>
         </button>
         <div class="wordmark">Wander</div>
-        <div class="vrule"></div>
-        <div class="tagline">
-          One ordinary video clip in.
-          <b>A place you can walk around in, with the people still moving.</b>
-        </div>
         <div class="spacer"></div>
-        <button class="hbtn" id="reelbtn" hidden>Recorded reel · 65 s</button>
+        <button class="hbtn" id="play" disabled>
+          <span id="playlabel">Play camera move</span>
+        </button>
+        <button class="hbtn" id="srcbtn">Source clip</button>
+        <button class="hbtn" id="resetbtn">Reset</button>
+        <div class="vsep"></div>
+        <button class="hbtn" id="soundbtn" aria-pressed="false" disabled>Sound</button>
+        <button class="hbtn" id="audiomodebtn" aria-pressed="false" hidden>Spatial dialogue</button>
         <button class="hbtn" id="questviewbtn">Quest view</button>
-        <button class="hbtn" id="hudbtn">Debug HUD <kbd>H</kbd></button>
+        <div class="hmenu">
+          <button class="hbtn" id="helpbtn" aria-expanded="false" aria-controls="helppop">
+            Controls
+          </button>
+          <div class="pop" id="helppop" role="dialog" aria-label="Controls" hidden>
+            <div class="pophead">
+              <span class="label">Controls</span>
+              <button class="popclose" id="helpclose" aria-label="Close controls">×</button>
+            </div>
+            <dl class="keys">
+              <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
+              <dd>walk</dd>
+              <dt>drag</dt>
+              <dd>look around</dd>
+              <dt>scroll</dt>
+              <dd>move in and out</dd>
+              <dt><kbd>Shift</kbd></dt>
+              <dd>faster</dd>
+              <dt><kbd>Enter</kbd></dt>
+              <dd>play / pause</dd>
+              <dt><kbd>V</kbd></dt>
+              <dd>source clip</dd>
+              <dt><kbd>R</kbd></dt>
+              <dd>reset view</dd>
+              <dt><kbd>1</kbd>–<kbd>5</kbd></dt>
+              <dd>choose a scene</dd>
+              <dt><kbd>[</kbd></dt>
+              <dd>scene list</dd>
+            </dl>
+          </div>
+        </div>
       </header>
 
       <nav id="rail">
@@ -664,29 +628,9 @@
           title="Wander viewer"
         ></iframe>
 
-        <div class="ov panel" id="srccap">
-          <div class="label">Source clip</div>
-          <div class="txt" id="srctxt"></div>
-        </div>
-
         <div class="ov panel" id="edgelab">
           <b>Edge of what was filmed.</b> Let go and it eases you back.
           <span><kbd>R</kbd> resets the view</span>
-        </div>
-
-        <div class="ov panel" id="bar">
-          <button id="play" disabled><span id="playlabel">Play camera move</span></button>
-          <div class="sep"></div>
-          <div class="keys">
-            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <b>walk</b></span>
-            <span><b>drag</b> to look</span>
-            <span><b>scroll</b> in/out</span>
-            <span><kbd>Shift</kbd> <b>faster</b></span>
-            <span><kbd>Enter</kbd> <b>play/pause</b></span>
-          </div>
-          <div class="sep"></div>
-          <button class="minibtn" id="srcbtn">Source clip <kbd>V</kbd></button>
-          <button class="minibtn" id="resetbtn">Reset <kbd>R</kbd></button>
         </div>
 
         <div class="ov" id="loading">
@@ -696,11 +640,6 @@
           <div id="loadbar" class="indet"><i></i></div>
           <div id="loadmsg" role="status" aria-live="polite">loading…</div>
           <button id="loadretry" hidden>Retry scene</button>
-        </div>
-
-        <div class="ov" id="reelwrap">
-          <video id="reelvid" controls playsinline></video>
-          <button class="panel" id="reelclose">Close</button>
         </div>
       </main>
     </div>
@@ -1005,8 +944,6 @@
         for (const el of document.querySelectorAll('.card'))
           el.classList.toggle('on', el.dataset.id === id);
 
-        $('srctxt').textContent = c.srctxt;
-
         $('play').disabled = true;
         setPlayLabel(false);
         driving.clear();
@@ -1121,19 +1058,22 @@
         s.id = 'wander-demo-chrome';
         s.textContent = `
     #hud{display:none!important}
-    #walk-map{left:20px!important;right:auto!important;top:20px!important}
+    #walk-map{display:none!important}
+    #audio-controls{display:none!important}
     body.wd-hud #hud{display:block!important;left:20px;top:20px;background:#f7f7f8;color:#1e1d22;
       border:1px solid #fff;border-radius:12px;padding:11px 13px;font-size:11px}
     #hint{display:none!important}
-    #audio-credit{bottom:100px!important}
-    #pip{left:24px!important;right:auto!important;bottom:86px!important;width:300px!important;
+    #audio-credit{right:16px!important;bottom:24px!important;padding:6px 10px!important;border-radius:999px!important;
+      background:#f0f0f2f2!important;color:#4b4a52!important;border:1px solid #f8f8f9;font:11.5px system-ui!important}
+    #audio-credit a{color:#1e1d22!important}
+    #pip{left:24px!important;right:auto!important;bottom:24px!important;width:300px!important;
       border:0!important;border-radius:12px;outline:1px solid #ffffff;background:#000}
     #pip.hidden{display:none}
-    body.wd-hud #pip{bottom:86px!important}
+    body.wd-hud #pip{bottom:24px!important}
     #xrBtn{top:20px!important;left:50%!important;right:auto!important;bottom:auto!important;
-      transform:translateX(-50%)!important;min-height:44px!important;padding:10px 16px!important;
-      border-radius:9px!important;background:#e8c07a!important;color:#17130a!important;
-      font-weight:600!important;box-shadow:0 8px 24px #0008}
+      transform:translateX(-50%)!important;min-height:38px!important;padding:0 18px!important;
+      border:0!important;border-radius:999px!important;background:#2a292f!important;color:#fff!important;
+      font:600 13.5px system-ui,sans-serif!important;box-shadow:none!important}
   `;
         doc.head.appendChild(s);
         if (hudOn) doc.body.classList.add('wd-hud');
@@ -1143,7 +1083,7 @@
       function setPlayLabel(running) {
         $('play').classList.toggle('running', running);
         $('playlabel').textContent = running
-          ? 'Playing — click or press a key to take over'
+          ? 'Playing — press any key to stop'
           : 'Play camera move';
       }
       function api() {
@@ -1200,28 +1140,6 @@
           setPlayLabel(r);
         }
       }, 120);
-
-      // The viewer's inset keeps its own aspect ratio (tos31 is 1920x800, the phone clips are 16:9),
-      // so the caption is measured against it rather than given a fixed offset.
-      function placeCaption() {
-        let pip;
-        try {
-          pip = frame.contentWindow.document.getElementById('pip');
-        } catch {
-          return;
-        }
-        const cap = $('srccap');
-        if (!pip || pip.classList.contains('hidden') || !pip.getBoundingClientRect().height) {
-          cap.style.opacity = '0';
-          return;
-        }
-        cap.style.opacity = '1';
-        const st = $('stage').getBoundingClientRect(),
-          pr = pip.getBoundingClientRect();
-        cap.style.bottom = Math.round(st.bottom - pr.top + 8) + 'px';
-      }
-      setInterval(placeCaption, 400);
-      addEventListener('resize', placeCaption);
 
       /* ---------------- edge of the filmed world ----------------
    The viewer's soft boundary lets driven motion coast to a stop at a hard limit where its fade has
@@ -1282,13 +1200,12 @@
 
       /* ---------------- HUD + rail ---------------- */
       let hudOn = false,
-        railOn = true;
+        railOn = false;
       function toggleHud(v) {
         hudOn = v === undefined ? !hudOn : v;
         try {
           frame.contentWindow.document.body.classList.toggle('wd-hud', hudOn);
         } catch {}
-        $('hudbtn').classList.toggle('on', hudOn);
       }
       function toggleRail(v) {
         railOn = v === undefined ? !railOn : v;
@@ -1296,13 +1213,81 @@
         $('railbtn').setAttribute('aria-expanded', String(railOn));
         $('railbtn').setAttribute('aria-label', railOn ? 'Hide scene list' : 'Show scene list');
       }
-      $('hudbtn').addEventListener('click', () => {
-        toggleHud();
+      $('railbtn').addEventListener('click', () => toggleRail());
+
+      /* ---------------- sound ----------------
+   The viewer's own sound buttons are hidden by dress(); this header button drives its audio through
+   the window.wander API and mirrors its state. */
+      const soundBtn = $('soundbtn'),
+        modeBtn = $('audiomodebtn');
+      // Scenes with reviewed spatial tracks offer a second mode; the button only appears for them.
+      modeBtn.addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        w.setAudioMode(w.audioState.mode === 'spatial' ? 'original' : 'spatial');
         try {
           frame.contentWindow.focus();
         } catch {}
       });
-      $('railbtn').addEventListener('click', () => toggleRail());
+      soundBtn.addEventListener('click', () => {
+        const w = api();
+        if (!w) return;
+        const st = w.audioState;
+        if (st.muted || !st.unlocked) {
+          w.setMuted(false);
+          void w.unlockAudio();
+        } else w.setMuted(true);
+        try {
+          frame.contentWindow.focus();
+        } catch {}
+      });
+      setInterval(() => {
+        let st = null;
+        try {
+          st = ready ? (api()?.audioState ?? null) : null;
+        } catch {}
+        if (!st) {
+          soundBtn.disabled = true;
+          soundBtn.classList.remove('on');
+          soundBtn.textContent = 'Sound';
+          modeBtn.hidden = true;
+          return;
+        }
+        modeBtn.hidden = !st.spatialReady;
+        modeBtn.classList.toggle('on', st.mode === 'spatial');
+        modeBtn.setAttribute('aria-pressed', String(st.mode === 'spatial'));
+        const unavailable = st.hasAudio === false && !st.loading;
+        const on = !st.muted && st.unlocked;
+        soundBtn.disabled = unavailable;
+        soundBtn.classList.toggle('on', on);
+        soundBtn.setAttribute('aria-pressed', String(on));
+        soundBtn.textContent = st.loading
+          ? 'Loading sound…'
+          : unavailable
+            ? 'No sound'
+            : on
+              ? 'Sound on'
+              : 'Sound off';
+      }, 300);
+
+      /* ---------------- controls popover ---------------- */
+      const helpBtn = $('helpbtn'),
+        helpPop = $('helppop');
+      function setHelp(open) {
+        helpPop.hidden = !open;
+        helpBtn.setAttribute('aria-expanded', String(open));
+        helpBtn.classList.toggle('on', open);
+      }
+      helpBtn.addEventListener('click', () => setHelp(helpPop.hidden));
+      $('helpclose').addEventListener('click', () => {
+        setHelp(false);
+        helpBtn.focus();
+      });
+      document.addEventListener('pointerdown', (e) => {
+        if (!helpPop.hidden && !e.target.closest?.('.hmenu')) setHelp(false);
+      });
+      // A click into the viewer iframe never reaches this document, but it does blur the window.
+      addEventListener('blur', () => setHelp(false));
 
       // Shortcuts have to be installed in both documents: once the judge clicks into the scene,
       // key events go to the iframe and never reach this page.
@@ -1409,12 +1394,7 @@
               e.preventDefault();
               return;
             }
-            if (
-              doc === document &&
-              FORWARD.has(e.code) &&
-              ready &&
-              !$('reelwrap').classList.contains('on')
-            ) {
+            if (doc === document && FORWARD.has(e.code) && ready) {
               e.preventDefault();
               forward(e);
               return;
@@ -1426,7 +1406,7 @@
               return;
             }
             if (e.code === 'Escape') {
-              closeReel();
+              setHelp(false);
               return;
             }
             const n = /^Digit([1-9])$/.exec(e.code);
@@ -1463,34 +1443,6 @@
           { passive: false },
         );
       }
-
-      /* ---------------- recorded reel fallback ---------------- */
-      const REEL = '/reel-65s.mp4';
-      fetch(REEL, { method: 'HEAD' })
-        .then((r) => {
-          if (r.ok && !(r.headers.get('content-type') || '').startsWith('text/html'))
-            $('reelbtn').hidden = false;
-        })
-        .catch(() => {});
-      $('reelbtn').addEventListener('click', () => {
-        api()?.play(false);
-        $('reelvid').src = REEL;
-        $('reelwrap').classList.add('on');
-        $('reelvid')
-          .play()
-          .catch(() => {});
-      });
-      function closeReel() {
-        if (!$('reelwrap').classList.contains('on')) return;
-        $('reelvid').pause();
-        $('reelvid').removeAttribute('src');
-        $('reelvid').load();
-        $('reelwrap').classList.remove('on');
-      }
-      $('reelclose').addEventListener('click', closeReel);
-      $('reelwrap').addEventListener('click', (e) => {
-        if (e.target === $('reelwrap')) closeReel();
-      });
 
       /* ---------------- boot ---------------- */
       const want = new URLSearchParams(location.search).get('clip');
