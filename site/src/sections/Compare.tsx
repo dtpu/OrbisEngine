@@ -27,7 +27,8 @@ const compareScenes: CompareScene[] = [
   },
   {
     id: 'gym',
-    caption: 'Gym at 8.0 s, dumbbells raised. Viewpoint: OFFSET_GYM.',
+    caption:
+      'Gym at 8.0 s, dumbbells raised. Viewpoint: 1.0 body-heights right and 0.4 forward of where the walk starts.',
   },
 ];
 
