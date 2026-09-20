@@ -7,13 +7,14 @@ const candidate = (id: string, x: number, z = 0, eligible = true) => ({
   position: [x, 1, z] as [number, number, number],
   eligible,
 });
-const detector = () =>
+const detector = (allowInitialApproach = false) =>
   new ApproachDetector({
-    enterDistance: 1,
-    exitDistance: 1.5,
-    dwellSeconds: 0.4,
-    minApproachDistance: 0.2,
-    facingCos: 0.5,
+    enterDistance: 0.95,
+    exitDistance: 0.95 * 1.35,
+    dwellSeconds: 0.3,
+    minApproachDistance: 0.035,
+    facingCos: 0.35,
+    allowInitialApproach,
   });
 const update = (
   subject: ApproachDetector,
@@ -29,8 +30,16 @@ describe('proximity approach detection', () => {
     expect(update(subject, visitor(3), [candidate('alex', 0)])).toBeNull();
     expect(update(subject, visitor(0.9), [candidate('alex', 0)])).toBeNull();
     expect(update(subject, visitor(0.7), [candidate('alex', 0)])).toBeNull();
-    expect(update(subject, visitor(0.65), [candidate('alex', 0)])).toBeNull();
-    expect(update(subject, visitor(0.6), [candidate('alex', 0)])).toBe('alex');
+    expect(update(subject, visitor(0.65), [candidate('alex', 0)])).toBe('alex');
+  });
+
+  test('an initial-inside visitor may approach deliberately, but still needs net movement and dwell', () => {
+    const subject = detector(true);
+    for (let i = 0; i < 8; i++)
+      expect(update(subject, visitor(0.6), [candidate('alex', 0)])).toBeNull();
+    expect(update(subject, visitor(0.56), [candidate('alex', 0)])).toBeNull();
+    expect(update(subject, visitor(0.51), [candidate('alex', 0)])).toBeNull();
+    expect(update(subject, visitor(0.46), [candidate('alex', 0)])).toBe('alex');
   });
 
   test('initial or reset-inside positions do not fire until departure beyond exit and a new approach', () => {
@@ -40,8 +49,7 @@ describe('proximity approach detection', () => {
     expect(update(subject, visitor(2), [candidate('alex', 0)])).toBeNull();
     expect(update(subject, visitor(0.8), [candidate('alex', 0)])).toBeNull();
     expect(update(subject, visitor(0.6), [candidate('alex', 0)])).toBeNull();
-    expect(update(subject, visitor(0.5), [candidate('alex', 0)])).toBeNull();
-    expect(update(subject, visitor(0.45), [candidate('alex', 0)])).toBe('alex');
+    expect(update(subject, visitor(0.5), [candidate('alex', 0)])).toBe('alex');
 
     subject.reset(visitor(0.5));
     for (let i = 0; i < 8; i++)
@@ -80,11 +88,11 @@ describe('proximity approach detection', () => {
     ).toBeNull();
     // Alpha becomes closer after the detector has selected bravo; it must not steal this dwell.
     expect(
-      update(subject, visitor(0.62), [candidate('bravo', 0), candidate('alpha', 0.55)]),
+      update(subject, visitor(0.62), [candidate('bravo', 0), candidate('alpha', 0.55)], 0.09),
     ).toBeNull();
-    expect(update(subject, visitor(0.55), [candidate('bravo', 0), candidate('alpha', 0.54)])).toBe(
-      'bravo',
-    );
+    expect(
+      update(subject, visitor(0.55), [candidate('bravo', 0), candidate('alpha', 0.54)], 0.1),
+    ).toBe('bravo');
     for (let i = 0; i < 8; i++) {
       expect(
         update(subject, visitor(0.52), [candidate('bravo', 0), candidate('alpha', 0.54)]),
@@ -117,13 +125,6 @@ describe('proximity approach detection', () => {
     ).toBeNull();
     expect(
       update(subject, visitor(0.6), [
-        candidate('zeta', 0),
-        candidate('alpha', 0),
-        candidate('hidden', 0, 0, false),
-      ]),
-    ).toBeNull();
-    expect(
-      update(subject, visitor(0.5), [
         candidate('zeta', 0),
         candidate('alpha', 0),
         candidate('hidden', 0, 0, false),

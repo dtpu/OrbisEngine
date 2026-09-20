@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { BottlePhysics, type Vec3 } from './bottle-physics';
 import { ApproachDetector } from './approach';
 import { BottleAgentClient } from './bottle-agent-client';
+import { BottleVisual } from './bottle-visual';
 import {
   nearestHeldTime,
   parseHeadTrack,
   recordedState,
   sampleVector,
+  segments,
   yawBetween,
   type HeadTrack,
   type ObjectMetadata,
@@ -81,6 +83,9 @@ export class BottleScene {
   private readonly fetchAbort = new AbortController();
   private readonly marker: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private readonly speaker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  private readonly visual: BottleVisual;
+  private readonly voiceDistance: number;
+  private readonly grabReach: number;
   private active: InteractionPerson | null = null;
   private target: Attachment | null = null;
   private attached: Attachment | null = null;
@@ -97,7 +102,7 @@ export class BottleScene {
   private resumeVoice = false;
   private xrVisible = true;
   private voiceStatus = 'Mic off';
-  private status = 'Playing · approach closely or grip the bottle';
+  private status = 'Playing · approach, speak, or grip the bottle';
   private lastEvent = 'playing';
   private epoch = 0;
   private speaking = false;
@@ -133,13 +138,23 @@ export class BottleScene {
       const value = host.params.has(key) ? Number(host.params.get(key)) : fallback;
       return Number.isFinite(value) ? THREE.MathUtils.clamp(value, lo, hi) : fallback;
     };
-    const enter = setting('interactDistance', 0.3, 0.12, 0.6) * host.stature;
+    const enter = setting('interactDistance', 0.95, 0.12, 1.8) * host.stature;
+    this.voiceDistance = setting('interactVoiceDistance', 1.8, 0.5, 3) * host.stature;
+    this.grabReach = setting('interactReach', 0.12, 0.04, 0.2) * host.stature;
     this.approach = new ApproachDetector({
       enterDistance: enter,
-      exitDistance: enter * 1.5,
-      dwellSeconds: setting('interactDwell', 0.4, 0.1, 1.5),
-      facingCos: 0.5,
+      exitDistance: enter * 1.35,
+      dwellSeconds: setting('interactDwell', 0.3, 0.1, 1.5),
+      minApproachDistance: 0.035 * host.stature,
+      facingCos: 0.35,
+      allowInitialApproach: true,
     });
+    this.visual = new BottleVisual(
+      host.stature,
+      size?.length === 3 ? new THREE.Vector3(...size).multiplyScalar(scale) : undefined,
+    );
+    host.scene.add(this.visual.group);
+    this.visual.group.visible = false;
     this.marker = new THREE.Mesh(
       new THREE.RingGeometry(0.068 * host.stature, 0.075 * host.stature, 48),
       new THREE.MeshBasicMaterial({
@@ -153,6 +168,8 @@ export class BottleScene {
     this.marker.name = 'assisted-return-target';
     this.marker.renderOrder = 1002;
     this.marker.visible = false;
+    this.visual.proxy.visible = false;
+    this.visual.locator.visible = false;
     this.speaker = new THREE.Mesh(
       new THREE.SphereGeometry(0.018 * host.stature, 12, 8),
       new THREE.MeshBasicMaterial({
@@ -226,7 +243,9 @@ export class BottleScene {
 
   private forward(person: InteractionPerson) {
     const track = this.tracks.get(person.id);
-    if (!track?.forward) return null;
+    // Without a packaged facing track, use the reconstructed group's approximate forward axis.
+    if (!track?.forward)
+      return new THREE.Vector3(0, 0, 1).transformDirection(person.group.matrixWorld);
     return sampleVector(track.forward, track.times, this.host.time()).transformDirection(
       person.group.matrixWorld,
     );
@@ -252,23 +271,27 @@ export class BottleScene {
         )
         .filter(
           ({ anchor }) =>
-            anchor.distanceTo(this.head) < 0.8 * this.host.stature &&
-            anchor.clone().sub(this.head).normalize().dot(facing) > 0.45 &&
+            anchor.distanceTo(this.head) < this.voiceDistance &&
+            anchor.clone().sub(this.head).normalize().dot(facing) > 0.2 &&
             this.clearPath(this.head, anchor),
         )
-        .sort(
-          (a, b) => a.anchor.distanceToSquared(this.head) - b.anchor.distanceToSquared(this.head),
-        )[0]?.person ?? null
+        .sort((a, b) => {
+          const score = (anchor: THREE.Vector3) =>
+            anchor.clone().sub(this.head).normalize().dot(facing) -
+            (0.15 * anchor.distanceTo(this.head)) / this.voiceDistance;
+          return score(b.anchor) - score(a.anchor);
+        })[0]?.person ?? null
     );
   }
 
-  private canAddress(person: InteractionPerson) {
+  private canAddress(person: InteractionPerson, continuing = false) {
     const anchor = this.anchor(person);
     if (!anchor) return false;
     const toward = anchor.clone().sub(this.head);
     return (
-      toward.length() < 0.8 * this.host.stature &&
-      toward.normalize().dot(new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation)) > 0.45 &&
+      toward.length() < this.voiceDistance * (continuing ? 1.4 : 1) &&
+      (continuing ||
+        toward.normalize().dot(new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation)) > 0.2) &&
       this.clearPath(this.head, anchor)
     );
   }
@@ -352,6 +375,9 @@ export class BottleScene {
       }
       this.bottle.mesh.getWorldQuaternion(this.bottleRotation);
       this.prepareTarget(person);
+    } else if (this.active !== person) {
+      this.active = person;
+      this.prepareTarget(person);
     }
     this.lastEvent = reason;
     this.status =
@@ -364,10 +390,20 @@ export class BottleScene {
 
   private onSpeech(): boolean {
     if (!this.xrActive || this.muted || this.disposed) return false;
-    const person = this.interrupted ? this.active : this.choosePerson();
+    const addressed = this.choosePerson();
+    let person = this.interrupted ? this.active : addressed;
+    if (this.interrupted && addressed && addressed !== this.active) {
+      const facing = new THREE.Vector3(0, 0, -1).applyQuaternion(this.rotation);
+      const score = (candidate: InteractionPerson | null) => {
+        const anchor = candidate && this.anchor(candidate);
+        return anchor ? anchor.sub(this.head).normalize().dot(facing) : -1;
+      };
+      if (score(addressed) > 0.65 && score(addressed) > score(this.active) + 0.25)
+        person = addressed;
+    }
     if (!person || !person.group.visible || !this.anchor(person)) return false;
-    if (!this.canAddress(person)) return false;
-    if (!this.interrupted) return this.interrupt('speech', person.id);
+    if (!this.canAddress(person, this.interrupted && person === this.active)) return false;
+    if (!this.interrupted || person !== this.active) return this.interrupt('speech', person.id);
     return true;
   }
 
@@ -383,7 +419,7 @@ export class BottleScene {
     pivot.attach(object);
   }
 
-  private facePerson(): boolean {
+  private facePerson(deltaSeconds?: number): boolean {
     const person = this.active;
     if (!person) return false;
     const position = this.anchor(person),
@@ -412,7 +448,15 @@ export class BottleScene {
     desired.y = 0;
     facing.y = 0;
     if (desired.lengthSq() < 1e-8 || facing.lengthSq() < 1e-8) return false;
-    pivot.quaternion.premultiply(yawBetween(facing, desired));
+    const turn = yawBetween(facing, desired);
+    if (deltaSeconds !== undefined) {
+      const rawAngle = 2 * Math.atan2(turn.y, turn.w);
+      const angle = Math.atan2(Math.sin(rawAngle), Math.cos(rawAngle));
+      const dt = THREE.MathUtils.clamp(deltaSeconds, 0, 0.1);
+      const step = THREE.MathUtils.clamp(angle * (1 - Math.exp(-5 * dt)), -1.6 * dt, 1.6 * dt);
+      turn.setFromAxisAngle(new THREE.Vector3(0, 1, 0), step);
+    }
+    pivot.quaternion.premultiply(turn);
     pivot.updateMatrixWorld(true);
     return true;
   }
@@ -462,6 +506,8 @@ export class BottleScene {
     this.bottle.mesh.visible = true;
     this.airborneSeconds = 0;
     this.marker.visible = false;
+    this.visual.proxy.visible = false;
+    this.visual.locator.visible = false;
   }
 
   replay(play = true) {
@@ -476,7 +522,7 @@ export class BottleScene {
     this.hands.clear();
     this.armedHands.clear();
     this.lastEvent = play ? 'replayed' : 'reset';
-    this.status = play ? 'Playing · approach closely or grip the bottle' : 'Scene reset · paused';
+    this.status = play ? 'Playing · approach, speak, or grip the bottle' : 'Scene reset · paused';
     this.host.play(play);
     this.client.setPlayback(play);
     this.client.notify(this.snapshot(), false);
@@ -568,6 +614,7 @@ export class BottleScene {
   }
   sessionStart() {
     this.xrActive = true;
+    this.visual.group.visible = true;
     this.lastFrame = performance.now();
     this.approach.reset();
     this.hands.clear();
@@ -595,6 +642,8 @@ export class BottleScene {
     this.xrVisible = true;
     this.marker.visible = false;
     this.speaker.visible = false;
+    this.visual.group.visible = false;
+    this.bottle.mesh.visible = !this.lost && this.bottle.group.visible;
   }
   ended() {
     this.host.play(false);
@@ -614,6 +663,7 @@ export class BottleScene {
     this.lastFrame = now;
     this.head.copy(head);
     this.rotation.copy(rotation);
+    if (this.interrupted && this.active && this.canAddress(this.active, true)) this.facePerson(dt);
     if (!this.interrupted)
       this.physics.setRecordedPosition(
         tuple(this.bottle.mesh.getWorldPosition(new THREE.Vector3())),
@@ -631,7 +681,7 @@ export class BottleScene {
         this.bottle.group.visible &&
         this.physics.canGrabSegment(
           tuple(input.position),
-          0.055 * this.host.stature,
+          this.grabReach,
           previous && tuple(previous.position),
         );
       if (input.squeeze && this.armedHands.has(input.id) && !state.holder && reachable) {
@@ -641,15 +691,15 @@ export class BottleScene {
           this.physics.grab(
             input.id,
             tuple(input.position),
-            0.055 * this.host.stature,
+            this.grabReach,
             previous && tuple(previous.position),
           )
         ) {
           this.attached = null;
           this.bottle.interactionOwned = true;
           this.showTarget = true;
-          this.bottle.mesh.getWorldQuaternion(this.bottleRotation);
-          this.handOffset.copy(input.rotation).invert().multiply(this.bottleRotation);
+          this.bottleRotation.copy(input.rotation);
+          this.handOffset.identity();
           this.client.notify(this.snapshot());
         }
       }
@@ -680,7 +730,7 @@ export class BottleScene {
         position: input.position.clone(),
         rotation: input.rotation.clone(),
       });
-    if (!this.interrupted) {
+    {
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(rotation);
       const personId = this.approach.update(
         {
@@ -700,7 +750,8 @@ export class BottleScene {
         },
         dt,
       );
-      if (personId) this.interrupt('approached', personId);
+      if (personId && (!this.interrupted || this.active?.id !== personId))
+        this.interrupt('approached', personId);
     }
     if (this.interrupted && !this.lost) {
       const target = this.targetPosition();
@@ -748,6 +799,65 @@ export class BottleScene {
       this.speaker.position.copy(anchor).add(new THREE.Vector3(0, 0.1 * this.host.stature, 0));
       this.client.updateAudio(anchor, head, rotation, this.host.stature);
     }
+    const state = this.physics.snapshot();
+    const position = from(state.position);
+    const visible = !this.lost && this.bottle.group.visible;
+    const proxyVisible = visible && this.interrupted;
+    this.bottle.mesh.visible = visible && !proxyVisible;
+    this.visual.update({
+      position,
+      quaternion: this.interrupted
+        ? this.bottleRotation
+        : this.bottle.mesh.getWorldQuaternion(new THREE.Quaternion()),
+      proxyVisible,
+      locatorVisible: visible && state.mode !== 'held' && this.clearPath(head, position),
+      nearHand: inputs.some((input) => input.position.distanceTo(position) < this.grabReach),
+      dt,
+      elapsed: now / 1000,
+    });
+  }
+
+  private character() {
+    const person = this.active ?? this.host.people[0];
+    if (!person) return null;
+    const frame = this.host.time() * this.bottle.track.fps;
+    const flight = segments(this.bottle.meta)
+      .filter((span) => span.kind === 'free')
+      .sort(
+        (a, b) =>
+          Math.max(a.fromSourceFrame - frame, 0, frame - a.toSourceFrame) -
+          Math.max(b.fromSourceFrame - frame, 0, frame - b.toSourceFrame),
+      )[0];
+    const participants = flight
+      ? recordedState(
+          this.bottle.meta,
+          this.bottle.track.fps,
+          flight.fromSourceFrame / this.bottle.track.fps,
+          this.host.people.map((candidate) => ({ id: candidate.id, track: candidate.meta.track })),
+        )
+      : this.recordingState();
+    const role =
+      person.id === participants.thrower
+        ? 'thrower'
+        : person.id === participants.recipient
+          ? 'receiver'
+          : 'bystander';
+    const index = Math.max(0, this.host.people.indexOf(person));
+    const styles = [
+      'easygoing and lightly playful',
+      'calm, friendly, and a little dry',
+      'curious and upbeat',
+    ];
+    return {
+      id: person.id,
+      label: person.label,
+      role,
+      style: styles[index % styles.length],
+      activity:
+        role === 'bystander'
+          ? 'near the bottle exchange'
+          : 'passing a bottle with the other person',
+    };
   }
 
   snapshot() {
@@ -758,6 +868,7 @@ export class BottleScene {
       playing: this.host.playing(),
       interrupted: this.interrupted,
       activePersonId: this.active?.id ?? null,
+      character: this.character(),
       lastEvent: this.lastEvent,
       status: this.status,
       bottle: {
@@ -770,7 +881,7 @@ export class BottleScene {
       voiceConnected: this.client.connected,
       voiceStatus: this.voiceStatus,
       microphoneMuted: this.muted,
-      poseType: 'paused recorded pose; whole-body turn only',
+      poseType: 'paused recorded pose; automatic whole-body facing only',
       returnType: 'assisted target, not animated reach',
       availableActions: this.interrupted
         ? ['face_player', 'show_return_target', 'offer_replay']
@@ -784,6 +895,7 @@ export class BottleScene {
     this.disposed = true;
     this.fetchAbort.abort();
     this.restore();
+    this.visual.dispose();
     for (const mesh of [this.marker, this.speaker]) {
       mesh.removeFromParent();
       mesh.geometry.dispose();

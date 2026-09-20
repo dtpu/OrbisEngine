@@ -772,6 +772,10 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         } else if (controller.handGrip.visible) {
           position = controller.handGrip.getWorldPosition(new THREE.Vector3());
           rotation = controller.handGrip.getWorldQuaternion(new THREE.Quaternion());
+          // Place held props inside the glove's grip, with the cap clear of the fingers.
+          position.add(
+            new THREE.Vector3(0, 0.012, -0.025).multiplyScalar(upm).applyQuaternion(rotation),
+          );
         }
         if (position && rotation)
           inputs.push({
