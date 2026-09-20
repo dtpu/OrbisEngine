@@ -2,7 +2,14 @@ export type Vec3 = [number, number, number];
 export type BottleMode = 'recorded' | 'held' | 'free' | 'returned' | 'resting';
 
 export type BottlePhysicsOptions = {
+  /** Horizontal radius used for walls and hand reach checks. */
   radius: number;
+  /**
+   * Distance from the centre to the lowest visible point when resting on a horizontal support.
+   * Defaults to `radius` for spherical props. A nonspherical visual can use its bounding sphere
+   * for conservative floor clearance without making its wall collision artificially wide.
+   */
+  floorRadius?: number;
   gravity: number;
   maxSpeed: number;
   floorAt: (x: number, z: number) => number | null;
@@ -61,6 +68,8 @@ export class BottlePhysics {
     if (
       !Number.isFinite(options.radius) ||
       options.radius <= 0 ||
+      (options.floorRadius !== undefined &&
+        (!Number.isFinite(options.floorRadius) || options.floorRadius <= 0)) ||
       !Number.isFinite(options.gravity) ||
       options.gravity < 0 ||
       !Number.isFinite(options.maxSpeed) ||
@@ -215,6 +224,10 @@ export class BottlePhysics {
     return this.options.blockedAt([...position], this.options.radius);
   }
 
+  private get floorRadius(): number {
+    return this.options.floorRadius ?? this.options.radius;
+  }
+
   private clearPath(start: Vec3, end: Vec3): boolean {
     const stepLength = this.options.radius * 0.5;
     const steps = Math.ceil(distance(start, end) / stepLength);
@@ -224,7 +237,7 @@ export class BottlePhysics {
       const floor = this.options.floorAt(point[0], point[2]);
       if (
         this.blocked(point) ||
-        (floor !== null && Number.isFinite(floor) && point[1] < floor + this.options.radius)
+        (floor !== null && Number.isFinite(floor) && point[1] < floor + this.floorRadius)
       )
         return false;
     }
@@ -271,8 +284,9 @@ export class BottlePhysics {
       const next = start.map((v, axis) => v + this.velocity[axis] * dt) as Vec3;
       if (!finite(next)) return [];
       const floor = floorAt(next[0], next[2]);
-      const grounded = floor !== null && Number.isFinite(floor) && next[1] <= floor + radius;
-      if (grounded) next[1] = floor + radius;
+      const grounded =
+        floor !== null && Number.isFinite(floor) && next[1] <= floor + this.floorRadius;
+      if (grounded) next[1] = floor + this.floorRadius;
       if (this.blocked(next)) {
         let bounced = false;
         for (let axis = 0; axis < 3; axis++) {

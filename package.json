@@ -22,7 +22,7 @@
     "test:audio-browser": "bun scripts/test-fourd-audio-browser.ts",
     "smoke:xr": "bun scripts/smoke-xr.ts",
     "test:xr": "bun test ./scripts/test-xr-physical-walk.ts ./scripts/test-xr-teleport.ts ./scripts/test-xr-hands.ts ./scripts/test-xr-body.ts ./scripts/test-xr-body-geometry.ts ./scripts/test-person-size.ts",
-    "test:interaction": "bun test ./scripts/test-bottle-physics.ts ./scripts/test-interaction-approach.ts ./scripts/test-recorded-object.ts ./scripts/test-bottle-agent.ts ./scripts/test-bottle-agent-client.ts ./scripts/test-bottle-scene.ts ./scripts/test-bottle-visual.ts ./scripts/test-xr-replay-button.ts",
+    "test:interaction": "bun test ./scripts/test-bottle-physics.ts ./scripts/test-bottle-floor.ts ./scripts/test-interaction-approach.ts ./scripts/test-recorded-object.ts ./scripts/test-bottle-agent.ts ./scripts/test-bottle-agent-client.ts ./scripts/test-bottle-scene.ts ./scripts/test-bottle-visual.ts ./scripts/test-xr-replay-button.ts",
     "test:interaction-browser": "bun scripts/test-bottle-scene-browser.ts",
     "test:xr-browser": "bun scripts/test-xr-locomotion-browser.ts && bun scripts/test-xr-turning-browser.ts && bun scripts/test-xr-ground-browser.ts && bun scripts/test-xr-navigation-browser.ts && bun scripts/test-xr-body-browser.ts && bun scripts/test-xr-playback.ts && bun scripts/test-person-size-browser.ts",
     "test:xr-turning": "bun scripts/test-xr-turning-browser.ts",

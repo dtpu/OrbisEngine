@@ -69,6 +69,34 @@ describe('bottle interaction simulation', () => {
     expect(falling.snapshot().mode).toBe('free');
   });
 
+  test('a fast drop honors the visible support extent without widening wall collision', () => {
+    const contacts: number[] = [];
+    const b = bottle({
+      floorRadius: 0.11,
+      bounceSpeed: 100,
+      settleSpeed: 1,
+      blockedAt: (_position, radius) => {
+        contacts.push(radius);
+        return false;
+      },
+    });
+    expect(b.startFlight([0, 1, 0], [0, -30, 0])).toBe(true);
+    const events = b.step(0.1);
+    expect(events).toEqual([{ type: 'dropped', position: [0, 0.11, 0] }]);
+    expect(b.snapshot()).toMatchObject({
+      mode: 'resting',
+      position: [0, 0.11, 0],
+      velocity: [0, 0, 0],
+    });
+    expect(contacts).toContain(0.05);
+
+    const unsupported = bottle({ floorRadius: 0.11, floorAt: () => null });
+    expect(unsupported.startFlight([0, 1, 0], [0, -30, 0])).toBe(true);
+    unsupported.step(0.1);
+    expect(unsupported.snapshot().position[1]).toBeLessThan(0);
+    expect(unsupported.snapshot().mode).toBe('free');
+  });
+
   test('radius collision prevents a fast throw crossing a thin occupied wall', () => {
     // Sphere against an occupied cell spanning x=[0.5,0.52], y=[0,2], z=[-1,1].
     const b = bottle({
@@ -128,6 +156,7 @@ describe('bottle interaction simulation', () => {
       holder: null,
     });
     expect(() => bottle({ radius: 0 })).toThrow();
+    expect(() => bottle({ floorRadius: 0 })).toThrow();
     expect(() => bottle({ gravity: NaN })).toThrow();
   });
 
