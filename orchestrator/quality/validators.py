@@ -10,6 +10,8 @@ from typing import Any
 
 from PIL import Image
 
+from orchestrator.workspace import is_output_file
+
 
 def validate_stage_outputs(
     definition: dict[str, Any],
@@ -19,7 +21,7 @@ def validate_stage_outputs(
     files_by_role: dict[str, list[Path]] = {}
     for pattern, role in output_roles.items():
         for path in attempt_root.glob(pattern):
-            if path.is_file() and not path.is_symlink():
+            if is_output_file(path):
                 files_by_role.setdefault(role, []).append(path)
     issues: list[str] = []
     for name, contract in definition.get("outputs", {}).items():

@@ -20,7 +20,9 @@ from orchestrator.artifacts import (
     generate_preview,
     sha256_file,
 )
+from orchestrator.quality.validators import validate_stage_outputs
 from orchestrator.stages.registry import stage_registry
+from orchestrator.workspace import RunWorkspace
 from orchestrator.workspace import RunWorkspace
 
 
@@ -226,6 +228,61 @@ class BundleRoleTests(unittest.TestCase):
         self.write("outputs/crops/a.png", "inputs/outputs/crops/b.png")
         assigned = assign_roles(self.root, {"outputs/crops/*.png": "object_crops"})
         self.assertEqual(list(assigned), ["outputs/crops/a.png"])
+
+
+class IncidentalFileTests(unittest.TestCase):
+    """A stage's tooling writes files to coordinate itself. They are not its outputs.
+
+    LHM's frozen person finished on the GPU in 98 seconds and was then failed by its own QA:
+    "canonical_person: recovery-receipt.json.lock is empty". A lock is empty by design, and
+    the emptiness check exists to catch an output that was truncated.
+    """
+
+    def test_a_lock_file_is_neither_an_output_nor_a_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frozen = root / "outputs/runs/activity-1/lhm-frozen"
+            frozen.mkdir(parents=True)
+            (frozen / "canonical-state.pt").write_bytes(b"weights")
+            (frozen / "recovery-receipt.json").write_text("{}")
+            (frozen / "recovery-receipt.json.lock").write_bytes(b"")
+
+            roles = {
+                pattern.replace("{name}", "activity-1"): role
+                for pattern, role in default_adapters()["lhm_frozen"].output_roles.items()
+            }
+            assigned = assign_roles(root, roles)
+            self.assertNotIn(
+                "outputs/runs/activity-1/lhm-frozen/recovery-receipt.json.lock", assigned
+            )
+            self.assertEqual(
+                assigned["outputs/runs/activity-1/lhm-frozen/canonical-state.pt"],
+                "canonical_person",
+            )
+            definition = stage_registry()["lhm_frozen"].model_dump(mode="json")
+            self.assertEqual(validate_stage_outputs(definition, root, roles), ())
+
+    def test_a_lock_file_is_still_kept_with_the_attempt(self):
+        """Not an output is not the same as not evidence; everything is still frozen."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "outputs").mkdir()
+            (root / "outputs/thing.json").write_text("{}")
+            (root / "outputs/thing.json.lock").write_bytes(b"")
+            store = LocalCAS(root / "cas")
+            store.initialize()
+            workspace = RunWorkspace(root / "runs", "run-1")
+            workspace.initialize()
+            made = workspace.create_attempt("stage", "attempt-1", {"runId": "run-1"})
+            (made.outputs / "thing.json").write_text("{}")
+            (made.outputs / "thing.json.lock").write_bytes(b"")
+            made.finalize({"status": "succeeded", "error": None, "command": []})
+            manifest = freeze_attempt(
+                made, store, status="succeeded", roles={"outputs/thing.json": "report"}
+            )
+            by_path = {item.relative_path: item.role for item in manifest.files}
+            self.assertEqual(by_path["outputs/thing.json"], "report")
+            self.assertEqual(by_path["outputs/thing.json.lock"], "attempt_file")
 
 
 class MotionBundleTests(unittest.TestCase):
