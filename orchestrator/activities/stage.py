@@ -174,7 +174,25 @@ class StageActivityRunner:
             self.attempt_ledger.started(request, attempt_id)
         inputs = self._hydrate_inputs(attempt, request.selected_inputs)
         context = AdapterContext(request, attempt, inputs, self.repository)
-        execution = adapter.build(context)
+        try:
+            execution = adapter.build(context)
+        except Exception as caught:
+            # An adapter that cannot build its command has nothing to run and nothing to
+            # retry into. Raising here left the ledger holding an attempt that said running
+            # for ever, with no command, no logs and no reason; say what went wrong instead.
+            error = f"stage command could not be built: {type(caught).__name__}: {caught}"
+            attempt.finalize({"status": "blocked", "error": error, "command": []})
+            manifest = freeze_attempt(attempt, self.store, status="blocked")
+            self._publish(workspace, manifest)
+            result = StageActivityResult(
+                node_id=request.node_id,
+                attempt_id=attempt_id,
+                status="blocked",
+                error=error,
+            )
+            if self.attempt_ledger:
+                self.attempt_ledger.finished(request, result, manifest)
+            return result
         absent = [name for name in execution.credentials if name not in os.environ]
         if absent:
             # A stage names the credentials it needs, and a worker without one cannot do the
