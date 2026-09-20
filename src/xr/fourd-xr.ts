@@ -43,6 +43,7 @@ import * as THREE from 'three';
 import { createAvatarBody } from './avatar-body';
 import { createAvatarHands } from './avatar-hands';
 import { PhysicalWalk, parseWalkGain } from './physical-walk';
+import { raycastWalkFloor } from './teleport';
 
 type Wander = {
   spark: { lodSplatCount?: number };
@@ -59,6 +60,13 @@ type Wander = {
   walk?: {
     eye: number;
     floor: number;
+    grid: { cell: number } | null;
+    cellAt: (
+      x: number,
+      z: number,
+      maximumSupport?: number,
+    ) => { floor: number; inside: boolean | number };
+    blockedAt: (x: number, z: number, floor?: number) => number;
     advance: (from: THREE.Vector3, delta: THREE.Vector3, dt: number) => THREE.Vector3;
   } | null;
   possess?: { head: THREE.Vector3; yaw: number } | null; // fourd.html ?possess=: the ridden person's head (world units) and yaw, updated every frame
@@ -269,7 +277,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   // (BRAIN section 6 rules out a continuous recentre; 0.2 Hz is the worst frequency there is).
   const home = camera.position.clone();
   const homeQ = camera.quaternion.clone();
-  const homeYaw = yawOf(homeQ);
+  let homeYaw = yawOf(homeQ);
   let anchored = false;
   const frames: number[] = [];
   let lastFrameStart = 0;
@@ -282,8 +290,15 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
 
   renderer.xr.addEventListener('sessionstart', () => {
     btn.textContent = 'Exit VR';
+    home.copy(camera.position);
+    homeQ.copy(camera.quaternion);
+    homeYaw = yawOf(homeQ);
     anchored = false;
     groundFloor = wander.walk?.floor ?? wander.floorY;
+    report.groundFloor = groundFloor;
+    report.teleportTarget = null;
+    report.teleportValid = false;
+    targetOk = false;
     physicalWalk.reset();
     walkReferenceSpace = renderer.xr.getReferenceSpace();
     walkReferenceSpace?.addEventListener('reset', resetPhysicalWalk);
@@ -416,6 +431,7 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     step = new THREE.Vector3(),
     nrm = new THREE.Vector3();
   const groundFrom = new THREE.Vector3();
+  const physicalStep = new THREE.Vector3();
   const bodyRigStart = new THREE.Vector3();
   const bodyTravel = new THREE.Vector3();
   const bodyInverseRotation = new THREE.Quaternion();
@@ -432,16 +448,37 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
   const headOffset = (out: THREE.Vector3) =>
     out.copy(headLocal).multiplyScalar(upm).applyQuaternion(rig.quaternion);
 
-  /** The aim ray meets the floor plane. The ring is only offered where the recording still holds. */
+  /** Walk mode intersects known support, including stair levels; authoring mode uses its plane. */
   function aim(from: THREE.Object3D): boolean {
+    targetOk = false;
+    report.teleportTarget = null;
+    report.teleportValid = false;
     const o = from.getWorldPosition(tmpV);
     const d = new THREE.Vector3(0, 0, -1).applyQuaternion(from.getWorldQuaternion(tmpQ));
     if (d.y > -1e-3) return false;
-    const floorW = floorRef ? rig.position.y : wander.floorY;
-    const t = (floorW - o.y) / d.y;
-    if (t < 0 || t > 400 * upm) return false;
-    target.copy(o).addScaledVector(d, t);
-    targetOk = reachable(target);
+    const walk = wander.walk;
+    if (walk) {
+      const hit = raycastWalkFloor(
+        o,
+        d,
+        (x, z) => {
+          const cell = walk.cellAt(x, z, o.y);
+          return cell.inside ? cell.floor : NaN;
+        },
+        Math.min(walk.grid?.cell ?? 0.1 * upm, 0.1 * upm) / 2,
+        20 * upm,
+        target,
+      );
+      if (!hit) return false;
+      targetOk = reachable(target) && !walk.blockedAt(target.x, target.z, target.y);
+    } else {
+      const t = (groundFloor - o.y) / d.y;
+      if (t < 0 || t > 20 * upm) return false;
+      target.copy(o).addScaledVector(d, t);
+      targetOk = reachable(target);
+    }
+    report.teleportTarget = target.toArray();
+    report.teleportValid = targetOk;
     return true;
   }
 
@@ -450,7 +487,13 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     const off = headOffset(new THREE.Vector3());
     rig.position.x = target.x - off.x;
     rig.position.z = target.z - off.z;
-    if (!floorRef) rig.position.y = target.y + EYE - off.y;
+    // Move the reference floor by the landing height delta, retaining local-space eye/crouch pose.
+    rig.position.y += target.y - groundFloor;
+    groundFloor = target.y;
+    report.groundFloor = groundFloor;
+    targetOk = false;
+    report.teleportValid = false;
+    vel.set(0, 0, 0);
     avatarBody?.reset();
     blink = 1;
   }
@@ -475,7 +518,10 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
     // Critically damped rather than instant velocity: no lurch on push, no dead stop on release.
     vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
     if (vel.lengthSq() < 1e-10) vel.set(0, 0, 0);
-    step.copy(vel).multiplyScalar(dt);
+    step.addScaledVector(vel, dt);
+  }
+
+  function moveRig(dt: number) {
     // fourd.html's own soft boundary, applied to the RIG. Outward motion past the measured face is
     // scaled towards zero so you coast to a stop; inward motion is never damped, so it is always one
     // nudge back into the good region. The head is untouched by any of this.
@@ -552,18 +598,19 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         homeYaw - Math.atan2(-hf.x, -hf.z),
       );
       const off = headOffset(tmpV);
-      rig.position.set(home.x - off.x, floorRef ? groundFloor : home.y - off.y, home.z - off.z);
+      rig.position.set(
+        home.x - off.x,
+        floorRef ? groundFloor : groundFloor + EYE - off.y,
+        home.z - off.z,
+      );
     }
     bodyRigStart.copy(rig.position);
-    // Add only the extra horizontal tracked displacement, before composing this frame's head.
-    // Snap turns and teleports change the rig, never this local baseline; recenter/session resets
-    // explicitly rebase it. Possession owns the rig and must not accumulate physical travel.
-    rig.position.add(physicalWalk.update(headLocal, rig.quaternion, upm, tmpV, !wander.possess));
     rig.updateMatrixWorld(true);
     head.copy(headLocal).applyMatrix4(rig.matrixWorld);
     headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
 
     if (wander.possess) {
+      physicalWalk.reset();
       // Possession: the rig follows the person's head so the viewer's eyes land on it. His yaw
       // reaches the rig only as snap turns through the blink (header point 2: never a smooth turn
       // of someone's head, never his pitch or roll); ?possessyaw=smooth opts into a continuous yaw.
@@ -595,9 +642,16 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         } else if (Math.abs(sticks.turnX) < 0.4) snapLatch = false;
       }
 
-      if (mode === 'smooth') {
-        travel(dt);
-      } else {
+      // The runtime's real head displacement remains untouched. Only extra gain and joystick
+      // displacement pass through the shared boundary/collision solver, in either movement mode.
+      headYaw = yawOf(tmpQ.copy(rig.quaternion).multiply(headQuaternion));
+      step.copy(physicalWalk.update(headLocal, rig.quaternion, upm, physicalStep));
+      if (mode === 'smooth') travel(dt);
+      moveRig(dt);
+      rig.updateMatrixWorld(true);
+      head.copy(headLocal).applyMatrix4(rig.matrixWorld);
+
+      if (mode === 'teleport') {
         // Aim with the left stick pushed forward, or with either trigger held. Release to go.
         const held = controllers.find((c) => c.aiming);
         const aiming = !!held || sticks.moveY < -0.5;
@@ -617,6 +671,9 @@ export async function initXR({ renderer, scene, camera, wander, q }: XrInit): Pr
         aimingPrev = aiming;
       }
     }
+
+    rig.updateMatrixWorld(true);
+    head.copy(headLocal).applyMatrix4(rig.matrixWorld);
 
     // The body consumes reference-space metres. Account for artificial travel so a planted foot
     // stays in world space while the rig walks; head tracking is already included in headLocal.
