@@ -16,6 +16,7 @@ PRIOR_URL = "https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d
 PRIOR_BYTES = 18_818_365_440
 SEGFORMER_REV = "489d5cd81a0b59fab9b7ea758d3548ebe99677da"
 LHM_REV = "dd6392905187a91fd67b3f6962aa74481e943764"
+LHM_LARGER_REV = "92372582f660066b9f1b9513860744357265b3d5"
 MASKRCNN_URL = "https://download.pytorch.org/models/maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth"
 DINO_URL = "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth"
 GFPGAN_URL = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth"
@@ -243,6 +244,7 @@ def stage(phase: str, deadline_epoch: float):
         "clean-motion-repair-v2",
         "lhm",
         "lhm-resume",
+        "lhm-larger",
         "dino",
         "gfpgan",
         "clean-instance",
@@ -418,6 +420,23 @@ def stage(phase: str, deadline_epoch: float):
                     "destination": str(destination),
                     "bytes": destination.stat().st_size,
                     "sha256": expected_sha,
+                },
+            )
+        elif phase == "lhm-larger":
+            snapshot = snapshot_download(
+                "3DAIGC/LHM-1B-HF",
+                revision=LHM_LARGER_REV,
+                cache_dir="/lhm/huggingface/hub",
+                allow_patterns=["config.json", "model.safetensors"],
+                max_workers=1,
+            )
+            step_done(
+                "lhm-larger-model",
+                {
+                    "model": "3DAIGC/LHM-1B-HF",
+                    "revision": LHM_LARGER_REV,
+                    "snapshot": snapshot,
+                    **inventory(Path(snapshot).parents[1]),
                 },
             )
         elif phase in ("lhm", "lhm-resume"):

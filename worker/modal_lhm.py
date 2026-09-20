@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 LHM_REV = "4f88aaeb3629249fbbddb4d0784a06962d9e1338"
 MODEL_REV = "dd6392905187a91fd67b3f6962aa74481e943764"
 LARGER_MODEL_REV = "92372582f660066b9f1b9513860744357265b3d5"
-image = (
+base_image = (
     modal.Image.from_registry("nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04", add_python="3.10")
     .apt_install(
         "git", "build-essential", "ninja-build", "ffmpeg", "libgl1", "libglib2.0-0", "libegl1"
@@ -118,6 +118,21 @@ image = (
     .run_commands(
         f"git clone https://github.com/aigc3d/LHM.git /opt/lhm && git -C /opt/lhm checkout {LHM_REV}",
     )
+)
+image = base_image.add_local_dir(HERE / "stages", "/root/stages", ignore=["__pycache__"])
+# Keep the cached L4 image intact. Only H100 selection builds these native extensions.
+h100_image = (
+    base_image.env({"TORCH_CUDA_ARCH_LIST": "9.0+PTX"})
+    .run_commands(
+        "rm -rf /opt/pytorch3d/build /opt/diff-gaussian-rasterization/build /opt/simple-knn/build"
+    )
+    .uv_pip_install(
+        "/opt/pytorch3d",
+        "/opt/diff-gaussian-rasterization",
+        "/opt/simple-knn",
+        extra_options="--force-reinstall --no-cache-dir --no-build-isolation --no-deps",
+        env={"CC": "gcc", "CXX": "g++", "CUB_HOME": "/usr/local/cuda/include"},
+    )
     .add_local_dir(HERE / "stages", "/root/stages", ignore=["__pycache__"])
 )
 app = modal.App("wander-overnight-lhm")
@@ -200,11 +215,17 @@ def stage():
     volumes={"/cache": cache},
     scaledown_window=2,
 )
-def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, recovery_id: str = ""):
+def frozen(
+    inputs: dict,
+    animate: bool = False,
+    larger_model: bool = False,
+    recovery_id: str = "",
+    gpu: str = "L4",
+    execution_timeout: int = 1800,
+):
     import hashlib
     import json
     import os
-    import subprocess
     import tempfile
     import time
     import traceback
@@ -217,6 +238,11 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
         start_checkpoint,
     )
 
+    from stages.lhm_execution import run_logged_inference
+    from stages.lhm_resources import compute_rate, execution_options
+
+    execution_options(gpu, execution_timeout)
+    started = time.monotonic()
     start = time.time()
     mode = "motion" if animate else "frozen"
     checkpoint, out = start_checkpoint("/cache", recovery_id, mode)
@@ -224,8 +250,17 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
     model_id = "3DAIGC/LHM-1B-HF" if larger_model else "3DAIGC/LHM-500M-HF"
     model_revision = LARGER_MODEL_REV if larger_model else MODEL_REV
     error = None
-    proc = None
+    detected_gpu = None
     try:
+        import torch
+
+        detected_gpu = torch.cuda.get_device_name(0)
+        atomic_json(
+            out / "execution-resources.json", {"requestedGPU": gpu, "detectedGPU": detected_gpu}
+        )
+        cache.commit()
+        if gpu not in detected_gpu:
+            raise RuntimeError(f"Requested {gpu} but provider supplied {detected_gpu}")
         from huggingface_hub import snapshot_download
 
         root = Path(tempfile.mkdtemp(prefix="lhm-"))
@@ -310,26 +345,14 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
                 "--model",
                 model,
             ]
-        with (out / "inference.log").open("w") as log:
-            proc = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-            )
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                log.write(line)
-                log.flush()
-            if proc.wait() != 0:
-                raise RuntimeError(f"LHM inference exited {proc.returncode}")
+        run_logged_inference(
+            command,
+            out / "inference.log",
+            started=started,
+            execution_timeout=execution_timeout,
+        )
     except Exception:  # noqa: BLE001 - preserve artifacts for any model/dependency failure
         error = traceback.format_exc()
-        if proc is not None and proc.poll() is None:
-            # Only our child process may write these outputs. Stop it before hashing.
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
         print(error, flush=True)
         with (out / "inference.log").open("a") as log:
             log.write(error)
@@ -361,11 +384,12 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
         "seconds": elapsed,
         "error": error,
         "experiment": "canonical-source-motion" if animate else "frozen-source-pose",
-        "gpu": "L4",
+        "gpu": gpu,
+        "detectedGPU": detected_gpu,
         "cpu": 4,
         "memoryGiB": 64,
-        "timeoutSeconds": 1800,
-        "estimatedComputeUSD": elapsed * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
+        "timeoutSeconds": execution_timeout,
+        "estimatedComputeUSD": elapsed * compute_rate(gpu),
         "timingScope": "worker setup and inference; excludes final output hashing and volume commit",
         "codeRevision": LHM_REV,
         "model": model_id,
@@ -403,14 +427,20 @@ def main(
     seed: str = "",
     fixed_inputs: str = "",
     larger_model: bool = False,
+    gpu: str = "L4",
+    execution_timeout: int = 1800,
 ):
+    from worker.stages.lhm_resources import execution_options
+
+    options = execution_options(gpu, execution_timeout)
     if not prepared and not canonical:
         print(stage.remote())
         return
+    import hashlib
     import json
     import tarfile
 
-    from worker.stages.lhm_recovery import new_receipt, recover_outputs, submit_once
+    from worker.stages.lhm_recovery import atomic_json, new_receipt, recover_outputs, submit_once
 
     if not out:
         raise ValueError("LHM output destination is required")
@@ -451,8 +481,27 @@ def main(
             )
     if larger_model and not fixed_inputs:
         raise ValueError("Larger checkpoint comparison requires saved fixed inputs")
+    receipt["execution"] = {
+        "gpu": gpu,
+        "cpu": 4,
+        "memoryGiB": 64,
+        "timeoutSeconds": execution_timeout,
+        "inputSha256": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
+    }
+    atomic_json(receipt_path, receipt)
+    if gpu == "H100":
+        options["image"] = h100_image
+    function = (
+        frozen.with_options(**options) if gpu != "L4" or execution_timeout != 1800 else frozen
+    )
     result = submit_once(
-        frozen, receipt_path, inputs, animate=bool(canonical), larger_model=larger_model
+        function,
+        receipt_path,
+        inputs,
+        animate=bool(canonical),
+        larger_model=larger_model,
+        gpu=gpu,
+        execution_timeout=execution_timeout,
     )
     manifest = recover_outputs(receipt_path, cache)
     # Preserve the normal archive artifact, without GPU compression or a giant return.
