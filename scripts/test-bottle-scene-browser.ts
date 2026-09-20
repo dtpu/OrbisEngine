@@ -261,41 +261,45 @@ try {
   assert.equal(initial.state.interrupted, false);
   assert.equal(initial.state.playing, true);
   assert.equal(initial.state.sceneId, 'elevator');
-  const floorDrops = await page.evaluate(() => {
-    const interaction = (window.wander as SceneDiagnostics).interaction as unknown as {
-      physics: { options: BottlePhysicsOptions; constructor: Function };
-    };
-    const options = interaction.physics.options;
-    const Physics = interaction.physics.constructor as new (
-      options: BottlePhysicsOptions,
-    ) => BottlePhysics;
-    return [
-      [0.7, -0.8],
-      [-0.1308783, -4.1531556],
-    ].map(([x, z]) => {
-      const floor = options.floorAt(x!, z!);
-      const physics = new Physics(options);
-      physics.startFlight([x!, 0.4, z!], [0, -options.maxSpeed, 0]);
-      let minimum = Infinity;
-      for (let i = 0; i < 720; i++) {
-        physics.step(1 / 72);
-        minimum = Math.min(minimum, physics.snapshot().position[1]);
-        if (physics.snapshot().mode === 'resting') break;
-      }
-      return {
-        floor,
-        minimum,
-        radius: options.floorRadius ?? options.radius,
-        state: physics.snapshot(),
+  const checkFloorDrops = async (variant = 'walk') => {
+    const floorDrops = await page.evaluate(() => {
+      const interaction = (window.wander as SceneDiagnostics).interaction as unknown as {
+        physics: { options: BottlePhysicsOptions; constructor: Function };
       };
+      const options = interaction.physics.options;
+      const Physics = interaction.physics.constructor as new (
+        options: BottlePhysicsOptions,
+      ) => BottlePhysics;
+      return [
+        [0.7, -0.8],
+        [-0.1308783, -4.1531556],
+        [1.236952165297598, 1.476897242384616],
+      ].map(([x, z]) => {
+        const floor = options.floorAt(x!, z!);
+        const physics = new Physics(options);
+        physics.startFlight([x!, 0.4, z!], [0, -options.maxSpeed, 0]);
+        let minimum = Infinity;
+        for (let i = 0; i < 720; i++) {
+          physics.step(1 / 72);
+          minimum = Math.min(minimum, physics.snapshot().position[1]);
+          if (physics.snapshot().mode === 'resting') break;
+        }
+        return {
+          floor,
+          minimum,
+          radius: options.floorRadius ?? options.radius,
+          state: physics.snapshot(),
+        };
+      });
     });
-  });
-  for (const drop of floorDrops) {
-    assert.ok(drop.floor !== null && Number.isFinite(drop.floor), JSON.stringify(drop));
-    assert.equal(drop.state.mode, 'resting', JSON.stringify(drop));
-    assert.ok(drop.minimum >= drop.floor! + drop.radius - 1e-6, JSON.stringify(drop));
-  }
-  await writeFile(`${output}/floor-drops.json`, JSON.stringify(floorDrops, null, 2));
+    for (const drop of floorDrops) {
+      assert.ok(drop.floor !== null && Number.isFinite(drop.floor), JSON.stringify(drop));
+      assert.equal(drop.state.mode, 'resting', JSON.stringify(drop));
+      assert.ok(drop.minimum >= drop.floor! + drop.radius - 1e-6, JSON.stringify(drop));
+    }
+    await writeFile(`${output}/floor-drops-${variant}.json`, JSON.stringify(floorDrops, null, 2));
+  };
+  await checkFloorDrops();
   console.log(
     'Fast drops settle above the reported sparse-floor locations using production scene callbacks',
   );
@@ -852,6 +856,47 @@ try {
   await page.screenshot({ path: `${output}/resting-xr.png` });
   console.log('A controller-released bottle remains visible above the rendered floor support');
 
+  const switched = await page.evaluate(async () => {
+    const prior = window.wander as SceneDiagnostics & { loadScene(id: string): Promise<void> };
+    const session = prior.spark.renderer.xr.getSession();
+    const bottle = prior.interaction.snapshot().bottle;
+    await prior.loadScene('lobby');
+    const old = prior.interaction as unknown as { xrActive: boolean };
+    const detached = { capture: prior.interaction.snapshot().voiceConnected, active: old.xrActive };
+    await (window.wander as typeof prior).loadScene('elevator');
+    return {
+      detached,
+      reused: window.wander === prior,
+      sameSession: window.wander.spark.renderer.xr.getSession() === session,
+      playing: window.wander.playing,
+      bottleBefore: bottle,
+      bottleAfter: (window.wander as SceneDiagnostics).interaction.snapshot().bottle,
+      active: old.xrActive,
+      enabled: new URLSearchParams(location.search).get('interact'),
+    };
+  });
+  assert.deepEqual(switched.detached, { capture: false, active: false });
+  assert.equal(switched.reused, true);
+  assert.equal(switched.sameSession, true);
+  assert.equal(switched.playing, false);
+  assert.equal(switched.active, true);
+  assert.equal(switched.enabled, '1');
+  assert.deepEqual(switched.bottleAfter, switched.bottleBefore);
+  await handAt(switched.bottleAfter.position, false);
+  await handAt(switched.bottleAfter.position, true);
+  assert.equal(
+    (await snapshot()).bottle.mode,
+    'held',
+    'Controller grip survives scene replacement',
+  );
+  if (liveVoice)
+    await page.waitForFunction(
+      () => (window.wander as SceneDiagnostics).interaction.snapshot().voiceConnected,
+    );
+  console.log(
+    'Scene switching releases old capture and returns to the paused interaction in the same XR session',
+  );
+
   // The same build must keep the established looping viewer outside the experiment.
   await page.evaluate(async () => window.wander.spark.renderer.xr.getSession()!.end());
   await page.goto(
@@ -875,6 +920,15 @@ try {
     () => window.wander.video.currentTime < 1 && window.wander.t < 1 && window.wander.playing,
   );
   console.log('Standard viewer still loops and starts playback on VR entry');
+
+  await page.evaluate(async () => window.wander.spark.renderer.xr.getSession()!.end());
+  await page.goto('http://127.0.0.1:5399/fourd.html?demo=elevator&interact=1&walk=0&pause=1', {
+    timeout: 120000,
+  });
+  await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });
+  assert.equal(await page.evaluate(() => window.wander.walk), null);
+  await checkFloorDrops('without-walk');
+  console.log('Interaction floor support remains available with walking disabled');
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
