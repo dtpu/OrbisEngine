@@ -1,4 +1,17 @@
+import { existsSync } from 'node:fs';
 import { chromium, type Page } from 'playwright-core';
+
+function chromePath(): string {
+  const candidates = [
+    process.env.CHROME_PATH,
+    '/home/ubuntu/.local/bin/google-chrome',
+    '/usr/bin/google-chrome',
+  ].filter((p): p is string => Boolean(p));
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return chromium.executablePath();
+}
 
 const BASE = 'http://127.0.0.1:5400';
 const SECTION_IDS = [
@@ -32,7 +45,7 @@ async function waitForServer(timeoutMs = 30000): Promise<void> {
 
 async function collectErrors(run: (page: Page) => Promise<void>): Promise<string[]> {
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome',
+    executablePath: chromePath(),
   });
   try {
     const page = await browser.newPage();
