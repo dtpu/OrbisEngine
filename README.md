@@ -4,10 +4,16 @@ Anything ever filmed, in 4D.
 
 ![Orbis Engine](docs/images/hero.jpg)
 
-Orbis turns an ordinary video into a 3D world you can walk around in. Put on a Quest, or use WASD
-in a browser, and you are standing in the room while the moment plays out around you as it was
-recorded, with the original sound. In one scene you can walk up to a person and talk to them, or
-pick up what they are holding.
+**Hack the North 2026 finalist (top 12 of 350 teams) and 2nd place in the OpenAI track.**
+
+Orbis turns an ordinary video into a 4D scene: a full 3D world, plus time. The room is rebuilt
+in 3D, and the people and objects in it move through it as they did in the recording, in sync
+with the original sound. You are not locked to the camera. Put on a Quest, or use WASD in a
+browser, and walk anywhere while the moment plays: stand behind someone, watch a throw from the
+far side of the room, see it from angles the video never had.
+
+In one scene you can also step in: walk up to a person and talk to them, or pick up the bottle
+they are holding, and it behaves like a physical object in your hand.
 
 It works on phone clips and on movie shots. Built at Hack the North 2026.
 
