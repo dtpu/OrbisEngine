@@ -31,7 +31,21 @@ export type AssetMiddleware = (
   next: Connect.NextFunction,
 ) => Promise<void>;
 export type SharedAssetsPlugin = Plugin & { middleware: AssetMiddleware };
-type PinnedCatalog = AssetCatalog & { snapshot: string };
+export type PinnedCatalog = AssetCatalog & { snapshot: string };
+export interface BlobCache {
+  catalog(): Promise<PinnedCatalog>;
+  cached(f: AssetEntry): Promise<string>;
+  cacheDir: string;
+  destroy(): void;
+}
+/** Application code and documents; everything else is looked up in the catalog. */
+export function appPath(pathname: string) {
+  return (
+    /^\/(?:src|node_modules|@[^/]+|api)(?:\/|$)/.test(pathname) ||
+    pathname === '/' ||
+    /^\/[^/]+\.html$/.test(pathname)
+  );
+}
 export function parseRange(header: string | undefined, size: number): ByteRange | false | null {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header);
@@ -63,11 +77,12 @@ export function assetPath(url: string) {
     return null;
   }
 }
-export function sharedAssets(
+/** The pinned snapshot and its verified content-addressed blob cache, shared by the dev-server
+ * middleware and the `assets:warm` pre-download command so both use one download path. */
+export function blobCache(
   env: StorageEnvironment = {},
   dependencies: SharedAssetDependencies = {},
-): SharedAssetsPlugin {
-  const local = env.WANDER_ASSETS_MODE === 'local';
+): BlobCache {
   const s3 = dependencies.s3 || client(env);
   const cacheDir = dependencies.cacheDir || path.join(ROOT, '.context/shared-assets/blobs');
   const stallMs = dependencies.stallMs ?? 30000;
@@ -141,6 +156,17 @@ export function sharedAssets(
       );
     return downloads.get(f.sha256)!;
   }
+  return { catalog, cached, cacheDir, destroy: () => s3.destroy() };
+}
+
+export function sharedAssets(
+  env: StorageEnvironment = {},
+  dependencies: SharedAssetDependencies = {},
+): SharedAssetsPlugin {
+  const local = env.WANDER_ASSETS_MODE === 'local';
+  const blobs = blobCache(env, dependencies);
+  const catalog = () => blobs.catalog();
+  const cached = (f: AssetEntry) => blobs.cached(f);
   async function middleware(req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) {
     if (local) return next();
     const pathname = assetPath(req.url || '/');
@@ -150,14 +176,8 @@ export function sharedAssets(
       return;
     }
     const status = pathname === '/api/shared-assets';
-    // These are application code requests; all public assets are looked up in the catalog.
-    if (
-      !status &&
-      (/^\/(?:src|node_modules|@[^/]+|api)(?:\/|$)/.test(pathname) ||
-        pathname === '/' ||
-        /^\/[^/]+\.html$/.test(pathname))
-    )
-      return next();
+    // Application code and documents keep Vite's own no-cache handling.
+    if (!status && appPath(pathname)) return next();
     if (!['GET', 'HEAD'].includes(req.method!)) {
       res.statusCode = 405;
       res.end();
@@ -247,7 +267,7 @@ export function sharedAssets(
     name: 'private-shared-assets',
     configureServer(server: ViteDevServer) {
       server.middlewares.use(middleware);
-      server.httpServer?.once('close', () => s3.destroy());
+      server.httpServer?.once('close', () => blobs.destroy());
     },
     middleware,
   };
