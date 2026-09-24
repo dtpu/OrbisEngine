@@ -4,7 +4,7 @@ Anything ever filmed, in 4D.
 
 ![Orbis Engine](docs/images/hero.jpg)
 
-**Hack the North 2026 finalist (top 12 of 350 teams) and 2nd place in the OpenAI track.**
+**[Hack the North 2026](https://devpost.com/software/temp-jcyltx) finalist (top 12 of 350 teams) and 2nd place in the OpenAI track.**
 
 Orbis turns an ordinary video into a 4D scene: a full 3D world, plus time. The room is rebuilt
 in 3D, and the people and objects in it move through it as they did in the recording, in sync
@@ -118,6 +118,7 @@ sideways camera movement, decent light.
 
 ## More
 
+- [Devpost submission](https://devpost.com/software/temp-jcyltx): the build story, what we tried first, and how OpenAI, Codex and Devin were used.
 - [Developing](docs/DEVELOPING.md): code map, checks, Quest options, pipeline flags, repo history.
 - [Research log](docs/research-log.md) and [known limits](docs/known-limits.md).
 - [Audio](docs/audio.md), [objects](docs/objects.md), [interactive scene](docs/interactive-world.md), [unattended runs](docs/unattended-runs.md).
