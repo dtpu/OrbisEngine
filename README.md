@@ -2,7 +2,9 @@
 
 Anything ever filmed, in 4D.
 
-![Orbis Engine](docs/images/hero.jpg)
+[![Orbis Engine](docs/images/hero.jpg)](https://www.youtube.com/watch?v=fvC2Ax81VGE)
+
+**[▶ Watch the demo](https://www.youtube.com/watch?v=fvC2Ax81VGE)**
 
 **[Hack the North 2026](https://devpost.com/software/temp-jcyltx) finalist (top 12 of 350 teams) and 2nd place in the OpenAI track.**
 
