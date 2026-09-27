@@ -2504,8 +2504,8 @@ class Pipeline:
             if ps:
                 sc, res = ps["sizeCheck"], ps["residualCm"]
                 print(
-                    f"  place: add &place=1 for the per-sample solve "
-                    f"(contact residual "
+                    "  place: add &place=1 for the per-sample solve "
+                    "(contact residual "
                     + ", ".join(
                         f"{res['before'][k]['rms']:.1f}->{res['after'][k]['rms']:.1f}"
                         for k in res["before"]
@@ -2690,8 +2690,8 @@ class Pipeline:
             return 1
         if gated:
             print(
-                f"\nSTOPPED AT THE CLEAN-REVIEW GATE before spending any credits. Look at the "
-                f"frames listed above, then re-run the same command with --gate-pass."
+                "\nSTOPPED AT THE CLEAN-REVIEW GATE before spending any credits. Look at the "
+                "frames listed above, then re-run the same command with --gate-pass."
             )
             return 2
         return 0

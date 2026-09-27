@@ -15,7 +15,7 @@ Prints one JSON object per image, one per line. Exit 0 always; read the JSON.
 Requires OPENAI_API_KEY (see ~/.openai-env).
 """
 
-import argparse, base64, json, os, ssl, sys, time, urllib.error, urllib.request
+import argparse, base64, json, os, ssl, time, urllib.error, urllib.request
 
 CTX = ssl.create_default_context()
 try:

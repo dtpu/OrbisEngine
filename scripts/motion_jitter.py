@@ -5,7 +5,7 @@ Splat index is stable across frames (same canonical body posed per frame), so
 splat i at frame t is the same body point: position differences are real motion.
 """
 
-import argparse, json, sys
+import argparse, json
 import numpy as np
 
 HDR_END = b"end_header\n"

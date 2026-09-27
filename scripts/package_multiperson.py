@@ -35,7 +35,6 @@ from package_person_sequence import (  # noqa: E402
     orthonormal,
     quat_from_matrix,
     quat_mul,
-    transform_ply,
 )
 from sfm_frame import camera0_reframe, describe as describe_frame  # noqa: E402
 

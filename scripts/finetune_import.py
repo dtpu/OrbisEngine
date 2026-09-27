@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bake_video_colours import ROOT, SH_C0, SPZ_COLOR_SCALE, read_spz  # noqa: E402
+from bake_video_colours import ROOT, SPZ_COLOR_SCALE, read_spz  # noqa: E402
 from finetune_export import quat_mul, rotmat_to_quat_xyzw  # noqa: E402
 
 

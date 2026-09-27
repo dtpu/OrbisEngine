@@ -241,7 +241,6 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
     `inMask` stayed at 0.99: on that clip the shadow really is re-observed. A clip where `inMask`
     stays near 1 AND the mask changes nothing is the one to distrust.
     """
-    import cv2
     import export_observation_confidence as eo
 
     wd = ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")

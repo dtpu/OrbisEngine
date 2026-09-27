@@ -53,7 +53,6 @@ import gzip
 import json
 import os
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -882,7 +881,6 @@ def person_masks_for(clip_name: str, ds_shape=None):
     tdirs = sorted((p.parent).glob("track_*"))
     src = {}
     for td in tdirs:
-        t = int(td.name.split("_")[1])
         for f in json.loads((td / "motion.json").read_text())["frames"]:
             src.setdefault(f["sample"], f["sourceIndex"])
     out = {}

@@ -751,7 +751,7 @@ def main():
     tracks = load_tracks(cfg)
     print(f"[{a.clip}] {len(tracks)} track(s), world {cfg['world']}", flush=True)
 
-    feats, bodyH0, low0 = [], None, None
+    feats, low0 = [], None
     rng = np.random.default_rng(0)
     for tid, seq, tr, _man in tracks:
         fr = list(person_frames(seq))
@@ -759,7 +759,7 @@ def main():
         ys = np.sort(op0[:, 1])
         l0 = float(ys[int(len(ys) * 0.01)])
         if low0 is None:
-            low0, bodyH0 = l0, float(fr[0][1][:, 1].max() - fr[0][1][:, 1].min())
+            low0 = l0
         feats.append([tid, fr, tr, l0, json.load(open(seq))])
         print(f"  {tid}: {len(fr)} frames, frame-0 low {l0:.4f}", flush=True)
 
@@ -803,7 +803,6 @@ def main():
             measure_pad(fr, scale, pos0 + tr, pad, mpu=mpu) for _t, fr, tr, _l, _s in feats
         ]
         normal = pad["n"]
-        probe_xyz = None
     else:
         probe = []
         for _t, fr, tr, _l, _s in feats:

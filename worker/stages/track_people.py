@@ -220,7 +220,7 @@ def main():
 
     estimator = PoseEstimator("./pretrained_models/human_model_files", device="cuda")
     cap = cv2.VideoCapture(a.video)
-    tracks, closed, next_id = [], [], 0
+    tracks, next_id = [], 0
     overlay_samples = {0, len(indices) // 2, len(indices) - 1}
     mask_store = {}
     unmatched_rcnn_total = 0
@@ -246,7 +246,6 @@ def main():
             break
         raw = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         h, w = raw.shape[:2]
-        diag = float(np.hypot(w, h))
         padded, ow, oh = estimator.img_center_padding(raw)
         tensor, annotation = estimator._preprocess(padded)
         pl, pt, factor, _, _ = annotation
