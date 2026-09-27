@@ -135,5 +135,4 @@ excerpts used in testing are not redistributed here.
 
 ## License
 
-Apache-2.0 for the code in this repository. Some models the pipeline downloads are
-research-only; see [licences](docs/licences.md).
+Apache-2.0. Some models the pipeline uses are research-only; see [licences](docs/licences.md).
