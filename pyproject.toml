@@ -66,3 +66,7 @@ required-version = "==0.16.8"
 target-version = "py311"
 line-length = 100
 cache-dir = ".context/ruff-cache"
+
+[tool.ruff.lint]
+# Pyflakes and syntax errors only for now; widen once the backlog is cleared.
+select = ["E9", "F"]

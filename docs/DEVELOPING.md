@@ -206,18 +206,18 @@ and recovery without duplicate Marble generations.
 ```sh
 bun run build
 bun run format:check
-bun run test:shared-assets
-bun run test:pull-assets
-bun run test:publish-hook
-bun run test:marble
-bun run test:audio
+bun run lint:python
+bun run test
+```
+
+CI (`.github/workflows/ci.yml`) runs these, plus type checks in `site/` and `admin/`, on every
+pull request. `bun run test` covers every unit test that needs no browser or server. The browser
+checks need Chrome and a running server:
+
+```sh
 bun run test:audio-browser
-bun run test:audio-package
-bun run test:person-motion
-bun run test:static-colliders
-bun run test:walk-collision
 bun run test:walk-clearance-browser
-bun run test:xr-turning
+bun run test:xr-browser
 ```
 
 Python checks and formatting need `uv`; viewer-only use needs just Bun.
