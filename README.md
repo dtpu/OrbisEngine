@@ -132,3 +132,8 @@ Aayan Karmali, Austin Jian, Daniel Pu and James Li.
 The Tears of Steel scene uses excerpts of **(CC) Blender Foundation | [mango.blender.org](https://mango.blender.org/)**,
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Phone clips are our own footage. Movie
 excerpts used in testing are not redistributed here.
+
+## License
+
+Apache-2.0 for the code in this repository. Some models the pipeline downloads are
+research-only; see [licences](docs/licences.md).
