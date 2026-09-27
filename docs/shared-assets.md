@@ -5,7 +5,7 @@ The shared migration is complete; the active demo loads published scenes from a 
 
 ## Teammates
 
-1. Clone `main` with `git clone --no-tags --single-branch --branch main https://github.com/StockerMC/wander.git`,
+1. Clone `main` with `git clone --no-tags --single-branch --branch main https://github.com/dtpu/OrbisEngine.git`,
    enter the checkout, and run `bun install --frozen-lockfile` (Bun 1.2.21+).
 2. Ask Aayan privately for the teammate environment file. Save it as `.env.local` at the repo root.
    It contains `WANDER_ASSET_ACCESS_KEY_ID` and `WANDER_ASSET_SECRET_ACCESS_KEY`. These credentials

@@ -1,9 +1,9 @@
 {
-  "name": "wander",
+  "name": "orbis-engine",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Step inside any video: one 2D clip -> orbitable 3D moment in the browser",
+  "description": "Anything ever filmed, in 4D: turn a video into a world you can walk around in",
   "scripts": {
     "dev": "bunx --bun vite --port 5399 --host 127.0.0.1",
     "demo": "bunx --bun vite --port 5399 --host 127.0.0.1",

@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "wander",
+      "name": "orbis-engine",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.1136.0",
         "@fontsource-variable/manrope": "^5.3.0",

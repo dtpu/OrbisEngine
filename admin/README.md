@@ -1,4 +1,4 @@
-# Wander admin
+# Orbis admin
 
 Operator console for pipeline runs: start a run from a clip, watch stages in dependency order,
 look at what each attempt produced, and approve, retry, pause or cancel with a recorded reason.
@@ -8,7 +8,7 @@ look at what each attempt produced, and approve, retry, pause or cancel with a r
 ```sh
 cd admin
 bun install --frozen-lockfile
-WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bun run dev -- --port 5400 --hostname 127.0.0.1
+WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bun run dev -- --port 5401 --hostname 127.0.0.1
 ```
 
 The browser only ever talks to this server. `app/api/pipeline/[[...path]]/route.ts` proxies to the
