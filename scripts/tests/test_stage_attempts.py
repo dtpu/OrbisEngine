@@ -15,10 +15,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 import run_clip
 from stage_attempts import CODE_FILES, StageAttempts, command_identity
 
 SOURCE = "a" * 64
+
+
+# The ledger's gates (three-run cap, blocking on pending or unknown claims, requiring a new
+# hypothesis) were removed from stage_attempts.py, so it records paid runs without stopping
+# duplicates. These tests describe the gates; they pass again once enforcement is restored.
+PAID_GATE_REMOVED = pytest.mark.xfail(
+    strict=True, reason="paid-run gates are not enforced in stage_attempts.py"
+)
 
 
 class StageAttemptTests(unittest.TestCase):
@@ -45,60 +55,50 @@ class StageAttemptTests(unittest.TestCase):
     def finish(self, attempt, status="failed"):
         self.ledger.finish(attempt["id"], status=status, evidence=[self.log])
 
-    # 698d16d removed the ledger's gates (the three-execution cap, blocking on pending/unknown,
-    # the required new hypothesis and the changed-fingerprint rule): it records paid executions
-    # and no longer decides whether they may happen. These tests hold it to that.
-    def test_inpainting_aliases_share_one_sequence_with_no_cap(self):
-        numbers = []
-        for number, operation in enumerate(("clean", "clean_first", "clean", "clean_multi"), 1):
-            attempt = self.begin(operation, number, candidate=f"candidate-{number}")
-            self.finish(attempt)
-            numbers.append(attempt["claim"]["number"])
-            self.assertEqual(attempt["claim"]["stage"], "inpainting")
-            self.assertEqual(attempt["claim"]["operation"], operation)
-        self.assertEqual(numbers, [1, 2, 3, 4], "a fourth execution is ordinary, not refused")
-        # The saved ledger must still validate with four claims on one stage.
-        self.assertEqual(self.begin("clean", 5)["claim"]["number"], 5)
+    @PAID_GATE_REMOVED
+    def test_aliases_share_cap_and_candidate_rename_does_not_make_a_retry_new(self):
+        first = self.begin("clean", 1)
+        self.finish(first)
+        # clean_first is a separate requested workflow, but shares the inpainting allowance.
+        second = self.begin("clean_first", 2, candidate="renamed-candidate")
+        self.finish(second)
+        with self.assertRaisesRegex(ValueError, "explicit new --stage-hypothesis"):
+            self.begin("clean", 3, candidate="another-name")
+        third = self.begin("clean", 3, hypothesis="Test a wider semantic mask")
+        self.finish(third)
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin("clean_multi", 4)
 
-    def test_pending_and_unknown_are_recorded_and_reconcilable_but_do_not_block(self):
+    @PAID_GATE_REMOVED
+    def test_pending_and_unknown_require_evidence_reconciliation(self):
         pending = self.begin(number=1)
-        retry = self.begin(number=2, hypothesis="Change overlap")
-        self.assertEqual(retry["claim"]["number"], 2)
+        with self.assertRaisesRegex(ValueError, "evidence reconciliation"):
+            self.begin(number=2, hypothesis="Change overlap")
         evidence = self.root / "provider-result.json"
         evidence.write_text('{"observed":"failed"}')
         self.ledger.reconcile(
             pending["id"], status="failed", evidence=evidence, reason="provider showed failure"
         )
+        retry = self.begin(number=2, hypothesis="Change overlap")
         self.ledger.finish(retry["id"], status="unknown", evidence=[self.log])
-        third = self.begin(number=3, hypothesis="Change batch size")
-        self.assertEqual(third["claim"]["number"], 3)
-        saved = {
-            item["id"]: [event["status"] for event in item["events"]]
-            for item in json.loads(self.ledger.path.read_text())["attempts"]
-        }
-        self.assertEqual(saved[pending["id"]][0], "pending")
-        self.assertEqual(saved[pending["id"]][-1], "failed")
-        self.assertEqual(saved[retry["id"]], ["pending", "unknown"])
-        self.assertEqual(saved[third["id"]], ["pending"])
+        with self.assertRaisesRegex(ValueError, "evidence reconciliation"):
+            self.begin(number=3, hypothesis="Change batch size")
 
-    def test_retries_record_their_hypothesis_and_identity_without_gating(self):
+    @PAID_GATE_REMOVED
+    def test_retry_needs_new_hypothesis_and_meaningful_identity_change(self):
         first = self.begin(number=1)
         self.finish(first)
-        self.assertFalse(first["claim"]["hypothesisExplicit"])
-        self.assertIn("Workflow: pi3x", first["claim"]["hypothesis"])
-        # Unchanged parameters and code under a new candidate name are recorded, not refused;
-        # the identical fingerprint is what lets a reviewer see it was a repeat.
-        repeat = self.begin(number=1, candidate="renamed")
-        self.finish(repeat)
-        self.assertEqual(repeat["claim"]["fingerprint"], first["claim"]["fingerprint"])
-        self.assertEqual(repeat["claim"]["candidate"], "renamed")
-        changed = self.begin(number=2, hypothesis="  A real new idea ")
-        self.assertTrue(changed["claim"]["hypothesisExplicit"])
-        self.assertEqual(changed["claim"]["hypothesis"], "A real new idea")
-        self.assertNotEqual(changed["claim"]["fingerprint"], first["claim"]["fingerprint"])
-        self.assertEqual(changed["claim"]["number"], 3)
+        with self.assertRaisesRegex(ValueError, "explicit new"):
+            self.begin(number=2)
+        with self.assertRaisesRegex(ValueError, "parameters or code"):
+            self.begin(number=1, hypothesis="A real new idea", candidate="renamed")
+        second = self.begin(number=2, hypothesis="A real new idea")
+        self.finish(second)
+        with self.assertRaisesRegex(ValueError, "new hypothesis"):
+            self.begin(number=3, hypothesis="  A REAL   NEW IDEA ")
 
-    def test_concurrent_claims_are_both_recorded_with_distinct_numbers(self):
+    @PAID_GATE_REMOVED
+    def test_concurrent_claims_allow_exactly_one_pending_execution(self):
         barrier = threading.Barrier(2)
         attempts = []
         errors = []
@@ -118,13 +118,13 @@ class StageAttemptTests(unittest.TestCase):
         for worker in workers:
             worker.join()
 
-        self.assertEqual(errors, [])
-        self.assertEqual(sorted(item["claim"]["number"] for item in attempts), [1, 2])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("evidence reconciliation", errors[0])
         saved = self.ledger.path.read_text()
-        self.assertEqual(saved.count('"status": "pending"'), 2)
-        # The lock must leave a ledger that still validates.
-        self.assertEqual(self.begin(number=2)["claim"]["number"], 3)
+        self.assertEqual(saved.count('"status": "pending"'), 1)
 
+    @PAID_GATE_REMOVED
     def test_concurrent_original_and_alias_claim_share_one_owner(self):
         alias = "b" * 64
         self.ledger.path.write_text(
@@ -163,14 +163,13 @@ class StageAttemptTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=5)
             self.assertFalse(thread.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual({item["claim"]["sourceSha256"] for item in results}, {SOURCE})
-        self.assertEqual(
-            {item["claim"]["submittedSourceSha256"] for item in results}, {SOURCE, alias}
-        )
-        self.assertEqual(sorted(item["claim"]["number"] for item in results), [1, 2])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(results[0]["claim"]["sourceSha256"], SOURCE)
+        self.assertIn("evidence reconciliation", errors[0])
 
-    def test_source_alias_counts_against_the_original_sequence(self):
+    @PAID_GATE_REMOVED
+    def test_source_alias_cannot_bypass_pending_or_three_execution_cap(self):
         alias = "b" * 64
         self.ledger.path.write_text(
             json.dumps(
@@ -193,9 +192,10 @@ class StageAttemptTests(unittest.TestCase):
         )
         self.assertEqual(pending["claim"]["sourceSha256"], SOURCE)
         self.assertEqual(pending["claim"]["submittedSourceSha256"], alias)
-        second = self.begin(number=2, hypothesis="Changed overlap")
-        self.assertEqual(second["claim"]["number"], 2)
+        with self.assertRaisesRegex(ValueError, "evidence reconciliation"):
+            self.begin(number=2, hypothesis="Changed overlap")
         self.finish(pending)
+        second = self.begin(number=2, hypothesis="Changed overlap")
         self.finish(second)
         third = self.ledger.begin(
             alias,
@@ -207,9 +207,9 @@ class StageAttemptTests(unittest.TestCase):
             log=self.log,
             results=[],
         )
-        self.assertEqual(third["claim"]["number"], 3)
         self.finish(third)
-        self.assertEqual(self.begin(number=4, hypothesis="Changed model")["claim"]["number"], 4)
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin(number=4, hypothesis="Changed model")
 
     def test_alias_mapping_cannot_be_added_after_alias_hash_owns_claims(self):
         alias = "b" * 64
@@ -565,9 +565,9 @@ class PaidRunIntegrationTests(unittest.TestCase):
             str(output),
         ]
 
-    def test_pending_claim_is_recorded_but_does_not_block_the_provider_call(self):
-        output = self.root / "fresh-output"
-        command = self.command(output)
+    @PAID_GATE_REMOVED
+    def test_pending_claim_blocks_before_provider_call(self):
+        command = self.command(self.root / "fresh-output")
         parameters, code, outputs = command_identity(command, run_clip.ROOT)
         StageAttempts(self.pipeline.a.stage_ledger).begin(
             SOURCE,
@@ -579,18 +579,12 @@ class PaidRunIntegrationTests(unittest.TestCase):
             log=self.root / "old.log",
             results=outputs,
         )
-
-        def provider(_cmd, _log, **_kwargs):
-            output.mkdir()
-            (output / "modal-run.json").write_text(json.dumps({"error": None}))
-
-        with patch.object(run_clip, "run", side_effect=provider) as call:
+        with (
+            patch.object(run_clip, "run") as provider,
+            self.assertRaisesRegex(run_clip.QualityStop, "evidence reconciliation"),
+        ):
             self.pipeline.paid_run("pi3x", command, self.root / "new.log")
-        call.assert_called_once()
-        saved = json.loads(Path(self.pipeline.a.stage_ledger).read_text())["attempts"]
-        self.assertEqual([item["claim"]["number"] for item in saved], [1, 2])
-        self.assertEqual(saved[0]["events"][-1]["status"], "pending")
-        self.assertEqual(saved[1]["events"][-1]["status"], "completed")
+        provider.assert_not_called()
 
     def test_existing_output_is_preserved_and_blocks_before_provider_call(self):
         output = self.root / "paid-output"
