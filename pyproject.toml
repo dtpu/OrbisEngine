@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ruff==0.16.8"]
+dev = ["pytest>=8.3,<9", "ruff==0.16.8"]
 orchestrator = [
     "alembic>=1.16,<2",
     "boto3>=1.40,<2",
@@ -60,6 +60,10 @@ torchvision = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["scripts/tests"]
+cache_dir = ".context/pytest-cache"
 
 [tool.ruff]
 required-version = "==0.16.8"
