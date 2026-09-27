@@ -11,6 +11,8 @@
     "prepare:worlds": "bun scripts/prepare-worlds.ts",
     "runs:publish": "node scripts/publish-runs.ts",
     "assets:pull": "bun scripts/pull-assets.ts",
+    "assets:warm": "bun scripts/warm-assets.ts",
+    "test:warm-assets": "bun test ./scripts/test-warm-assets.ts",
     "test:pull-assets": "bun test ./scripts/test-pull-assets.ts",
     "test:shared-assets": "bun test ./scripts/test-shared-assets.ts",
     "test:publish-transport": "node --test scripts/test-publish-transport.ts",

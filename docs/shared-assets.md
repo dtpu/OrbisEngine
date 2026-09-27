@@ -25,6 +25,17 @@ Restart the local server to pick up a newly published snapshot. A running server
 so a publish cannot mix an old scene manifest with new frames. `/api/shared-assets` shows the active
 snapshot, timestamp, and file count without exposing credentials.
 
+## Warm the cache before a demo
+
+`bun run assets:warm` fills that same cache for every scene the picker offers, so the first visit
+to a scene costs no S3 download. It reads the demo list from `demo.html` and each scene's assets
+from the viewer's own preset table, warms each named world directory whole, and downloads each
+blob once however many paths share it. Downloads are verified by size and SHA-256, retried once,
+and abandoned after 30 s of silence — the same code path the dev server uses, so nothing is
+duplicated. Re-running skips what is already cached. Narrow or widen it with `--scene <id>`,
+`--path`, `--prefix` or `--all` (the whole pinned snapshot); `--help` lists the options.
+Run it before `bun run demo`, on the machine that will present. Expect several GB and some minutes.
+
 Do not give these keys a `VITE_` prefix: credentials belong in the local server, never the browser.
 `.env.local` and the cache are gitignored. Keep the server on localhost (the default demo command).
 This is a local development viewer, not an authenticated public hosting service.
