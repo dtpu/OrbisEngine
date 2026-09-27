@@ -10,7 +10,7 @@ have not passed acceptance. No new paid generation, cleaning or inference was su
 [Delivery page](http://127.0.0.1:5399/reviews/gym-kitchen/index.html) contains both scenes and videos.
 Use the `austin/gym-kitchen` branch for the current viewer and visibility correction.
 A teammate server must adopt the delivery snapshot; a running server pins its older snapshot.
-Only restart a server you own. See [shared assets](shared-assets.md).
+Only restart a server you own. See [shared assets](../shared-assets.md).
 
 On Austin's current machine, the existing server belongs to another checkout and was preserved.
 The [immediate local delivery page](http://127.0.0.1:5399/@fs/Users/austinjian/htn2026/public/reviews/gym-kitchen/index.html)
@@ -59,7 +59,7 @@ ordinal is 2, not 0. These old cleaned frames are not relabeled as camera-aligne
 The older archived framehash pair independently proves 609 pixel matches and 305 incorrect labels.
 New pipeline cleaning binds actual decoder selections and PTS, image hashes and source hashes;
 multi-image selection/submission checks these bindings before spending. Existing operation
-recovery remains available without a new submission. See [kitchen review](kitchen-review.md).
+recovery remains available without a new submission. See [kitchen review](../kitchen-review.md).
 
 The recovered first-image clean is a separate source-frame-0 operation. Its saved camera RGB
 matches that source view (resized RGB mean absolute difference 1.375/255; ray reprojection RMSE

@@ -1,6 +1,6 @@
 # Accepted gym delivery
 
-The subsequent [live raw-video evaluation](video-input-evaluation.md) generated a separate gym
+The subsequent [live raw-video evaluation](../video-input-evaluation.md) generated a separate gym
 candidate. It was not promoted; this accepted environment, people/props and viewer snapshot remain
 unchanged. Generation success did not establish improved geometry or fewer hallucinations.
 
@@ -25,7 +25,7 @@ The focused port from Austin's `2ba38d7ca08e9a64365a21c2106e7c94598dfeda` adds o
 box colliders, continuous walker collision checks and finite seat support. It preserves main's
 lossless animation reader, verified original-PLY fallback, loading/retry behavior, deterministic
 stance, object timing and recorded-audio handling. Colliders constrain the viewer's walker;
-they do not simulate the actor or repair prerecorded contact. See [objects](objects.md).
+they do not simulate the actor or repair prerecorded contact. See [objects](../objects.md).
 
 The review's already published standalone controller supplies comparison controls. Its candidate
 uses the exact placement/frame alignment and disables stance, foot locking and camera drift as

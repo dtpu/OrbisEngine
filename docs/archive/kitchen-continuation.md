@@ -71,7 +71,7 @@ works through the existing server without interrupting it.
 The new-main video evaluation records two additional kitchen generations and one gym generation,
 4,800 provider credits total across the three. Those receipts remain separate historical spending;
 this continuation submitted none. Neither the new credentials nor those evaluation results reset
-stage allowances. See [the evaluation](video-input-evaluation.md).
+stage allowances. See [the evaluation](../video-input-evaluation.md).
 
 ## Floor calibration experiment
 
@@ -262,7 +262,7 @@ hypotheses, original spending ledger and the additional authorized job receipt a
 
 The user reviewed the kitchen as good and specifically identified the missing Brita water-filter
 pitcher. Use this version as a reference for similar kitchen clips, with the recorded object,
-geometry and contact limitations retained. The [reusable kitchen workflow](kitchen-workflow.md)
+geometry and contact limitations retained. The [reusable kitchen workflow](../kitchen-workflow.md)
 captures that process and adds explicit prop inventory and interaction coverage before cleaning.
 Its procedures still include manual authoring and review; documenting them adds no automatic
 held-object reconstruction feature or authorization for future paid runs.

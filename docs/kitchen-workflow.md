@@ -4,7 +4,7 @@ Use this as the default preparation and review procedure for future kitchen clip
 It documents how to apply the reference's lessons; it adds no automated pipeline feature.
 The user found the current kitchen useful and good, while identifying the missing Brita
 filter pitcher. Its measured door, contact, room and coverage limitations remain recorded
-in the [kitchen continuation](kitchen-continuation.md).
+in the [kitchen continuation](archive/kitchen-continuation.md).
 Read the [known limits](known-limits.md) before choosing another reconstruction approach.
 
 ## Preserve the recording and establish correspondence
