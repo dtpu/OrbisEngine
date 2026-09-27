@@ -45,7 +45,7 @@ Vite server already owns port 5399, use it and coordinate changes instead of sto
 
 Austin’s accepted gym reconstruction is available in the [gym review](http://127.0.0.1:5399/reviews/gym-repair/index.html?quality=detail).
 Use its **Walk around the bench** link for a single-scene view. The original gym preset remains
-the comparison baseline. See [the gym delivery notes](gym-delivery.md) for the accepted asset
+the comparison baseline. See [the gym delivery notes](archive/gym-delivery.md) for the accepted asset
 version, retained limitations, and the older review page’s historical work-in-progress labels.
 
 Walk mode is the default. `?walk=0` restores the authoring camera. The source clip, reconstruction,

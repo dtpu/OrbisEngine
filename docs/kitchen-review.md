@@ -111,6 +111,6 @@ No new Marble generation or GPU inference was launched for this investigation.
 ## September 19 delivery recovery
 
 A later, separate `kitchen-cooking` run was recovered with 610 detections across two appearance
-fragments. [The delivery report](gym-kitchen-delivery.md) describes its source mapping, one duplicate
+fragments. [The delivery report](archive/gym-kitchen-delivery.md) describes its source mapping, one duplicate
 suppression, 609 retained samples, original audio and full-duration preview. It does not promote
 the old `test1.mov` alignment or claim that the new kitchen geometry/object reconstruction passed.
