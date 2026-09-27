@@ -16,7 +16,7 @@ turn 9.80665 m/s^2 into units.
   uv run --locked --group inference python scripts/world_collision.py --world elevator-4d --spz public/marble-elevator-clean.spz
 """
 
-import argparse, gzip, json, os, struct, sys
+import argparse, gzip, json, os, struct
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -367,8 +367,6 @@ def ransac_walls(P, n, d, max_walls, tol, min_inliers, iters, rng, floor_pts):
         bs = np.floor(s / 0.1).astype(np.int64)
         bh = np.floor(h / 0.1).astype(np.int64)
         occ = np.unique(bs * 100000 + bh)
-        ubs = np.unique(bs)
-        ubh = np.unique(bh)
         # a bin column counts only when it holds enough of the sheet, so a stray splat a metre
         # away does not stretch the extent
         cols = np.bincount(bs - bs.min())

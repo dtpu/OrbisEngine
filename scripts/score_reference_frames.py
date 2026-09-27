@@ -35,7 +35,7 @@ reported as unverified; `estimatorReadable` on each row records which of the thr
 detector substitutes for this: torchvision's keypoint R-CNN reads bedroom f198 at 0.999.
 """
 
-import argparse, json, sys
+import argparse, json
 from pathlib import Path
 
 import cv2

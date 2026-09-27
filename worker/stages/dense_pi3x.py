@@ -6,7 +6,7 @@ surface limitation remains explicit. All chunks share a measured similarity fram
 """
 
 from __future__ import annotations
-import argparse, gc, hashlib, json, os, shutil, sys, time
+import argparse, gc, hashlib, json, os, sys, time
 from pathlib import Path
 import cv2
 import numpy as np

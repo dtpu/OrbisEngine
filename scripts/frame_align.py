@@ -729,7 +729,7 @@ def scale_report(clip):
     Stature is the body's longest principal extent, which a rotation does not change, so the scale
     moves only because the camera ruler moved.
     """
-    from place_solve import world_splats, person_frames, fit_plane
+    from place_solve import world_splats, person_frames
 
     world, pi3x, spz, floor, preset_scale = CLIPS[clip]
     fa = json.load(open(ROOT / "public/worlds" / world / "framealign.json"))

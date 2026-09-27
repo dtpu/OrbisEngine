@@ -20,7 +20,7 @@ the choice is unverified on that axis, which is how bedroom's top frame 198 was 
 refused by the GPU.
 """
 
-import argparse, hashlib, json, os, subprocess, sys
+import argparse, hashlib, json, os, sys
 from pathlib import Path
 
 import cv2
