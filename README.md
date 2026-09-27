@@ -71,10 +71,9 @@ bun run demo
 
 Open http://127.0.0.1:5399/demo.html and pick a scene.
 
-Scenes are not in this repo. You have three ways to get one:
+Scenes are not in this repo. You have two ways to get one:
 
 - **Team credentials:** put the read-only keys in `.env.local` (see `.env.example`).
-- **A scene bundle:** `tar -xzf orbis-sample.tar.gz`, then `WANDER_ASSETS_MODE=local bun run demo`.
 - **Your own clip:** see below.
 
 | Key           | Does          |
