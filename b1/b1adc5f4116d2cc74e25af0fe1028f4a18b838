@@ -1,0 +1,45 @@
+.github/workflows/ci.yml
+  s_52d9aafecb7e4b::t_3517c2b71d77ed 55
+README.md
+  s_52d9aafecb7e4b::t_bd15e59be5ecdf 107,117-118
+admin/README.md
+  s_52d9aafecb7e4b::t_3e9499deb38175 23-27,31-33,39-41
+admin/app/globals.css
+  s_52d9aafecb7e4b::t_82b3df90292f93 2111-2285
+admin/app/page.tsx
+  s_52d9aafecb7e4b::t_30befc0ce481ce 4,8-10,12
+admin/app/runs/[runId]/console.tsx
+  s_52d9aafecb7e4b::t_e9f5a7b846b23f 10,528-529
+admin/components/create-run.tsx
+  s_52d9aafecb7e4b::t_7e7459ad8ab1ff 1-318
+admin/components/run-overview.tsx
+  s_52d9aafecb7e4b::t_8067eafbe77fe8 1-179
+admin/lib/client.ts
+  s_52d9aafecb7e4b::t_cbf1ad02d0dfb3 5-7,174-187
+admin/lib/options.ts
+  s_52d9aafecb7e4b::t_7c14dfbfd65372 1-44
+admin/lib/types.ts
+  s_52d9aafecb7e4b::t_d24344d8988765 180-237
+admin/package.json
+  s_52d9aafecb7e4b::t_d51aecdafc844d 8-9
+admin/tests/options.test.ts
+  s_52d9aafecb7e4b::t_ae130dba82b0cd 1-67
+docs/pipeline-validation.md
+  s_52d9aafecb7e4b::t_f788850ff380a0 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1b1adc5f4116d2cc74e25af0fe1028f4a18b838",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
