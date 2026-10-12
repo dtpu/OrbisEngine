@@ -13,6 +13,7 @@ interesting decisions are the agent's, and this is only how it records them.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orchestrator.config import resolve_stage_ledger
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.steps import (
     SAME_AS,
@@ -30,6 +32,7 @@ from orchestrator.steps import (
     needs_of,
     people_steps,
     planned_steps,
+    RunOptions,
 )
 
 RUN_FILE = "run.json"
@@ -46,6 +49,7 @@ class RunContext:
     source: Path
     repository: Path
     options: dict[str, Any]
+    source_sha256: str | None = None
 
     @classmethod
     def load(cls) -> RunContext:
@@ -65,6 +69,7 @@ class RunContext:
                 described.get("repository") or os.environ.get("WANDER_REPOSITORY", ".")
             ),
             options=described.get("options") or {},
+            source_sha256=described.get("sourceSha256"),
         )
 
     def journal(self) -> Journal:
@@ -110,19 +115,18 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
         "--only",
         step,
         "--no-publish",
+        "--reject-cuts",
         "--stage-ledger",
-        str(context.run_dir / "paid-ledger.json"),
+        str(resolve_stage_ledger()),
     ]
-    marble = context.options.get("marble")
-    if marble:
-        command += ["--marble", str(marble)]
-    people = context.options.get("people")
-    if isinstance(people, int) and people > 1:
-        command += ["--people", str(people)]
-    elif context.options.get("all_people"):
-        command.append("--all-people")
-    if context.options.get("one_shot", True):
-        command.append("--one-shot")
+    options = RunOptions.model_validate(context.options)
+    command += ["--marble", options.marble]
+    if options.people > 1 or options.all_people:
+        command += ["--people", str(options.people)]
+    if not options.objects:
+        command.append("--no-objects")
+    if not options.finetune:
+        command.append("--skip-finetune")
     return command + extra
 
 
@@ -165,6 +169,19 @@ def take_our_flags(args: argparse.Namespace) -> None:
     args.rest = kept
 
 
+def source_problem(context: RunContext) -> str | None:
+    try:
+        if not context.source_sha256:
+            return "Legacy run has no source digest; submit a new run before executing stages."
+        with context.source.open("rb") as source:
+            observed = hashlib.file_digest(source, "sha256").hexdigest()
+        if observed != context.source_sha256:
+            return "Source bytes changed since submission; restore the source or submit a new run. Cached stages were retained."
+    except OSError as error:
+        return f"Source is unavailable: {error}"
+    return None
+
+
 def command_step(context: RunContext, args: argparse.Namespace) -> int:
     take_our_flags(args)
     """Start a step. By default it runs on its own and this returns at once.
@@ -173,6 +190,30 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     holding a session open to do nothing. So the work is detached and journalled by the child
     that runs it: start it, stop your turn, and you will be given another when it lands.
     """
+    if problem := source_problem(context):
+        journal = context.journal()
+        number = args.number or journal.attempt_number(args.step)
+        attempt = args.attempt or f"{context.run_id}:{args.step}:{number}"
+        if not args.attempt:
+            journal.append(
+                "step.started",
+                step=args.step,
+                attempt=attempt,
+                number=number,
+                command=[],
+                parameters={"preflight": True},
+                paid=False,
+            )
+        journal.append(
+            "step.finished",
+            step=args.step,
+            attempt=attempt,
+            status="blocked",
+            error=problem,
+            preflight=True,
+        )
+        print(problem, file=sys.stderr)
+        return 2
     absent = missing_credentials(args.step)
     if absent:
         # Running it anyway spends a turn to be told by the stage itself, and for a paid step
@@ -190,7 +231,7 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     number = args.number or journal.attempt_number(step)
     attempt = args.attempt or f"{context.run_id}:{step}:{number}"
     command = run_clip_command(context, step, args.rest)
-    described = STEPS.get(step)
+    described = STEPS.get(base_step(step))
 
     logs = context.run_dir / LOG_DIR
     logs.mkdir(parents=True, exist_ok=True)
@@ -227,8 +268,25 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
                     sys.stdout.buffer.write(line)
                     sys.stdout.flush()
             code = process.wait()
-        if code != 0:
-            status, error = "failed", f"exited {code}"
+        try:
+            record = json.loads((context.run_dir / "state.json").read_text())["stages"].get(
+                step, {}
+            )
+        except (OSError, ValueError, KeyError):
+            record = {}
+        actual = record.get("status")
+        if actual in {"gate", "blocked"}:
+            status, error = (
+                "blocked",
+                record.get("error") or "Review or recovery required; inspect the stage log.",
+            )
+        elif code != 0 or actual == "failed":
+            status, error = (
+                "failed",
+                record.get("error") or f"exited {code}; inspect {log.relative_to(context.run_dir)}",
+            )
+        elif actual == "skipped":
+            status = "skipped"
     except BaseException as caught:  # noqa: BLE001 - the journal must say what happened
         status, error = "failed", f"{type(caught).__name__}: {caught}"
     finally:
@@ -241,7 +299,7 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             seconds=round(time.monotonic() - started, 1),
             log=str(log.relative_to(context.run_dir)),
         )
-    return 0 if status == "succeeded" else 1
+    return 0 if status in {"succeeded", "skipped"} else 1
 
 
 def detach(context: RunContext, args: argparse.Namespace) -> int:
@@ -252,7 +310,7 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
     number = journal.attempt_number(args.step)
     attempt = f"{context.run_id}:{args.step}:{number}"
     log = Path(LOG_DIR) / f"{args.step}.{number}.log"
-    described = STEPS.get(args.step)
+    described = STEPS.get(base_step(args.step))
     journal.append(
         "step.started",
         step=args.step,
@@ -292,7 +350,7 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    described = STEPS.get(args.step)
+    described = STEPS.get(base_step(args.step))
     print(
         f"{args.step} started"
         + ("  (this one costs money)" if described and described.paid else "")
@@ -338,9 +396,9 @@ def completed(context: RunContext) -> set[str]:
     for name, record in stages.items():
         if name.startswith("_"):
             continue  # run_clip's own bookkeeping, not a stage
-        if isinstance(record, dict) and record.get("status") == "ok":
+        if isinstance(record, dict) and record.get("status") in {"ok", "skipped"}:
             done.add(name)
-    done |= Journal(context.run_dir).done()
+    done |= Journal(context.run_dir).done() - set(stages)
     return {name for step in done for name in (step, SAME_AS.get(step, step))}
 
 
@@ -355,7 +413,10 @@ def tracked_people(context: RunContext) -> int:
         report = json.loads((context.run_dir / "tracks" / "tracks.json").read_text())
     except (OSError, ValueError):
         return 1
-    return max(1, int(report.get("trackCount") or len(report.get("tracks") or ())))
+    return min(
+        int(context.options.get("people") or 1),
+        max(1, int(report.get("trackCount") or len(report.get("tracks") or ()))),
+    )
 
 
 def graph_shape(context: RunContext) -> tuple[int, bool]:
@@ -383,9 +444,11 @@ def plan_for(context: RunContext) -> list[str]:
     return people_steps(planned_steps(context.options), people, multiperson=many)
 
 
-def waiting_on(step: str, done: set[str], people: int = 1, multiperson: bool = False) -> list[str]:
+def waiting_on(
+    step: str, done: set[str], people: int = 1, multiperson: bool = False, options=None
+) -> list[str]:
     """The prerequisites of a step that are not done."""
-    return [need for need in needs_of(step, people, multiperson) if need not in done]
+    return [need for need in needs_of(step, people, multiperson, options) if need not in done]
 
 
 def in_flight(journal) -> dict[str, str]:
@@ -409,7 +472,7 @@ def command_ready(context: RunContext, args: argparse.Namespace) -> int:
     for name in plan_for(context):
         if name in done:
             continue
-        (blocked if waiting_on(name, done, people, many) else ready).append(name)
+        (blocked if waiting_on(name, done, people, many, context.options) else ready).append(name)
     if running:
         print("already running (you do not have to wait for these):")
         for name in running:
@@ -428,7 +491,9 @@ def command_ready(context: RunContext, args: argparse.Namespace) -> int:
     if args.all and blocked:
         print("\nwaiting on something:")
         for name in blocked:
-            print(f"  {name:<16} wants {', '.join(waiting_on(name, done, people, many))}")
+            print(
+                f"  {name:<16} wants {', '.join(waiting_on(name, done, people, many, context.options))}"
+            )
     if done:
         print(f"\ndone: {', '.join(sorted(done & set(STEPS)))}")
     print(
@@ -458,8 +523,8 @@ def command_show(context: RunContext, args: argparse.Namespace) -> int:
         print("  costs      money, every time it runs")
     if step.caution:
         print(f"  careful    {step.caution}")
-    outstanding = waiting_on(name, done, people, many)
-    print(f"  wants      {', '.join(needs_of(name, people, many)) or 'nothing'}")
+    outstanding = waiting_on(name, done, people, many, context.options)
+    print(f"  wants      {', '.join(needs_of(name, people, many, context.options)) or 'nothing'}")
     print(f"  waiting on {', '.join(outstanding) if outstanding else 'nothing — it can run now'}")
     properties = (step.parameters or {}).get("properties") or {}
     if properties:
@@ -528,6 +593,90 @@ def command_answer(context: RunContext, args: argparse.Namespace) -> int:
 
 
 def command_finish(context: RunContext, args: argparse.Namespace) -> int:
+    if args.status == "succeeded":
+        if problem := source_problem(context):
+            print(problem, file=sys.stderr)
+            return 1
+        plan = set(plan_for(context))
+        missing = plan - completed(context)
+        if missing:
+            print(
+                f"cannot finish: incomplete stages: {', '.join(sorted(missing))}", file=sys.stderr
+            )
+            return 1
+        world = context.run_dir / "public" / "worlds" / f"{context.name}-4d"
+        try:
+
+            def packaged_path(base: Path, name: Any, kind: str) -> Path:
+                if not isinstance(name, str) or not name or Path(name).is_absolute():
+                    raise ValueError(f"packaged {kind} needs a relative path")
+                path = (base / name).resolve()
+                if not path.is_relative_to(world.resolve()):
+                    raise ValueError(f"packaged {kind} escapes the world directory")
+                return path
+
+            cameras = json.loads((world / "cameras.json").read_text())
+            if not isinstance(cameras, dict) or not cameras.get("cameras"):
+                raise ValueError("packaged cameras are missing")
+            sequences = {packaged_path(world, "person/sequence.json", "sequence")}
+            if "package_people" in plan:
+                manifest = json.loads(packaged_path(world, "people.json", "manifest").read_text())
+                if not isinstance(manifest, dict) or manifest.get("schema") != "wander.people/1":
+                    raise ValueError("packaged people manifest is malformed")
+                if manifest.get("sourceSha256") != context.source_sha256:
+                    raise ValueError("packaged people source identity is missing or changed")
+                people = manifest.get("people")
+                if (
+                    not isinstance(people, list)
+                    or not people
+                    or type(manifest.get("peopleCount")) is not int
+                    or manifest["peopleCount"] != len(people)
+                ):
+                    raise ValueError("packaged people manifest has no valid people list")
+                ids, referenced = set(), set()
+                for person in people:
+                    if not isinstance(person, dict):
+                        raise ValueError("packaged person manifest entry is malformed")
+                    person_id = person.get("id")
+                    if not isinstance(person_id, str) or not person_id or person_id in ids:
+                        raise ValueError("packaged person identity is missing or repeated")
+                    ids.add(person_id)
+                    sequence_path = packaged_path(world, person.get("sequence"), "sequence")
+                    if sequence_path in referenced:
+                        raise ValueError("packaged person sequence is repeated")
+                    referenced.add(sequence_path)
+                if manifest.get("primary") not in ids:
+                    raise ValueError("packaged primary person is missing")
+                sequences.update(referenced)
+            for sequence_path in sorted(sequences):
+                sequence = json.loads(sequence_path.read_text())
+                if (
+                    not isinstance(sequence, dict)
+                    or sequence.get("sourceSha256") != context.source_sha256
+                ):
+                    raise ValueError("packaged source identity is missing or changed")
+                frames, hashes = sequence.get("frames"), sequence.get("frame_sha256")
+                if (
+                    not isinstance(frames, list)
+                    or not frames
+                    or not isinstance(hashes, list)
+                    or len(frames) != len(hashes)
+                ):
+                    raise ValueError("packaged frame identities are missing")
+                for name, expected in zip(frames, hashes, strict=True):
+                    path = packaged_path(sequence_path.parent, name, "frame")
+                    with path.open("rb") as frame:
+                        if hashlib.file_digest(frame, "sha256").hexdigest() != expected:
+                            raise ValueError(
+                                f"packaged frame changed: {path.relative_to(world.resolve())}"
+                            )
+            if context.options.get("marble", "video") != "none":
+                state = json.loads((context.run_dir / "state.json").read_text())
+                if state.get("stages", {}).get("_verify", {}).get("passed") is not True:
+                    raise ValueError("the static world has no passed manual review")
+        except (OSError, ValueError, TypeError) as error:
+            print(f"cannot finish: {error}", file=sys.stderr)
+            return 1
     context.journal().append("run.finished", status=args.status, summary=args.summary)
     return 0
 

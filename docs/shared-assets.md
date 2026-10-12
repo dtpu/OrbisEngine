@@ -183,7 +183,7 @@ The commands above select the `default` profile; replace it with your author pro
 standard AWS environment credentials instead, omit the `AWS_PROFILE=default` prefix and leave
 `AWS_PROFILE` unset.
 
-`scripts/run_clip.py` automatically archives `public/` and `.context/run/` at the end, including
+`scripts/run_clip.py` automatically archives `public/` and run directories at the end, including
 failed/gated runs, using `--archive-only`. Public outputs are stored privately under `public/` in
 the author archive; automatic completion does not promote them to the viewer. Review the local
 result before explicitly running the publish command above to update the viewer.
@@ -193,6 +193,15 @@ with `bun run runs:publish --archive-only` (and the same evidence directory when
 `--no-publish` is the explicit offline opt-out. Standalone experimental scripts outside `run_clip.py`
 need `bun run runs:publish` after finishing. Hard-killed processes cannot run a completion hook;
 resume them or publish their partial outputs manually.
+
+Both automatic archiving and manual publishing discover `.context/runs/` (the current default),
+`.context/run/` (legacy history), and any `WANDER_RUNS_ROOT` or legacy `WANDER_RUNS_DIR` directories.
+Relative configured paths resolve from the repository root; `~/` expands to the user's home.
+Keep the same overrides set when retrying a manual archive. Every root retains the archive layout
+`runs/<name>/...`; missing roots are harmless and aliases of the same directory are scanned once.
+Distinct local runs sharing a name across roots cause publication to fail before any upload,
+even if their files do not overlap. Rename or consolidate those runs before retrying; no root
+silently takes precedence over another.
 
 `--archive-only` preserves existing archive paths and conditionally updates only the archive
 reference in an existing shared pointer, retaining its viewer snapshot. It creates no viewer

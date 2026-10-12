@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import secrets
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -24,8 +25,10 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 
-from orchestrator.api.artifacts import ArtifactReader, register_artifact_routes
+from orchestrator.api.artifacts import ArtifactReader, register_artifact_routes, safe_filename
+from orchestrator.api.progress import register_progress_routes
 from orchestrator.api.reviews import register_review_routes
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
@@ -35,10 +38,28 @@ from orchestrator.steps import RunOptions
 GRAPH_VERSION = "wander.agent-run/1"
 
 
+def source_filename(name: str) -> str:
+    """Keep the source's extension even when its untrusted basename needs truncation."""
+    basename = name.replace("\\", "/").rsplit("/", 1)[-1]
+    suffix = Path(basename).suffix
+    if suffix and len(suffix) <= 20 and suffix[1:].isalnum():
+        stem = safe_filename(Path(basename).stem)[: 120 - len(suffix)]
+        return stem + suffix
+    return safe_filename(basename)
+
+
 class Runs(Protocol):
     """Where runs live on disk. The supervisor picks up whatever appears here."""
 
-    def open(self, *, run_id: str, name: str, source: Path, options: dict[str, Any]) -> Path: ...
+    def open(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        source: Path,
+        options: dict[str, Any],
+        source_artifact_id: str | None = None,
+    ) -> Path: ...
 
     def journal(self, run_id: str) -> Journal: ...
 
@@ -61,9 +82,9 @@ class ApiSettings(BaseModel):
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str | None = None
+    id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_artifact_id: str
+    source_artifact_id: str = Field(min_length=1, max_length=128)
     options: RunOptions = Field(default_factory=RunOptions)
     budget: BudgetPolicy = Field(default_factory=BudgetPolicy)
 
@@ -124,9 +145,78 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
         return "operator"
 
+    @app.get("/api/pipeline/options")
+    async def pipeline_options(user: str = Depends(actor)):
+        del user
+        return RunOptions.model_json_schema()
+
+    @app.post("/api/pipeline/doctor")
+    def doctor(options: RunOptions, user: str = Depends(actor)):
+        del user
+        from orchestrator.doctor import inspect_setup
+
+        return inspect_setup(options.model_dump(mode="json"))
+
+    def require_supported_budget(budget: BudgetPolicy) -> None:
+        if budget.maximum_attempts_by_stage or budget.maximum_provider_operations:
+            raise HTTPException(
+                422,
+                "Custom run budgets are not enforced by the directory runner; its shared source/stage ledger enforces the documented fixed attempt limits.",
+            )
+        if budget.maximum_cost is not None:
+            raise HTTPException(
+                422,
+                "maximum_cost is not enforced by the directory runner. Use provider-side spending limits; monetary-capped submissions are disabled until all provider calls are metered.",
+            )
+
+    def require_new_run(run_id: str) -> None:
+        # Check before archiving bytes or downloading a replay. The unique database key
+        # still arbitrates concurrent submissions below.
+        try:
+            repository.run_summary(run_id)
+        except KeyError:
+            return
+        raise HTTPException(status_code=409, detail=f"run already exists: {run_id}")
+
+    def submit(run: Run, source: Path, filename: str, source_metadata: dict | None = None):
+        created = False
+        try:
+            repository.create_run_row(run)
+            created = True
+            if source_metadata is not None:
+                repository.add_source_artifact(**source_metadata)
+            runs.open(
+                run_id=run.id,
+                name=Path(filename).stem or run.id,
+                source=source,
+                options=run.configuration["options"],
+                source_artifact_id=run.source_artifact_id,
+            )
+        except Exception as error:
+            if created:
+                repository.delete_unstarted_run(run.id)
+            if isinstance(error, (ValueError, FileExistsError, IntegrityError)):
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            raise
+
     @app.post("/api/pipeline/runs", status_code=201)
     async def create_run(request: CreateRunRequest, user: str = Depends(actor)):
+        require_supported_budget(request.budget)
         run_id = request.id or f"run-{uuid.uuid4().hex}"
+        require_new_run(run_id)
+        if artifact_reader is None:
+            raise HTTPException(status_code=503, detail="source artifact reads are not configured")
+        try:
+            artifact = repository.get_source_artifact(request.source_artifact_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if artifact["sha256"] != request.source_sha256:
+            raise HTTPException(status_code=422, detail="source digest does not match artifact")
+        if artifact["size"] > settings.maximum_upload_bytes:
+            raise HTTPException(status_code=413, detail="source upload is too large")
+        filename = source_filename(artifact["name"])
         run = Run(
             id=run_id,
             graph_version=GRAPH_VERSION,
@@ -138,20 +228,31 @@ def create_app(
             budget=request.budget,
             created_by=user,
         )
-        try:
-            repository.create_run_row(run)
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        # The clip may not be on this machine yet: a run opened by artifact id is one the
-        # operator is pointing at something already uploaded, and the supervisor fetches it
-        # when it picks the run up. What has to exist now is the run.
-        runs.open(
-            run_id=run.id,
-            name=run.id,
-            source=None,
-            options=request.options.model_dump(mode="json"),
-            source_artifact_id=run.source_artifact_id,
-        )
+        # Artifact IDs are durable references, not runnable inputs. Hydrate and verify a
+        # local copy before publishing anything the supervisor can discover.
+        with tempfile.TemporaryDirectory(prefix="wander-source-") as directory:
+            local = Path(directory) / filename
+            payload = artifact_reader.read(artifact["storageKey"])
+            if payload.path is not None:
+                shutil.copyfile(payload.path, local)
+            elif payload.body is not None and payload.status_code == 200:
+                local.write_bytes(payload.body)
+            else:
+                raise HTTPException(status_code=422, detail="source artifact has no complete bytes")
+            digest = hashlib.sha256()
+            with local.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+            if (
+                local.stat().st_size != artifact["size"]
+                or digest.hexdigest() != request.source_sha256
+            ):
+                raise HTTPException(
+                    status_code=422, detail="source artifact bytes failed verification"
+                )
+            if not local.stat().st_size:
+                raise HTTPException(status_code=422, detail="source upload is empty")
+            submit(run, local, filename)
         return {"id": run.id, "status": run.status}
 
     @app.post("/api/pipeline/runs/upload", status_code=201)
@@ -159,7 +260,9 @@ def create_app(
         source: UploadFile = File(),
         options: str = Form(default="{}"),
         budget: str = Form(default="{}"),
-        requested_id: str | None = Form(default=None),
+        requested_id: str | None = Form(
+            default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        ),
         user: str = Depends(actor),
     ):
         if source_store is None:
@@ -169,56 +272,56 @@ def create_app(
             budget_policy = BudgetPolicy.model_validate_json(budget)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        require_supported_budget(budget_policy)
         run_id = requested_id or f"run-{uuid.uuid4().hex}"
-        filename = Path(source.filename or "source.bin").name
+        require_new_run(run_id)
+        filename = source_filename(source.filename or "source.bin")
         digest = hashlib.sha256()
         size = 0
-        with tempfile.NamedTemporaryFile(prefix="wander-source-", delete=False) as temporary:
-            while chunk := await source.read(1024 * 1024):
-                size += len(chunk)
-                if size > settings.maximum_upload_bytes:
-                    raise HTTPException(status_code=413, detail="source upload is too large")
-                digest.update(chunk)
-                temporary.write(chunk)
-            temporary.flush()
+        # The filename preserves the video extension through the local run copy, and the
+        # context manager removes uploads on every error path, including oversized bodies.
+        with tempfile.TemporaryDirectory(prefix="wander-source-") as directory:
+            stored_path = Path(directory) / filename
+            with stored_path.open("wb") as temporary:
+                while chunk := await source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > settings.maximum_upload_bytes:
+                        raise HTTPException(status_code=413, detail="source upload is too large")
+                    digest.update(chunk)
+                    temporary.write(chunk)
+            if not size:
+                raise HTTPException(status_code=422, detail="source upload is empty")
             source_sha256 = digest.hexdigest()
             artifact_id = f"artifact:{run_id}:source"
+            if len(artifact_id) > 128:
+                artifact_id = f"artifact:{hashlib.sha256(run_id.encode()).hexdigest()}:source"
             storage_key = f"sources/{source_sha256[:2]}/{source_sha256}"
-            source_store.put(Path(temporary.name), storage_key)
-        stored_path = Path(temporary.name)
-        run = Run(
-            id=run_id,
-            graph_version=GRAPH_VERSION,
-            code_revision=settings.code_revision,
-            container_digest=settings.container_digest,
-            source_sha256=source_sha256,
-            source_artifact_id=artifact_id,
-            configuration={"options": graph_options.model_dump(mode="json")},
-            budget=budget_policy,
-            created_by=user,
-        )
-        try:
-            repository.create_run_row(run)
-            repository.add_source_artifact(
-                artifact_id=artifact_id,
-                run_id=run_id,
-                sha256=source_sha256,
-                size=size,
-                media_type=source.content_type or "application/octet-stream",
-                storage_key=storage_key,
-                filename=filename,
+            source_store.put(stored_path, storage_key)
+            run = Run(
+                id=run_id,
+                graph_version=GRAPH_VERSION,
+                code_revision=settings.code_revision,
+                container_digest=settings.container_digest,
+                source_sha256=source_sha256,
+                source_artifact_id=artifact_id,
+                configuration={"options": graph_options.model_dump(mode="json")},
+                budget=budget_policy,
+                created_by=user,
             )
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        try:
-            runs.open(
-                run_id=run_id,
-                name=Path(filename).stem or run_id,
-                source=stored_path,
-                options=graph_options.model_dump(mode="json"),
+            submit(
+                run,
+                stored_path,
+                filename,
+                {
+                    "artifact_id": artifact_id,
+                    "run_id": run_id,
+                    "sha256": source_sha256,
+                    "size": size,
+                    "media_type": source.content_type or "application/octet-stream",
+                    "storage_key": storage_key,
+                    "filename": filename,
+                },
             )
-        finally:
-            stored_path.unlink(missing_ok=True)
         return {
             "id": run_id,
             "status": run.status,
@@ -321,6 +424,8 @@ def create_app(
             },
         )
         journal = runs.journal(run_id)
+        if command in {"retry", "resume"}:
+            journal.append("run.resumed", reason=request.rationale)
         if command in {"reject", "retry"}:
             asked = "run again" if command == "retry" else "do not accept"
             journal.append(
@@ -369,4 +474,5 @@ def create_app(
 
     register_artifact_routes(app, repository, actor, artifact_reader)
     register_review_routes(app, repository, actor, review_workspace_root)
+    register_progress_routes(app, repository, actor, review_workspace_root)
     return app

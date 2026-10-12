@@ -2,6 +2,9 @@
 
 import type {
   GraphOptions,
+  OptionsSchema,
+  RunProgress,
+  SetupReport,
   PipelineRun,
   ReconcileStatus,
   ReviewTranscript,
@@ -167,4 +170,18 @@ export function reconcileClaim(
     `/runs/${encodeURIComponent(runId)}/provider-claims/${encodeURIComponent(claimId)}/reconcile`,
     body,
   );
+}
+
+export async function loadOptionsSchema(): Promise<OptionsSchema> {
+  return (await unwrap(await fetch(`${ROOT}/options`, { cache: 'no-store' }))) as OptionsSchema;
+}
+
+export async function checkSetup(options: GraphOptions): Promise<SetupReport> {
+  return (await send('/doctor', options)) as SetupReport;
+}
+
+export async function loadRunProgress(runId: string): Promise<RunProgress> {
+  return (await unwrap(
+    await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}/progress`, { cache: 'no-store' }),
+  )) as RunProgress;
 }

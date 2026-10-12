@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from orchestrator.contracts import Event, EventType, Run
@@ -313,6 +313,32 @@ class PipelineRepository:
                 "name": artifact_name(artifact),
             }
 
+    def get_source_artifact(self, artifact_id: str) -> dict[str, Any]:
+        """Resolve an archived input for a new run, never a generated stage output."""
+        with self.sessions() as session:
+            artifact = session.get(ArtifactRecord, artifact_id)
+            if artifact is None:
+                raise KeyError(f"unknown artifact: {artifact_id}")
+            if artifact.role != "source_video":
+                raise ValueError("source artifact must have role source_video")
+            return {
+                "id": artifact.id,
+                "sha256": artifact.sha256,
+                "size": artifact.size,
+                "storageKey": artifact.storage_key,
+                "name": artifact_name(artifact),
+            }
+
+    def delete_unstarted_run(self, run_id: str) -> None:
+        """Compensate a failed submission before its directory is published to workers."""
+        with self.sessions.begin() as session:
+            if session.scalar(select(AttemptRecord.id).where(AttemptRecord.run_id == run_id)):
+                raise ValueError("cannot remove a run that has started")
+            # Delete explicitly so SQLite without foreign-key enforcement behaves like Postgres.
+            for record in (ArtifactRecord, EventRecord, NodeRecord):
+                session.execute(delete(record).where(record.run_id == run_id))
+            session.execute(delete(RunRecord).where(RunRecord.id == run_id))
+
     def add_quality_decision(
         self,
         *,
@@ -472,12 +498,32 @@ class PipelineRepository:
                     created_by=run.created_by,
                     created_at=run.created_at,
                     updated_at=run.updated_at,
-                    next_event_sequence=1,
+                    next_event_sequence=2,
                     parent_run_id=run.parent_run_id,
                     branch_key=run.branch_key,
                 )
             )
-        self.append_event(run.id, EventType.RUN, run.id, {"status": run.status})
+            session.flush()
+            event = Event(
+                id=f"event:{uuid.uuid4().hex}",
+                run_id=run.id,
+                sequence=1,
+                type=EventType.RUN,
+                subject_id=run.id,
+                payload={"status": run.status},
+            )
+            session.add(
+                EventRecord(
+                    id=event.id,
+                    run_id=event.run_id,
+                    sequence=event.sequence,
+                    schema_version=event.schema_version,
+                    type=event.type,
+                    subject_id=event.subject_id,
+                    payload=event.payload,
+                    created_at=event.created_at,
+                )
+            )
 
     def ensure_node(
         self,
@@ -585,7 +631,7 @@ class PipelineRepository:
             run = session.get(RunRecord, run_id, with_for_update=True)
             if run is None:
                 raise KeyError(f"unknown run: {run_id}")
-            if run.status not in TERMINAL_RUN_STATUSES:
+            if run.status == "running":
                 return False
             run.status = "running"
             run.updated_at = datetime.now(timezone.utc)

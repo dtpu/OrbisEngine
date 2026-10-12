@@ -24,7 +24,6 @@ def main(argv=None) -> int:
     parser.add_argument("--all-people", action="store_true")
     parser.add_argument("--people", type=int, default=1)
     parser.add_argument("--no-objects", action="store_true")
-    parser.add_argument("--reviewed-audio", action="store_true")
     parser.add_argument("--finetune", action="store_true")
     parser.add_argument("--maximum-cost", type=float)
     parser.add_argument("--no-follow", action="store_true")
@@ -38,7 +37,6 @@ def main(argv=None) -> int:
             "all_people": args.all_people or args.people > 1,
             "people": args.people,
             "objects": not args.no_objects,
-            "reviewed_audio": args.reviewed_audio,
             "finetune": args.finetune,
         },
         budget={"maximum_cost": args.maximum_cost} if args.maximum_cost is not None else {},

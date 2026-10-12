@@ -16,7 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+from orchestrator.pipeline import multiperson_graph, single_graph
 
 
 def knob(kind: str, default: Any, description: str, **bounds: Any) -> dict[str, Any]:
@@ -294,9 +297,27 @@ class RunOptions(BaseModel):
 
     marble: Literal["video", "image", "multi", "both", "none"] = "video"
     people: int = Field(default=1, ge=1, le=16)
-    all_people: bool = False
-    objects: bool = True
+    all_people: bool = Field(
+        default=False,
+        description="Use the tracked-person pipeline, up to the Maximum people limit; useful even for one person.",
+    )
+    objects: bool = Field(
+        default=True,
+        description="Detect thrown objects. Reconstructing them in 3D requires tracked-person mode (all_people or people > 1).",
+    )
     finetune: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_audio(cls, value):
+        # Older clients sent this disabled placeholder. No reviewed-audio stage exists.
+        if isinstance(value, dict) and "reviewed_audio" in value:
+            value = dict(value)
+            if value.pop("reviewed_audio") is not False:
+                raise ValueError(
+                    "reviewed_audio is unsupported; recorded audio is preserved automatically"
+                )
+        return value
 
 
 @dataclass(frozen=True)
@@ -329,6 +350,7 @@ STEPS: dict[str, Step] = {
             summary="Remove the people from the clip, leaving the room they were in",
             writes="<name>-clean.mp4 in clips/, masks.npz and clean.json in the run directory",
             parameters=CLEAN_PARAMETERS,
+            paid=True,
             caution=(
                 "Look at the cleaned frames before spending on a world. Inpainting can take a "
                 "railing or a flight of stairs with the person, and that is only visible to "
@@ -340,12 +362,14 @@ STEPS: dict[str, Step] = {
             summary="Clean a single frame, for the image world modes",
             writes="first/f_0000.png and clean-first.json",
             parameters=CLEAN_PARAMETERS,
+            paid=True,
         ),
         Step(
             name="clean_multi",
             summary="Clean the measured set of frames the multi-view world mode submits",
             writes="clean-multi/ and clean-multi.json",
             parameters=CLEAN_PARAMETERS,
+            paid=True,
         ),
         Step(
             name="world_prompt",
@@ -381,6 +405,26 @@ STEPS: dict[str, Step] = {
                 "resubmit, because a resubmit after the operation exists buys a second world."
             ),
             credentials=("WLT_API_KEY",),
+        ),
+        Step(
+            name="marble_image",
+            summary="Generate and fetch the static world from cleaned image input",
+            writes="marble/ world splats and thumbnail",
+            after=("clean_first", "review"),
+            parameters=MARBLE_PARAMETERS | MARBLE_POLL_PARAMETERS,
+            paid=True,
+            credentials=("WLT_API_KEY",),
+            caution="One paid generation per source and mode; recover existing submissions before retrying.",
+        ),
+        Step(
+            name="marble_multi",
+            summary="Generate and fetch the static world from cleaned multi input",
+            writes="marble/ world splats and thumbnail",
+            after=("clean_multi", "review"),
+            parameters=MARBLE_PARAMETERS | MARBLE_POLL_PARAMETERS,
+            paid=True,
+            credentials=("WLT_API_KEY",),
+            caution="One paid generation per source and mode; recover existing submissions before retrying.",
         ),
         Step(
             name="pi3x",
@@ -534,30 +578,25 @@ def for_person(name: str, index: int) -> str:
     return f"{name}_{index:02d}"
 
 
-def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
-    """The steps this run probably wants, in an order that holds together.
+def stage_graph(options: "RunOptions | dict | None" = None, people: int | None = None):
+    """Executable stages and prerequisites for these options and person slots."""
+    options = (
+        options if isinstance(options, RunOptions) else RunOptions.model_validate(options or {})
+    )
+    if options.all_people or options.people > 1:
+        return multiperson_graph(
+            min(options.people, max(1, people if people is not None else options.people)),
+            options.marble,
+            options.objects,
+            options.finetune,
+        )
+    return single_graph(options.marble, options.objects, options.finetune)
 
-    A suggestion, shown in the dashboard so a run is not an empty page and given to the agent
-    as a starting point. The agent may run something not on this list, and the journal adds a
-    row when it does.
-    """
-    if options is None:
-        options = RunOptions()
-    elif isinstance(options, dict):
-        options = RunOptions.model_validate(options)
-    many = options.all_people or options.people > 1
-    wanted = ["pi3x", "frame_align", "tracks", *PER_PERSON]
-    wanted.append("package_people" if many else "package")
-    if options.marble == "none":
-        wanted.insert(0, "clean")
-    else:
-        wanted = ["clean", "world_prompt", f"marble_{options.marble}", *wanted]
-        wanted += ["scale_fit", "place_fit", "anchors", "verify"]
-        if options.finetune:
-            wanted.append("finetune")
-    if options.objects:
-        wanted.append("objects")
-    return suggested_order([name for name in dict.fromkeys(wanted) if name in STEPS])
+
+def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
+    """The shared plan, collapsed to catalogue names until tracking determines slots."""
+    stages, _ = stage_graph(options)
+    return list(dict.fromkeys(base_step(name) for name in stages))
 
 
 def people_steps(names: list[str], people: int, *, multiperson: bool) -> list[str]:
@@ -585,48 +624,22 @@ def people_steps(names: list[str], people: int, *, multiperson: bool) -> list[st
 SAME_AS = {"package_people": "package"}
 
 
-def needs_of(step: str, people: int, multiperson: bool) -> list[str]:
-    """What a step wants finished, in the names this run's graph uses.
-
-    A per-person step waits on its own person and nobody else's: person 01's avatar does not
-    depend on person 00's. A step that joins them -- packaging -- waits on all of them.
-
-    The agent reads this to know what is unblocked and the dashboard draws the same answer as
-    edges, so it lives here rather than beside either of them: a graph whose arrows disagree
-    with what actually gates a step is worse than no arrows.
-    """
-    described = STEPS.get(base_step(step))
-    if described is None:
-        return []
-    _, _, index = step.rpartition("_")
-    mine = index if index.isdigit() else None
-    wanted: list[str] = []
-    for need in described.after:
-        if not multiperson or need not in PER_PERSON:
-            wanted.append(need)
-        elif mine is not None:
-            wanted.append(f"{need}_{mine}")
-        else:
-            wanted.extend(f"{need}_{person:02d}" for person in range(max(1, people)))
-    return wanted
+def needs_of(
+    step: str, people: int, multiperson: bool, options: "RunOptions | dict | None" = None
+) -> list[str]:
+    settings = options.model_dump() if isinstance(options, RunOptions) else dict(options or {})
+    settings.update(people=max(1, people), all_people=multiperson)
+    return stage_graph(settings, people)[1].get(step, [])
 
 
-def dependencies_within(step: str, plan: list[str], people: int, multiperson: bool) -> list[str]:
-    """`needs_of` narrowed to the steps a plan actually contains.
-
-    A plan holds one packager, so a step that names `package` is gated by `package_people` when
-    that is the one being run -- the same substitution the run directory makes when it decides
-    what is done. Anything the plan does not contain is dropped rather than drawn: an edge to a
-    step that will never run is an arrow to nowhere.
-    """
-    present = set(plan)
-    instead = {base: name for name, base in SAME_AS.items()}
-    wanted = []
-    for need in needs_of(step, people, multiperson):
-        name = need if need in present else instead.get(need, need)
-        if name in present:
-            wanted.append(name)
-    return wanted
+def dependencies_within(
+    step: str,
+    plan: list[str],
+    people: int,
+    multiperson: bool,
+    options: "RunOptions | dict | None" = None,
+) -> list[str]:
+    return [need for need in needs_of(step, people, multiperson, options) if need in plan]
 
 
 def suggested_order(names: list[str] | None = None) -> list[str]:

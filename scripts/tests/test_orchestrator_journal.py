@@ -6,6 +6,7 @@ database, must not lose the run.
 """
 
 import json
+import hashlib
 import os
 import shutil
 import sys
@@ -63,6 +64,12 @@ class JournalTests(unittest.TestCase):
             stream.write("{ truncated\n\n")
         self.run_step("pi3x", "succeeded")
         self.assertEqual(self.journal.done(), {"clean", "pi3x"})
+
+    def test_explicit_resume_reopens_a_finished_run(self):
+        self.journal.append("run.finished", status="blocked", summary="provider unavailable")
+        self.assertEqual(self.journal.finished(), "blocked")
+        self.journal.append("run.resumed", reason="provider repaired")
+        self.assertIsNone(self.journal.finished())
 
     def test_an_unknown_kind_is_refused_rather_than_written(self):
         with self.assertRaisesRegex(ValueError, "not a kind of thing"):
@@ -126,6 +133,19 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(statuses.get("clean"), "succeeded")
         self.assertEqual(statuses.get("pi3x"), "succeeded")
 
+    def test_new_person_stages_keep_catalogue_details_and_indexed_dependencies(self):
+        self.journal.append(
+            "step.started", step="lhm_frozen_01", attempt="run-1:lhm_frozen_01:1", number=1
+        )
+        node = next(
+            node
+            for node in self.repository.run_summary("run-1")["nodes"]
+            if node["id"] == "lhm_frozen_01"
+        )
+        self.assertEqual(node["dependencies"], ["person_prep_01"])
+        self.assertEqual(node["definition"]["title"], STEPS["lhm_frozen"].summary)
+        self.assertTrue(node["definition"]["paid"])
+
     def test_a_broken_mirror_does_not_stop_the_run(self):
         """The journal line is already on disk; the database is the derived copy."""
 
@@ -155,6 +175,7 @@ class CommandTests(unittest.TestCase):
                     "runId": "run-demo",
                     "name": "demo",
                     "source": str(self.run_dir / "source.mp4"),
+                    "sourceSha256": hashlib.sha256(b"clip").hexdigest(),
                     "repository": str(ROOT),
                     "options": {"marble": "none", "people": 4},
                 }

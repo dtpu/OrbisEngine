@@ -20,15 +20,24 @@ orchestrator API and attaches the bearer token server-side, so the token never r
 ## What the pages show
 
 - **Runs** (`/`): every run with a stage strip (one cell per stage, dependency order, coloured by
-  status), plus a banner listing gates waiting on you. Shot runs nest under their parent.
+  status), plus a banner listing gates waiting on you. Shot runs nest under their parent. The
+  upload form loads supported options and defaults from the API: choose a world mode, people
+  limit and tracking behavior, moving objects, and fine-tuning. A setup check runs before
+  submission and shows actionable local checks. Unverified provider access permits queuing;
+  blocked local checks offer **Queue for later** while the worker is being set up.
 - **Run** (`/runs/<id>`): stage ladder on the left, grouped by dependency depth; the inspector on
   the right shows the selected stage's attempts, an artifact viewer (video, image, audio, JSON,
   text inline; anything else as a download), and the decision panel. `?stage=<id>` opens a stage
-  directly; otherwise the page lands on whatever needs attention first.
+  directly; otherwise the page lands on whatever needs attention first. The progress panel
+  reads the run directory to show running stages, why processing stopped, and the next action.
+  Source and cleaned clips, review images, and output reports appear as files are produced.
 
 The viewer reads bytes from `GET /api/pipeline/runs/{run}/artifacts/{artifact}` on the orchestrator
 (`orchestrator/api/artifacts.py`). Only image, video, audio, JSON and plain-text types render
 inline; everything else is served as an octet-stream download.
+
+Run `bun run test` for the form/schema contract checks and `bun run build` to check TypeScript
+and the production bundle. Setup checks do not contact paid providers or approve a review.
 
 ## Design notes
 

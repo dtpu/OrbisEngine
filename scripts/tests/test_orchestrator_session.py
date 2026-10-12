@@ -207,7 +207,28 @@ class RunThroughTests(unittest.TestCase):
         )
 
     def test_the_supervisor_reads_the_outcome_out_of_the_journal(self):
-        self.open()
+        from orchestrator.cli import RunContext, plan_for
+
+        directory = self.open()
+        context = RunContext("run-1", directory, "demo", self.clip, ROOT, {"marble": "none"})
+        (directory / "state.json").write_text(
+            json.dumps({"stages": {name: {"status": "ok"} for name in plan_for(context)}})
+        )
+        world = directory / "public/worlds/demo-4d"
+        (world / "person").mkdir(parents=True)
+        import hashlib
+
+        (world / "person/frame.ply").write_bytes(b"retained frame")
+        (world / "person/sequence.json").write_text(
+            json.dumps(
+                {
+                    "frames": ["frame.ply"],
+                    "frame_sha256": [hashlib.sha256(b"retained frame").hexdigest()],
+                    "sourceSha256": hashlib.sha256(self.clip.read_bytes()).hexdigest(),
+                }
+            )
+        )
+        (world / "cameras.json").write_text(json.dumps({"cameras": [{}]}))
         policy = self.agent('subprocess.run(["wander", "finish", "succeeded", "done"])')
         self.assertIn("finished succeeded", work_on(self.runs / "demo", None, policy, 2))
         self.assertEqual(runs_needing_work(self.runs), [], "a finished run is not picked up again")
