@@ -1,149 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { StageStrip } from '@/components/stage-strip';
 import { Status } from '@/components/status';
 import { useNow } from '@/components/use-now';
-import { listRuns, uploadRun } from '@/lib/client';
-import {
-  describeOptions,
-  formatBytes,
-  formatMs,
-  formatWhen,
-  isWaitingOnUpstream,
-} from '@/lib/format';
+import { listRuns } from '@/lib/client';
+import { CreateRun } from '@/components/create-run';
+import { describeOptions, formatMs, formatWhen, isWaitingOnUpstream } from '@/lib/format';
 import { activeMs, countByStatus, isExecuting, stagesWaitingOnYou } from '@/lib/graph';
-import type { GraphOptions, PipelineRun } from '@/lib/types';
-
-/**
- * Every clip goes through the whole pipeline at full effort; the reviewing agent steers from
- * there. Reviewed audio stays off because it needs a `reviewed_audio_config` run input that an
- * upload does not carry, so the stage would wait forever.
- */
-const FULL_EFFORT: GraphOptions = {
-  marble: 'video',
-  people: 16,
-  all_people: true,
-  objects: true,
-  reviewed_audio: false,
-  finetune: true,
-};
-
-function CreateRun({ onCreated }: { onCreated: (runId: string) => void }) {
-  const [requestedId, setRequestedId] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [over, setOver] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!file || progress !== null) return;
-    setError(null);
-    setProgress(0);
-    try {
-      const run = await uploadRun({
-        file,
-        options: FULL_EFFORT,
-        requestedId: requestedId.trim() || undefined,
-        onProgress: setProgress,
-      });
-      setFile(null);
-      setRequestedId('');
-      if (fileInput.current) fileInput.current.value = '';
-      onCreated(run.id);
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setProgress(null);
-    }
-  }
-
-  const busy = progress !== null;
-  const percent = Math.round((progress ?? 0) * 100);
-
-  return (
-    <form className="create" onSubmit={submit} aria-labelledby="create-title">
-      <h2 className="create__title" id="create-title">
-        Start a run
-      </h2>
-
-      <label
-        className={`drop${over ? ' drop--over' : ''}`}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setOver(false);
-          const dropped = event.dataTransfer.files?.[0];
-          if (dropped && !busy) setFile(dropped);
-        }}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept="video/*"
-          required={!file}
-          disabled={busy}
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-        />
-        {file ? (
-          <>
-            <span className="drop__file">{file.name}</span>
-            <span className="drop__hint">{formatBytes(file.size)}. Click to change.</span>
-          </>
-        ) : (
-          <>
-            <strong>Choose a source clip</strong>
-            <span className="drop__hint">or drop a video file here</span>
-          </>
-        )}
-      </label>
-
-      <div className="field">
-        <label htmlFor="requested-id">Run name</label>
-        <input
-          id="requested-id"
-          type="text"
-          className="mono"
-          placeholder="generated when blank"
-          value={requestedId}
-          disabled={busy}
-          onChange={(event) => setRequestedId(event.target.value)}
-        />
-      </div>
-
-      {error ? (
-        <p className="notice notice--error" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {busy ? (
-        <div className="field" aria-live="polite">
-          <div className="bar">
-            <span style={{ width: `${percent}%` }} />
-          </div>
-          <span className="field__hint">Uploading {percent}%</span>
-        </div>
-      ) : null}
-
-      <button className="button button--primary" type="submit" disabled={!file || busy}>
-        {busy ? 'Uploading…' : 'Create run'}
-      </button>
-      <p className="field__hint">
-        Every clip gets the full pipeline: everyone in the shot, moving objects, a generated world
-        and a fine-tune pass. The reviewing agent steers; you approve the cleaned input and the
-        finished world.
-      </p>
-    </form>
-  );
-}
+import type { PipelineRun } from '@/lib/types';
 
 function RunRow({ run, shot, now }: { run: PipelineRun; shot: boolean; now: number }) {
   const counts = countByStatus(run);
