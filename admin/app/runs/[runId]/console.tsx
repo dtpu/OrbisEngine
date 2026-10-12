@@ -435,7 +435,6 @@ export default function RunConsole({ runId }: { runId: string }) {
     ? ['failed', 'blocked', 'succeeded', 'canceled'].includes(selected.status)
     : false;
   const paused = run.live?.paused === true || run.status === 'paused';
-  const claims = run.providerClaims ?? [];
 
   return (
     <main className="page" id="main">

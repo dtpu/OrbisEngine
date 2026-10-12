@@ -238,14 +238,7 @@ def create_app(
             summary = repository.run_summary(run_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        try:
-            summary["live"] = {"source": "journal"}
-        except Exception as error:
-            # A finished workflow can no longer answer queries once the workflow code has
-            # changed (Temporal replays its history under the new code and finds it
-            # nondeterministic). The recorded rows still describe the run; say why live is empty.
-            summary["live"] = None
-            summary["liveError"] = type(error).__name__
+        summary["live"] = {"source": "journal"}
         return summary
 
     @app.post("/api/pipeline/runs/{run_id}/messages", status_code=202)

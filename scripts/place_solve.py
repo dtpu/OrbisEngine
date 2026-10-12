@@ -336,40 +336,6 @@ def choose_lambda(M, A, B, Wa, Wb, sigma_c, max_jerk, grid=None):
     return lam, a, b, k, edf
 
 
-# ---------------------------------------------------------------- reprojection cost
-def reproj_cost(cameras_json, sample_src, P_world, D_world, scale):
-    """Pixels the correction moves the avatar off its source-frame silhouette, per sample.
-
-    D_world is the correction in world units; the person sits at P_world. Converted into the source
-    camera at that sample: perpendicular displacement costs f/z px, along-ray displacement costs
-    about (silhouette_px / 2z) px through the change in apparent size. Both in source pixels.
-    """
-    cams = json.load(open(cameras_json))["cameras"]
-    by_src = {c["sourceIndex"]: c for c in cams}
-    out = []
-    for i, si in enumerate(sample_src):
-        c = by_src.get(si)
-        if c is None:
-            out.append(float("nan"))
-            continue
-        c2w = np.array(c["camera_to_world"])
-        K = np.array(c["source_intrinsics"])
-        f = float((K[0, 0] + K[1, 1]) / 2)
-        # camera position / forward in the SfM frame; the viewer's world is scale * SfM
-        C = c2w[:3, 3] * scale
-        ray = P_world[i] - C
-        z = float(np.linalg.norm(ray))
-        if z < 1e-6:
-            out.append(float("nan"))
-            continue
-        u = ray / z
-        D = D_world[i]
-        par = float(D @ u)
-        perp = float(np.linalg.norm(D - par * u))
-        out.append(f * perp / z)  # the dominant term; the size term is ~4x smaller per metre
-    return np.array(out)
-
-
 # ---------------------------------------------------------------- clips
 # Per clip: the world, the person, and the registration scale the solve starts from. `scale` is the
 # SfM-to-Marble scale, a property of the two COORDINATE FRAMES, and it must never be re-derived from a

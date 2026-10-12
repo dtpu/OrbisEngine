@@ -1,13 +1,4 @@
 import * as THREE from 'three';
-interface ProjectionSource {
-  url: string;
-  sha256: string;
-  width: number;
-  height: number;
-  fps: number;
-  duration: number;
-}
-
 export interface VideoProjection {
   url: string;
   sha256: string;
@@ -68,107 +59,6 @@ export interface ProjectionHeader {
   edgeThreshold: number;
   cameras: number[][];
   registeredFrames: number[];
-}
-
-function check(ok: unknown, message: string): asserts ok {
-  if (!ok) throw new Error(`Video projection: ${message}`);
-}
-const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
-const positiveInt = (x: unknown): x is number => Number.isInteger(x) && (x as number) > 0;
-
-async function gunzip(bytes: ArrayBuffer): Promise<Uint8Array> {
-  check(typeof DecompressionStream === 'function', 'this browser cannot decompress gzip');
-  try {
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  } catch {
-    throw new Error('Video projection: not a gzip container');
-  }
-}
-
-/** Fail closed: the container must describe exactly the experiment's source and be complete. */
-export async function parseProjectionContainer(
-  bytes: ArrayBuffer,
-  source: ProjectionSource,
-): Promise<{ header: ProjectionHeader; data: Uint8Array }> {
-  const raw = await gunzip(bytes);
-  check(
-    raw.byteLength > 8 && String.fromCharCode(...raw.subarray(0, 4)) === 'WVP1',
-    'not a WVP1 container',
-  );
-  const headerLength = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(4, true);
-  check(headerLength > 0 && 8 + headerLength <= raw.byteLength, 'truncated header');
-  const h = JSON.parse(
-    new TextDecoder().decode(raw.subarray(8, 8 + headerLength)),
-  ) as ProjectionHeader;
-  check(
-    h?.version === 1 &&
-      positiveInt(h.width) &&
-      positiveInt(h.height) &&
-      positiveInt(h.frames) &&
-      finite(h.fps) &&
-      h.fps > 0,
-    'invalid dimensions',
-  );
-  check(
-    h.source?.width === source.width &&
-      h.source?.height === source.height &&
-      h.source?.sha256 === source.sha256,
-    'depth was built for a different source video',
-  );
-  check(
-    Math.abs(h.fps - source.fps) < 1e-6 && h.frames <= Math.round(source.duration * source.fps) + 1,
-    'frame rate or count disagrees with the source',
-  );
-  const k = h.intrinsics;
-  check(
-    k && [k.fx, k.fy].every((x) => finite(x) && x > 0) && [k.cx, k.cy].every(finite),
-    'invalid intrinsics',
-  );
-  check(
-    h.depthRange &&
-      finite(h.depthRange.near) &&
-      finite(h.depthRange.far) &&
-      h.depthRange.near > 0 &&
-      h.depthRange.far > h.depthRange.near,
-    'invalid depth range',
-  );
-  check(finite(h.edgeThreshold) && h.edgeThreshold > 0, 'invalid discontinuity threshold');
-  check(
-    Array.isArray(h.cameras) &&
-      h.cameras.length === h.frames &&
-      h.cameras.every((m) => Array.isArray(m) && m.length === 16 && m.every(finite)),
-    'one camera_to_world per frame is required',
-  );
-  check(
-    Array.isArray(h.registeredFrames) &&
-      h.registeredFrames.every((f) => Number.isInteger(f) && f >= 0 && f < h.frames),
-    'invalid registered frame list',
-  );
-  check(
-    positiveInt(h.depthFrames) &&
-      h.depthFrames <= h.frames &&
-      Array.isArray(h.depthIndex) &&
-      h.depthIndex.length === h.frames &&
-      h.depthIndex.every((i) => Number.isInteger(i) && i >= 0 && i < h.depthFrames),
-    'every source frame needs a depth layer',
-  );
-  check(
-    Array.isArray(h.depthSources) &&
-      h.depthSources.length === h.depthFrames &&
-      h.depthSources.every((f) => Number.isInteger(f) && f >= 0 && f < h.frames),
-    'invalid depth layer sources',
-  );
-  check(
-    h.maskLayers === 0 ? h.depthFrames === h.frames : h.maskLayers === h.frames,
-    'person masks must cover every source frame',
-  );
-  const data = raw.subarray(8 + headerLength);
-  check(
-    data.byteLength === h.depthFrames * h.width * h.height * 4 + h.maskLayers * h.width * h.height,
-    'payload size does not match the header',
-  );
-  return { header: h, data };
 }
 
 const vertexShader = /* glsl */ `
@@ -668,13 +558,4 @@ export class VideoProjectionLayer {
     this.compositeMaterial.dispose();
     (this.compositeScene.children[0] as THREE.Mesh).geometry.dispose();
   }
-}
-
-export async function loadVideoProjection(
-  bytes: ArrayBuffer,
-  experiment: { source: ProjectionSource },
-  options: VideoProjection,
-): Promise<VideoProjectionLayer> {
-  const { header, data } = await parseProjectionContainer(bytes, experiment.source);
-  return new VideoProjectionLayer(header, data, options);
 }

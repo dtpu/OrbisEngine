@@ -140,24 +140,6 @@ export function isInFlight(status: string): boolean {
   return status === 'running' || status === 'waiting_agent' || status === 'ready';
 }
 
-export function formatAgo(value?: string | null, now = Date.now()): string {
-  const time = parse(value);
-  if (time === null) return '';
-  const seconds = Math.max(0, Math.round((now - time) / 1000));
-  if (seconds < 45) return 'just now';
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
-  return `${Math.round(seconds / 86400)} d ago`;
-}
-
-export const WORLD_MODES: Record<GraphOptions['marble'], string> = {
-  video: 'World from cleaned video',
-  image: 'World from cleaned first frame',
-  multi: 'World from selected frames',
-  both: 'World from video and first frame',
-  none: 'No generated world',
-};
-
 /** One sentence describing what a run was asked to do. */
 export function describeOptions(options: GraphOptions): string {
   const parts: string[] = [];
@@ -241,12 +223,4 @@ export function parseAgentQuestion(reason: string): { question: string; overCap:
 
 export function shortHash(value: string, length = 12): string {
   return value.length > length ? value.slice(0, length) : value;
-}
-
-/** Artifact ids are `artifact:<64 hex>`; the hash tail is noise on screen. */
-export function shortId(value: string): string {
-  const [head, ...rest] = value.split(':');
-  const tail = rest.join(':');
-  if (!tail) return value;
-  return /^[0-9a-f]{24,}$/.test(tail) ? `${head}:${tail.slice(0, 8)}` : value;
 }

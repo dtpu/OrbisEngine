@@ -2,7 +2,6 @@
 
 import type {
   GraphOptions,
-  OperatorMessage,
   PipelineRun,
   ReconcileStatus,
   ReviewTranscript,
@@ -90,13 +89,6 @@ export async function uploadRun(input: {
   });
 }
 
-export async function listMessages(runId: string): Promise<OperatorMessage[]> {
-  const body = (await unwrap(
-    await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}/messages`, { cache: 'no-store' }),
-  )) as { messages: OperatorMessage[] };
-  return body.messages;
-}
-
 /** One run's transcripts, newest first. A run writes one, so this is usually a single row. */
 export async function listReviewTranscripts(
   runId: string,
@@ -107,17 +99,6 @@ export async function listReviewTranscripts(
   return { ...body, transcripts: [...body.transcripts].reverse() };
 }
 
-/** Newest transcripts across every run, live ones first by recency. */
-export async function listRecentTranscripts(): Promise<{
-  transcripts: ReviewTranscript[];
-  available: boolean;
-}> {
-  return (await unwrap(await fetch(`${ROOT}/reviews?limit=20`, { cache: 'no-store' }))) as {
-    transcripts: ReviewTranscript[];
-    available: boolean;
-  };
-}
-
 export async function readTranscript(
   runId: string,
   nodeId: string,
@@ -126,11 +107,6 @@ export async function readTranscript(
 ): Promise<TranscriptTail> {
   const path = `${ROOT}/runs/${encodeURIComponent(runId)}/reviews/${encodeURIComponent(nodeId)}/${encodeURIComponent(attemptId)}/transcript?after=${after}`;
   return (await unwrap(await fetch(path, { cache: 'no-store' }))) as TranscriptTail;
-}
-
-/** Same-origin SSE stream of a run's events; the proxy passes it through unbuffered. */
-export function eventsUrl(runId: string): string {
-  return `${ROOT}/runs/${encodeURIComponent(runId)}/events`;
 }
 
 /** Same-origin URL for an artifact's bytes; the proxy adds the bearer token server-side. */

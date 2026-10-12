@@ -10,10 +10,8 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
-import boto3
-from botocore.exceptions import ClientError
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -140,72 +138,6 @@ class LocalCAS:
         if sha256_file(destination) != sha256:
             destination.unlink(missing_ok=True)
             raise ValueError("hydrated artifact failed verification")
-
-
-class S3Archive:
-    """Immutable S3-compatible archive used with AWS S3 or local MinIO."""
-
-    def __init__(
-        self,
-        bucket: str,
-        *,
-        prefix: str = "pipeline",
-        endpoint_url: str | None = None,
-        client: Any | None = None,
-    ):
-        self.bucket = bucket
-        self.prefix = prefix.strip("/")
-        self.client = client or boto3.client("s3", endpoint_url=endpoint_url)
-
-    def blob_key(self, sha256: str) -> str:
-        return f"{self.prefix}/blobs/{sha256[:2]}/{sha256}"
-
-    def has_blob(self, sha256: str) -> bool:
-        try:
-            response = self.client.head_object(Bucket=self.bucket, Key=self.blob_key(sha256))
-        except ClientError as error:
-            if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
-                return False
-            raise
-        metadata = response.get("Metadata", {})
-        return metadata.get("sha256") == sha256
-
-    def put_blob(self, sha256: str, source: Path) -> None:
-        if sha256_file(source) != sha256:
-            raise ValueError("refusing to upload a blob with mismatched bytes")
-        try:
-            with Path(source).open("rb") as stream:
-                self.client.put_object(
-                    Bucket=self.bucket,
-                    Key=self.blob_key(sha256),
-                    Body=stream,
-                    ContentLength=Path(source).stat().st_size,
-                    Metadata={"sha256": sha256},
-                    IfNoneMatch="*",
-                )
-        except ClientError as error:
-            if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 412:
-                raise
-            if not self.has_blob(sha256):
-                raise ValueError("existing S3 blob does not match its content identity") from error
-
-    def put_manifest(self, key: str, value: bytes) -> None:
-        manifest_key = f"{self.prefix}/manifests/{key}"
-        try:
-            self.client.put_object(
-                Bucket=self.bucket,
-                Key=manifest_key,
-                Body=value,
-                ContentLength=len(value),
-                ContentType="application/json",
-                IfNoneMatch="*",
-            )
-        except ClientError as error:
-            if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 412:
-                raise
-            existing = self.client.get_object(Bucket=self.bucket, Key=manifest_key)["Body"].read()
-            if existing != value:
-                raise ValueError(f"immutable S3 manifest differs: {key}") from error
 
 
 def assign_roles(root: Path, roles: dict[str, str]) -> dict[str, str]:
@@ -367,35 +299,6 @@ class DatabaseArtifactResolver:
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = destination.with_suffix(destination.suffix + ".partial")
             self.client.download_file(self.bucket, artifact.storage_key, str(temporary))
-            if sha256_file(temporary) != artifact.sha256:
-                temporary.unlink(missing_ok=True)
-                raise ValueError(f"artifact hash mismatch: {artifact_id}")
-            os.replace(temporary, destination)
-            return destination
-
-
-class DatabaseFilesystemArtifactResolver:
-    def __init__(self, sessions, root: Path):
-        self.sessions = sessions
-        self.root = Path(root).resolve()
-
-    def hydrate(self, artifact_id: str, destination_directory: Path) -> Path:
-        from orchestrator.database import ArtifactRecord
-
-        with self.sessions() as session:
-            artifact = session.get(ArtifactRecord, artifact_id)
-            if artifact is None:
-                raise KeyError(f"unknown artifact ID: {artifact_id}")
-            source = (self.root / artifact.storage_key).resolve()
-            if not source.is_relative_to(self.root) or not source.is_file():
-                raise ValueError(f"artifact storage object is unavailable: {artifact_id}")
-            metadata = dict(artifact.artifact_metadata or {})
-            destination = (
-                Path(destination_directory) / Path(metadata.get("relative_path", artifact.id)).name
-            )
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            temporary = destination.with_suffix(destination.suffix + ".partial")
-            shutil.copyfile(source, temporary)
             if sha256_file(temporary) != artifact.sha256:
                 temporary.unlink(missing_ok=True)
                 raise ValueError(f"artifact hash mismatch: {artifact_id}")

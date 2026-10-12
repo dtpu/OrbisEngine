@@ -494,9 +494,6 @@ a:hover {
 .run__count--bad {
   color: var(--bad);
 }
-.run__count--attention {
-  color: var(--attention);
-}
 .run__when {
   display: grid;
   gap: 2px;
@@ -550,38 +547,13 @@ a:hover {
   display: grid;
   gap: 6px;
 }
-.field > label,
-.field__label {
+.field > label {
   font-size: var(--t-12);
   color: var(--ink-2);
 }
 .field__hint {
   font-size: var(--t-12);
   color: var(--muted);
-}
-.field--row {
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.checks {
-  display: grid;
-  gap: 8px;
-}
-.check {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: var(--t-14);
-  cursor: pointer;
-}
-.check input {
-  margin: 4px 0 0;
-  accent-color: var(--ink);
-}
-.check small {
-  display: block;
-  color: var(--muted);
-  font-size: var(--t-12);
 }
 
 input[type='text'],
@@ -705,9 +677,6 @@ select {
   100% {
     transform: translateX(360%);
   }
-}
-.progress--thin {
-  height: 2px;
 }
 
 /* Buttons ------------------------------------------------------------------------------------ */
@@ -1395,10 +1364,6 @@ button,
   stroke-width: 2.5;
   stroke-linecap: round;
 }
-.mark__label {
-  font-size: var(--t-11);
-  color: var(--dim);
-}
 .mark--good {
   color: var(--good);
 }
@@ -1410,12 +1375,6 @@ button,
 }
 .mark--bad {
   color: var(--bad);
-}
-.mark--good .mark__label,
-.mark--active .mark__label,
-.mark--attention .mark__label,
-.mark--bad .mark__label {
-  color: inherit;
 }
 
 @keyframes lens {
@@ -1589,14 +1548,6 @@ button,
   display: grid;
   min-height: 0;
   min-width: 0;
-}
-.gnode__empty {
-  display: grid;
-  place-items: center;
-  border-radius: 3px;
-  border: 1px dashed var(--line-soft);
-  color: var(--dim);
-  font-size: var(--t-11);
 }
 .gnode__body {
   display: grid;
@@ -1799,7 +1750,7 @@ video.viewer__media {
   text-overflow: ellipsis;
 }
 
-/* Decisions and messages --------------------------------------------------------------------- */
+/* Decisions ---------------------------------------------------------------------------------- */
 
 .decide {
   display: grid;
@@ -1822,17 +1773,6 @@ video.viewer__media {
 }
 .decide__actions .gap {
   flex: 1;
-}
-
-.messages {
-  display: grid;
-  gap: 10px;
-}
-.messages__row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
 }
 
 /* Spend-guard unblock ------------------------------------------------------------------------ */
@@ -2145,12 +2085,6 @@ video.viewer__media {
   }
   .run-head__state {
     justify-items: start;
-  }
-  .field--row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .messages__row {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

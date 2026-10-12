@@ -7,7 +7,6 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, text
@@ -28,13 +27,6 @@ from orchestrator.database import (
 
 
 TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "canceled"})
-HALTED_NODE_STATUSES = frozenset({"succeeded", "skipped", "failed", "blocked", "canceled"})
-
-
-def artifact_display_name(artifact: ArtifactRecord) -> str:
-    """The human-facing name for an artifact: its recorded basename, else its ID."""
-    relative_path = (artifact.artifact_metadata or {}).get("relative_path")
-    return Path(relative_path).name if relative_path else artifact.id
 
 
 def live_run_status(recorded: str, node_statuses: list[str]) -> str:
