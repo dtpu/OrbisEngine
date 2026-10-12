@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "test": "bun test ./tests"
+    "start": "next start"
   },
   "dependencies": {
     "@sparkjsdev/spark": "^2.2.0",

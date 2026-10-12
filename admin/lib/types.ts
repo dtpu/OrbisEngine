@@ -147,6 +147,7 @@ export interface GraphOptions {
   people: number;
   all_people: boolean;
   objects: boolean;
+  reviewed_audio: boolean;
   finetune: boolean;
 }
 
@@ -177,61 +178,3 @@ export type RunCommand = 'reject' | 'retry' | 'pause' | 'resume' | 'cancel';
 
 /** The outcomes an operator may record for a provider claim that ended unobserved. */
 export type ReconcileStatus = 'completed' | 'failed';
-
-/** The control plane publishes these defaults and supported values from RunOptions. */
-export interface OptionProperty {
-  title?: string;
-  description?: string;
-  type: 'string' | 'integer' | 'number' | 'boolean';
-  default?: string | number | boolean;
-  enum?: string[];
-  minimum?: number;
-  maximum?: number;
-  deprecated?: boolean;
-}
-
-export interface OptionsSchema {
-  properties: Record<string, OptionProperty>;
-  additionalProperties: boolean;
-}
-
-export interface SetupCheck {
-  name: string;
-  status: 'okay' | 'ok' | 'blocked' | 'unverified';
-  detail: string;
-  action?: string;
-}
-
-export interface SetupReport {
-  ready: boolean;
-  status: 'okay' | 'blocked' | 'unverified';
-  checks: SetupCheck[];
-}
-
-export interface StageProgress {
-  name: string;
-  summary: string;
-  status: StageStatus;
-  reason: string | null;
-  nextAction: string;
-  dependencies: string[];
-}
-
-export interface RunPreview {
-  label: string;
-  path: string;
-  kind: 'video' | 'image' | 'report';
-  bytes: number;
-  url: string;
-}
-
-export interface RunProgress {
-  runId: string;
-  finished: string | null;
-  paused: boolean;
-  question: string | null;
-  currentStages: string[];
-  stopped: StageProgress[];
-  stages: StageProgress[];
-  previews: RunPreview[];
-}

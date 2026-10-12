@@ -50,6 +50,25 @@ def world_half(marble: str):
     return stages, deps, world
 
 
+def _finish_world(stages, deps, world, package, objects, finetune):
+    if world:
+        tail = {
+            "scale_fit": ["pi3x", "frame_align", package, world],
+            "place_fit": ["scale_fit"],
+            "anchors": ["place_fit"],
+        }
+        if finetune:
+            tail["finetune"] = ["scale_fit"]
+        tail["verify"] = (
+            ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
+        )
+        stages.extend(tail)
+        deps.update(tail)
+        if objects and package == "package":
+            deps["objects"].append("place_fit")
+    return stages, deps
+
+
 def single_graph(marble: str, objects: bool = True, finetune: bool = True):
     stages, deps, world = world_half(marble)
     stages += ["pi3x", "frame_align", "person_prep", "lhm_frozen", "lhm_motion", "package"]
@@ -66,30 +85,15 @@ def single_graph(marble: str, objects: bool = True, finetune: bool = True):
     if objects:
         stages += ["objects"]
         deps["objects"] = ["package"]
-    if world:
-        stages += ["scale_fit", "place_fit", "anchors", "finetune", "verify"]
-        deps["scale_fit"] = ["pi3x", "frame_align", "package", world]
-        deps["place_fit"] = ["scale_fit"]
-        if objects and "tracks" not in stages:
-            deps["objects"].append("place_fit")
-        deps["anchors"] = ["place_fit"]
-        deps["finetune"] = ["scale_fit"]
-        deps["verify"] = (
-            ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
-        )
-    if not finetune and "finetune" in stages:
-        stages.remove("finetune")
-        del deps["finetune"]
-    return stages, deps
+    return _finish_world(stages, deps, world, "package", objects, finetune)
 
 
 def multiperson_graph(limit: int, marble: str, objects: bool = True, finetune: bool = True):
     """Stage list and dependencies for up to `limit` people.
 
     The real track count is only known once `tracks` has run, so the graph is built for `limit`
-    slots and the slots no track claims mark themselves skipped. One person found => only slot 00
-    runs and `package_people` writes the ordinary single-person layout, so a one-person clip comes
-    out of this mode byte-identical to the single-person pipeline.
+    slots and the slots no track claims mark themselves skipped. With one person found, only
+    slot 00 runs and `package_people` also writes the compatible single-person layout.
     """
     stages, deps, world = world_half(marble)
     stages += ["pi3x", "frame_align", "tracks"]
@@ -107,16 +111,4 @@ def multiperson_graph(limit: int, marble: str, objects: bool = True, finetune: b
     if objects:
         stages += ["objects"]
         deps["objects"] = ["package_people", "tracks"]
-    if world:
-        stages += ["scale_fit", "place_fit", "anchors", "finetune", "verify"]
-        deps["scale_fit"] = ["pi3x", "frame_align", "package_people", world]
-        deps["place_fit"] = ["scale_fit"]
-        deps["anchors"] = ["place_fit"]
-        deps["finetune"] = ["scale_fit"]
-        deps["verify"] = (
-            ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
-        )
-    if not finetune and "finetune" in stages:
-        stages.remove("finetune")
-        del deps["finetune"]
-    return stages, deps
+    return _finish_world(stages, deps, world, "package_people", objects, finetune)

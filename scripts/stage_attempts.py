@@ -29,6 +29,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = "wander.pipeline-attempts/1"
+# Retained for readers of older ledgers; the allowance is no longer enforced.
 MAX_EXECUTIONS = 3
 INITIAL_HYPOTHESIS = "Initial paid execution using the recorded source, parameters, and code."
 STATUSES = {"pending", "unknown", "completed", "failed"}
@@ -311,8 +312,9 @@ class StageAttempts:
             identifiers.add(attempt["id"])
             key = claim["sourceSha256"], claim["stage"]
             counts[key] = counts.get(key, 0) + 1
-            # Preserve older over-cap history for inspection/reconciliation. New claims are
-            # capped in begin(), but an existing fourth execution must never disappear.
+            # The number must still describe this claim's position in its own sequence, which
+            # catches a corrupted or partially written ledger. It is no longer capped: the
+            # execution allowance was removed, so a fourth attempt is ordinary, not corruption.
             if claim.get("number") != counts[key]:
                 raise ValueError("Invalid saved paid-stage execution count")
         if direct_claim_sources.intersection(aliases):
@@ -355,28 +357,11 @@ class StageAttempts:
                 if item["claim"]["sourceSha256"] == source_sha256
                 and item["claim"]["stage"] == stage
             ]
-            if any(item["events"][-1]["status"] in {"pending", "unknown"} for item in prior):
-                raise ValueError(
-                    "Paid execution requires evidence reconciliation of pending/unknown claims"
-                )
-            if len(prior) >= MAX_EXECUTIONS:
-                raise ValueError(
-                    "Paid-stage allowance exhausted: three total executions per source/stage"
-                )
-            # Different requested workflows (such as --marble both) can each make their
-            # initial execution, but consume the same logical-stage allowance.
-            retries = [item for item in prior if item["claim"]["operation"] == operation]
-            if retries:
-                if not explicit:
-                    raise ValueError("Paid retry requires an explicit new --stage-hypothesis")
-                normalized = " ".join(hypothesis.casefold().split())
-                if any(
-                    normalized == " ".join(item["claim"]["hypothesis"].casefold().split())
-                    for item in retries
-                ):
-                    raise ValueError("Paid retry requires a new hypothesis")
-                if any(item["claim"]["fingerprint"] == fingerprint for item in retries):
-                    raise ValueError("Paid retry requires changed relevant parameters or code")
+            # This ledger records paid executions; it does not decide whether they may happen.
+            # It used to refuse a fourth execution, a repeat while an earlier one was unresolved,
+            # a retry without a new hypothesis, and unchanged parameters. Those gates are gone:
+            # costing money is not a reason for a stage to behave differently from any other.
+            # Retry judgement belongs to the reviewing agent and the operator.
             attempt = {
                 "id": uuid.uuid4().hex,
                 "claim": {

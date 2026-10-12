@@ -150,18 +150,11 @@ def create_app(
         del user
         return RunOptions.model_json_schema()
 
-    @app.post("/api/pipeline/doctor")
-    def doctor(options: RunOptions, user: str = Depends(actor)):
-        del user
-        from orchestrator.doctor import inspect_setup
-
-        return inspect_setup(options.model_dump(mode="json"))
-
     def require_supported_budget(budget: BudgetPolicy) -> None:
         if budget.maximum_attempts_by_stage or budget.maximum_provider_operations:
             raise HTTPException(
                 422,
-                "Custom run budgets are not enforced by the directory runner; its shared source/stage ledger enforces the documented fixed attempt limits.",
+                "Custom run budgets are not enforced by the directory runner.",
             )
         if budget.maximum_cost is not None:
             raise HTTPException(

@@ -13,18 +13,7 @@ first-frame clean, and multi-image clean operations share the inpainting allowan
 LHM track suffixes have separate allowances. `--marble both` sequences its two clean operations
 so their claims do not overlap. A candidate rename or new output path does not create a new
 allowance. A retry needs a new `--stage-hypothesis` and changed relevant parameters or worker
-code. Each distinct clean operation can make its initial execution without a retry hypothesis,
-but all consume the same three-execution allowance. Pending or unknown attempts block further
-submissions for that source/logical stage until evidence is reconciled. Existing over-cap ledger
-history remains readable and reconcilable; it never grants another execution.
-
-The provider-agnostic `orchestrator/paid.py` policy likewise caps executions across run names
-by original source and logical stage. It persists retry hypotheses on the associated stage attempt
-and blocks unresolved claims before submission. Explicit run budgets can stop work sooner:
-provider operation limits count every claim, and the cost ceiling reserves estimates across
-all providers, including failed or unresolved operations. A capped cost budget requires an
-estimate for every reserved operation. These are estimates, not verified invoices. This policy
-only protects callers that use it; it does not add accounting to direct provider invocations.
+code. Pending or unknown attempts block further submissions until evidence is reconciled.
 
 The runner hashes the original `--clip` by default, including when processing a derived shot.
 For independently encoded aliases or pretrimmed inputs, use a reviewed canonical

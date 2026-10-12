@@ -46,13 +46,12 @@ not damage the main view or walking route. Label invented appearance and unobser
   justified parameter or a new code hypothesis and recorded before/after evidence, timing, and cost.
   Persist attempts across resume and candidate renaming; never reset counters. An agent that wants
   a further attempt stops and asks the operator rather than deciding for itself.
-- Paid executions have a stricter enforced allowance: `scripts/run_clip.py`'s shared ledger
-  and `orchestrator/paid.py` allow at most **three executions total per original source/logical
-  stage**, across candidate or run renaming. Distinct clean workflows share that allowance;
-  a repeat of a concrete operation needs a new hypothesis and changed relevant parameters or
-  worker code. Pending or unknown claims block further submissions until reconciliation.
-  Explicit stage, provider-operation, and cost budgets can stop work sooner. The broader quality
-  retry ceiling does not authorize a fourth paid execution or bypass an unresolved claim.
+- This cap is now told to the agent rather than enforced against it. The orchestrator used to
+  refuse a fourth attempt; it no longer schedules anything, so what stops a loop is the agent
+  reading its own run's journal, which records every attempt of every step and is put in front of
+  it at the start of each turn. What is still enforced is spend: `scripts/run_clip.py`'s ledger
+  refuses to relaunch a paid operation that may already be in flight, at the point where the money
+  is committed.
 - A retry must move something the step actually reads. Each step declares its overridable
   defaults in `orchestrator/steps.py`, with the value it would otherwise use and a sentence on
   what the knob does, and the agent's brief lists them with those values. A test holds every

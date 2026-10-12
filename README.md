@@ -104,7 +104,6 @@ Labs and OpenAI in `.env.author` (`.env.example` lists them).
 ```sh
 uv sync --locked --group inference
 set -a; source .env.author; set +a
-uv run --locked --group inference python -m orchestrator.doctor --clip /path/to/clip.mp4
 uv run --locked --group inference scripts/run_clip.py \
   --clip /path/to/clip.mp4 --name myclip \
   --marble video --all-people --fps 12 --skip-finetune --no-publish
@@ -114,8 +113,6 @@ uv run --locked --group inference scripts/run_clip.py \
 - Running the same command after a crash resumes where it stopped.
 - A 10-second clip takes about 25 minutes, roughly $0.15 of Modal GPU plus 1,600 Marble credits.
 - Read [paid recovery](docs/paid-recovery.md) before retrying a failed paid stage.
-- [Pipeline setup](docs/pipeline-setup.md) explains dependencies, credentials and read-only model-cache checks.
-- [Pipeline validation](docs/pipeline-validation.md) separates tested orchestration from fresh GPU inference and visual quality.
 
 **Clips that work:** one continuous shot, 5 to 15 seconds, people at least 150 px tall, some
 sideways camera movement, decent light.

@@ -7,7 +7,6 @@ import { ArtifactViewer } from '@/components/artifact-viewer';
 import { leadArtifact } from '@/lib/blocks';
 import { GraphCanvas } from '@/components/graph-canvas';
 import { Progress } from '@/components/progress';
-import { RunOverview } from '@/components/run-overview';
 import { StageStrip } from '@/components/stage-strip';
 import { Status } from '@/components/status';
 import { useNow } from '@/components/use-now';
@@ -524,8 +523,6 @@ export default function RunConsole({ runId }: { runId: string }) {
         </div>
         <StageStrip nodes={run.nodes} />
       </header>
-
-      <RunOverview runId={runId} onSelectStage={setSelectedId} />
 
       {run.liveError ? (
         <p className="notice notice--warn" style={{ marginBottom: 16 }}>
