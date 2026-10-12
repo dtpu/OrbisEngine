@@ -1,0 +1,24 @@
+orchestrator/doctor.py
+  s_52d9aafecb7e4b::t_8e39b57f991435 146,183,277-279,298,300,302,307,311,336,338,340,378,380,382,392,395-396,399,427,463,472,475-476,493,519
+  s_52d9aafecb7e4b::t_df922ddc404e84 442,444-445
+  s_52d9aafecb7e4b::t_3a7d288be7d0dd 443,446-449
+  s_52d9aafecb7e4b::t_a0b84476d961c2 281-288,291-292,295,297,301,309-310,339,381
+  s_52d9aafecb7e4b::t_765de4b0d4e8b8 453
+  s_52d9aafecb7e4b::t_f99d9bb5672c15 280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d83fa889e828e3d46f7c37ba3b1ee5b5686cc0c1",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
