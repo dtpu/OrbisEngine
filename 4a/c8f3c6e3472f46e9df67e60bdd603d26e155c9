@@ -1,0 +1,33 @@
+orchestrator/session.py
+  s_52d9aafecb7e4b::t_a86a5fb328a0d3 25
+scripts/run_clip.py
+  s_52d9aafecb7e4b::t_3994038b1eef52 2890
+scripts/run_pipeline.py
+  s_52d9aafecb7e4b::t_3994038b1eef52 48
+admin/lib/types.ts
+  s_52d9aafecb7e4b::t_2308f27703458c 172
+orchestrator/artifacts.py
+  s_52d9aafecb7e4b::t_a86a5fb328a0d3 13
+admin/app/globals.css
+  s_52d9aafecb7e4b::t_29dc8b3dd24808 550,1753
+orchestrator/api/app.py
+  s_52d9aafecb7e4b::t_3994038b1eef52 241
+scripts/capture-walk-attack.ts
+  s_52d9aafecb7e4b::t_3994038b1eef52 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ac8f3c6e3472f46e9df67e60bdd603d26e155c9",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
