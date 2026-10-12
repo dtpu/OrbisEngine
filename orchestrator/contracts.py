@@ -38,19 +38,6 @@ class RunStatus(StrEnum):
     SUCCEEDED = "succeeded"
 
 
-class NodeStatus(StrEnum):
-    QUEUED = "queued"
-    READY = "ready"
-    RUNNING = "running"
-    WAITING_AGENT = "waiting_agent"
-    WAITING_HUMAN = "waiting_human"
-    SUCCEEDED = "succeeded"
-    SKIPPED = "skipped"
-    FAILED = "failed"
-    BLOCKED = "blocked"
-    CANCELED = "canceled"
-
-
 class AttemptStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"

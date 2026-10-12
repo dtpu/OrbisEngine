@@ -2887,7 +2887,7 @@ def main():
     ap.add_argument(
         "--orchestrated",
         action="store_true",
-        help="submit the durable Temporal pipeline instead of using the legacy in-process runner",
+        help="submit the run to the pipeline API and directory supervisor",
     )
     ap.add_argument("--pipeline-api", default="http://127.0.0.1:8000")
     ap.add_argument("--pipeline-token-env", default="WANDER_API_TOKEN")

@@ -22,7 +22,7 @@ import sys
 
 from orchestrator.agent.harness import HarnessAgent
 from orchestrator.journal import Journal, RunProjection
-from orchestrator.steps import STEPS, Step, people_steps, planned_steps
+from orchestrator.steps import STEPS, people_steps, planned_steps
 
 # What the steps themselves need. Modal authenticates through ~/.modal.toml, so HOME covers
 # it; Marble and OpenAI read a key from the environment and fail instantly without one.
@@ -78,28 +78,6 @@ def install_wander(run_dir: Path) -> Path:
     )
     shim.chmod(0o755)
     return binaries
-
-
-def describe_step(step: Step, done: bool, last: str | None) -> str:
-    mark = "x" if done else " "
-    line = f"- [{mark}] `{step.name}` — {step.summary}"
-    if last and not done:
-        line += f" (last run: {last})"
-    if step.paid:
-        line += "  **costs money**"
-    return line
-
-
-def parameter_lines(step: Step) -> list[str]:
-    properties = (step.parameters or {}).get("properties") or {}
-    if not properties:
-        return []
-    lines = [f"  Defaults for `{step.name}`, which it is already running at:"]
-    for name in sorted(properties):
-        rule = properties[name]
-        default = repr(rule["default"]) if "default" in rule else "unset"
-        lines.append(f"    - `{name}` = {default} — {rule.get('description', '')}")
-    return lines
 
 
 def render_brief(

@@ -38,23 +38,6 @@ def tunables(**knobs: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": dict(knobs), "additionalProperties": False}
 
 
-ADMISSION_PARAMETERS = tunables(
-    cut_threshold=knob(
-        "number",
-        0.10,
-        "scene score above which a frame is a candidate cut; raise it when a pan or a flash "
-        "is being read as a cut, lower it when a real cut is being missed",
-        minimum=0.0,
-        maximum=1.0,
-    ),
-    min_seconds=knob(
-        "number",
-        1.5,
-        "shots shorter than this are reported as too short to use",
-        minimum=0.1,
-        maximum=60.0,
-    ),
-)
 CLEAN_PARAMETERS = tunables(
     fps=knob(
         "number",

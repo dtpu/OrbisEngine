@@ -7,7 +7,7 @@
 //   bun scripts/capture-walk-attack.ts [--clips elevator,lobby,stairs2,atrium,hpwide] [--secs 6] [--out dir]
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type Page, type BrowserContext } from 'playwright-core';
+import { chromium, type Page } from 'playwright-core';
 
 const rest = process.argv.slice(2);
 const flag = (name: string, d: string) => {
@@ -104,7 +104,6 @@ interface AttackReport {
   worst?: [string, YawReport];
   worstShot?: string;
 }
-let hull = 0;
 const out: Record<string, unknown> = {};
 try {
   const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
@@ -130,7 +129,6 @@ try {
       start: await page.evaluate(state),
       yaws: {},
     };
-    hull = r.grid?.hullCells ?? 0;
     for (const yaw of [0, 45, 90, 135, 180, 225, 270, 315]) {
       await page.keyboard.press('KeyR');
       await page.waitForTimeout(100);

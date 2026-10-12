@@ -102,17 +102,6 @@ export interface QualityReview {
   createdAt: string;
 }
 
-export interface OperatorMessage {
-  id: string;
-  nodeId: string | null;
-  attemptId: string | null;
-  author: string;
-  message: string;
-  attachmentArtifactIds: string[];
-  resolved: boolean;
-  createdAt: string;
-}
-
 /** One `transcript.jsonl` the reviewing agent wrote (or is writing) for an attempt. */
 export interface ReviewTranscript {
   /** Present in the cross-run listing; the per-run listing implies it. */
@@ -180,7 +169,7 @@ export interface PipelineRun {
   artifacts?: RunArtifact[];
   providerClaims?: ProviderClaim[];
   reviews?: QualityReview[];
-  /** Temporal's view of the workflow, or null with `liveError` when it cannot be queried. */
+  /** Live run metadata derived from the journal. */
   live?: { paused?: boolean; canceled?: boolean } | null;
   liveError?: string | null;
 }

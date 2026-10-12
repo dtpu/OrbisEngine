@@ -46,10 +46,6 @@ def sha256_file(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def normalized_hypothesis(value):
-    return " ".join(value.split()).casefold()
-
-
 def logical_stage(operation):
     return "inpainting" if operation in {"clean", "clean_first", "clean_multi"} else operation
 

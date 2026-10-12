@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     )
     print(
         f"submitted {response['id']} ({response['sourceSha256']}); "
-        f"dashboard: http://127.0.0.1:5399/dashboard.html"
+        f"dashboard: http://127.0.0.1:5401/runs/{response['id']}"
     )
     if args.no_follow:
         return 0
