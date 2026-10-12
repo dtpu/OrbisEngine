@@ -157,7 +157,6 @@ export function describeOptions(options: GraphOptions): string {
     }[options.marble],
   );
   if (options.objects) parts.push('objects');
-  if (options.reviewed_audio) parts.push('reviewed audio');
   if (options.finetune) parts.push('fine-tune');
   return parts.join(', ');
 }
