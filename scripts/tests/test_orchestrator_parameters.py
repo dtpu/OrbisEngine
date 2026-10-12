@@ -7,7 +7,6 @@ themselves rather than restated.
 """
 
 import ast
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -110,20 +109,17 @@ class DeclaredDefaultTests(unittest.TestCase):
 class CatalogueTests(unittest.TestCase):
     def test_every_step_names_a_stage_run_clip_actually_has(self):
         """The catalogue is what the agent picks from; a name it cannot run is a dead end."""
-        source = (ROOT / "scripts/run_clip.py").read_text()
+        from orchestrator.pipeline import MARBLE_MODES, single_graph, multiperson_graph
+        from orchestrator.steps import base_step
 
-        def named(start: str, until: str) -> set[str]:
-            return set(re.findall(r'"([a-z_0-9]+)"', source.split(start)[1].split(until)[0]))
-
-        world = named("def world_half", "def single_graph")
-        known = (
-            world
-            | named("def single_graph", "def multiperson_graph")
-            | named("def multiperson_graph", "\nclass ")
-        )
-        for name in STEPS:
-            with self.subTest(step=name):
-                self.assertIn(name, known, f"run_clip.py has no stage called {name}")
+        known = set()
+        for mode in MARBLE_MODES:
+            for stages, deps in (single_graph(mode), multiperson_graph(2, mode)):
+                known.update(base_step(stage) for stage in stages)
+                self.assertEqual(set(stages), set(deps))
+                for stage, required in deps.items():
+                    self.assertTrue(set(required) <= set(stages), stage)
+        self.assertEqual(set(STEPS), known)
 
     def test_the_order_is_advice_that_at_least_holds_together(self):
         order = suggested_order()

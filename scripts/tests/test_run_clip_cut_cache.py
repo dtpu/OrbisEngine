@@ -50,6 +50,10 @@ class CutCacheTests(unittest.TestCase):
 
         self.fake = fake
         self.old_root = run_clip.ROOT
+        self.runs_root = self.root / ".context" / "runs"
+        self.runs_env = patch.dict(os.environ, {"WANDER_RUNS_DIR": str(self.runs_root)})
+        self.runs_env.start()
+        self.addCleanup(self.runs_env.stop)
         run_clip.ROOT = self.root
         self.addCleanup(self.restore)
 
@@ -65,6 +69,9 @@ class CutCacheTests(unittest.TestCase):
             shot=shot,
             all_shots=all_shots,
         )
+
+    def cache_path(self):
+        return self.runs_root / "same-run" / "cuts.json"
 
     def test_hit_and_same_size_mtime_content_change_miss(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
@@ -106,7 +113,7 @@ class CutCacheTests(unittest.TestCase):
             ):
                 result = run_clip.cut_check(self.args(threshold=0.1 + returncode))
                 self.assertEqual(result["continuous"], continuous)
-        cache = self.root / ".context/run/same-run/cuts.json"
+        cache = self.cache_path()
         original = cache.read_bytes()
         for continuous, returncode in ((True, 1), (False, 0), (False, 2)):
             with (
@@ -136,7 +143,7 @@ class CutCacheTests(unittest.TestCase):
     def test_malformed_cached_reports_recompute(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
             run_clip.cut_check(self.args())
-            cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+            cache = self.cache_path()
             cache.write_text("[]")
             run_clip.cut_check(self.args())
             cache.write_text(
@@ -156,7 +163,7 @@ class CutCacheTests(unittest.TestCase):
     def test_failed_or_malformed_rerun_preserves_old_report(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
             run_clip.cut_check(self.args())
-        cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+        cache = self.cache_path()
         old = cache.read_bytes()
         self.clip.write_bytes(b"BBBB")
         with (
@@ -188,7 +195,7 @@ class CutCacheTests(unittest.TestCase):
                 patch.object(run_clip.subprocess, "run", side_effect=self.fake),
             ):
                 run_clip.cut_check(self.args())
-                cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+                cache = self.cache_path()
                 doc = json.loads(cache.read_text())
                 doc.update(change)
                 cache.write_text(json.dumps(doc))
@@ -199,7 +206,7 @@ class CutCacheTests(unittest.TestCase):
     def test_subprocess_exception_cleans_temp_and_preserves_old_report(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
             run_clip.cut_check(self.args())
-        cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+        cache = self.cache_path()
         old = cache.read_bytes()
         self.clip.write_bytes(b"CCCC")
         with (
@@ -213,7 +220,7 @@ class CutCacheTests(unittest.TestCase):
     def test_publish_failure_cleans_temp_and_preserves_old_report(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
             run_clip.cut_check(self.args())
-        cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+        cache = self.cache_path()
         old = cache.read_bytes()
         self.clip.write_bytes(b"DDDD")
         with (
@@ -229,7 +236,7 @@ class CutCacheTests(unittest.TestCase):
     def test_publish_serialization_failure_cleans_temp_and_preserves_old_report(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
             run_clip.cut_check(self.args())
-        cache = self.root / ".context" / "run" / "same-run" / "cuts.json"
+        cache = self.cache_path()
         old = cache.read_bytes()
         self.clip.write_bytes(b"EEEE")
         with (

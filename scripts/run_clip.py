@@ -27,13 +27,18 @@ failed or uncertain Modal invocations are never automatically resubmitted.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile, threading, time
+import argparse, fcntl, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile, threading, time
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
 from stage_attempts import StageAttempts, command_identity
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from orchestrator.config import resolve_runs_root, resolve_stage_ledger  # noqa: E402
+from orchestrator.pipeline import MARBLE_MODES, multiperson_graph, single_graph, world_half  # noqa: E402,F401
+
 # A clean clone uses its own toolchain and ignored output directories.
 PY = os.environ.get("WANDER_PYTHON", sys.executable)
 MODAL = os.environ.get("WANDER_MODAL", shutil.which("modal") or str(ROOT / ".venv/bin/modal"))
@@ -51,121 +56,18 @@ LOCAL_ENV = {
 
 
 def runs_dir() -> Path:
-    return Path(os.environ.get("WANDER_RUNS_DIR", ROOT / ".context/run")).expanduser().resolve()
+    return resolve_runs_root(os.environ.get("WANDER_RUNS_DIR"))
 
 
 def public_dir() -> Path:
     return Path(os.environ.get("WANDER_PUBLIC_DIR", ROOT / "public")).expanduser().resolve()
 
 
-MARBLE_MODES = ("video", "image", "multi", "both", "none")
 # scale_fit gates on each sampled frame's depth-ratio MEDIAN (0.95-1.05) and on its p10/p90: the median
 # alone passed hpwide with p10 0.71 / p90 1.37 -- two modes, 0.7 and 1.15, from a 15 deg frame tilt,
 # and no mass at 1.0 (share/ADVERSARIAL-LOG.md R11)
 SCALE_RATIO_BAND = (0.95, 1.05)
 SCALE_SPREAD_BAND = (0.90, 1.10)
-
-
-def world_half(marble: str):
-    """(stages, deps, world_stage) for the scene half.
-
-    ONE generation by default. A marble-1.1 world is 1600 credits, so `video` submits exactly one
-    and `both` (two worlds, 3200 credits) has to be asked for by name. `review` is the human gate
-    that sits between the clean pass and the spend: the clean pass can leave a removed arm's
-    dumbbells hanging in mid-air, and that is only visible to a person looking at the frames.
-    """
-    stages, deps = [], {}
-    if marble in ("image", "both"):
-        stages.append("clean_first")
-        deps["clean_first"] = []
-    if marble in ("video", "both", "none"):
-        stages.append("clean")
-        # Both inpainting operations share one paid allowance, so claim them in sequence.
-        deps["clean"] = ["clean_first"] if marble == "both" else []
-    if marble == "multi":
-        stages.append("clean_multi")
-        deps["clean_multi"] = []
-    if marble == "none":
-        return stages, deps, None
-    # Write a source-grounded description before generation. Image modes and prompted video request
-    # disable_recaption; this records intent, not proof that the provider retained the supplied text.
-    stages.append("world_prompt")
-    deps["world_prompt"] = []
-    stages.append("review")
-    deps["review"] = list(stages[:-1])
-    if marble in ("image", "both"):
-        stages.append("marble_image")
-        deps["marble_image"] = ["clean_first", "review"]
-    if marble in ("video", "both"):
-        stages.append("marble_video")
-        deps["marble_video"] = ["clean", "review"]
-    if marble == "multi":
-        stages.append("marble_multi")
-        deps["marble_multi"] = ["clean_multi", "review"]
-    world = {"multi": "marble_multi", "video": "marble_video", "both": "marble_video"}.get(
-        marble, "marble_image"
-    )
-    return stages, deps, world
-
-
-def single_graph(marble: str, objects: bool = True):
-    stages, deps, world = world_half(marble)
-    stages += ["pi3x", "frame_align", "person_prep", "lhm_frozen", "lhm_motion", "package"]
-    deps.update(
-        {
-            "pi3x": [],
-            "frame_align": ["pi3x"],
-            "person_prep": [],
-            "lhm_frozen": ["person_prep"],
-            "lhm_motion": ["lhm_frozen", "pi3x"],
-            "package": ["lhm_motion", "frame_align"],
-        }
-    )
-    if objects:
-        stages += ["objects"]
-        deps["objects"] = ["package"]
-    if world:
-        stages += ["scale_fit", "place_fit", "anchors", "finetune", "verify"]
-        deps["scale_fit"] = ["pi3x", "frame_align", "package", world]
-        deps["place_fit"] = ["scale_fit"]
-        deps["anchors"] = ["place_fit"]
-        deps["finetune"] = ["scale_fit"]
-        deps["verify"] = ["scale_fit"]
-    return stages, deps
-
-
-def multiperson_graph(limit: int, marble: str, objects: bool = True):
-    """Stage list and dependencies for up to `limit` people.
-
-    The real track count is only known once `tracks` has run, so the graph is built for `limit`
-    slots and the slots no track claims mark themselves skipped. One person found => only slot 00
-    runs and `package_people` writes the ordinary single-person layout, so a one-person clip comes
-    out of this mode byte-identical to the single-person pipeline.
-    """
-    stages, deps, world = world_half(marble)
-    stages += ["pi3x", "frame_align", "tracks"]
-    deps.update({"pi3x": [], "frame_align": ["pi3x"], "tracks": ["pi3x"]})
-    motions = []
-    for i in range(limit):
-        prep, frozen, motion = f"person_prep_{i:02d}", f"lhm_frozen_{i:02d}", f"lhm_motion_{i:02d}"
-        stages += [prep, frozen, motion]
-        deps[prep] = ["tracks"]
-        deps[frozen] = [prep]
-        deps[motion] = [frozen, "pi3x"]
-        motions.append(motion)
-    stages += ["package_people"]
-    deps["package_people"] = motions + ["frame_align"]
-    if objects:
-        stages += ["objects"]
-        deps["objects"] = ["package_people", "tracks"]
-    if world:
-        stages += ["scale_fit", "place_fit", "anchors", "finetune", "verify"]
-        deps["scale_fit"] = ["pi3x", "frame_align", "package_people", world]
-        deps["place_fit"] = ["scale_fit"]
-        deps["anchors"] = ["place_fit"]
-        deps["finetune"] = ["scale_fit"]
-        deps["verify"] = ["scale_fit"]
-    return stages, deps
 
 
 def parse_object_spec(spec: str) -> dict:
@@ -225,9 +127,24 @@ class State:
         return self.data["stages"].get(stage, {}).get("status") == "ok"
 
     def record(self, stage, **kw):
-        with self.lock:
+        # Different `wander step` processes share this file. Merge under an OS lock and
+        # publish atomically so parallel providers cannot lose each other's completion.
+        with self.lock, self.path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if self.path.exists():
+                self.data = json.loads(self.path.read_text())
+            if kw.get("status") in {"ok", "pending", "running"} and "error" not in kw:
+                kw["error"] = None
             self.data["stages"].setdefault(stage, {}).update(kw)
-            self.path.write_text(json.dumps(self.data, indent=2))
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=self.path.parent, prefix=".state-", delete=False
+            ) as handle:
+                temporary = Path(handle.name)
+                json.dump(self.data, handle, indent=2)
+            try:
+                temporary.replace(self.path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
 
 _modal_gate = threading.Lock()
@@ -394,9 +311,9 @@ class Pipeline:
         self.object_specs = [parse_object_spec(v) for v in (a.object or [])]
         want_objects = bool(self.object_specs) or not a.no_objects
         self.stages, self.deps = (
-            multiperson_graph(self.people_limit, self.marble, want_objects)
+            multiperson_graph(self.people_limit, self.marble, want_objects, not a.skip_finetune)
             if self.multi
-            else single_graph(self.marble, want_objects)
+            else single_graph(self.marble, want_objects, not a.skip_finetune)
         )
         self.certs = subprocess.run(
             [PY, "-m", "certifi"], check=True, stdout=subprocess.PIPE, text=True
@@ -413,9 +330,7 @@ class Pipeline:
 
     def paid_run(self, operation, cmd, log):
         """Persist a source-keyed claim before any direct paid Modal subprocess."""
-        ledger = StageAttempts(
-            getattr(self.a, "stage_ledger", None) or ROOT / ".context/pipeline-attempts.json"
-        )
+        ledger = StageAttempts(getattr(self.a, "stage_ledger", None) or resolve_stage_ledger())
         shot = getattr(self, "shot", None)
         selection = None
         if shot:
@@ -691,6 +606,17 @@ class Pipeline:
                 shots.append(dest)
         if self.first_png.exists():
             shots.append(self.first_png)
+        if self.marble == "multi":
+            report = json.loads((self.ctx / "clean-multi.json").read_text())
+            for frame in report.get("keptFrameProvenance", []):
+                path = self.ctx / "clean-multi" / f"f_{frame['frameIndex']:04d}.png"
+                if not path.is_file() or file_sha256(path) != frame.get("cleanedImageSha256"):
+                    raise RuntimeError(
+                        "Multi-image review input changed; retain the original clean report"
+                    )
+                destination = out / path.name
+                shutil.copy2(path, destination)
+                shots.append(destination)
         if not shots:
             raise RuntimeError("nothing to review: the clean stage produced no frames")
         report = self.ctx / "clean.json"
@@ -950,9 +876,8 @@ class Pipeline:
 
         Camera spread is diagnostic; it does not validate cleaned coverage or generated geometry.
         """
-        # Ordering note: the Pi3X solve runs after the world half in this graph, so on a first pass
-        # `--marble multi` wants `--only pi3x` run first, or a saved coarse admission.json.
-        # Image and video modes need neither.
+        # The shared graph runs Pi3X before multi-image cleaning so camera selection is
+        # measured on the first pass. Image and video modes need neither.
         cam = self.ctx / "pi3x" / "cameras.json"
         pred = self.ctx / "admission.json"
         cmd = [PY, "scripts/select_world_mode.py", "--out", str(self.mode_json)]
@@ -2713,7 +2638,7 @@ def cut_check(a) -> dict:
             source_hash.update(chunk)
     detector = ROOT / "scripts" / "shot_cuts.py"
     detector_hash = hashlib.sha256(detector.read_bytes()).hexdigest()
-    no_score = a.shot is not None or a.all_shots
+    no_score = a.shot is not None or a.all_shots or getattr(a, "reject_cuts", False)
     cache_key = {
         "sourceSha256": source_hash.hexdigest(),
         "sourcePath": str(clip),
@@ -2816,6 +2741,10 @@ def resolve_shots(a) -> list[tuple[str, Path, dict | None]]:
     doc = cut_check(a)
     if doc["continuous"] and a.shot is None:
         return [(a.name, clip, None)]
+    if getattr(a, "reject_cuts", False):
+        raise SystemExit(
+            f"Source contains {doc['cutCount']} cut(s). Submit a continuous shot; see {runs_dir() / a.name / 'cuts.json'}. No stages were launched."
+        )
     if a.one_shot:
         say(
             f"   --one-shot: processing the whole clip across {doc['cutCount']} detected cut(s) "
@@ -3042,6 +2971,11 @@ def main():
         "--all-shots",
         action="store_true",
         help="process every shot of a multi-shot clip separately, as <name>-shotNN",
+    )
+    ap.add_argument(
+        "--reject-cuts",
+        action="store_true",
+        help="refuse multi-shot input without trimming or changing the run directory",
     )
     ap.add_argument(
         "--one-shot",

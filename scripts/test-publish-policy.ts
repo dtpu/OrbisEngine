@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { publishInventory, publishMetadata, writePublishMetadata } from './lib/publish-policy.ts';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  publishInventory,
+  scanPublishInventory,
+  publishMetadata,
+  writePublishMetadata,
+} from './lib/publish-policy.ts';
 
 const previous = {
   schema: 'wander.shared/1',
@@ -24,31 +32,131 @@ const input = {
 };
 
 test('archive-only inventories public outputs, runs and evidence exclusively as author archives', () => {
-  const roots = publishInventory('/fixture', { archiveOnly: true }, '/evidence');
+  const roots = publishInventory('/fixture', { archiveOnly: true }, '/evidence', {});
   assert.deepEqual(
     roots.map((root) => root.directory),
-    ['/fixture/public', '/fixture/.context/run', '/evidence'],
+    ['/fixture/public', '/fixture/.context/runs', '/fixture/.context/run', '/evidence'],
   );
   assert.deepEqual(
     roots.map((root) => root.logicalPrefix),
-    ['public/', 'runs/', 'evidence/'],
+    ['public/', 'runs/', 'runs/', 'evidence/'],
   );
   assert.ok(roots.every((root) => root.kind === 'archives' && root.prefix === 'archive'));
 });
 
 test('explicit full and assets-only publication retain their inventory behavior', () => {
-  const full = publishInventory('/fixture', {}, '/evidence');
+  const full = publishInventory('/fixture', {}, '/evidence', {});
   assert.equal(full[0].kind, 'files');
   assert.equal(full[0].prefix, 'viewer');
   assert.equal(full[0].logicalPrefix, '/');
-  assert.equal(full.length, 3);
-  const assets = publishInventory('/fixture', { assetsOnly: true }, '/evidence');
+  assert.equal(full.length, 4);
+  const assets = publishInventory('/fixture', { assetsOnly: true }, '/evidence', {});
   assert.deepEqual(assets, [full[0]]);
   assert.throws(
     () => publishInventory('/fixture', { archiveOnly: true, assetsOnly: true }),
     /cannot be combined/,
   );
 });
+
+test('configured roots resolve relative to the repo, expand home, and deduplicate defaults', () => {
+  const roots = publishInventory('/fixture', {}, undefined, {
+    WANDER_RUNS_ROOT: 'custom/runs',
+    WANDER_RUNS_DIR: '~/old-runs',
+  });
+  assert.deepEqual(
+    roots.slice(1).map((root) => root.directory),
+    [
+      '/fixture/.context/runs',
+      '/fixture/.context/run',
+      '/fixture/custom/runs',
+      path.join(homedir(), 'old-runs'),
+    ],
+  );
+  assert.equal(
+    publishInventory('/fixture', {}, undefined, {
+      WANDER_RUNS_ROOT: '.context/runs',
+      WANDER_RUNS_DIR: '/fixture/.context/run',
+    }).length,
+    3,
+  );
+});
+
+async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
+  const root = await mkdtemp(path.join(tmpdir(), 'publish-inventory-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const write = async (relative: string, contents = 'fixture output') => {
+    const file = path.join(root, relative);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, contents);
+  };
+  return { root, write };
+}
+
+for (const archiveOnly of [false, true]) {
+  test(`${archiveOnly ? 'automatic archive' : 'manual publish'} scans new, legacy, and custom history`, async (t) => {
+    const { root, write } = await fixture(t);
+    await write('public/scene.json');
+    await write('.context/runs/new-run/result.json');
+    await write('.context/run/old-run/result.json');
+    await write('configured/api-run/result.json');
+    await write('legacy-configured/clip-run/result.json');
+    await write('.context/runs/new-run/.env', 'private');
+    await write('.context/run/old-run/.env', 'private');
+    const { tasks, exclusions } = await scanPublishInventory(
+      publishInventory(root, { archiveOnly }, undefined, {
+        WANDER_RUNS_ROOT: 'configured',
+        WANDER_RUNS_DIR: path.join(root, 'legacy-configured'),
+      }),
+    );
+    assert.deepEqual(
+      tasks.map((task) => task.path).sort(),
+      [
+        archiveOnly ? 'public/scene.json' : '/scene.json',
+        'runs/new-run/result.json',
+        'runs/old-run/result.json',
+        'runs/api-run/result.json',
+        'runs/clip-run/result.json',
+      ].sort(),
+    );
+    assert.ok(
+      tasks
+        .filter((task) => task.path.startsWith('runs/'))
+        .every((task) => task.kind === 'archives' && task.prefix === 'archive'),
+    );
+    assert.equal(tasks[0].kind, archiveOnly ? 'archives' : 'files');
+    assert.deepEqual(exclusions.runs, ['new-run/.env']);
+    assert.deepEqual(exclusions['runs-legacy'], ['old-run/.env']);
+  });
+}
+
+test('missing roots are harmless and aliases of the same root are scanned once', async (t) => {
+  const { root, write } = await fixture(t);
+  assert.deepEqual(
+    (await scanPublishInventory(publishInventory(root, {}, undefined, {}))).tasks,
+    [],
+  );
+  await write('.context/runs/example/result.json');
+  await symlink(path.join(root, '.context/runs'), path.join(root, '.context/run'), 'dir');
+  const { tasks } = await scanPublishInventory(publishInventory(root, {}, undefined, {}));
+  assert.deepEqual(
+    tasks.map((task) => task.path),
+    ['runs/example/result.json'],
+  );
+});
+
+for (const secondFile of ['result.json', 'other-stage.json']) {
+  test(`duplicate run names fail before upload even with ${secondFile}`, async (t) => {
+    const { root, write } = await fixture(t);
+    await write('.context/runs/example/result.json', 'new run');
+    await write(`.context/run/example/${secondFile}`, 'legacy run');
+    for (const archiveOnly of [false, true]) {
+      await assert.rejects(
+        scanPublishInventory(publishInventory(root, { archiveOnly }, undefined, {})),
+        /Archive run collision at runs\/example/,
+      );
+    }
+  });
+}
 
 test('archive-only writes an immutable archive then changes only the existing archive reference', () => {
   const writes = publishMetadata(input);

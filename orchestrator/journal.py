@@ -19,10 +19,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from orchestrator.steps import base_step, needs_of
+
 JOURNAL_FILE = "journal.jsonl"
 
 # What a line can be. A step is work that ran; the rest is the agent or an operator speaking.
-KINDS = ("step.started", "step.finished", "note", "question", "answer", "run.finished")
+KINDS = (
+    "step.started",
+    "step.finished",
+    "note",
+    "question",
+    "answer",
+    "run.finished",
+    "run.resumed",
+)
 
 
 def _now() -> str:
@@ -120,6 +130,8 @@ class Journal:
 
     def finished(self) -> str | None:
         for entry in reversed(self.entries()):
+            if entry.kind in {"run.resumed", "step.started"}:
+                return None
             if entry.kind == "run.finished":
                 return entry.data.get("status")
         return None
@@ -155,7 +167,10 @@ class RunProjection:
 
     def _apply(self, entry: Entry) -> None:
         data = entry.data
-        if entry.kind == "step.started":
+        if entry.kind == "run.resumed":
+            self.repository.reopen_run(self.run_id)
+        elif entry.kind == "step.started":
+            self.repository.reopen_run(self.run_id)
             step = data["step"]
             self._ensure_node(step)
             self.repository.set_node_status(self.run_id, step, "running")
@@ -213,7 +228,11 @@ class RunProjection:
         The plan is a suggestion, so the agent may run something that was never in it. A step
         the dashboard has no row for would otherwise be invisible.
         """
-        described = self.catalogue.get(step)
+        base = base_step(step)
+        described = self.catalogue.get(base)
+        dependencies = list(getattr(described, "after", ()) or ())
+        if base != step:
+            dependencies = needs_of(step, int(step.rsplit("_", 1)[1]) + 1, True)
         self.repository.ensure_node(
             run_id=self.run_id,
             node_id=step,
@@ -225,5 +244,5 @@ class RunProjection:
                 "paid": bool(getattr(described, "paid", False)),
                 "parameter_schema": getattr(described, "parameters", {}) or {},
             },
-            dependencies=list(getattr(described, "after", ()) or ()),
+            dependencies=dependencies,
         )

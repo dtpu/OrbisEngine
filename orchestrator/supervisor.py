@@ -19,6 +19,7 @@ from pathlib import Path
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.journal import Journal
 from orchestrator.session import RunSession
+from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.steps import (
     STEPS,
     base_step,
@@ -110,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--runs",
-        default=os.environ.get("WANDER_RUNS_ROOT", ".context/runs"),
+        default=str(resolve_runs_root()),
         help="directory holding one folder per run",
     )
     parser.add_argument("--run-id", help="work on one run and stop")
@@ -127,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    root = Path(args.runs).resolve()
+    root = resolve_runs_root(args.runs)
     root.mkdir(parents=True, exist_ok=True)
     repository = repository_from_environment()
     policy = HarnessPolicy.from_environment()
@@ -211,6 +212,7 @@ def open_run(
     The source is copied in rather than referenced, so the run holds everything it needs and
     a run directory remains meaningful when the file it came from has moved.
     """
+    import hashlib
     import json
     import shutil
 
@@ -220,14 +222,19 @@ def open_run(
     held = run_dir / f"source{Path(source).suffix.lower()}" if source else None
     if held is not None and not held.exists():
         shutil.copy2(source, held)
+    digest = None
+    if held is not None:
+        with held.open("rb") as copied_source:
+            digest = hashlib.file_digest(copied_source, "sha256").hexdigest()
     (run_dir / RUN_FILE).write_text(
         json.dumps(
             {
                 "runId": run_id,
                 "name": name,
                 "source": str(held) if held else "",
+                "sourceSha256": digest,
                 **({"sourceArtifactId": source_artifact_id} if source_artifact_id else {}),
-                "repository": os.environ.get("WANDER_REPOSITORY", str(Path.cwd())),
+                "repository": os.environ.get("WANDER_REPOSITORY", str(REPOSITORY_ROOT)),
                 "options": options or {},
                 **({"goal": goal} if goal else {}),
             },
@@ -262,7 +269,7 @@ def open_run(
                     "paid": described.paid,
                     "parameter_schema": described.parameters or {},
                 },
-                dependencies=dependencies_within(step, plan, 1, many),
+                dependencies=dependencies_within(step, plan, 1, many, settings),
             )
     return run_dir
 

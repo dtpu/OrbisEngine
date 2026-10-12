@@ -17,7 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from orchestrator.api.app import ApiSettings, create_app
-from orchestrator.api.storage import FilesystemArtifactReader, FilesystemSourceStore
+from orchestrator.api.storage import (
+    ArtifactPayload,
+    FilesystemArtifactReader,
+    FilesystemSourceStore,
+)
 from orchestrator.database import ArtifactRecord, AttemptRecord, Base
 from orchestrator.repository import PipelineRepository
 
@@ -66,6 +70,9 @@ class SourceStore:
     def put(self, source, storage_key):
         self.values[storage_key] = source.read_bytes()
 
+    def read(self, storage_key, *, range_header=None):
+        return ArtifactPayload(body=self.values[storage_key])
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
@@ -87,9 +94,19 @@ class ApiTests(unittest.TestCase):
             self.runs,
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
             self.source_store,
+            artifact_reader=self.source_store,
         )
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
+        fixture = self.client.post(
+            "/api/pipeline/runs/upload",
+            headers=AUTH,
+            data={"requested_id": "source-fixture", "options": '{"marble":"none"}'},
+            files={"source": ("fixture.mp4", b"source-video", "video/mp4")},
+        )
+        self.assertEqual(fixture.status_code, 201, fixture.text)
+        self.source_fixture = fixture.json()
+        self.runs.started.clear()
 
     def create_run(self):
         response = self.client.post(
@@ -97,8 +114,8 @@ class ApiTests(unittest.TestCase):
             headers=AUTH,
             json={
                 "id": "run-1",
-                "source_sha256": "a" * 64,
-                "source_artifact_id": "artifact:source",
+                "source_sha256": self.source_fixture["sourceSha256"],
+                "source_artifact_id": self.source_fixture["sourceArtifactId"],
                 "options": {"marble": "none", "objects": False},
             },
         )
@@ -116,7 +133,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(summary.json()["live"]["source"], "journal")
         self.assertTrue(summary.json()["nodes"])
         listing = self.client.get("/api/pipeline", headers=AUTH)
-        self.assertEqual([run["id"] for run in listing.json()["runs"]], ["run-1"])
+        self.assertEqual([run["id"] for run in listing.json()["runs"]], ["run-1", "source-fixture"])
 
     def test_messages_approvals_and_commands_are_durable_before_signal(self):
         self.create_run()
@@ -151,8 +168,8 @@ class ApiTests(unittest.TestCase):
             headers=AUTH,
             json={
                 "id": "run-1",
-                "source_sha256": "a" * 64,
-                "source_artifact_id": "artifact:source",
+                "source_sha256": self.source_fixture["sourceSha256"],
+                "source_artifact_id": self.source_fixture["sourceArtifactId"],
                 "options": {"marble": "none", "objects": False},
             },
         )
@@ -194,6 +211,7 @@ class ArtifactReadTests(unittest.TestCase):
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
         self.repository = PipelineRepository(self.sessions)
         self.root = Path(tempfile.mkdtemp(prefix="wander-artifacts-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
         app = create_app(
             self.repository,
             Runs(self.root / "runs"),
@@ -205,14 +223,10 @@ class ArtifactReadTests(unittest.TestCase):
         self.addCleanup(self.client.close)
         for run_id in ("run-a", "run-b"):
             response = self.client.post(
-                "/api/pipeline/runs",
+                "/api/pipeline/runs/upload",
                 headers=AUTH,
-                json={
-                    "id": run_id,
-                    "source_sha256": "a" * 64,
-                    "source_artifact_id": f"artifact:{run_id}:source",
-                    "options": {"marble": "none", "objects": False},
-                },
+                data={"requested_id": run_id, "options": '{"marble":"none","objects":false}'},
+                files={"source": (f"{run_id}.mp4", b"source-video", "video/mp4")},
             )
             self.assertEqual(response.status_code, 201, response.text)
 
@@ -355,23 +369,21 @@ class ReviewSidebarTests(unittest.TestCase):
         self.addCleanup(self.engine.dispose)
         self.repository = PipelineRepository(sessionmaker(self.engine, expire_on_commit=False))
         self.root = Path(tempfile.mkdtemp(prefix="wander-workspace-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
         app = create_app(
             self.repository,
             Runs(self.root / "runs"),
             ApiSettings(bearer_token=TOKEN, code_revision="1234567"),
+            FilesystemSourceStore(self.root / "artifacts"),
             review_workspace_root=self.root / "runs",
         )
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         response = self.client.post(
-            "/api/pipeline/runs",
+            "/api/pipeline/runs/upload",
             headers=AUTH,
-            json={
-                "id": "run-1",
-                "source_sha256": "a" * 64,
-                "source_artifact_id": "artifact:source",
-                "options": {"marble": "none", "objects": False},
-            },
+            data={"requested_id": "run-1", "options": '{"marble":"none","objects":false}'},
+            files={"source": ("run-1.mp4", b"source-video", "video/mp4")},
         )
         self.assertEqual(response.status_code, 201, response.text)
 

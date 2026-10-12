@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,9 +51,15 @@ class FilesystemSourceStore:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists():
             return
-        temporary = destination.with_suffix(destination.suffix + ".partial")
-        shutil.copyfile(source, temporary)
-        os.replace(temporary, destination)
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{destination.name}.", suffix=".partial", dir=destination.parent, delete=False
+        ) as pending:
+            temporary = Path(pending.name)
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 class S3ArtifactReader:

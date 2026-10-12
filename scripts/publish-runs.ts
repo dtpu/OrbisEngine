@@ -5,11 +5,16 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { ROOT, config, client, getJSON, hashFile, filesUnder, mime } from './lib/shared-storage.ts';
+import { ROOT, config, client, getJSON, hashFile, mime } from './lib/shared-storage.ts';
 import type { PutObjectCommandInput } from '@aws-sdk/client-s3';
-import type { AssetEntry, CatalogPointer, ScannedFile } from './lib/shared-storage.ts';
+import type { AssetEntry, CatalogPointer } from './lib/shared-storage.ts';
 import { uploadBlob } from './lib/publish-transport.ts';
-import { publishInventory, publishMetadata, writePublishMetadata } from './lib/publish-policy.ts';
+import {
+  publishInventory,
+  scanPublishInventory,
+  publishMetadata,
+  writePublishMetadata,
+} from './lib/publish-policy.ts';
 
 // Bun 1.3.9 drops Content-Length on larger Node-compatible streaming requests,
 // invalidating the S3 signature. Keep uploads streamed through Node's transport.
@@ -25,10 +30,6 @@ interface UploadCacheEntry {
 interface PublishBase {
   files: Record<string, AssetEntry>;
   archives: Record<string, AssetEntry>;
-}
-interface PublishTask extends ScannedFile {
-  kind: 'files' | 'archives';
-  prefix: 'viewer' | 'archive';
 }
 interface StorageFailure {
   name?: string;
@@ -52,6 +53,7 @@ const inventory = publishInventory(
 const concurrency = Number(args.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32)
   throw new Error('concurrency must be 1–32');
+const { tasks, exclusions } = await scanPublishInventory(inventory);
 const s3 = client(); // Author's AWS profile, NEVER the teammate credentials in .env.local.
 const cacheDir = path.join(ROOT, '.context/shared-storage');
 await mkdir(cacheDir, { recursive: true });
@@ -90,27 +92,6 @@ for (const prefix of archiveOnly ? ['archive/blobs/'] : ['viewer/blobs/', 'archi
     for (const x of r.Contents || []) known.add(x.Key);
     token = r.NextContinuationToken;
   } while (token);
-}
-const tasks: PublishTask[] = [];
-const exclusions: Record<string, string[]> = {};
-for (const source of inventory) {
-  // Preserve the public scanner's existing symlink policy in both publishing modes.
-  const scan = await filesUnder(
-    source.directory,
-    source.exclusionKey === 'public' ? '/' : source.logicalPrefix,
-  );
-  tasks.push(
-    ...scan.files.map((x) => ({
-      ...x,
-      path:
-        source.exclusionKey === 'public' && archiveOnly
-          ? `${source.logicalPrefix}${x.path.slice(1)}`
-          : x.path,
-      kind: source.kind,
-      prefix: source.prefix,
-    })),
-  );
-  exclusions[source.exclusionKey] = scan.excluded;
 }
 console.log(
   `Inventory: ${tasks.length} files, ${(tasks.reduce((s, t) => s + t.size, 0) / 1e9).toFixed(2)} GB; ${known.size} existing blobs. Exclusions: ${Object.values(exclusions).flat().length}.`,
