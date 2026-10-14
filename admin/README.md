@@ -48,11 +48,16 @@ orchestrator.api.service:create_service --factory --host 127.0.0.1 --port 8000`)
 against an isolated database, `WANDER_RUNS_ROOT` and local `WANDER_ARTIFACT_ROOT`. Keep the
 supervisor stopped: the test uploads a clip, queues it, previews it, then pauses, resumes and
 cancels its own run. It also checks the missing-run error page. From the repository root, with
-Chrome installed and root dependencies installed:
+Chrome installed:
 
 ```sh
-bun admin/scripts/live-smoke.ts /absolute/path/to/source.mp4
+bun install --frozen-lockfile
+bun scripts/test-admin-live-browser.ts /absolute/path/to/source.mp4
 ```
+
+The browser smoke script lives with the root browser tests and uses the root package's
+`playwright-core` dependency. The admin package can be installed and typechecked independently;
+its production build does not require browser-test dependencies.
 
 `ADMIN_SMOKE_URL` overrides the admin URL (default `http://127.0.0.1:5401`), and
 `ADMIN_SMOKE_OUTPUT` overrides the ignored evidence directory (default

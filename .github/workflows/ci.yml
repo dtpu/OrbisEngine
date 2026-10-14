@@ -62,4 +62,4 @@ jobs:
       - run: uv run --locked --only-group dev ruff check scripts worker orchestrator
       - run: uv lock --check
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: uv run --locked --group dev pytest
+      - run: uv run --locked --group dev --group inference pytest

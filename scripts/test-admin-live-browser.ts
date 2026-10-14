@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 
 const clip = process.argv[2];
-if (!clip) throw new Error('Usage: bun admin/scripts/live-smoke.ts /absolute/path/to/clip.mp4');
+if (!clip)
+  throw new Error('Usage: bun scripts/test-admin-live-browser.ts /absolute/path/to/clip.mp4');
 const base = process.env.ADMIN_SMOKE_URL ?? 'http://127.0.0.1:5401';
 const output = resolve(process.env.ADMIN_SMOKE_OUTPUT ?? '.context/evidence/admin-live-smoke');
 const runId = `admin-smoke-${Date.now()}`;

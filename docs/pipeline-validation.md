@@ -6,7 +6,7 @@ acceptable reconstruction quality. The doctor reports those separately.
 
 ## What is tested
 
-`uv run --locked --group dev pytest` includes:
+`uv run --locked --group dev --group inference pytest` includes:
 
 - Production API, SQLite and filesystem storage: uploads, replay from source artifacts, hash
   verification, extensions, conflicts, failed-submission compensation and restart discovery.
@@ -21,6 +21,10 @@ acceptable reconstruction quality. The doctor reports those separately.
   retry identity requirements, retained legacy receipts and shared execution allowances.
 - Setup diagnostics for missing tools, dependencies, selected credentials/caches, fine-tune
   hosts and discontinuous footage. Remote diagnostics never launch model work.
+
+The suite needs the locked inference dependencies for local tensor-based observation and
+packaging checks. CI installs that group explicitly; these synthetic checks do not download
+model weights or submit provider jobs.
 
 The admin's `bun test ./tests` checks schema-derived options and queue decisions. Its production
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
