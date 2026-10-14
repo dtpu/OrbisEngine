@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -21,7 +22,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
-import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
@@ -212,15 +212,53 @@ class SourceTimingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "strictly increasing"):
                 resample_source(clip, 12.0)
 
-    # Not strict: it fails about one run in five. With -loglevel debug, FFmpeg's decoder thread
-    # can write "Decoder returned EOF, finishing" into the middle of a showinfo@source line,
-    # cutting off its checksum, so _observed_frames drops that frame and resample_source raises
-    # "Incomplete source frame diagnostics" before it reaches the FPS check this test targets.
-    # Undamaged logs can be cut the same way, which fails a real run closed for no reason.
-    @pytest.mark.xfail(
-        strict=False,
-        reason="source_timing parses FFmpeg debug logs that other threads interleave into",
-    )
+    def test_interleaved_showinfo_checksum_keeps_exact_pixel_bindings(self):
+        with tempfile.TemporaryDirectory() as root:
+            clip = self.make_clip(Path(root), "60", 30)
+            run = source_timing._run
+            interrupted = []
+
+            def interleaved_log(command):
+                result = run(command)
+                if command[0] == "ffmpeg" and command[-1] == "-":
+                    # Captured on FFmpeg 8: an input thread interrupts the row,
+                    # then showinfo resumes with its own original instance prefix.
+                    log = result.stderr.decode()
+                    pattern = r"(\[showinfo@(source|sampled) @ [^\]]+\] )([^\n]*?n:\s*0 pts:[^\n]*?) checksum:"
+
+                    def interrupt(match):
+                        interrupted.append(match[2])
+                        return (
+                            f"{match[1]}{match[3]} EOF while reading input\n"
+                            "[in#0/matroska,webm @ 0xother] Terminating thread with return code 0 (success)\n"
+                            f"{match[1]}checksum:"
+                        )
+
+                    result.stderr = re.sub(pattern, interrupt, log).encode()
+                return result
+
+            with patch.object(source_timing, "_run", side_effect=interleaved_log):
+                self.check_pixels(clip, 12.0)
+            self.assertEqual(interrupted, ["source", "sampled", "source", "sampled"])
+
+    def test_invalid_showinfo_checksum_continuations_fail_closed(self):
+        prefix = "[showinfo@source @ 0xfirst] "
+        config = prefix + "config in time_base: 1/1000\n"
+        header = prefix + "n: 0 pts: 0 pts_time:0 type:I EOF while reading input\n"
+        checksum = prefix + "checksum:ABC123 plane_checksum:[ABC123]\n"
+        next_header = prefix + "n: 1 pts: 17 pts_time:0.017 checksum:DEF456 \n"
+        invalid = {
+            "missing": header,
+            "displaced": header + next_header + checksum,
+            "orphan": checksum,
+            "duplicate": header + checksum + checksum,
+            "wrong instance": header + checksum.replace("0xfirst", "0xsecond"),
+            "wrong filter": header + checksum.replace("@source", "@sampled"),
+        }
+        for name, records in invalid.items():
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                source_timing._observed_frames(config + records, "source")
+
     def test_missing_ffmpeg_selection_diagnostics_fail_closed(self):
         with tempfile.TemporaryDirectory() as root:
             clip = self.make_clip(Path(root), "60", 12)
