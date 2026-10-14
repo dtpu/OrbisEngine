@@ -51,8 +51,63 @@ def load_track_masks(npz_path: Path):
     return out, (h, w), ms
 
 
-def mask_rows(m: np.ndarray, ms: float, full_h: int):
+def projected_body_bounds(box):
+    bounds = np.asarray(box, dtype=float)
+    if (
+        bounds.shape != (4,)
+        or not np.isfinite(bounds).all()
+        or bounds[2] <= bounds[0]
+        or bounds[3] <= bounds[1]
+    ):
+        raise ValueError(
+            "projected body box must contain finite ordered xmin,ymin,xmax,ymax bounds"
+        )
+    return bounds
+
+
+def load_track_motion(masks_path: Path, track: int):
+    """Source-indexed tracker metadata; None means the legacy file is absent.
+
+    Projected body bounds only censor rows that cannot measure a complete body. They are
+    pose estimates, not observed silhouette edges.
+    """
+    paths = [
+        directory / "motion.json"
+        for directory in Path(masks_path).parent.glob("track_*")
+        if directory.name[6:].isdigit()
+        and int(directory.name[6:]) == track
+        and (directory / "motion.json").exists()
+    ]
+    if not paths:
+        return None
+    if len(paths) != 1 or not paths[0].is_file():
+        raise ValueError(f"ambiguous or invalid motion metadata for track {track}: {paths}")
+    path = paths[0]
+    try:
+        described = json.loads(path.read_text())
+        frames = described["frames"]
+        if not isinstance(frames, list):
+            raise ValueError("frames must be a list")
+        by_source, samples = {}, set()
+        for frame in frames:
+            source, sample = frame["sourceIndex"], frame["sample"]
+            if any(type(value) is not int or value < 0 for value in (source, sample)):
+                raise ValueError("sourceIndex and sample must be nonnegative integers")
+            if source in by_source or sample in samples:
+                raise ValueError(
+                    f"duplicate or conflicting source/sample mapping: {source}/{sample}"
+                )
+            projected_body_bounds(frame["box"])
+            by_source[source] = frame
+            samples.add(sample)
+        return by_source
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"invalid motion metadata {path}: {error}") from error
+
+
+def mask_rows(m: np.ndarray, ms: float, full_h: int, projected_body_box=None):
     """(top, bottom, cropped_top, cropped_bottom) in SOURCE rows, or None for an empty mask."""
+    bounds = projected_body_bounds(projected_body_box) if projected_body_box is not None else None
     counts = m.sum(1)
     rows = np.nonzero(counts >= max(1, int(round(MIN_ROW_PX * ms))))[0]
     if not len(rows):
@@ -61,8 +116,11 @@ def mask_rows(m: np.ndarray, ms: float, full_h: int):
     return dict(
         top=float(top),
         bottom=float(bot),
-        croppedTop=bool(rows[0] <= EDGE_PX * ms),
-        croppedBottom=bool(rows[-1] >= m.shape[0] - 1 - EDGE_PX * ms),
+        croppedTop=bool(rows[0] <= EDGE_PX * ms or (bounds is not None and bounds[1] <= 0)),
+        croppedBottom=bool(
+            rows[-1] >= m.shape[0] - 1 - EDGE_PX * ms
+            or (bounds is not None and bounds[3] >= full_h)
+        ),
         areaPx=float(m.sum() / (ms * ms)),
     )
 
@@ -100,7 +158,18 @@ def avatar_rows(P, R, C, K):
     )
 
 
-def measure(frames_world, cams_by_sample, masks, track, samples, hw_full, ms, feet_world, up):
+def measure(
+    frames_world,
+    cams_by_sample,
+    masks,
+    track,
+    samples,
+    hw_full,
+    ms,
+    feet_world,
+    up,
+    motion_by_sample=None,
+):
     """Per sample: mask rows, avatar rows, and d(row)/d(displacement) for a 1 world-unit move along
     the feet ray (`u`), along the in-plane up direction (`w`) and for a 1 % size change about the feet.
 
@@ -116,7 +185,8 @@ def measure(frames_world, cams_by_sample, masks, track, samples, hw_full, ms, fe
             out.append(None)
             continue
         R, C, K = cam_matrices(*cam)
-        mr = mask_rows(m, ms, H)
+        record = motion_by_sample.get(s) if motion_by_sample is not None else None
+        mr = mask_rows(m, ms, H, record["box"] if record is not None else None)
         ar = avatar_rows(P, R, C, K)
         if mr is None or ar is None:
             out.append(None)
@@ -200,14 +270,26 @@ if __name__ == "__main__":
     hw_full = tuple(cams[0]["source_image_size"][::-1])
     pos0 = np.array([float(x) for x in a.pos0.split(",")])
     by_src = {c["sourceIndex"]: c for c in cams}
-    cams_by_sample = {
+    manifest_cams_by_sample = {
         s: (by_src[si], a.scale, pos0) for s, si in enumerate(man["sourceIndices"]) if si in by_src
     }
     coef = [float(x) for x in a.floor_coef.split(",")] if a.floor_coef else None
     for p in man["people"]:
         seq = a.world / p["sequence"]
         fr = list(person_frames(seq))
-        samples = [man["sourceIndices"].index(si) for si in p["sourceIndices"]]
+        motion = load_track_motion(masks_path, p["track"])
+        motion_by_sample = None
+        if motion is None:
+            cams_by_sample = manifest_cams_by_sample
+            samples = [man["sourceIndices"].index(si) for si in p["sourceIndices"]]
+        else:
+            samples = [motion[si]["sample"] if si in motion else None for si in p["sourceIndices"]]
+            motion_by_sample = {record["sample"]: record for record in motion.values()}
+            cams_by_sample = {
+                record["sample"]: (by_src[si], a.scale, pos0)
+                for si, record in motion.items()
+                if si in by_src
+            }
         frames_world = [op * a.scale + pos0 for op, _ in fr]
         feet = measure_floor(fr, a.scale, pos0, coef or [0, 0, 0])
         feet_world = np.array([[r["x"], r["y"], r["z"]] for r in feet])
@@ -221,6 +303,7 @@ if __name__ == "__main__":
             ms,
             feet_world,
             np.array([0, 1.0, 0]),
+            motion_by_sample=motion_by_sample,
         )
         print(f"\n{p['id']} (track {p['track']}): {summarize(rows)}")
         for r, f in zip(rows, feet):

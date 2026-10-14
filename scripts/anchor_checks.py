@@ -176,13 +176,18 @@ def check_silhouette(
     if place.get("silhouetteFit"):
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
-        from silhouette_rows import load_track_masks
+        from silhouette_rows import load_track_masks, load_track_motion
         from motion_silhouette import splat_silhouette, iou as mask_iou
         from place_solve import read_ply
         from PIL import Image
 
-        masks, _, _ = load_track_masks(masks or Path(place["silhouetteFit"]["masks"]))
+        masks_path = masks or Path(place["silhouetteFit"]["masks"])
+        masks, _, _ = load_track_masks(masks_path)
         man = json.loads((wd / "people.json").read_text())
+        motion = {
+            person["track"]: load_track_motion(masks_path, person["track"])
+            for person in man["people"]
+        }
         cams = {
             c["sourceIndex"]: c
             for c in json.loads((cameras or wd / "cameras.json").read_text())["cameras"]
@@ -204,7 +209,10 @@ def check_silhouette(
             for person in man["people"]:
                 pid = person["id"]
                 seq = seqs[pid]
-                mask = masks.get(person["track"], {}).get(sample)
+                metadata = motion[person["track"]]
+                record = metadata.get(src) if metadata is not None else None
+                mask_sample = sample if metadata is None else record["sample"] if record else None
+                mask = masks.get(person["track"], {}).get(mask_sample)
                 if src not in seq["sourceIndices"] or mask is None:
                     continue
                 k = seq["sourceIndices"].index(src)

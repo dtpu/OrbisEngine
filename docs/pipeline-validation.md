@@ -51,6 +51,16 @@ cameras and fitted registration. Tracked runs exclude the source person masks; m
 coverage fails instead of silently using the avatar. Single-person runs retain the documented
 projected-avatar estimate. Confidence measures visibility and is not proof of accurate geometry.
 
+Metric-depth predictions are cached by source-content hash, model identifier and frame index.
+Changing camera poses can reuse a prediction; replacing an upload with the same filename cannot.
+Legacy filename-only caches are retained but ignored because their source is unverified.
+
+Silhouette fitting uses the tracker's projected body bounds to flag potentially cropped head/foot
+edges even when the segmentation mask stops short of the image border. Those bounds only mark
+which edges are unavailable; they never replace source-mask measurements. A cropped person cannot
+supply a complete-body height. Motion metadata maps source frames to the original mask samples,
+including after sequence subsetting, and malformed mappings fail explicitly.
+
 ## Existing demo replay, 2026-10-12
 
 The private shared snapshot used for this check is

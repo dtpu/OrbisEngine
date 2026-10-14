@@ -507,7 +507,13 @@ def silhouette_fit(
     not an exact constraint. Missing/cropped measurements do not invent a complete body height.
     Tables follow each sequence's sourceIndices (including gaps), never its manifest offset.
     """
-    from silhouette_rows import load_track_masks, mask_rows, cam_matrices, avatar_rows
+    from silhouette_rows import (
+        load_track_masks,
+        load_track_motion,
+        mask_rows,
+        cam_matrices,
+        avatar_rows,
+    )
 
     masks, _hw, ms = load_track_masks(masks_path)
     by_src = {c["sourceIndex"]: c for c in cameras}
@@ -518,14 +524,21 @@ def silhouette_fit(
             continue
         person = next(p for p in man["people"] if p["id"] == tid)
         samples = {s: i for i, s in enumerate(man["sourceIndices"])}
+        motion = load_track_motion(masks_path, person["track"])
+        cropped_top = cropped_bottom = 0
         data = []
         for fi, (fr, src) in enumerate(zip(frames, seq["sourceIndices"])):
             cam = by_src.get(src)
-            mask = masks.get(person["track"], {}).get(samples.get(src))
+            record = motion.get(src) if motion is not None else None
+            sample = samples.get(src) if motion is None else record["sample"] if record else None
+            mask = masks.get(person["track"], {}).get(sample)
             if cam is None or mask is None:
                 data.append(None)
                 continue
-            mr = mask_rows(mask, ms, cam["source_image_size"][1])
+            mr = mask_rows(mask, ms, cam["source_image_size"][1], record["box"] if record else None)
+            if mr is not None:
+                cropped_top += mr["croppedTop"]
+                cropped_bottom += mr["croppedBottom"]
             if mr is None or (mr["croppedTop"] and mr["croppedBottom"]):
                 data.append(None)
                 continue
@@ -646,6 +659,17 @@ def silhouette_fit(
             sizeScale=size,
             sourceIndices=seq["sourceIndices"],
             measuredFrames=len(contacts),
+            croppedTopFrames=cropped_top,
+            croppedBottomFrames=cropped_bottom,
+            measurementProvenance=dict(
+                masks=str(masks_path),
+                sampleMapping="tracker sourceIndex to sample"
+                if motion is not None
+                else "manifest order (legacy motion metadata absent)",
+                cropBounds="mask boundary plus projected body bounds (censoring only)"
+                if motion is not None
+                else "mask boundary only (legacy motion metadata absent)",
+            ),
             heightRatioMedian=float(np.median(heights)) if heights else None,
             contactResidualUnits=contacts,
             edgeResidualsPx=edge_errors,
