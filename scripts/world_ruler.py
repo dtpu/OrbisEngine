@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import base64
 import gzip
+import hashlib
 import json
 import os
 import struct
@@ -270,9 +271,9 @@ def cast_ray(xyz, alpha, cam, scale0, px, py, radius_px=14.0, min_alpha=0.2):
 def predict_depths(cams, clip: str, model_id=None, device=None, cache: Path | None = None):
     """[(cam, metric depth map in metres, predicted FOV or None)], one per decodable frame.
 
-    Cached on disk by (model, video, frame). The prediction depends on the source pixels alone, so
-    a run in a rotated camera frame reuses it -- which makes the before/after comparison exact
-    rather than merely repeated, and halves the CPU bill for it.
+    Cached on disk by (full source-content hash, model identifier, frame). The prediction
+    depends on source pixels alone, so changes to camera poses can reuse it. Legacy caches
+    named only for a clip stem are preserved but never used as measurements.
     """
     import cv2
     import torch
@@ -286,13 +287,18 @@ def predict_depths(cams, clip: str, model_id=None, device=None, cache: Path | No
         else "cpu"
     )
     depthpro = "depthpro" in model_id.lower()
-    tag = model_id.replace("/", "_")
+    cache_root = None
+    if cache is not None:
+        with Path(clip).open("rb") as source:
+            source_hash = hashlib.file_digest(source, "sha256").hexdigest()
+        model_hash = hashlib.sha256(model_id.encode("utf-8")).hexdigest()
+        cache_root = Path(cache) / "metric-depth-v2" / source_hash / model_hash
     want = []
     out = {}
     cap = cv2.VideoCapture(clip)
     for cam in cams:
         fi = cam["sourceIndex"]
-        cp = cache and Path(cache) / f"{Path(clip).stem}-{tag}-{fi}.npz"
+        cp = cache_root / f"{fi}.npz" if cache_root is not None else None
         if cp and cp.exists():
             z = np.load(cp)
             out[fi] = (
