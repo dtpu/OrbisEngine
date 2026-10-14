@@ -519,6 +519,37 @@ def silhouette_fit(
     by_src = {c["sourceIndex"]: c for c in cameras}
     result = {}
     for pi, (tid, frames, tr, _low, seq) in enumerate(feats):
+
+        def measured_rows(points, data, phase):
+            context = f"track {tid}, sourceIndex {data['sourceIndex']}, {phase}"
+            if not all(
+                np.isfinite(value).all() for value in (points, data["R"], data["C"], data["K"])
+            ):
+                raise ValueError(
+                    f"{context}: invalid silhouette projection (nonfinite geometry/camera)"
+                )
+            rows = avatar_rows(points, data["R"], data["C"], data["K"])
+            if rows is None:
+                raise ValueError(
+                    f"{context}: insufficient in-front splats for silhouette projection"
+                )
+            try:
+                values = np.asarray([rows[key] for key in ("top", "bottom", "zMedian")], float)
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"{context}: invalid silhouette projection row measurements"
+                ) from error
+            if (
+                values.shape != (3,)
+                or not np.isfinite(values).all()
+                or values[1] < values[0]
+                or values[2] <= 0
+            ):
+                raise ValueError(
+                    f"{context}: invalid silhouette projection (nonfinite/unordered rows or depth)"
+                )
+            return rows
+
         man = tracks[pi][3]
         if not man:
             continue
@@ -552,7 +583,19 @@ def silhouette_fit(
             w = normal - normal.dot(u) * u
             w /= max(np.linalg.norm(w), 1e-9)
             data.append(
-                dict(P=P, F=F, R=R, C=C, K=K, mask=mr, u=u, w=w, contact=foot["res"], depth=depth)
+                dict(
+                    P=P,
+                    F=F,
+                    R=R,
+                    C=C,
+                    K=K,
+                    mask=mr,
+                    u=u,
+                    w=w,
+                    contact=foot["res"],
+                    depth=depth,
+                    sourceIndex=src,
+                )
             )
         if sum(d is not None for d in data) < 3:
             continue
@@ -576,13 +619,15 @@ def silhouette_fit(
                     continue
                 D = x[2 * i] * d["u"] + x[2 * i + 1] * d["w"]
                 body = (d["P"] - d["F"]) * np.exp(x[-1])
-                ar = avatar_rows(d["F"] + body + D, d["R"], d["C"], d["K"])
+                ar = measured_rows(d["F"] + body + D, d, "base")
                 eps = max(1e-5, d["depth"] * 0.001)
                 jac = []
-                for direction in (d["u"], d["w"]):
-                    other = avatar_rows(d["F"] + body + D + eps * direction, d["R"], d["C"], d["K"])
+                for name, direction in (("u", d["u"]), ("w", d["w"])):
+                    other = measured_rows(
+                        d["F"] + body + D + eps * direction, d, f"{name} perturbation"
+                    )
                     jac.append([(other[k] - ar[k]) / eps for k in ("top", "bottom")])
-                other = avatar_rows(d["F"] + body * np.exp(0.001) + D, d["R"], d["C"], d["K"])
+                other = measured_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
                 jac.append([(other[k] - ar[k]) / 0.001 for k in ("top", "bottom")])
                 jac = np.array(jac).T
                 mr = d["mask"]
@@ -629,7 +674,13 @@ def silhouette_fit(
                         )
                     equations.append(row)
                     targets.append(-row.dot(x))
-            step, *_ = np.linalg.lstsq(np.array(equations), np.array(targets), rcond=None)
+            matrix, residuals = np.array(equations), np.array(targets)
+            context = f"track {tid}, sourceIndices {seq['sourceIndices']}"
+            if not np.isfinite(matrix).all() or not np.isfinite(residuals).all():
+                raise ValueError(f"{context}: nonfinite silhouette fit equations")
+            step, *_ = np.linalg.lstsq(matrix, residuals, rcond=None)
+            if not np.isfinite(step).all():
+                raise ValueError(f"{context}: nonfinite silhouette fit step")
             # Trust region: never cross the camera in a single linearisation.
             cap = min(d["depth"] for d in basis) * 0.2
             step *= min(1.0, cap / max(np.abs(step).max(), 1e-9))
@@ -645,7 +696,7 @@ def silhouette_fit(
         for i, d in enumerate(data):
             if d is None:
                 continue
-            ar = avatar_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d["R"], d["C"], d["K"])
+            ar = measured_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "final")
             if not d["mask"]["croppedTop"] and not d["mask"]["croppedBottom"]:
                 heights.append(
                     (ar["bottom"] - ar["top"]) / (d["mask"]["bottom"] - d["mask"]["top"])

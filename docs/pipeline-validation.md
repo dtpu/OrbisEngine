@@ -70,6 +70,10 @@ matching source frames. Missing selected frames fail; legacy tracks without moti
 retain the documented manifest-order fallback. Silhouette scoring and detector seed boxes also
 require exact source-frame poses. Diagnostic image shifts discard pixels outside the frame
 instead of wrapping them to the opposite edge.
+The silhouette solver validates each base, perturbed and final avatar projection. Insufficient
+points in front of the camera, invalid rows/depth, or nonfinite equations/updates stop the fit
+with the affected track and source frame identified, instead of producing a generic exception
+or an accepted result from invalid measurements. Valid fits keep the same objective and weights.
 
 ## Existing demo replay, 2026-10-12
 
