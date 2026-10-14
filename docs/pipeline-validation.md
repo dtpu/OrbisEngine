@@ -31,6 +31,11 @@ after cancellation, stale agent completion, and journal replay. Canceled runs ca
 a late stage event; explicit operator resume is required. Already submitted provider work keeps
 its completion records.
 
+Source-timing tests compare emitted pixels with the exact decoded source frames, including
+variable frame rates and duplicated samples. FFmpeg can split a diagnostic row when another
+thread logs an EOF message; only a checksum continuation from the same filter instance completes
+that row. Missing, displaced or conflicting records still fail before paid submission.
+
 Placement and anchor regressions use separate run/output roots. The runner passes exact world,
 camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead
 of selecting a historical demo. The size gate evaluates the final silhouette fit, and the printed
@@ -114,10 +119,12 @@ Do not copy an old `state.json` wholesale or launch replacement worlds for exist
 
 ### Cropped-track diagnosis, 2026-10-14
 
-The retained shot never shows complete feet: all 75 tracker records project the lower body
-outside the image, even though the segmentation masks stop several pixels before its border.
-The corrected measurement now records these edges as cropped and reports no complete-body
-height. This fixes the measurement contract; the resulting placement is still rejected.
+All 75 tracker records project the lower body outside the image, even though the segmentation
+masks stop before its border. The measurement conservatively censors these edges and reports
+no complete-body height. This is a tracker-derived classification, not proof that the footage
+never shows the feet: at six seconds the boots are visible, with mask bottom near pixel 518
+in a 534-pixel image while the projected body extends to about pixel 562. The disagreement
+requires investigation of the tracked geometry; the resulting placement is still rejected.
 
 A read-only comparison isolates the placement contribution. At source frames 0, 90 and 185,
 the raw packaged person's silhouette IoU is 0.873, 0.816 and 0.718. With the crop-aware
@@ -128,6 +135,12 @@ visibly oversized and world alignment is not accepted. Neither raw geometry nor 
 is promoted as a passing reconstruction. Evidence is retained under
 `.context/evidence/production-readiness/placement-isolation.json`, `cropped-quality.json`
 and `cropped-placement-browser/`.
+
+A separately authorized local visible-width experiment improved the 12-frame silhouette IoU
+from 0.631 to 0.799, but its area ratio of 1.171 still exceeds 1.15 and its contact residual remains
+below the noise floor. Width depends on avatar shape and is not an independent ruler. The
+prototype remains outside the production runner; this candidate is rejected. Evidence is in
+`.context/evidence/production-readiness/width-quality.json` and `width-placement-browser/`.
 
 ## Remaining boundaries
 
