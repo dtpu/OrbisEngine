@@ -67,6 +67,12 @@ def pipeline(tmp_path, monkeypatch):
         (public / f"marble-fixture-{suffix}.spz").write_bytes(suffix.encode())
     wdir = public / "worlds/fixture-4d"
     wdir.mkdir(parents=True)
+    (wdir / "person").mkdir()
+    (wdir / "person" / "sequence.json").write_text('{"frames": ["frame_000.ply"]}')
+    (wdir / "person" / "frame_000.ply").write_bytes(
+        b"ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\n"
+        b"property float z\nproperty float opacity\nend_header\n0 -1 -2 2\n0 1 -2 2\n"
+    )
     (wdir / "cameras.json").write_text('{"cameras": []}')
     (wdir / "placement.json").write_text(
         json.dumps(
@@ -94,6 +100,7 @@ def accept_placement(p):
         world=str(world.resolve()),
         worldSha256=run_clip.file_sha256(world),
         reportSha256=run_clip.file_sha256(report),
+        inputReceipt=p.placement_inputs(world),
         sizeCheck={"pass_": True},
         residualCm={"before": {}, "after": {}},
         metresPerWorldUnit=1,
@@ -102,12 +109,20 @@ def accept_placement(p):
 
 def accept_anchors(p):
     placement = p.state.data["stages"]["_placement_solve"]
+    report = p.ctx / "anchors.json"
+    report.write_text('{"ok": true}')
+    world = p.world_spz()
+    observation = world.with_name(world.stem + "-obs.bin")
+    observation.write_bytes(b"observation")
     p.state.record("anchors", status="ok")
     p.state.record(
         "_anchors",
         ok=True,
         worldSha256=placement["worldSha256"],
         placementSha256=placement["reportSha256"],
+        inputReceipt=p.anchor_inputs(world),
+        reportSha256=run_clip.file_sha256(report),
+        observationSha256=run_clip.file_sha256(observation),
     )
 
 
@@ -153,7 +168,12 @@ def test_all_final_consumers_use_finetuned_world(pipeline, monkeypatch, capsys):
     p.state.record("finetune", status="ok")
     final_world = p.world_spz()
     assert final_world.name.endswith("-finetuned.spz")
-    invoke = Mock()
+
+    def local_stage(command, *args, **kwargs):
+        if command[1] == "scripts/export_observation_confidence.py":
+            Path(command[command.index("--out") + 1]).write_bytes(b"observation")
+
+    invoke = Mock(side_effect=local_stage)
     monkeypatch.setattr(run_clip, "run", invoke)
     p.place_fit()
     p.state.record("place_fit", status="ok")

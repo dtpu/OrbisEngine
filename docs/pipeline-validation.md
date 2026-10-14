@@ -40,11 +40,16 @@ behavior, not visual reconstruction quality.
 When enabled, fine-tuning finishes before placement and anchors. Those checks, observation
 confidence, static-world review and the viewer link select the same final world. Scale fitting
 and fine-tune export/import use the original provider world. Failed or missing fine-tune output
-cannot silently fall back to another file. Placement records the world and report hashes;
-changed files invalidate its viewer setting and rerun the local placement/anchor stages on a
-full resume. Existing placements without these hashes need that local recheck too.
-Anchor results also bind to the placement and world; selecting only `verify` cannot accept
-stale dependencies. Provider metadata follows the selected video, image or multi-image mode.
+cannot silently fall back to another file. Placement records the world and report hashes plus
+an input receipt covering packaged cameras, person manifests and frames, tracking masks and
+motion metadata, effective scale/floor, size-gate setting and measurement code. Changed or
+missing inputs invalidate its viewer setting and rerun the local placement/anchor stages on
+a full resume. Existing placements without these receipts need that local recheck too;
+successful paid-stage records remain intact.
+Anchor receipts additionally bind the source video, ruler settings/model, measurement code,
+anchor report and observation sidecar. Selecting only `verify` cannot accept stale dependencies.
+Inputs are compared before and after measurement so edits during execution cannot receive a
+current acceptance receipt. Provider metadata follows the selected video, image or multi-image mode.
 
 Before checking observation confidence, the runner rebuilds the sidecar from the current world,
 cameras and fitted registration. Tracked runs exclude the source person masks; missing camera
@@ -60,6 +65,11 @@ edges even when the segmentation mask stops short of the image border. Those bou
 which edges are unavailable; they never replace source-mask measurements. A cropped person cannot
 supply a complete-body height. Motion metadata maps source frames to the original mask samples,
 including after sequence subsetting, and malformed mappings fail explicitly.
+The ruler and visibility exporter use those same per-track mappings and union masks only for
+matching source frames. Missing selected frames fail; legacy tracks without motion metadata
+retain the documented manifest-order fallback. Silhouette scoring and detector seed boxes also
+require exact source-frame poses. Diagnostic image shifts discard pixels outside the frame
+instead of wrapping them to the opposite edge.
 
 ## Existing demo replay, 2026-10-12
 
@@ -83,8 +93,8 @@ old default Modal credentials were rejected with `AuthError`; another saved work
 authenticated and exposed the model-cache volumes. Normal Hugging Face snapshot symlinks are
 reported as unverified rather than missing because metadata alone cannot validate their targets.
 The optional local inference environment has been installed separately from the base environment.
-Fresh inference remains unverified and is held pending confirmation of the operator's $30-per-account
-workspace limit. No other account or provider receives a separate retry allowance.
+Fresh inference remains unverified and is held pending an operator-confirmed run budget.
+Changing accounts or providers does not create a separate retry allowance.
 
 The scene is not accepted as a quality pass. The animated person visibly floats above the floor
 and disagrees with the source framing. The archive's scale-spread check failed; its old review
@@ -97,6 +107,23 @@ are retained locally under `.context/evidence/pipeline-reliability/`. Media and 
 not committed. To repeat the check, use [shared asset recovery](shared-assets.md) to retrieve
 the named source and retained run, verify their hashes, and rebuild into a new candidate directory.
 Do not copy an old `state.json` wholesale or launch replacement worlds for existing demos.
+
+### Cropped-track diagnosis, 2026-10-14
+
+The retained shot never shows complete feet: all 75 tracker records project the lower body
+outside the image, even though the segmentation masks stop several pixels before its border.
+The corrected measurement now records these edges as cropped and reports no complete-body
+height. This fixes the measurement contract; the resulting placement is still rejected.
+
+A read-only comparison isolates the placement contribution. At source frames 0, 90 and 185,
+the raw packaged person's silhouette IoU is 0.873, 0.816 and 0.718. With the crop-aware
+placement it is 0.704, 0.644 and 0.551. Its 12-frame mean area ratio is 1.584, outside the
+unchanged 0.85–1.15 target, and its contact residual falls below the noise floor. The live
+viewer loads all 75 frames without request or script failures, but source comparisons remain
+visibly oversized and world alignment is not accepted. Neither raw geometry nor placement
+is promoted as a passing reconstruction. Evidence is retained under
+`.context/evidence/production-readiness/placement-isolation.json`, `cropped-quality.json`
+and `cropped-placement-browser/`.
 
 ## Remaining boundaries
 

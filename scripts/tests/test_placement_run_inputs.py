@@ -16,6 +16,20 @@ import place_solve
 import run_clip
 
 
+def package_inputs(world, context, tracked=False):
+    (world / "person").mkdir(exist_ok=True)
+    (world / "person/sequence.json").write_text('{"frames": ["frame_000.ply"]}')
+    (world / "person/frame_000.ply").write_bytes(b"packaged person fixture")
+    (world / "cameras.json").write_text('{"cameras": []}')
+    context.mkdir(parents=True, exist_ok=True)
+    if tracked:
+        (world / "people.json").write_text(
+            '{"people": [{"id": "person", "track": 0, "sequence": "person/sequence.json"}]}'
+        )
+        (context / "tracks").mkdir()
+        (context / "tracks/masks.npz").write_bytes(b"tracked masks fixture")
+
+
 def test_masks_follow_configured_run_root_and_explicit_missing_masks_fail(tmp_path, monkeypatch):
     monkeypatch.delenv("WANDER_RUNS_DIR", raising=False)
     monkeypatch.setenv("WANDER_RUNS_ROOT", str(tmp_path / "active-runs"))
@@ -39,6 +53,7 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
     pipeline = object.__new__(run_clip.Pipeline)
     pipeline.name = "example"
     pipeline.ctx = tmp_path / "separate-runs/example"
+    package_inputs(world, pipeline.ctx, tracked=True)
     pipeline.state = SimpleNamespace(data={"stages": {"_scale": {"scale0": 1.0}}}, record=Mock())
     pipeline.a = SimpleNamespace(allow_bad_size=False)
     pipeline.placement = Mock(return_value={"floor": -1.0})
@@ -183,8 +198,14 @@ def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch,
     pipeline.clip = tmp_path / "upload.mp4"
     pipeline.ctx = tmp_path / "separate-runs/example"
     pipeline.ctx.mkdir(parents=True)
+    package_inputs(world, pipeline.ctx, tracked=tracked)
+    pipeline.clip.write_bytes(b"source video")
     pipeline.state = run_clip.State(pipeline.ctx / "state.json")
-    pipeline.a = SimpleNamespace(ruler_tol=0.15, ruler_vlm=False, allow_weak_anchor=False)
+    pipeline.a = SimpleNamespace(
+        ruler_tol=0.15, ruler_vlm=False, allow_weak_anchor=False, allow_bad_size=False
+    )
+    pipeline.placement = Mock(return_value={"floor": -1})
+    pipeline.state.record("_scale", scale0=2.5)
     pipeline.world_spz = Mock(return_value=public / "retained-world.spz")
     pipeline.world_spz().write_bytes(b"retained world")
     pipeline.state.record("place_fit", status="ok")
@@ -193,6 +214,7 @@ def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch,
         world=str(pipeline.world_spz().resolve()),
         worldSha256=run_clip.file_sha256(pipeline.world_spz()),
         reportSha256=run_clip.file_sha256(world / "placement.json"),
+        inputReceipt=pipeline.placement_inputs(pipeline.world_spz()),
     )
     commands = []
     exports = []
@@ -264,12 +286,15 @@ def test_summary_links_to_the_accepted_placement(
     pipeline.name = "example"
     pipeline.marble = "multi"
     pipeline.info = {"duration": 1, "frames": 30, "fps": 30}
-    pipeline.a = SimpleNamespace(fps=12)
+    pipeline.a = SimpleNamespace(fps=12, allow_bad_size=False)
+    pipeline.ctx = tmp_path / "run"
+    package_inputs(world, pipeline.ctx)
     pipeline.stages = ["place_fit"]
     pipeline.video_url = "/clips/example.mp4"
     pipeline.placement = Mock(return_value={"floor": -1, "fittedScale0": 2})
     pipeline.state = run_clip.State(tmp_path / "state.json")
     pipeline.state.record("place_fit", status=stage_status)
+    pipeline.state.record("_scale", scale0=2)
     pipeline.state.record(
         "_placement_solve",
         world=str((public / "marble-example-multi.spz").resolve()),
@@ -280,6 +305,7 @@ def test_summary_links_to_the_accepted_placement(
         sizeCheck={"pass_": size_pass},
         residualCm={"before": {}, "after": {}},
         metresPerWorldUnit=1,
+        inputReceipt=pipeline.placement_inputs(public / "marble-example-multi.spz"),
     )
     pipeline.summary(1)
     output = capsys.readouterr().out

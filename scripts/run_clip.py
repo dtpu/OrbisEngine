@@ -1901,19 +1901,137 @@ class Pipeline:
                 result.get("world") == str(world.resolve())
                 and result.get("worldSha256") == file_sha256(world)
                 and result.get("reportSha256") == file_sha256(report)
+                and result.get("inputReceipt") == self.placement_inputs(world)
             )
-        except OSError:
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
             return False
+
+    def input_hash(self, path: Path) -> str:
+        """Hash bytes once per unchanged file identity during this process's local checks."""
+        path = path.resolve()
+        cache = getattr(self, "_input_hash_cache", {})
+
+        def identity():
+            stat = path.stat()
+            return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+        before = identity()
+        cached = cache.get(path)
+        if cached is not None and cached[0] == before:
+            return cached[1]
+        digest = file_sha256(path)
+        if identity() != before:
+            raise ValueError(f"input changed while hashing: {path}; rerun the local check")
+        cache[path] = (before, digest)
+        self._input_hash_cache = cache
+        return digest
+
+    def placement_inputs(self, world: Path) -> dict:
+        """The geometry, observations and registration actually supplied to place_solve."""
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
+        files = {}
+
+        def include(path, required=True):
+            path = Path(path)
+            if not required and not path.exists():
+                files[str(path.resolve())] = None
+                return
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"placement input is missing: {path}; restore it before place_fit"
+                )
+            files[str(path.resolve())] = self.input_hash(path)
+
+        include(world)
+        include(wdir / "cameras.json")
+        include(wdir / "person" / "frame_000.ply")
+        people = wdir / "people.json"
+        include(people, required=False)
+        sequences = {wdir / "person" / "sequence.json"}
+        if people.is_file():
+            manifest = json.loads(people.read_text())
+            for person in manifest["people"]:
+                # Placement loads by id; the anchor inspector follows the manifest reference.
+                sequences.add(wdir / person["id"] / "sequence.json")
+                if person.get("sequence"):
+                    sequences.add(wdir / person["sequence"])
+        # The observation exporter also reads any packaged one-level person sequence.
+        sequences.update(wdir.glob("*/sequence.json"))
+        for sequence in sorted(sequences):
+            include(sequence)
+            for frame in json.loads(sequence.read_text())["frames"]:
+                include(sequence.parent / frame)
+        masks = self.ctx / "tracks" / "masks.npz"
+        include(masks, required=people.is_file())
+        # Record the set as well as its hashes: newly added legacy motion metadata changes
+        # crop interpretation even when all previously recorded files remain identical.
+        for motion in sorted(masks.parent.glob("track_*/motion.json")):
+            include(motion)
+        for script in ("place_solve.py", "silhouette_rows.py"):
+            include(ROOT / "scripts" / script)
+        scale = (self.state.data["stages"].get("_scale") or {}).get("scale0")
+        try:
+            floor = self.placement().get("floor")
+        except Exception as error:
+            raise ValueError(
+                "cannot read packaged floor; restore the person package before place_fit"
+            ) from error
+        if (
+            isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not math.isfinite(scale)
+            or scale <= 0
+            or isinstance(floor, bool)
+            or not isinstance(floor, (int, float))
+            or not math.isfinite(floor)
+        ):
+            raise ValueError("placement registration is invalid; rerun scale_fit and package")
+        return {
+            "schema": "wander.placement-inputs/1",
+            "files": files,
+            "scale": f"{scale:.6f}",
+            "floor": f"{floor:.6f}",
+            "failOnSize": not self.a.allow_bad_size,
+        }
+
+    def anchor_inputs(self, world: Path) -> dict:
+        files = {str(self.clip.resolve()): self.input_hash(self.clip)}
+        for script in (
+            "anchor_checks.py",
+            "world_ruler.py",
+            "export_observation_confidence.py",
+            "motion_silhouette.py",
+            "motion_audit.py",
+            "person_masks_tight.py",
+        ):
+            path = ROOT / "scripts" / script
+            files[str(path)] = self.input_hash(path)
+        return {
+            "schema": "wander.anchor-inputs/1",
+            "placementInputs": self.placement_inputs(world),
+            "files": files,
+            "rulerTolerance": self.a.ruler_tol,
+            "rulerVlm": self.a.ruler_vlm,
+            "allowWeakAnchor": self.a.allow_weak_anchor,
+            "metricModel": os.environ.get("WANDER_METRIC_DEPTH", "apple/DepthPro-hf"),
+        }
 
     def anchors_are_current(self, world: Path) -> bool:
         if not self.state.done("anchors") or not self.placement_is_current(world):
             return False
         placement = self.state.data["stages"]["_placement_solve"]
         anchors = self.state.data["stages"].get("_anchors") or {}
-        return (
-            anchors.get("worldSha256") == placement["worldSha256"]
-            and anchors.get("placementSha256") == placement["reportSha256"]
-        )
+        try:
+            observation = world.with_name(world.stem + "-obs.bin")
+            return (
+                anchors.get("worldSha256") == placement["worldSha256"]
+                and anchors.get("placementSha256") == placement["reportSha256"]
+                and anchors.get("inputReceipt") == self.anchor_inputs(world)
+                and anchors.get("reportSha256") == self.input_hash(self.ctx / "anchors.json")
+                and anchors.get("observationSha256") == self.input_hash(observation)
+            )
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            return False
 
     def cameras(self) -> Path:
         p = self.ctx / "pi3x" / "cameras.json"
@@ -2129,6 +2247,7 @@ class Pipeline:
         out = wdir / "placement.json"
         world = self.world_spz()
         world_hash = file_sha256(world)
+        inputs = self.placement_inputs(world)
         cmd = [
             PY,
             "scripts/place_solve.py",
@@ -2154,6 +2273,8 @@ class Pipeline:
         if not self.a.allow_bad_size:
             cmd.append("--fail-on-size")
         run(cmd, self.ctx / "place_fit.log", attempts=1)
+        if self.placement_inputs(world) != inputs:
+            raise RuntimeError("placement inputs changed during solve; rerun place_fit")
         doc = json.loads(out.read_text())
         sc = doc["surface"]["sizeCheck"]
         res = doc["residualCm"]
@@ -2163,6 +2284,7 @@ class Pipeline:
             world=str(world.resolve()),
             worldSha256=world_hash,
             reportSha256=file_sha256(out),
+            inputReceipt=inputs,
             samples=doc["samples"],
             metresPerWorldUnit=doc["metresPerWorldUnit"],
             sizeCheck=sc,
@@ -2199,6 +2321,7 @@ class Pipeline:
         if not self.placement_is_current(world):
             raise RuntimeError("placement is not accepted for the current world; rerun place_fit")
         measured_placement = self.state.data["stages"]["_placement_solve"].copy()
+        inputs = self.anchor_inputs(world)
         cameras = wdir / "cameras.json"
         placement = wdir / "placement.json"
         masks = self.ctx / "tracks" / "masks.npz" if (wdir / "people.json").exists() else None
@@ -2263,11 +2386,16 @@ class Pipeline:
         if p.returncode not in (0, 3):
             raise RuntimeError(f"scripts/anchor_checks.py itself failed (exit {p.returncode})")
         doc = json.loads(out.read_text())
+        if not self.placement_is_current(world) or self.anchor_inputs(world) != inputs:
+            raise RuntimeError("anchor inputs changed during checks; rerun place_fit and anchors")
         self.state.record(
             "_anchors",
             **doc,
             worldSha256=measured_placement["worldSha256"],
             placementSha256=measured_placement["reportSha256"],
+            inputReceipt=inputs,
+            reportSha256=self.input_hash(out),
+            observationSha256=self.input_hash(observation),
         )
         if p.returncode == 3:
             raise RuntimeError(
