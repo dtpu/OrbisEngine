@@ -1,0 +1,24 @@
+scripts/place_solve.py
+  s_988a422339b8f1::t_257491345674c8 522-552,586-597
+  s_988a422339b8f1::t_5c32abdce1c184 598,622,625-628,630,677-683,699
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_c41ce043b544fc 73-76
+scripts/tests/test_silhouette_projection_failures.py
+  s_988a422339b8f1::t_f37ba1f8c3d2c2 1-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ae079debb8c59cbae52b90adb0f6d8baebe4812",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
