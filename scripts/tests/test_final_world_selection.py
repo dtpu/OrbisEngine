@@ -354,3 +354,43 @@ def test_metadata_uses_selected_provider_world_including_zero_floor(
     assert result["worldUrl"] == f"https://example.invalid/{suffix}"
     assert result["metricScaleFactor"] == ("clean", "image", "multi").index(suffix) + 1
     assert result["marbleFloor"] == 0
+
+
+@pytest.mark.parametrize("metres_per_unit", [0.5, 1.0, 2.0])
+@pytest.mark.parametrize("nested", [False, True])
+def test_preview_height_round_trips_to_metres_without_replacing_fitted_scale(
+    pipeline, monkeypatch, tmp_path, capsys, metres_per_unit, nested
+):
+    p = pipeline
+    p.a.skip_finetune = True
+    p.stages.remove("finetune")
+    p.state.data["stages"].clear()
+    p.placement = lambda: run_clip.Pipeline.placement(p)
+    monkeypatch.setattr(run_clip, "MARBLE_DIR", tmp_path)
+    semantics = {"metric_scale_factor": metres_per_unit, "ground_plane_offset": 0.75}
+    metadata = {"assets": {"splats": {"semantics_metadata": semantics}}} if nested else semantics
+    (tmp_path / "fixture-clean-world.json").write_text(json.dumps(metadata))
+
+    result = p.placement()
+    # Applying the provider's raw-to-metric transform must recover the assumed stature
+    # and put the raw floor at metric ground zero, for factors on either side of one.
+    assert result["height"] * metres_per_unit == pytest.approx(1.7)
+    assert result["marbleFloor"] * metres_per_unit + 0.75 == pytest.approx(0)
+    assert result["formulaScale"] * result["bodyHeight"] * metres_per_unit == pytest.approx(1.7)
+    assert "fittedScale0" not in result
+
+    p.summary(1)
+    output = capsys.readouterr().out
+    link = next(line for line in output.splitlines() if "http://127.0.0.1" in line)
+    assert f"&height={result['height']:.4f}" in link
+    assert "&scale=" not in link and "&place=1" not in link
+    assert "UNFITTED" in output
+
+    p.state.record("_scale", scale0=0.8, gateOk=True)
+    fitted = p.placement()
+    assert fitted["fittedScale0"] == 0.8
+    assert fitted["floor"] == pytest.approx(fitted["feetY"] * 0.8)
+    p.summary(1)
+    link = next(line for line in capsys.readouterr().out.splitlines() if "http://127.0.0.1" in line)
+    assert "&scale=0.8000" in link
+    assert "&height=" not in link and "&place=1" not in link

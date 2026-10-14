@@ -53,6 +53,16 @@ of selecting a historical demo. The size gate evaluates the final silhouette fit
 viewer link enables a successful placement. These checks establish input routing and acceptance
 behavior, not visual reconstruction quality.
 
+The unfitted viewer link keeps the world in raw Marble asset units. World Labs documents
+`metric_scale_factor` as metres per raw unit in its
+[SPZ rendering guide](https://docs.worldlabs.ai/api/rendering-spz), so the assumed 1.7 m person
+height is `1.7 / metric_scale_factor`, consistent with the raw floor at
+`-ground_plane_offset / metric_scale_factor`. The earlier multiplication inverted that conversion;
+its preview size error was the square of the factor. Tests cover factors below, at and above one,
+legacy and nested metadata, and fitted-scale precedence. Correct units do not establish source
+camera registration, actual subject stature or reconstruction quality. Previously captured
+unfitted views retain their recorded parameters; this correction does not change their verdicts.
+
 When enabled, fine-tuning finishes before placement and anchors. Those checks, observation
 confidence, static-world review and the viewer link select the same final world. Scale fitting
 and fine-tune export/import use the original provider world. Failed or missing fine-tune output

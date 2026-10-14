@@ -2149,9 +2149,9 @@ class Pipeline:
     def scale_fit(self):
         """Fit scale0, the SfM-to-Marble scale, against the Pi3X anchor cloud.
 
-        Mandatory before anything ships: Marble's own metric_scale_factor has been wrong by 2.9x
-        (gym), 2.1x (atrium) and 2.5x (living). ratio = splat depth / measured depth is ~1/scale0,
-        so scale0 <- scale0 * geomean(ratio) converges in two or three probes.
+        Mandatory before anything ships: Marble's metric scale converts asset units to metres;
+        it does not register the source camera reconstruction. ratio = splat depth / measured
+        depth is ~1/scale0, so scale0 <- scale0 * geomean(ratio) converges in two or three probes.
         """
         s, probes = self.a.scale0, []
         if s is None:
@@ -2565,7 +2565,9 @@ class Pipeline:
                 out.update(
                     metricScaleFactor=msf,
                     groundPlaneOffset=gpo,
-                    height=1.7 * msf,
+                    # The viewer keeps raw Marble units, so metres must be divided by
+                    # the provider's metres-per-asset-unit factor, just like the floor.
+                    height=1.7 / msf,
                     marbleFloor=-gpo / msf,
                     world=w.get("world_id") or w.get("id"),
                     worldUrl=w.get("world_marble_url"),
@@ -2675,8 +2677,9 @@ class Pipeline:
         elif p.get("height") is not None:
             print(f"{base}&floor={p['marbleFloor']:.4f}&height={p['height']:.4f}")
             print(
-                "  UNFITTED: that height is 1.7 x Marble's metric_scale_factor, which has been "
-                "wrong by 2.9x. Run the scale_fit stage before shipping this preset."
+                "  UNFITTED: height assumes a 1.7 m person, converted to raw Marble units by "
+                "dividing by metric_scale_factor. This is not measured registration; run "
+                "scale_fit and the quality checks before shipping this preset."
             )
         else:
             print("\n  no Marble world yet: run the marble_video stage with a key to get the URL")
