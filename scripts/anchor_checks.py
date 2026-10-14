@@ -121,6 +121,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
     cams = json.loads(cameras.read_text())["cameras"]
     seq = json.loads((wd / "person" / "sequence.json").read_text())
     pick = [cams[i] for i in np.linspace(0, len(cams) - 1, min(n, len(cams))).round().astype(int)]
+    frame_by_source = ms.source_frame_paths(seq, (cam["sourceIndex"] for cam in pick))
     if masks is not None:
         ground = person_masks_for("", masks=masks, world_dir=wd, dilate=False)
     else:
@@ -150,8 +151,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
         index = cam["sourceIndex"]
         if index not in ground:
             continue
-        k = int(np.argmin(np.abs(np.asarray(seq["sourceIndices"]) - index)))
-        v = read_ply(wd / "person" / seq["frames"][k])
+        v = read_ply(wd / "person" / frame_by_source[index])
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sizes = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
         hw = tuple(cam["source_image_size"][::-1])

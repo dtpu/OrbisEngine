@@ -129,6 +129,67 @@ def test_single_person_uses_exact_cameras_masks_and_sequence(inputs, monkeypatch
     assert all(camera["tag"] == "current" for camera in seen)
 
 
+@pytest.mark.parametrize("supplied_masks", [True, False])
+@pytest.mark.parametrize(
+    "indices,frames,error",
+    [
+        ([1000], ["frame.ply"], "no pose for selected sourceIndices"),
+        ([41, 41], ["frame.ply"] * 2, "duplicate sourceIndices"),
+        (list(range(41, 49)), ["frame.ply"], "8 sourceIndices but 1 frames"),
+    ],
+)
+def test_single_person_rejects_missing_or_ambiguous_source_poses(
+    inputs, monkeypatch, supplied_masks, indices, frames, error
+):
+    import motion_silhouette
+
+    write_json(
+        inputs["world_dir"] / "person/sequence.json",
+        {"sourceIndices": indices, "frames": frames},
+    )
+    # An image-space match must not certify geometry from a different source frame.
+    monkeypatch.setattr(
+        motion_silhouette,
+        "splat_silhouette",
+        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+    )
+    kwargs = {k: v for k, v in inputs.items() if k != "world"}
+    if not supplied_masks:
+        kwargs.pop("masks")
+    with pytest.raises(ValueError, match=error):
+        anchor_checks.check_silhouette("gym", **kwargs)
+
+
+def test_single_person_reordered_sequence_reads_exact_source_poses(inputs, monkeypatch):
+    import motion_silhouette
+    import place_solve
+
+    directory = inputs["world_dir"] / "person"
+    indices = list(reversed(range(41, 49)))
+    frames = [f"frame-{index}.ply" for index in indices]
+    write_json(directory / "sequence.json", {"sourceIndices": indices, "frames": frames})
+    for frame in frames:
+        write_person(directory / frame)
+    seen = []
+    read_ply = place_solve.read_ply
+
+    def read(path):
+        seen.append(path.name)
+        return read_ply(path)
+
+    monkeypatch.setattr(place_solve, "read_ply", read)
+    monkeypatch.setattr(
+        motion_silhouette,
+        "splat_silhouette",
+        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+    )
+    result = anchor_checks.check_silhouette(
+        "gym", **{k: v for k, v in inputs.items() if k != "world"}
+    )
+    assert result["ok"] is True
+    assert seen == [f"frame-{index}.ply" for index in range(41, 49)]
+
+
 def test_single_person_reads_explicit_video_instead_of_sequence_source(
     inputs, tmp_path, monkeypatch
 ):
