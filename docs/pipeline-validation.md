@@ -47,6 +47,20 @@ avoids preferring a larger cropped torso to a more complete back view. Explicit 
 retains its quality ranking. Projected coverage is a selection heuristic, not observed body coverage. An explicit source-frame request must exist in the track, and an empty track
 fails before image preparation. These checks establish selection behavior, not avatar fidelity.
 
+Preparation preserves the selected full-resolution segmentation as `observed-mask.png` before
+dilation, alongside the padded `mask.png` used by LHM. Metadata binds both masks and the source
+PNG by hash and records their source-pixel bounds, areas and dilation. The observed mask remains
+a segmentation estimate, not ground truth; older outputs without it cannot recover that evidence
+by reversing the padding. Model inputs and existing silhouette acceptance targets are unchanged.
+
+Head conditioning uses the same selected-person mask for detection and the expanded head crop.
+Previously the pinned [LHM head detector](https://github.com/aigc3d/LHM/blob/4f88aaeb3629249fbbddb4d0784a06962d9e1338/LHM/utils/face_detector.py)
+received the full frame and selected its largest detected head, which could belong to a bystander.
+Offline regressions reproduce that selection error, check exclusion of pixels outside the supplied
+mask even in an expanded crop, and preserve the existing zero-head fallback for unusable detection.
+Mask errors and dilation can still include unrelated pixels; this does not establish face fidelity
+or fix the retained single-person body's projection mismatch. No new model execution is implied.
+
 Placement and anchor regressions use separate run/output roots. The runner passes exact world,
 camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead
 of selecting a historical demo. The size gate evaluates the final silhouette fit, and the printed

@@ -78,6 +78,31 @@ def preprocess(repo, source, mask):
     return torch.from_numpy(rgb).float().permute(2, 0, 1)[None]
 
 
+def prepare_head_input(raw, mask, detector):
+    """Restrict detection and the expanded head crop to the supplied person mask.
+
+    The upstream detector chooses the largest head in its input. Giving it the full
+    frame can condition one tracked person's avatar on a bystander's face.
+    """
+    import torch
+
+    if mask.shape != raw.shape[:2]:
+        raise ValueError("Head mask must match the selected person's source image")
+    selected = mask > 127
+    masked = raw.copy()
+    masked[~selected] = 255
+    box = detector(torch.from_numpy(masked).permute(2, 0, 1)).cpu().numpy()
+    if box.shape != (4,) or not np.isfinite(box).all():
+        raise ValueError("Invalid head box for selected person")
+    box[[0, 2]] = box[[0, 2]].clip(0, raw.shape[1])
+    box[[1, 3]] = box[[1, 3]].clip(0, raw.shape[0])
+    x0, y0, x1, y1 = box.astype(int)
+    if x1 <= x0 or y1 <= y0 or not selected[y0:y1, x0:x1].any():
+        raise ValueError("Head box does not contain the selected person")
+    head = masked[y0:y1, x0:x1]
+    return cv2.resize(head, (112, 112), interpolation=cv2.INTER_AREA)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--prepared", required=True)
@@ -156,11 +181,7 @@ def main():
         "./pretrained_models/gagatracker/vgghead/vgg_heads_l.trcd", device="cuda"
     )
     try:
-        box = detector(torch.from_numpy(raw.copy()).permute(2, 0, 1)).cpu().numpy()
-        box[[0, 2]] = box[[0, 2]].clip(0, raw.shape[1])
-        box[[1, 3]] = box[[1, 3]].clip(0, raw.shape[0])
-        head = raw[box[1] : box[3], box[0] : box[2]]
-        head = cv2.resize(head, (112, 112), interpolation=cv2.INTER_AREA)
+        head = prepare_head_input(raw, mask, detector)
         head_detected = True
     except Exception as error:
         print("No head input; upstream zero-head fallback:", str(error), flush=True)
@@ -208,6 +229,7 @@ def main():
         points=len(xyz),
         bounds=np.percentile(xyz, [2, 50, 98], axis=0).tolist(),
         headDetected=head_detected,
+        headInputMethod="Largest detected head on selected-person mask; outside-mask pixels white",
         sourceImageSha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         prepared=json.loads((prepared / "prepared.json").read_text()),
         sourceIntrinsics=source_K.tolist(),
