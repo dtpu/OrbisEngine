@@ -97,6 +97,8 @@ def main():
     ap.add_argument("--out", type=Path, required=True, help="output stem")
     a = ap.parse_args()
     s = np.load(a.npz)
+    if not len(s["means"]):
+        raise ValueError("fine-tuned state contains no splats")
     R = s["R_raw_to_native"]
     t = s["origin_c2w"][:3, 3]
     scale0 = float(s["scale0"])
@@ -120,12 +122,15 @@ def main():
     oi = s["orig_index"] if "orig_index" in s else np.arange(len(xyz))
     frozen = (~vis) & (oi >= 0) & (oi < spz["n"])
     src = oi[frozen]  # oi indexes --init-npz, not Marble
-    print(
-        f"round trip on frozen splats: max |xyz - original| {np.abs(xyz[frozen] - spz['xyz'][src]).max():.2e}, "
-        f"max |log_scale - original| {np.abs(log_scale[frozen] - spz['log_scale'][src]).max():.2e}, "
-        f"max |quat.quat - 1| {np.abs(np.abs((quat[frozen] * spz['quat'][src]).sum(1)) - 1).max():.2e}",
-        flush=True,
-    )
+    if frozen.any():
+        print(
+            f"round trip on frozen splats: max |xyz - original| {np.abs(xyz[frozen] - spz['xyz'][src]).max():.2e}, "
+            f"max |log_scale - original| {np.abs(log_scale[frozen] - spz['log_scale'][src]).max():.2e}, "
+            f"max |quat.quat - 1| {np.abs(np.abs((quat[frozen] * spz['quat'][src]).sum(1)) - 1).max():.2e}",
+            flush=True,
+        )
+    else:
+        print("round trip: no frozen original splats; comparison not applicable", flush=True)
     print(
         f"{len(xyz)} splats (original {spz['n']}: {(oi < 0).sum()} created, {spz['n'] - (oi >= 0).sum()} pruned); "
         f"moved {vis.sum()}; bbox raw {xyz.min(0).round(2)} .. {xyz.max(0).round(2)} (original {spz['xyz'].min(0).round(2)} .. {spz['xyz'].max(0).round(2)})",
