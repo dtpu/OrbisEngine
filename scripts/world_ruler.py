@@ -920,31 +920,41 @@ def person_masks_for(clip_name: str, ds_shape=None, *, masks=None, world_dir=Non
         }
     fh, fw, ms = z["shape"]
     h, w = int(round(fh * ms)), int(round(fw * ms))
-    tdirs = sorted((p.parent).glob("track_*"))
-    src = {}
-    for td in tdirs:
-        for f in json.loads((td / "motion.json").read_text())["frames"]:
-            src.setdefault(f["sample"], f["sourceIndex"])
+    from silhouette_rows import load_track_motion
+
+    # A packaged subset can have a different order from the original tracking samples.
+    # The motion record, when present, owns that mapping for its particular track.
+    legacy_sources = {}
+    selected_sources = None
     if world_dir is not None and (Path(world_dir) / "people.json").is_file():
         described = json.loads((Path(world_dir) / "people.json").read_text())
-        for sample, index in enumerate(described.get("sourceIndices", [])):
-            if sample in src and src[sample] != index:
-                raise ValueError(
-                    f"tracking and packaged source indices disagree at sample {sample}"
-                )
-            src[sample] = index
-    if masks is not None and not src:
-        raise ValueError(f"tracking masks have no source-frame mapping: {p}")
+        selected_sources = described.get("sourceIndices", [])
+        legacy_sources = dict(enumerate(selected_sources))
+    mappings = {}
     out = {}
     for k in z.files:
         if k == "shape":
             continue
-        s = int(k.split("_")[1][1:])
-        fi = src.get(s)
+        track, sample = (int(part[1:]) for part in k.split("_"))
+        if track not in mappings:
+            motion = load_track_motion(p, track)
+            mappings[track] = (
+                {record["sample"]: source for source, record in motion.items()}
+                if motion is not None
+                else legacy_sources
+            )
+        fi = mappings[track].get(sample)
         if fi is None:
             continue
         m = np.unpackbits(z[k])[: h * w].reshape(h, w).astype(bool)
         out[fi] = out[fi] | m if fi in out else m
+    if masks is not None and not out:
+        raise ValueError(f"tracking masks have no source-frame mapping: {p}")
+    if selected_sources is not None and (missing := set(selected_sources) - out.keys()):
+        raise ValueError(
+            "tracking and packaged source indices disagree: "
+            f"no masks for packaged source frames {sorted(missing)}"
+        )
     # dilate a little: the mask is tight and the person's shadow edge is not world geometry
     return {
         k: cv2.dilate(v.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool) if dilate else v

@@ -318,7 +318,8 @@ def test_tracking_masks_reject_conflicting_source_frame_mappings(inputs, tmp_pat
     tracked.parent.mkdir()
     np.savez_compressed(tracked, shape=[40, 40, 1], t000_s000=np.packbits(np.ones((40, 40), bool)))
     write_json(
-        tracked.parent / "track_000/motion.json", {"frames": [{"sample": 0, "sourceIndex": 41}]}
+        tracked.parent / "track_000/motion.json",
+        {"frames": [{"sample": 0, "sourceIndex": 41, "box": [1, 1, 39, 39]}]},
     )
     write_json(inputs["world_dir"] / "people.json", {"sourceIndices": [999]})
     with pytest.raises(ValueError, match="source indices disagree"):
