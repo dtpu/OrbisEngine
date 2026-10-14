@@ -25,9 +25,11 @@ them warns. What they replace, in order:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -50,8 +52,8 @@ WORLD_DIR = {
 }
 
 
-def check_ruler(clip: str, extra: list[str], tol: float) -> dict:
-    out = ROOT / ".context" / "anchors" / f"ruler-{clip}.json"
+def check_ruler(clip: str, extra: list[str], tol: float, *, report=None, **inputs) -> dict:
+    out = report or ROOT / ".context" / "anchors" / f"ruler-{clip}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         PY,
@@ -60,14 +62,21 @@ def check_ruler(clip: str, extra: list[str], tol: float) -> dict:
         clip,
         "--tol",
         str(tol),
-        "--json-out",
-        str(out),
         *extra,
     ]
-    p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-    if not out.exists():
-        return dict(ok=False, reason=f"world_ruler.py did not run: {p.stderr.strip()[-400:]}")
-    doc = json.loads(out.read_text())
+    for name, value in inputs.items():
+        if value is not None:
+            cmd += ["--" + name.replace("_", "-"), str(value)]
+    # A failed child must never reuse the successful JSON from an earlier candidate.
+    with tempfile.TemporaryDirectory(prefix="anchor-ruler-") as temporary:
+        fresh = Path(temporary) / "ruler.json"
+        p = subprocess.run(
+            [*cmd, "--json-out", str(fresh)], cwd=ROOT, capture_output=True, text=True
+        )
+        if p.returncode != 0 or not fresh.is_file():
+            return dict(ok=False, why=[f"world_ruler.py failed: {p.stderr.strip()[-400:]}"])
+        doc = json.loads(fresh.read_text())
+        out.write_text(json.dumps(doc, indent=1))
     v = doc["verdict"]
     why = []
     if v.get("weaklyAnchored"):
@@ -100,14 +109,71 @@ def check_ruler(clip: str, extra: list[str], tol: float) -> dict:
     )
 
 
-def check_silhouette(clip: str, n: int = 12) -> dict:
+def single_silhouette_rows(wd, cameras, video, masks, n):
+    """Use this run's camera/source pair, without the shared historical mask cache."""
+    import motion_audit
+    import motion_silhouette as ms
+    import person_masks_tight as pmt
+    from place_solve import read_ply
+    from PIL import Image
+    from world_ruler import person_masks_for
+
+    cams = json.loads(cameras.read_text())["cameras"]
+    seq = json.loads((wd / "person" / "sequence.json").read_text())
+    pick = [cams[i] for i in np.linspace(0, len(cams) - 1, min(n, len(cams))).round().astype(int)]
+    if masks is not None:
+        ground = person_masks_for("", masks=masks, world_dir=wd, dilate=False)
+    else:
+        source = Path(video)
+        stamp = (str(source.resolve()), source.stat().st_size, source.stat().st_mtime_ns)
+        key = hashlib.sha256(
+            (str(wd.resolve()) + json.dumps(stamp) + json.dumps(pick) + json.dumps(seq)).encode()
+        ).hexdigest()
+        cache = ROOT / ".context" / "anchors" / f"tight-masks-{key}.npz"
+        if not cache.is_file():
+            hw = tuple(pick[0]["source_image_size"][::-1])
+            seeds = motion_audit.seed_boxes(wd, pick, seq, hw)
+            frames = pmt.read_frames(str(source), list(seeds))
+            indices = [i for i in seeds if i in frames]
+            if not indices:
+                return []
+            tight = pmt.masks_for(
+                np.stack([frames[i] for i in indices]), [seeds[i] for i in indices]
+            )
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                cache, masks=np.packbits(tight, axis=-1), shape=tight.shape, indices=indices
+            )
+        ground, _ = ms.load_masks(cache)
+    rows = []
+    for cam in pick:
+        index = cam["sourceIndex"]
+        if index not in ground:
+            continue
+        k = int(np.argmin(np.abs(np.asarray(seq["sourceIndices"]) - index)))
+        v = read_ply(wd / "person" / seq["frames"][k])
+        xyz = np.column_stack([v["x"], v["y"], v["z"]])
+        sizes = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
+        hw = tuple(cam["source_image_size"][::-1])
+        gt = np.asarray(
+            Image.fromarray(ground[index]).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
+        )
+        pred = ms.splat_silhouette(xyz, v["opacity"], sizes, cam, hw, 30000)
+        if gt.sum() > 500:
+            rows.append(dict(iou=ms.iou(pred, gt), predPx=int(pred.sum()), gtPx=int(gt.sum())))
+    return rows
+
+
+def check_silhouette(
+    clip: str, n: int = 12, *, world_dir=None, cameras=None, video=None, masks=None, placement=None
+) -> dict:
     """§4D. motion_audit already computes both numbers; this is the floor under them."""
     import motion_audit
 
-    wd = ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
-    placement_path = wd / "placement.json"
-    placement = json.loads(placement_path.read_text()) if placement_path.exists() else {}
-    if placement.get("silhouetteFit"):
+    wd = world_dir or ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
+    placement_path = placement or wd / "placement.json"
+    place = json.loads(placement_path.read_text()) if placement_path.exists() else {}
+    if place.get("silhouetteFit"):
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
         from silhouette_rows import load_track_masks
@@ -115,14 +181,15 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
         from place_solve import read_ply
         from PIL import Image
 
-        masks, _, _ = load_track_masks(Path(placement["silhouetteFit"]["masks"]))
+        masks, _, _ = load_track_masks(masks or Path(place["silhouetteFit"]["masks"]))
         man = json.loads((wd / "people.json").read_text())
         cams = {
-            c["sourceIndex"]: c for c in json.loads((wd / "cameras.json").read_text())["cameras"]
+            c["sourceIndex"]: c
+            for c in json.loads((cameras or wd / "cameras.json").read_text())["cameras"]
         }
         seqs = {p["id"]: json.loads((wd / p["sequence"]).read_text()) for p in man["people"]}
         ratios, overlaps = [], []
-        scale = placement["registrationScale"]
+        scale = place["registrationScale"]
         for sample in (
             np.linspace(0, len(man["sourceIndices"]) - 1, min(n, len(man["sourceIndices"])))
             .round()
@@ -144,12 +211,12 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
                 v = read_ply((wd / person["sequence"]).parent / seq["frames"][k])
                 xyz = np.column_stack([v["x"], v["y"], v["z"]])
                 sizes = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
-                pp = placement["perPerson"][pid]
+                pp = place["perPerson"][pid]
                 size = pp.get("sizeScale", 1)
-                offset = pp.get("offsetUnits", placement["offsetUnits"])[k]
+                offset = pp.get("offsetUnits", place["offsetUnits"])[k]
                 xyz = (
                     xyz * size
-                    + (np.array(placement["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
+                    + (np.array(place["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
                 )
                 pred |= splat_silhouette(xyz, v["opacity"], sizes + np.log(size), cam, hw, 30000)
                 gt |= np.array(
@@ -176,8 +243,11 @@ def check_silhouette(clip: str, n: int = 12) -> dict:
             method="all tracked people, applied placement; CPU splat approximation; verify in live viewer",
         )
     seq = json.loads((wd / "person" / "sequence.json").read_text())
-    src = seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")
-    rows = motion_audit.audit_world(wd, src, n)
+    src = video or seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")
+    if any(value is not None for value in (world_dir, cameras, video, masks)):
+        rows = single_silhouette_rows(wd, cameras or wd / "cameras.json", src, masks, n)
+    else:
+        rows = motion_audit.audit_world(wd, src, n)
     if len(rows) < MIN_FRAMES:
         return dict(
             ok=False,
@@ -230,7 +300,17 @@ def check_noise_floor(place: dict) -> dict:
     return dict(ok=bool(nf["ok"]), why=list(nf["refusals"]), contactCm=nf["contactCm"])
 
 
-def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
+def check_obs_mask(
+    clip: str,
+    sidecar: Path | None,
+    frames: int = 3,
+    *,
+    world_dir=None,
+    world=None,
+    cameras=None,
+    masks=None,
+    placement=None,
+) -> dict:
     """§4F: the confidence must be ~0 where the walker stood and ~1 on real textured surface.
 
     Read the two numbers together. `inMask` is high for a good reason as well as a bad one: where the
@@ -243,17 +323,18 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
     """
     import export_observation_confidence as eo
 
-    wd = ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
-    place = wd / "placement.json"
+    wd = world_dir or ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
+    place = placement or wd / "placement.json"
     if sidecar is None or not sidecar.exists():
         return dict(ok=False, why=[f"no observation sidecar at {sidecar}"])
     scale0 = json.loads(place.read_text())["registrationScale"] if place.exists() else None
     if scale0 is None:
         return dict(ok=False, why=["no fitted scale0 for this clip"])
     conf = np.frombuffer(sidecar.read_bytes(), np.uint8).astype(np.float32) / 255.0
-    world = Path(str(sidecar)[: -len(sidecar.name.split("-obs")[-1]) - 4] + ".spz")
-    if not world.exists():
-        world = next((ROOT / "public").glob(f"marble-{clip}*.spz"))
+    if world is None:
+        world = Path(str(sidecar)[: -len(sidecar.name.split("-obs")[-1]) - 4] + ".spz")
+        if not world.exists():
+            world = next((ROOT / "public").glob(f"marble-{clip}*.spz"))
     xyz = eo.read_spz_xyz(world)
     alpha = np.ones(len(xyz), np.float32)
     if len(xyz) != len(conf):
@@ -261,14 +342,31 @@ def check_obs_mask(clip: str, sidecar: Path | None, frames: int = 3) -> dict:
             ok=False,
             why=[f"{sidecar.name} has {len(conf):,} entries, {world.name} has {len(xyz):,} splats"],
         )
-    cams = json.loads((wd / "cameras.json").read_text())["cameras"]
+    cams = json.loads((cameras or wd / "cameras.json").read_text())["cameras"]
+    ground = None
+    if masks is not None:
+        from world_ruler import person_masks_for
+
+        ground = person_masks_for(clip, masks=masks, world_dir=wd, dilate=False)
     pick = [cams[i] for i in np.linspace(0, len(cams) - 1, frames).round().astype(int)]
     ins, outs = [], []
     for c in pick:
         W, H = c["source_image_size"]
         ds = 4
         gw, gh = W // ds, H // ds
-        pm = eo.person_pixels(wd, c, gw, gh, ds, dilate=0)
+        if ground is not None:
+            import cv2
+
+            original = ground.get(c["sourceIndex"])
+            pm = (
+                None
+                if original is None
+                else cv2.resize(
+                    original.astype(np.uint8), (gw, gh), interpolation=cv2.INTER_NEAREST
+                ).astype(bool)
+            )
+        else:
+            pm = eo.person_pixels(wd, c, gw, gh, ds, dilate=0)
         if pm is None:
             continue
         # per-pixel confidence of the front-most splat
@@ -323,6 +421,11 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--clip", required=True)
+    ap.add_argument("--world-dir", type=Path, help="packaged world directory for this run")
+    ap.add_argument("--world", type=Path, help="exact retained Marble SPZ for this run")
+    ap.add_argument("--cameras", type=Path, help="packaged source cameras for this run")
+    ap.add_argument("--video", type=Path, help="source video for this run")
+    ap.add_argument("--masks", type=Path, help="tracking or tight masks with source-frame mapping")
     ap.add_argument("--tol", type=float, default=0.15)
     ap.add_argument("--obs-sidecar", type=Path)
     ap.add_argument(
@@ -344,17 +447,36 @@ def main():
     ap.add_argument("--no-gate", action="store_true", help="report without failing the run")
     a = ap.parse_args()
 
-    wd = ROOT / "public" / "worlds" / WORLD_DIR.get(a.clip, f"{a.clip}-4d")
+    inputs = {
+        name: getattr(a, name)
+        for name in ("world_dir", "world", "cameras", "video", "masks", "placement")
+    }
+    for name, path in inputs.items():
+        if path is not None and not (path.is_dir() if name == "world_dir" else path.is_file()):
+            ap.error(
+                f"--{name.replace('_', '-')} is not a {'directory' if name == 'world_dir' else 'file'}: {path}"
+            )
+    wd = a.world_dir or ROOT / "public" / "worlds" / WORLD_DIR.get(a.clip, f"{a.clip}-4d")
     pj = a.placement or (wd / "placement.json")
     place = json.loads(pj.read_text()) if pj.exists() else {}
     skip = {s.strip() for s in a.skip.split(",") if s.strip()}
 
     runners = {
-        "ruler": lambda: check_ruler(a.clip, a.ruler_arg, a.tol),
-        "silhouette": lambda: check_silhouette(a.clip),
+        "ruler": lambda: check_ruler(
+            a.clip,
+            a.ruler_arg,
+            a.tol,
+            report=a.json_out.with_name("ruler-" + a.json_out.name) if a.json_out else None,
+            **inputs,
+        ),
+        "silhouette": lambda: check_silhouette(
+            a.clip, **{k: v for k, v in inputs.items() if k != "world"}
+        ),
         "cameraTrace": lambda: check_camera_trace(place),
         "noiseFloor": lambda: check_noise_floor(place),
-        "obsMask": lambda: check_obs_mask(a.clip, a.obs_sidecar),
+        "obsMask": lambda: check_obs_mask(
+            a.clip, a.obs_sidecar, **{k: v for k, v in inputs.items() if k != "video"}
+        ),
     }
     res = {}
     for name, fn in runners.items():
@@ -380,7 +502,13 @@ def main():
         if not r["ok"]:
             bad.append(name)
 
-    doc = dict(clip=a.clip, checks=res, failed=bad, ok=not bad)
+    doc = dict(
+        clip=a.clip,
+        inputs={k: str(v) for k, v in inputs.items() if v is not None},
+        checks=res,
+        failed=bad,
+        ok=not bad,
+    )
     if a.json_out:
         a.json_out.parent.mkdir(parents=True, exist_ok=True)
         a.json_out.write_text(json.dumps(doc, indent=1))

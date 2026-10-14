@@ -61,13 +61,35 @@ and how much is foot-detection noise". A floor on lam keeps the residual jerk un
 Outputs `placement.json` beside the person manifest. fourd.html reads it only under `?place=1`.
 """
 
-import argparse, json, sys
+import argparse, json, os, sys
 from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT))
 from bake_video_colours import read_spz  # noqa: E402
+from orchestrator.config import resolve_runs_root  # noqa: E402
+
+
+def tracked_masks_path(clip: str, explicit: Path | None = None) -> Path:
+    """Use this run's measurements; an explicitly required file must not silently disappear."""
+    if explicit is not None:
+        path = explicit.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Tracked masks are missing: {path}; rerun the tracking stage")
+        return path
+    return resolve_runs_root(os.environ.get("WANDER_RUNS_DIR")) / clip / "tracks" / "masks.npz"
+
+
+def require_valid_size(size_check: dict, enabled: bool) -> None:
+    """Gate the final body scale, including changes made by the silhouette fit."""
+    if enabled and not size_check["pass_"]:
+        raise SystemExit(
+            "SIZE CHECK FAILED after placement: assuming a 1.70 m person, the source camera "
+            f"is {size_check['cameraHeightM']:.2f} m above the floor (expected 1.15–1.85). "
+            "Inspect the saved placement report and verify the world scale before continuing."
+        )
 
 
 # ---------------------------------------------------------------- io
@@ -675,16 +697,17 @@ def main():
     ap.add_argument(
         "--masks",
         type=Path,
-        help="tracked masks.npz; defaults to .context/run/<clip>/tracks/masks.npz",
+        help="tracked masks.npz; defaults to the configured runs root/<clip>/tracks/masks.npz",
     )
     ap.add_argument("--measure-only", action="store_true")
     ap.add_argument("--scale", type=float, default=None, help="override the registration scale")
     ap.add_argument("--floor", type=float, default=None)
     a = ap.parse_args()
+    masks_path = tracked_masks_path(a.clip, a.masks)
     if a.world:
-        rel = lambda q: (
-            str(Path(q).resolve().relative_to(ROOT)) if Path(q).is_absolute() else str(q)
-        )
+        # Explicit run/output roots may be outside this checkout. ROOT / an absolute path
+        # preserves that path, so no repository-relative conversion is necessary.
+        rel = lambda q: str(Path(q).expanduser().resolve())
         cfg = dict(
             world=rel(a.world),
             base=rel(a.world),
@@ -883,7 +906,7 @@ def main():
         ),
     )
     print(
-        f"  SIZE CHECK: source camera {camM:.2f} m above the floor (want 1.15-1.85), "
+        f"  INITIAL SIZE CHECK: source camera {camM:.2f} m above the floor (want 1.15-1.85), "
         f"room {f2c:.2f} m floor to ceiling ({'plausible' if ceil_ok else 'IMPLAUSIBLE'}) "
         f"-> {'PASS' if size_ok else 'FAIL'}",
         flush=True,
@@ -898,7 +921,7 @@ def main():
         # avatar, and the avatar shrinks as the scale drops, so the height in metres goes as 1/scale
         want = 1.45 / camM
         msg = (
-            f"SIZE CHECK FAILED for {a.clip}. Taking the person as 1.70 m makes 1 world unit "
+            f"Initial size is outside the target band for {a.clip}. Taking the person as 1.70 m makes 1 world unit "
             f"{mpu:.3f} m, which puts the handheld source camera {camM:.2f} m above the floor and the "
             f"room {f2c:.2f} m floor to ceiling. One of those is not a real room. A registration "
             f"scale of about {cfg['scale'] / want:.4f} (x{1 / want:.2f}) would put the camera at 1.45 m. "
@@ -906,8 +929,6 @@ def main():
             f"depth map, so a global size error cancels in it. Check the world against something "
             f"real - floor tile pitch, ceiling height, a doorway - before shipping."
         )
-        if a.fail_on_size:
-            sys.exit(msg)
         print("  !! " + msg, flush=True)
 
     nF = max(len(r) for r in rows_per_track)
@@ -939,6 +960,7 @@ def main():
                 open(a.report, "w"),
                 indent=1,
             )
+        require_valid_size(meta["sizeCheck"], a.fail_on_size)
         return
 
     # ---- ray geometry from the primary track
@@ -1009,7 +1031,7 @@ def main():
         flush=True,
     )
     print(
-        f"    reprojection cost    median {np.median(px):5.1f} px  p90 {np.percentile(px, 90):5.1f} px  (1920 px source)",
+        f"    reprojection cost    median {np.median(px):5.1f} px  p90 {np.percentile(px, 90):5.1f} px  (source pixels)",
         flush=True,
     )
     print(f"    per-person constants {[round(float(x) * mpu * 100, 1) for x in kv]} cm", flush=True)
@@ -1087,7 +1109,6 @@ def main():
         noiseFloor=dict(contactCm=a.sigma_contact_cm, refusals=refusals, ok=not refusals),
         surface=meta,
     )
-    masks_path = a.masks or ROOT / ".context" / "run" / a.clip / "tracks" / "masks.npz"
     if a.silhouette_sigma_px > 0 and masks_path.exists() and cfg["contact"] == "floor":
         fits = silhouette_fit(
             feats,
@@ -1161,6 +1182,7 @@ def main():
             for key in ("medianM", "p10M", "p90M", "endToEndSlopeM"):
                 ct[key] *= factor
             sc["pass_"] = 1.15 <= sc["cameraHeightM"] <= 1.85
+            sc["ceilingPlausible"] = 2.10 <= sc["floorToCeilingM"] <= 3.60
             ct["drifted"] = abs(ct["endToEndSlopeM"]) > 0.20
             ct["verdict"] = (
                 "drift" if ct["drifted"] else "flat in band" if sc["pass_"] else "flat out of band"
@@ -1173,6 +1195,14 @@ def main():
     print(f"\n  wrote {out}", flush=True)
     if a.report:
         json.dump(doc, open(a.report, "w"), indent=1)
+    sc = doc["surface"]["sizeCheck"]
+    print(
+        f"  FINAL SIZE CHECK: {'PASS' if sc['pass_'] else 'FAIL'}; source camera "
+        f"{sc['cameraHeightM'] / 1.70:.3f} body-heights above the floor; "
+        "independent world scale and visual quality still require anchor checks",
+        flush=True,
+    )
+    require_valid_size(doc["surface"]["sizeCheck"], a.fail_on_size)
 
 
 if __name__ == "__main__":

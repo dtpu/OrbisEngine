@@ -26,6 +26,31 @@ The admin's `bun test ./tests` checks schema-derived options and queue decisions
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.
 
+The run-control regressions cover pause/cancel during stage admission, a detached child starting
+after cancellation, stale agent completion, and journal replay. Canceled runs cannot reopen from
+a late stage event; explicit operator resume is required. Already submitted provider work keeps
+its completion records.
+
+Placement and anchor regressions use separate run/output roots. The runner passes exact world,
+camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead
+of selecting a historical demo. The size gate evaluates the final silhouette fit, and the printed
+viewer link enables a successful placement. These checks establish input routing and acceptance
+behavior, not visual reconstruction quality.
+
+When enabled, fine-tuning finishes before placement and anchors. Those checks, observation
+confidence, static-world review and the viewer link select the same final world. Scale fitting
+and fine-tune export/import use the original provider world. Failed or missing fine-tune output
+cannot silently fall back to another file. Placement records the world and report hashes;
+changed files invalidate its viewer setting and rerun the local placement/anchor stages on a
+full resume. Existing placements without these hashes need that local recheck too.
+Anchor results also bind to the placement and world; selecting only `verify` cannot accept
+stale dependencies. Provider metadata follows the selected video, image or multi-image mode.
+
+Before checking observation confidence, the runner rebuilds the sidecar from the current world,
+cameras and fitted registration. Tracked runs exclude the source person masks; missing camera
+coverage fails instead of silently using the avatar. Single-person runs retain the documented
+projected-avatar estimate. Confidence measures visibility and is not proof of accurate geometry.
+
 ## Existing demo replay, 2026-10-12
 
 The private shared snapshot used for this check is

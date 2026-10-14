@@ -18,7 +18,7 @@ assumes one continuous shot, and a cut comes back as a camera teleport rather th
 multi-shot clip is not processed as one -- the shots are scored and the best one is named and
 trimmed (--shot N picks another, --all-shots runs them all). See scripts/shot_cuts.py.
 
-Stages write into .context/run/<name>/ and record themselves in state.json, so a crashed or
+Stages write into .context/runs/<name>/ by default and record themselves in state.json, so a crashed or
 killed run picks up where it stopped: re-run the same command. --force <stage>[,<stage>] redoes
 one, --only <stage>[,...] runs a subset (with its finished dependencies read from state).
 Existing paid outputs are retained, including under --force. LHM receipts allow read-only recovery;
@@ -68,6 +68,7 @@ def public_dir() -> Path:
 # and no mass at 1.0 (share/ADVERSARIAL-LOG.md R11)
 SCALE_RATIO_BAND = (0.95, 1.05)
 SCALE_SPREAD_BAND = (0.90, 1.10)
+WORLD_SUFFIXES = {"video": "clean", "both": "clean", "image": "image", "multi": "multi"}
 
 
 def parse_object_spec(spec: str) -> dict:
@@ -1020,6 +1021,12 @@ class Pipeline:
             or scale0 <= 0
         ):
             raise QualityStop("blocked", "No finite positive fitted scale0; run scale_fit first")
+        world = self.world_spz()
+        if "anchors" in self.stages and not self.anchors_are_current(world):
+            raise QualityStop(
+                "blocked",
+                "Final-world dependencies changed; rerun place_fit and anchors before verify",
+            )
         # verify_world renders with the viewer's own mapping (no re-anchoring), so it needs the
         # packaged, levelled cameras.json, not the raw Pi3X one
         packaged = public_dir() / "worlds" / f"{self.name}-4d" / "cameras.json"
@@ -1039,7 +1046,7 @@ class Pipeline:
                 result_path=Path(review[1]),
                 evidence_root=Path(review[2]),
                 clip=self.clip,
-                world=self.world_spz(),
+                world=world,
                 cameras=cameras,
                 scale0=scale0,
             )
@@ -1058,7 +1065,7 @@ class Pipeline:
             PY,
             "scripts/verify_world.py",
             "--world",
-            str(self.world_spz()),
+            str(world),
             "--cameras",
             str(cameras),
             "--clip",
@@ -1862,14 +1869,50 @@ class Pipeline:
         )
 
     # ---- world scale + fine-tune ------------------------------------------
+    def base_world_spz(self) -> Path:
+        """The selected provider output, before fine-tuning changes its geometry."""
+        suffix = WORLD_SUFFIXES.get(self.marble)
+        if suffix is None:
+            raise RuntimeError("this run does not select a Marble world")
+        path = public_dir() / f"marble-{self.name}-{suffix}.spz"
+        if not path.is_file():
+            raise RuntimeError(f"no Marble world on disk for {self.name}: expected {path}")
+        return path
+
     def world_spz(self) -> Path:
-        for suffix in ("clean", "image", "multi"):
-            p = public_dir() / f"marble-{self.name}-{suffix}.spz"
-            if p.exists():
-                return p
-        raise RuntimeError(
-            f"no Marble world on disk for {self.name}: expected "
-            f"{public_dir() / f'marble-{self.name}-clean.spz'}"
+        """Use the same final geometry for placement, acceptance and the viewer."""
+        if "finetune" not in self.stages:
+            return self.base_world_spz()
+        if not self.state.done("finetune"):
+            raise RuntimeError("fine-tuning has not completed; final-world checks must wait")
+        path = public_dir() / f"marble-{self.name}-finetuned.spz"
+        if not path.is_file():
+            raise RuntimeError(f"fine-tuning output is missing: {path}")
+        return path
+
+    def placement_is_current(self, world: Path) -> bool:
+        """A successful placement applies only to the exact geometry and report it measured."""
+        result = self.state.data["stages"].get("_placement_solve") or {}
+        report = public_dir() / "worlds" / f"{self.name}-4d" / "placement.json"
+        if not self.state.done("place_fit"):
+            return False
+        try:
+            return (
+                result.get("world") == str(world.resolve())
+                and result.get("worldSha256") == file_sha256(world)
+                and result.get("reportSha256") == file_sha256(report)
+            )
+        except OSError:
+            return False
+
+    def anchors_are_current(self, world: Path) -> bool:
+        if not self.state.done("anchors") or not self.placement_is_current(world):
+            return False
+        placement = self.state.data["stages"]["_placement_solve"]
+        anchors = self.state.data["stages"].get("_anchors") or {}
+        return (
+            anchors.get("worldSha256") == placement["worldSha256"]
+            and anchors.get("placementSha256") == placement["reportSha256"]
         )
 
     def cameras(self) -> Path:
@@ -1944,7 +1987,7 @@ class Pipeline:
                 "scripts/bake_video_colours.py",
                 "--diag",
                 "--world",
-                str(self.world_spz()),
+                str(self.base_world_spz()),
                 "--cameras",
                 str(self.cameras()),
                 "--clip",
@@ -2084,13 +2127,15 @@ class Pipeline:
             raise RuntimeError("no implied floor: the package stage has not produced frame_000.ply")
         wdir = public_dir() / "worlds" / f"{self.name}-4d"
         out = wdir / "placement.json"
+        world = self.world_spz()
+        world_hash = file_sha256(world)
         cmd = [
             PY,
             "scripts/place_solve.py",
             "--clip",
             self.name,
             "--world",
-            str(self.world_spz()),
+            str(world),
             "--cameras",
             str(wdir / "cameras.json"),
             "--scale",
@@ -2102,7 +2147,7 @@ class Pipeline:
         ]
         people = wdir / "people.json"
         cmd += (
-            ["--people", str(people)]
+            ["--people", str(people), "--masks", str(self.ctx / "tracks" / "masks.npz")]
             if people.exists()
             else ["--person", str(wdir / "person" / "sequence.json")]
         )
@@ -2115,6 +2160,9 @@ class Pipeline:
         self.state.record(
             "_placement_solve",
             out=str(out),
+            world=str(world.resolve()),
+            worldSha256=world_hash,
+            reportSha256=file_sha256(out),
             samples=doc["samples"],
             metresPerWorldUnit=doc["metresPerWorldUnit"],
             sizeCheck=sc,
@@ -2146,16 +2194,58 @@ class Pipeline:
         cliffs, clamp boxes, foot residuals, jitter -- inherits that assumption silently.
         """
         out = self.ctx / "anchors.json"
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
+        world = self.world_spz()
+        if not self.placement_is_current(world):
+            raise RuntimeError("placement is not accepted for the current world; rerun place_fit")
+        measured_placement = self.state.data["stages"]["_placement_solve"].copy()
+        cameras = wdir / "cameras.json"
+        placement = wdir / "placement.json"
+        masks = self.ctx / "tracks" / "masks.npz" if (wdir / "people.json").exists() else None
+        observation = world.with_name(world.stem + "-obs.bin")
+        # The observation gate needs a sidecar from these cameras and this registration.
+        # Always rebuild this local measurement rather than accepting a stale shipped sidecar.
+        export = [
+            PY,
+            "scripts/export_observation_confidence.py",
+            "--world",
+            str(world),
+            "--world-dir",
+            str(wdir),
+            "--cameras",
+            str(cameras),
+            "--scale",
+            str(json.loads(placement.read_text())["registrationScale"]),
+            "--out",
+            str(observation),
+        ]
+        if masks is not None:
+            export += ["--masks", str(masks)]
+        run(export, self.ctx / "observation.log", attempts=1)
         cmd = [
             PY,
             "scripts/anchor_checks.py",
             "--clip",
             self.name,
+            "--world-dir",
+            str(wdir),
+            "--world",
+            str(world),
+            "--cameras",
+            str(cameras),
+            "--video",
+            str(self.clip),
+            "--placement",
+            str(placement),
+            "--obs-sidecar",
+            str(observation),
             "--tol",
             str(self.a.ruler_tol),
             "--json-out",
             str(out),
         ]
+        if masks is not None:
+            cmd += ["--masks", str(masks)]
         if self.a.ruler_vlm:
             cmd += ["--ruler-arg=--vlm"]
         if self.a.allow_weak_anchor:
@@ -2170,16 +2260,20 @@ class Pipeline:
         )
         for line in p.stdout.strip().splitlines():
             say(f"   {line}")
+        if p.returncode not in (0, 3):
+            raise RuntimeError(f"scripts/anchor_checks.py itself failed (exit {p.returncode})")
+        doc = json.loads(out.read_text())
+        self.state.record(
+            "_anchors",
+            **doc,
+            worldSha256=measured_placement["worldSha256"],
+            placementSha256=measured_placement["reportSha256"],
+        )
         if p.returncode == 3:
-            doc = json.loads(out.read_text()) if out.exists() else {}
             raise RuntimeError(
                 f"anchor checks failed: {', '.join(doc.get('failed', ['unknown']))}. "
                 f"See {out}. Pass --allow-weak-anchor to record the failure and go on."
             )
-        if p.returncode != 0:
-            raise RuntimeError(f"scripts/anchor_checks.py itself failed (exit {p.returncode})")
-        if out.exists():
-            self.state.record("_anchors", **json.loads(out.read_text()))
 
     def finetune(self):
         """Export fitted camera/Pi3X anchors, train once on the configured host, and render figures.
@@ -2204,7 +2298,7 @@ class Pipeline:
                 PY,
                 "scripts/finetune_export.py",
                 "--world",
-                str(self.world_spz()),
+                str(self.base_world_spz()),
                 "--cameras",
                 str(self.cameras()),
                 "--anchors",
@@ -2290,7 +2384,7 @@ class Pipeline:
                 "--npz",
                 str(runs / "finetuned.npz"),
                 "--world",
-                str(self.world_spz()),
+                str(self.base_world_spz()),
                 "--out",
                 str(out),
             ],
@@ -2324,14 +2418,15 @@ class Pipeline:
         reading the wrong path is why this printed nothing for six consecutive runs.
         """
         out = {}
-        for suffix in ("clean", "image", "multi"):
-            wj = MARBLE_DIR / f"{self.name}-{suffix}-world.json"
-            if not wj.exists():
-                continue
+        suffix = WORLD_SUFFIXES.get(self.marble)
+        wj = MARBLE_DIR / f"{self.name}-{suffix}-world.json"
+        if suffix and wj.is_file():
             w = json.loads(wj.read_text())
             meta = ((w.get("assets") or {}).get("splats") or {}).get("semantics_metadata") or {}
             msf = meta.get("metric_scale_factor") or w.get("metric_scale_factor")
-            gpo = meta.get("ground_plane_offset") or w.get("ground_plane_offset")
+            gpo = meta.get("ground_plane_offset")
+            if gpo is None:
+                gpo = w.get("ground_plane_offset")
             if msf:
                 out.update(
                     metricScaleFactor=msf,
@@ -2341,7 +2436,6 @@ class Pipeline:
                     world=w.get("world_id") or w.get("id"),
                     worldUrl=w.get("world_marble_url"),
                 )
-            break
         ply = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if ply.exists():
             body, feet = body_stats(ply)
@@ -2388,15 +2482,12 @@ class Pipeline:
                     {k: (round(v, 4) if isinstance(v, float) else v) for k, v in p.items()}
                 )
             )
-        world = "<world>.spz"
-        for cand in (
-            f"marble-{self.name}-finetuned.spz",
-            f"marble-{self.name}-clean.spz",
-            f"marble-{self.name}-image.spz",
-        ):
-            if (public_dir() / cand).exists():
-                world = "/" + cand
-                break
+        try:
+            world = self.world_spz()
+        except RuntimeError as error:
+            print(f"  viewer unavailable: {error}")
+            print("=" * 78)
+            return
         manifest = public_dir() / "worlds" / f"{self.name}-4d" / "people.json"
         people_arg = ""
         if manifest.exists():
@@ -2418,19 +2509,23 @@ class Pipeline:
             if doc["peopleCount"] > 1:
                 people_arg = f"&people=/worlds/{self.name}-4d/people.json"
         base = (
-            f"\n  http://127.0.0.1:5399/fourd.html?world={world}"
+            f"\n  http://127.0.0.1:5399/fourd.html?world=/{quote(world.relative_to(public_dir()).as_posix())}"
             f"&person=/worlds/{self.name}-4d/person/sequence.json{people_arg}"
             f"&video={self.video_url}"
         )
         if p.get("floor") is not None:
             # fourd.html reads scale before height, and the fitted scale0 is the number to use.
-            print(f"{base}&floor={p['floor']:.4f}&scale={p['fittedScale0']:.4f}")
             ps = self.state.data["stages"].get("_placement_solve")
+            fitted = self.placement_is_current(world) and ps.get("sizeCheck", {}).get("pass_")
+            print(
+                f"{base}&floor={p['floor']:.4f}&scale={p['fittedScale0']:.4f}"
+                + ("&place=1" if fitted else "")
+            )
             if ps:
                 sc, res = ps["sizeCheck"], ps["residualCm"]
                 print(
-                    "  place: add &place=1 for the per-sample solve "
-                    "(contact residual "
+                    ("  placement applied" if fitted else "  placement not applied")
+                    + " (contact residual "
                     + ", ".join(
                         f"{res['before'][k]['rms']:.1f}->{res['after'][k]['rms']:.1f}"
                         for k in res["before"]
@@ -2496,6 +2591,20 @@ class Pipeline:
             return 1
         forced = set(a.force.split(",")) if a.force else set()
         todo = {s for s in wanted if s in self.stages and (s in forced or not self.state.done(s))}
+        if "place_fit" in wanted and "place_fit" not in todo:
+            try:
+                current = self.placement_is_current(self.world_spz())
+            except RuntimeError:
+                current = False
+            if not current or any(dep in todo for dep in self.deps["place_fit"]):
+                todo.add("place_fit")
+        if "anchors" in wanted and "anchors" not in todo:
+            try:
+                current = self.anchors_are_current(self.world_spz())
+            except RuntimeError:
+                current = False
+            if not current or "place_fit" in todo:
+                todo.add("anchors")
         if "verify" in wanted:
             # Stage success is not an evidence cache: re-import and hash the review on every
             # resume, including legacy verify=ok and changes to source/world/cameras/images.

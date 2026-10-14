@@ -131,15 +131,26 @@ PRESET_SCALE0 = {
 }
 
 
-def resolve_paths(clip_name, world=None, depth=None, cameras=None, video=None):
+def resolve_paths(clip_name, world=None, depth=None, cameras=None, video=None, world_dir=None):
     """Resolve inputs without changing the historical clips' measurement frame.
 
     --depth names the Pi3X directory or an anchor/depth file within it. The ruler
     uses its companion cameras.json; it does not measure the anchor cloud itself.
     Placement remains in the published world directory, separate from raw Pi3X.
     """
+    for label, path in (("world", world), ("cameras", cameras), ("video", video)):
+        if path is not None and not Path(path).is_file():
+            raise ValueError(f"--{label} is not a file: {path}")
+    if depth is not None and not Path(depth).exists():
+        raise ValueError(f"--depth does not exist: {depth}")
+    if world_dir is not None and not Path(world_dir).is_dir():
+        raise ValueError(f"--world-dir is not a directory: {world_dir}")
     legacy = CLIPS.get(clip_name)
-    wdir = ROOT / legacy[1] if legacy else ROOT / "public" / "worlds" / f"{clip_name}-4d"
+    wdir = (
+        Path(world_dir)
+        if world_dir is not None
+        else (ROOT / legacy[1] if legacy else ROOT / "public" / "worlds" / f"{clip_name}-4d")
+    )
     if world is None:
         if legacy:
             world = ROOT / legacy[0]
@@ -162,6 +173,10 @@ def resolve_paths(clip_name, world=None, depth=None, cameras=None, video=None):
         if depth is not None:
             depth_dir = depth if depth.is_dir() else depth.parent
             cameras = depth_dir / "cameras.json"
+        elif world_dir is not None:
+            cameras = wdir / "cameras.json"
+            if not cameras.is_file():
+                raise ValueError(f"no packaged cameras at {cameras}; pass --cameras")
         else:
             # a run's packaged cameras.json is the frame the viewer and placement.json use (levelled
             # by frame_align); the raw Pi3X one is the fallback for a run that never packaged
@@ -171,7 +186,7 @@ def resolve_paths(clip_name, world=None, depth=None, cameras=None, video=None):
             ) / "cameras.json"
             if not legacy and packaged.is_file():
                 cameras = packaged
-    elif (cameras.parent / "placement.json").is_file():
+    elif world_dir is None and (cameras.parent / "placement.json").is_file():
         # Preserve the existing explicit-camera mode for self-contained exports.
         wdir = cameras.parent
     if video is None:
@@ -858,11 +873,20 @@ def frames_for(cams, n):
     return [cams[i] for i in dict.fromkeys(idx.tolist())]
 
 
-def person_masks_for(clip_name: str, ds_shape=None):
+def person_masks_for(clip_name: str, ds_shape=None, *, masks=None, world_dir=None, dilate=True):
     """Per-source-frame person masks, when the tracking stage left any on disk."""
     import cv2
 
-    p = ROOT / ".context" / "mp" / clip_name / "tracks" / "masks.npz"
+    if world_dir is not None and masks is None:
+        # An explicit run must not inherit another candidate's historical tracking cache.
+        return None
+    p = (
+        Path(masks)
+        if masks is not None
+        else ROOT / ".context" / "mp" / clip_name / "tracks" / "masks.npz"
+    )
+    if masks is not None and not p.is_file():
+        raise ValueError(f"--masks is not a file: {p}")
     if not p.exists():
         # the single-person pipeline caches Mask R-CNN masks per world instead (motion_audit.py)
         for wd in (ROOT / ".context" / "pose" / "masks").glob(f"{clip_name}-4d*.npz"):
@@ -876,6 +900,18 @@ def person_masks_for(clip_name: str, ds_shape=None):
             return out
         return None
     z = np.load(p)
+    if "masks" in z.files:
+        if "indices" not in z.files:
+            raise ValueError(f"person masks require source-frame indices: {p}")
+        shape = tuple(int(v) for v in z["shape"])
+        decoded = np.unpackbits(z["masks"], axis=-1)[..., : shape[2]].reshape(shape).astype(bool)
+        out = {int(index): decoded[k] for k, index in enumerate(z["indices"])}
+        return {
+            k: cv2.dilate(v.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+            if dilate
+            else v
+            for k, v in out.items()
+        }
     fh, fw, ms = z["shape"]
     h, w = int(round(fh * ms)), int(round(fw * ms))
     tdirs = sorted((p.parent).glob("track_*"))
@@ -883,6 +919,16 @@ def person_masks_for(clip_name: str, ds_shape=None):
     for td in tdirs:
         for f in json.loads((td / "motion.json").read_text())["frames"]:
             src.setdefault(f["sample"], f["sourceIndex"])
+    if world_dir is not None and (Path(world_dir) / "people.json").is_file():
+        described = json.loads((Path(world_dir) / "people.json").read_text())
+        for sample, index in enumerate(described.get("sourceIndices", [])):
+            if sample in src and src[sample] != index:
+                raise ValueError(
+                    f"tracking and packaged source indices disagree at sample {sample}"
+                )
+            src[sample] = index
+    if masks is not None and not src:
+        raise ValueError(f"tracking masks have no source-frame mapping: {p}")
     out = {}
     for k in z.files:
         if k == "shape":
@@ -895,7 +941,7 @@ def person_masks_for(clip_name: str, ds_shape=None):
         out[fi] = out[fi] | m if fi in out else m
     # dilate a little: the mask is tight and the person's shadow edge is not world geometry
     return {
-        k: cv2.dilate(v.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+        k: cv2.dilate(v.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool) if dilate else v
         for k, v in out.items()
     }
 
@@ -908,6 +954,9 @@ def main():
         "--clip", required=True, help="clip name in run_clip.py's layout, or a historical clip"
     )
     ap.add_argument("--world", type=Path, help="override the Marble world SPZ")
+    ap.add_argument("--world-dir", type=Path, help="packaged world directory for this run")
+    ap.add_argument("--placement", type=Path, help="placement report for this run")
+    ap.add_argument("--masks", type=Path, help="tracking or tight masks with source-frame mapping")
     ap.add_argument(
         "--depth",
         type=Path,
@@ -959,10 +1008,15 @@ def main():
     a = ap.parse_args()
 
     try:
-        world, wdir, cams_json, clip = resolve_paths(a.clip, a.world, a.depth, a.cameras, a.video)
+        world, wdir, cams_json, clip = resolve_paths(
+            a.clip, a.world, a.depth, a.cameras, a.video, a.world_dir
+        )
+        for label, path in (("placement", a.placement), ("masks", a.masks)):
+            if path is not None and not path.is_file():
+                raise ValueError(f"--{label} is not a file: {path}")
     except ValueError as e:
         ap.error(str(e))
-    pj = wdir / "placement.json"
+    pj = a.placement or wdir / "placement.json"
     place = json.loads(pj.read_text()) if pj.exists() else {}
     scale0 = a.scale0 if a.scale0 is not None else place.get("registrationScale")
     mpu_person = a.mpu_person if a.mpu_person is not None else place.get("metresPerWorldUnit")
@@ -988,7 +1042,7 @@ def main():
             str(clip),
             scale0,
             [c["sourceIndex"] for c in pick],
-            person_masks=person_masks_for(a.clip),
+            person_masks=person_masks_for(a.clip, masks=a.masks, world_dir=a.world_dir),
             ds=a.ds,
             device=a.metric_device,
             model_id=a.metric_model,
@@ -1008,7 +1062,7 @@ def main():
                 str(clip),
                 mpu_person,
                 scale0,
-                person_masks=person_masks_for(a.clip),
+                person_masks=person_masks_for(a.clip, masks=a.masks, world_dir=a.world_dir),
                 ds=a.ds,
                 device=a.metric_device,
                 model_id=a.metric_model,
@@ -1037,6 +1091,13 @@ def main():
     doc = dict(
         clip=a.clip,
         world=str(world),
+        inputs=dict(
+            worldDir=str(wdir),
+            cameras=str(cams_json),
+            video=str(clip),
+            placement=str(pj),
+            masks=str(a.masks) if a.masks else None,
+        ),
         scale0=scale0,
         mpuPerson=mpu_person,
         rotfix=(
