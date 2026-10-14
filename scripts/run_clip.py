@@ -31,6 +31,7 @@ import argparse, fcntl, hashlib, json, math, os, re, shutil, subprocess, sys, te
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
+from package_source_audio import source_audio_manifest
 from stage_attempts import StageAttempts, command_identity
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1449,6 +1450,9 @@ class Pipeline:
 
     def package(self):
         out = public_dir() / "worlds" / f"{self.name}-4d"
+        seq = json.loads((self.ctx / "lhm-motion" / "sequence.json").read_text())
+        duration = seq["duration"] if "duration" in seq else len(seq["frames"]) / seq.get("fps", 12)
+        source_audio_manifest(self.clip, duration, out)
         shutil.rmtree(out, ignore_errors=True)
         run(
             [
@@ -1467,7 +1471,6 @@ class Pipeline:
 
     def package_people(self):
         out = public_dir() / "worlds" / f"{self.name}-4d"
-        shutil.rmtree(out, ignore_errors=True)
         motions = []
         for i in range(self.people_limit):
             folder = self.ctx / f"lhm-motion-{i:02d}"
@@ -1475,6 +1478,9 @@ class Pipeline:
                 motions += ["--motion", f"{i}={folder}"]
         if not motions:
             raise RuntimeError("no per-track animation finished")
+        tracks = json.loads((self.ctx / "tracks" / "tracks.json").read_text())
+        source_audio_manifest(self.clip, tracks["duration"], out)
+        shutil.rmtree(out, ignore_errors=True)
         run(
             [
                 PY,

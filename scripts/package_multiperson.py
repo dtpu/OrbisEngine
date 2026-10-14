@@ -37,6 +37,7 @@ from package_person_sequence import (  # noqa: E402
     quat_mul,
 )
 from sfm_frame import camera0_reframe, describe as describe_frame  # noqa: E402
+from package_source_audio import source_audio_manifest  # noqa: E402
 
 
 def body_stats(ply):
@@ -152,8 +153,9 @@ def main():
         a.shared_scale = "floor"
 
     out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
     tracks_doc = json.loads((Path(a.tracks) / "tracks.json").read_text())
+    audio = source_audio_manifest(a.clip, tracks_doc["duration"], out)
+    out.mkdir(parents=True, exist_ok=True)
     quality = {t["track"]: t["quality"] for t in tracks_doc["tracks"]}
 
     cams = json.loads(Path(a.cameras).read_text())
@@ -476,6 +478,7 @@ def main():
         "?person=<world>/person/sequence.json still loads exactly one person.",
     )
     (out / "people.json").write_text(json.dumps(manifest, indent=1))
+    (out / "audio.json").write_text(json.dumps(audio, indent=2))
     print(
         json.dumps(
             dict(

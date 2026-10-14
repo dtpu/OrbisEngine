@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 
 import package_person_motion
+from package_source_audio import source_audio_manifest
 from sfm_frame import camera0_reframe, describe as describe_frame
 from plyfile import PlyData, PlyElement
 
@@ -106,8 +107,10 @@ def main():
     motion = Path(a.motion)
     out = Path(a.out)
     person = out / "person"
-    person.mkdir(parents=True, exist_ok=True)
     seq = json.loads((motion / "sequence.json").read_text())
+    duration = seq["duration"] if "duration" in seq else len(seq["frames"]) / seq.get("fps", 12)
+    audio = source_audio_manifest(a.clip, duration, out)
+    person.mkdir(parents=True, exist_ok=True)
     cams = json.loads(Path(a.cameras).read_text())
     # world -> the packaged frame: camera 0 at the origin, gravity on +y when the run's framealign.json
     # exists beside cameras.json, camera 0's own axes otherwise (scripts/sfm_frame.py)
@@ -175,6 +178,7 @@ def main():
     )
     (person / "sequence.json").write_text(json.dumps(seq_out, indent=2))
     motion_track = add_motion_track(person)
+    (out / "audio.json").write_text(json.dumps(audio, indent=2))
     print(
         json.dumps(
             dict(

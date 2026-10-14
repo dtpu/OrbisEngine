@@ -41,9 +41,10 @@ thread logs an EOF message; only a checksum continuation from the same filter in
 that row. Missing, displaced or conflicting records still fail before paid submission.
 
 Avatar input selection retains its front-facing preference when that produces a positive score.
-When only the existing any-facing quality score is positive, it uses that ranking and records the
-fallback in the log and prepared metadata; back views no longer tie at zero and select the first
-record accidentally. An explicit source-frame request must exist in the track, and an empty track
+When no front-facing score is positive, positive-quality candidates are ranked by projected-joint
+coverage before the existing quality score, with the fallback recorded in prepared metadata. This
+avoids preferring a larger cropped torso to a more complete back view. Explicit any-facing mode
+retains its quality ranking. Projected coverage is a selection heuristic, not observed body coverage. An explicit source-frame request must exist in the track, and an empty track
 fails before image preparation. These checks establish selection behavior, not avatar fidelity.
 
 Placement and anchor regressions use separate run/output roots. The runner passes exact world,
@@ -158,9 +159,56 @@ below the noise floor. Width depends on avatar shape and is not an independent r
 prototype remains outside the production runner; this candidate is rejected. Evidence is in
 `.context/evidence/production-readiness/width-quality.json` and `width-placement-browser/`.
 
+## Fresh source integration check, 2026-10-14
+
+After explicit approval for four Modal calls within a $10 allowance, candidate
+`tos-fresh-source-20261014-01` rebuilt cameras, tracking, canonical appearance and animation from
+the same six-second source, reusing the existing world. The workspace usage limit was temporarily
+lowered to $9 with separate headroom and restored to its previous $100 after all four owned apps
+stopped. No paid retries, replacement world, placement fit, quality promotion or publication ran.
+The provider calls used the reviewed implementation at `e60c543`; the local audio packaging
+repair described below was discovered during the viewer check afterward.
+
+The fresh track contains 75/75 distinct source samples. Camera continuity passed, and the camera,
+source and canonical hashes bind the animation to its inputs. The finalized canonical and motion
+checkpoints contain 13 and 83 verified files respectively. All 75 animation PLYs contain 40,000
+finite splats; exported poses equal the 75 saved tracker seeds, without missing-pose recovery,
+pose interpolation or duplicate output frame hashes. Local canonical tensor inspection could
+not import a required model module, so that check remains unverified; the worker loaded the
+checkpoint successfully. These are interface and internal-consistency checks, not pose accuracy.
+
+The original fallback chose source frame 28 with the legs cropped. The general coverage ranking
+selected frame 185, whose source and mask visibly include both boots. A native-camera Gaussian
+render preserves the observed back-view clothing; hidden front/face appearance remains inferred.
+All 75 tracked body bounds still project below the image. Their internal 2D/3D consistency does
+not resolve that disagreement with visible source pixels.
+
+The real viewer loaded the 799,996-splat world, all 75 fresh animation frames and the 6.233-second
+source; seeking and playback advanced together without request or uncaught JavaScript failures.
+The first check exposed missing audio metadata: Vite returned HTML for absent `audio.json`, and
+the silent clip offered an enable-sound control. Both person packagers now probe the actual input
+streams and emit source-audio metadata with the package timeline. This describes embedded audio
+availability; it does not synthesize sound or certify soundtrack timing or speaker identity. The
+repackaged scene reports no audio error and disables its “No soundtrack available” control; all
+75 person frame hashes are unchanged. Conflicting authored audio manifests are refused before
+either a direct packager or the runner changes the destination.
+
+The candidate remains rejected for reconstruction quality. Read-only raw silhouette measurements
+at 12 source samples give mean IoU 0.836 and mean area ratio 1.123, but only 7/12 samples lie within
+0.85–1.15 and the final sample reaches 1.302. Person-only native-camera views confirm the late
+silhouette/boot mismatch. Unfitted world views do not align with the source scene. No new placement
+or contact acceptance was measured; the earlier failed placement remains failed. The source is
+silent and no headset test was performed.
+
+Private receipts, numeric audits, raw measurements and viewer screenshots are retained under
+`.context/evidence/production-readiness/tos-fresh-source-20261014-01/`. Generated media and provider
+credentials are not committed. The shared ledger now exhausts the ordinary camera and animation
+allowances for this original source; candidate renaming does not reset them.
+
 ## Remaining boundaries
 
-- Fresh inference needs confirmed spending controls and compatible model caches. World generation
+- The bounded fresh Modal check above verified its selected workspace and models. New inference
+  still requires an applicable budget and remaining shared attempt allowance. World generation
   additionally needs verified World Labs/OpenAI access; existing demo worlds must be reused.
 - The directory ledger bounds paid attempts; it is not a cross-provider dollar meter. The API
   refuses custom monetary/run budgets that this runner cannot enforce.

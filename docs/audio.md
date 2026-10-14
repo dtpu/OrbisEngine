@@ -24,6 +24,17 @@ The viewer discovers `audio.json` next to `people.json`, or in the world directo
 
 The timeline duration must match the viewer's people/sequence duration within 0.1 seconds. A track's sample zero occurs at `offsetSeconds` on the clip timeline, so sample time equals clip time minus offset. Trim original audio against the same original-video edit, retaining matching silence and verifying offsets. URLs resolve relative to `audio.json`. Additional provenance fields are allowed. Optional `provenance.attribution`, `provenance.license`, and `provenance.licenseUrl` show a visible audio excerpt credit while the original mix is selected; license links accept only HTTP(S) URLs. The recovered TOS package uses this credit for Blender Foundation's CC BY 3.0 source. Keep media and manifests in gitignored `public/worlds/<clip>-4d/` or `public/clips/audio/`; publish through the existing shared-assets snapshot only when authorized. PCM WAV and MP3 MIME entries already exist. No keys belong in manifests or client code. The attribution strip is currently shown only in original mode; it does not render per-stem credits or remain visible in spatial mode.
 
+The single-person and multiperson packagers probe the supplied local video with `ffprobe` and
+write a minimal `audio.json` containing its embedded-audio availability, SHA-256 and the package
+playback duration. Silent videos therefore show “No soundtrack available”; videos with an audio
+stream keep their original embedded soundtrack. A failed or malformed probe stops packaging
+before package files are written instead of guessing that the clip is silent.
+
+An identical generated manifest can be reused. An existing manifest with different content,
+including authored external audio or reviewed stems, stops packaging before it changes the
+package. The runner performs the same check before deleting a destination for a rebuild. Use a fresh output directory and explicitly review/preserve that authored audio;
+copying it to a different source does not establish matching words or timing.
+
 ## Reviewed character dialogue
 
 Extend the package with `spatialMixComplete: true` and `tracks`. Each concurrent character needs an independent mono signal. An isolated dialogue stem with non-overlapping turns can be prepared as separate speaker files offline, preserving timing and tails. A raw stereo channel or arbitrary time slice of a full mix is not proof of an isolated speaker.
