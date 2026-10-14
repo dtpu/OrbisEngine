@@ -12,6 +12,10 @@ often a back view, because shoulder spread is the same from behind. This adds th
   the body faces the lens. Checked against a frame read by eye (elevator track 1, sample 85, a
   3/4 front view) which scores -0.63; back views of the same clip score around +0.8.
 
+When no sample has a positive facing-weighted fit, positive base-quality scores use the existing
+any-facing ranking, recorded as facingPreferenceAvailable=false and any-facing-fallback. These
+selection heuristics do not establish the chosen frame's appearance or full-body visibility.
+
 The mask then comes from Mask R-CNN restricted to this track's box, so a two-person frame yields
 the right identity instead of whichever person Mask R-CNN scored higher.
 """
@@ -43,10 +47,12 @@ def rank(records, prefer_front=True):
         facing = max(0.0, -forward_z) if prefer_front else 1.0
         full = 1.0 if all(r["jointProjectionInImage"]) else 0.2
         clear = 1.0 - float(r.get("occludedFraction", 0.0))
+        base_fit = spread * r["heightFraction"] * r["score"] * full * clear
         fit = facing * spread * r["heightFraction"] * r["score"] * full * clear
         out.append(
             dict(
                 fit=fit,
+                anyFacingFit=base_fit,
                 sample=r["sample"],
                 sourceIndex=r["sourceIndex"],
                 forwardZ=forward_z,
@@ -58,6 +64,20 @@ def rank(records, prefer_front=True):
                 box=r["maskBox"],
             )
         )
+    facing_available = any(r["anyFacingFit"] * max(0.0, -r["forwardZ"]) > 0 for r in out)
+    fallback = prefer_front and not facing_available and any(r["anyFacingFit"] > 0 for r in out)
+    if not prefer_front:
+        policy = "any-facing"
+    elif facing_available:
+        policy = "preferred-facing"
+    elif fallback:
+        policy = "any-facing-fallback"
+    else:
+        policy = "no-positive-quality-score"
+    for r in out:
+        if fallback:
+            r["fit"] = r["anyFacingFit"]
+        r.update(facingPreferenceAvailable=facing_available, selectionPolicy=policy)
     out.sort(key=lambda d: -d["fit"])
     return out
 
@@ -80,12 +100,18 @@ def main():
 
     tracks = Path(a.tracks)
     records = json.loads((tracks / f"track_{a.track:02d}" / "motion.json").read_text())["frames"]
+    if not records:
+        ap.error(f"track {a.track} has no frames to prepare")
+    if a.frame is not None and not any(r["sourceIndex"] == a.frame for r in records):
+        ap.error(f"source frame {a.frame} is not present in track {a.track}")
     ranked = rank(records, prefer_front=not a.any_facing)
     chosen = (
-        next((r for r in ranked if r["sourceIndex"] == a.frame), ranked[0])
-        if a.frame is not None
-        else ranked[0]
+        next(r for r in ranked if r["sourceIndex"] == a.frame) if a.frame is not None else ranked[0]
     )
+    if a.frame is not None:
+        chosen = dict(
+            chosen, selectionPolicy="explicit-frame", rankingPolicy=chosen["selectionPolicy"]
+        )
     x0, y0, x1, y1 = chosen["box"]
     px, py = (x1 - x0) * a.pad, (y1 - y0) * a.pad
     box = f"{x0 - px:.0f},{y0 - py:.0f},{x1 + px:.0f},{y1 + py:.0f}"

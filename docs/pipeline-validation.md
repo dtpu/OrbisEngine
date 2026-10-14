@@ -36,6 +36,12 @@ variable frame rates and duplicated samples. FFmpeg can split a diagnostic row w
 thread logs an EOF message; only a checksum continuation from the same filter instance completes
 that row. Missing, displaced or conflicting records still fail before paid submission.
 
+Avatar input selection retains its front-facing preference when that produces a positive score.
+When only the existing any-facing quality score is positive, it uses that ranking and records the
+fallback in the log and prepared metadata; back views no longer tie at zero and select the first
+record accidentally. An explicit source-frame request must exist in the track, and an empty track
+fails before image preparation. These checks establish selection behavior, not avatar fidelity.
+
 Placement and anchor regressions use separate run/output roots. The runner passes exact world,
 camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead
 of selecting a historical demo. The size gate evaluates the final silhouette fit, and the printed
@@ -125,6 +131,12 @@ no complete-body height. This is a tracker-derived classification, not proof tha
 never shows the feet: at six seconds the boots are visible, with mask bottom near pixel 518
 in a 534-pixel image while the projected body extends to about pixel 562. The disagreement
 requires investigation of the tracked geometry; the resulting placement is still rejected.
+Reprojecting all 75 retained sets of 3D foot joints through their source intrinsics matches the
+stored 2D predictions within 0.86 pixels. The padding/intrinsics conversion also matches the
+pinned estimator's contract. This rules out a large post-model export shift; 2D and 3D predictions
+are internally consistent but do not establish agreement with the visible boots. Animation fixes
+canonical body shape while its motion-joint labels retain the original per-frame shape estimates,
+so those labels are not independent measurements of the animated body's geometry either.
 
 A read-only comparison isolates the placement contribution. At source frames 0, 90 and 185,
 the raw packaged person's silhouette IoU is 0.873, 0.816 and 0.718. With the crop-aware
