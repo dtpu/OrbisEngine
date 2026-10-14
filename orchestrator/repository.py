@@ -620,7 +620,7 @@ class PipelineRepository:
             {"attemptId": attempt_id, "status": status, "error": error},
         )
 
-    def reopen_run(self, run_id: str) -> bool:
+    def reopen_run(self, run_id: str, *, resume_canceled: bool = False) -> bool:
         """Mark a finished run running again, for a scheduler that has just taken it over.
 
         A run resumed after it ended -- because a stage produced the wrong thing, or because a
@@ -632,6 +632,8 @@ class PipelineRepository:
             if run is None:
                 raise KeyError(f"unknown run: {run_id}")
             if run.status == "running":
+                return False
+            if run.status == "canceled" and not resume_canceled:
                 return False
             run.status = "running"
             run.updated_at = datetime.now(timezone.utc)
@@ -645,6 +647,8 @@ class PipelineRepository:
             run = session.get(RunRecord, run_id, with_for_update=True)
             if run is None:
                 raise KeyError(f"unknown run: {run_id}")
+            if run.status == "canceled" and status != "canceled":
+                return
             run.status = status
             run.updated_at = datetime.now(timezone.utc)
         self.append_event(run_id, EventType.RUN, run_id, {"status": status})
