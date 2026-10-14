@@ -61,13 +61,35 @@ and how much is foot-detection noise". A floor on lam keeps the residual jerk un
 Outputs `placement.json` beside the person manifest. fourd.html reads it only under `?place=1`.
 """
 
-import argparse, json, sys
+import argparse, json, os, sys
 from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT))
 from bake_video_colours import read_spz  # noqa: E402
+from orchestrator.config import resolve_runs_root  # noqa: E402
+
+
+def tracked_masks_path(clip: str, explicit: Path | None = None) -> Path:
+    """Use this run's measurements; an explicitly required file must not silently disappear."""
+    if explicit is not None:
+        path = explicit.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Tracked masks are missing: {path}; rerun the tracking stage")
+        return path
+    return resolve_runs_root(os.environ.get("WANDER_RUNS_DIR")) / clip / "tracks" / "masks.npz"
+
+
+def require_valid_size(size_check: dict, enabled: bool) -> None:
+    """Gate the final body scale, including changes made by the silhouette fit."""
+    if enabled and not size_check["pass_"]:
+        raise SystemExit(
+            "SIZE CHECK FAILED after placement: assuming a 1.70 m person, the source camera "
+            f"is {size_check['cameraHeightM']:.2f} m above the floor (expected 1.15–1.85). "
+            "Inspect the saved placement report and verify the world scale before continuing."
+        )
 
 
 # ---------------------------------------------------------------- io
@@ -485,25 +507,69 @@ def silhouette_fit(
     not an exact constraint. Missing/cropped measurements do not invent a complete body height.
     Tables follow each sequence's sourceIndices (including gaps), never its manifest offset.
     """
-    from silhouette_rows import load_track_masks, mask_rows, cam_matrices, avatar_rows
+    from silhouette_rows import (
+        load_track_masks,
+        load_track_motion,
+        mask_rows,
+        cam_matrices,
+        avatar_rows,
+    )
 
     masks, _hw, ms = load_track_masks(masks_path)
     by_src = {c["sourceIndex"]: c for c in cameras}
     result = {}
     for pi, (tid, frames, tr, _low, seq) in enumerate(feats):
+
+        def measured_rows(points, data, phase):
+            context = f"track {tid}, sourceIndex {data['sourceIndex']}, {phase}"
+            if not all(
+                np.isfinite(value).all() for value in (points, data["R"], data["C"], data["K"])
+            ):
+                raise ValueError(
+                    f"{context}: invalid silhouette projection (nonfinite geometry/camera)"
+                )
+            rows = avatar_rows(points, data["R"], data["C"], data["K"])
+            if rows is None:
+                raise ValueError(
+                    f"{context}: insufficient in-front splats for silhouette projection"
+                )
+            try:
+                values = np.asarray([rows[key] for key in ("top", "bottom", "zMedian")], float)
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"{context}: invalid silhouette projection row measurements"
+                ) from error
+            if (
+                values.shape != (3,)
+                or not np.isfinite(values).all()
+                or values[1] < values[0]
+                or values[2] <= 0
+            ):
+                raise ValueError(
+                    f"{context}: invalid silhouette projection (nonfinite/unordered rows or depth)"
+                )
+            return rows
+
         man = tracks[pi][3]
         if not man:
             continue
         person = next(p for p in man["people"] if p["id"] == tid)
         samples = {s: i for i, s in enumerate(man["sourceIndices"])}
+        motion = load_track_motion(masks_path, person["track"])
+        cropped_top = cropped_bottom = 0
         data = []
         for fi, (fr, src) in enumerate(zip(frames, seq["sourceIndices"])):
             cam = by_src.get(src)
-            mask = masks.get(person["track"], {}).get(samples.get(src))
+            record = motion.get(src) if motion is not None else None
+            sample = samples.get(src) if motion is None else record["sample"] if record else None
+            mask = masks.get(person["track"], {}).get(sample)
             if cam is None or mask is None:
                 data.append(None)
                 continue
-            mr = mask_rows(mask, ms, cam["source_image_size"][1])
+            mr = mask_rows(mask, ms, cam["source_image_size"][1], record["box"] if record else None)
+            if mr is not None:
+                cropped_top += mr["croppedTop"]
+                cropped_bottom += mr["croppedBottom"]
             if mr is None or (mr["croppedTop"] and mr["croppedBottom"]):
                 data.append(None)
                 continue
@@ -517,7 +583,19 @@ def silhouette_fit(
             w = normal - normal.dot(u) * u
             w /= max(np.linalg.norm(w), 1e-9)
             data.append(
-                dict(P=P, F=F, R=R, C=C, K=K, mask=mr, u=u, w=w, contact=foot["res"], depth=depth)
+                dict(
+                    P=P,
+                    F=F,
+                    R=R,
+                    C=C,
+                    K=K,
+                    mask=mr,
+                    u=u,
+                    w=w,
+                    contact=foot["res"],
+                    depth=depth,
+                    sourceIndex=src,
+                )
             )
         if sum(d is not None for d in data) < 3:
             continue
@@ -541,13 +619,15 @@ def silhouette_fit(
                     continue
                 D = x[2 * i] * d["u"] + x[2 * i + 1] * d["w"]
                 body = (d["P"] - d["F"]) * np.exp(x[-1])
-                ar = avatar_rows(d["F"] + body + D, d["R"], d["C"], d["K"])
+                ar = measured_rows(d["F"] + body + D, d, "base")
                 eps = max(1e-5, d["depth"] * 0.001)
                 jac = []
-                for direction in (d["u"], d["w"]):
-                    other = avatar_rows(d["F"] + body + D + eps * direction, d["R"], d["C"], d["K"])
+                for name, direction in (("u", d["u"]), ("w", d["w"])):
+                    other = measured_rows(
+                        d["F"] + body + D + eps * direction, d, f"{name} perturbation"
+                    )
                     jac.append([(other[k] - ar[k]) / eps for k in ("top", "bottom")])
-                other = avatar_rows(d["F"] + body * np.exp(0.001) + D, d["R"], d["C"], d["K"])
+                other = measured_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
                 jac.append([(other[k] - ar[k]) / 0.001 for k in ("top", "bottom")])
                 jac = np.array(jac).T
                 mr = d["mask"]
@@ -594,7 +674,13 @@ def silhouette_fit(
                         )
                     equations.append(row)
                     targets.append(-row.dot(x))
-            step, *_ = np.linalg.lstsq(np.array(equations), np.array(targets), rcond=None)
+            matrix, residuals = np.array(equations), np.array(targets)
+            context = f"track {tid}, sourceIndices {seq['sourceIndices']}"
+            if not np.isfinite(matrix).all() or not np.isfinite(residuals).all():
+                raise ValueError(f"{context}: nonfinite silhouette fit equations")
+            step, *_ = np.linalg.lstsq(matrix, residuals, rcond=None)
+            if not np.isfinite(step).all():
+                raise ValueError(f"{context}: nonfinite silhouette fit step")
             # Trust region: never cross the camera in a single linearisation.
             cap = min(d["depth"] for d in basis) * 0.2
             step *= min(1.0, cap / max(np.abs(step).max(), 1e-9))
@@ -610,7 +696,7 @@ def silhouette_fit(
         for i, d in enumerate(data):
             if d is None:
                 continue
-            ar = avatar_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d["R"], d["C"], d["K"])
+            ar = measured_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "final")
             if not d["mask"]["croppedTop"] and not d["mask"]["croppedBottom"]:
                 heights.append(
                     (ar["bottom"] - ar["top"]) / (d["mask"]["bottom"] - d["mask"]["top"])
@@ -624,6 +710,17 @@ def silhouette_fit(
             sizeScale=size,
             sourceIndices=seq["sourceIndices"],
             measuredFrames=len(contacts),
+            croppedTopFrames=cropped_top,
+            croppedBottomFrames=cropped_bottom,
+            measurementProvenance=dict(
+                masks=str(masks_path),
+                sampleMapping="tracker sourceIndex to sample"
+                if motion is not None
+                else "manifest order (legacy motion metadata absent)",
+                cropBounds="mask boundary plus projected body bounds (censoring only)"
+                if motion is not None
+                else "mask boundary only (legacy motion metadata absent)",
+            ),
             heightRatioMedian=float(np.median(heights)) if heights else None,
             contactResidualUnits=contacts,
             edgeResidualsPx=edge_errors,
@@ -675,16 +772,17 @@ def main():
     ap.add_argument(
         "--masks",
         type=Path,
-        help="tracked masks.npz; defaults to .context/run/<clip>/tracks/masks.npz",
+        help="tracked masks.npz; defaults to the configured runs root/<clip>/tracks/masks.npz",
     )
     ap.add_argument("--measure-only", action="store_true")
     ap.add_argument("--scale", type=float, default=None, help="override the registration scale")
     ap.add_argument("--floor", type=float, default=None)
     a = ap.parse_args()
+    masks_path = tracked_masks_path(a.clip, a.masks)
     if a.world:
-        rel = lambda q: (
-            str(Path(q).resolve().relative_to(ROOT)) if Path(q).is_absolute() else str(q)
-        )
+        # Explicit run/output roots may be outside this checkout. ROOT / an absolute path
+        # preserves that path, so no repository-relative conversion is necessary.
+        rel = lambda q: str(Path(q).expanduser().resolve())
         cfg = dict(
             world=rel(a.world),
             base=rel(a.world),
@@ -883,7 +981,7 @@ def main():
         ),
     )
     print(
-        f"  SIZE CHECK: source camera {camM:.2f} m above the floor (want 1.15-1.85), "
+        f"  INITIAL SIZE CHECK: source camera {camM:.2f} m above the floor (want 1.15-1.85), "
         f"room {f2c:.2f} m floor to ceiling ({'plausible' if ceil_ok else 'IMPLAUSIBLE'}) "
         f"-> {'PASS' if size_ok else 'FAIL'}",
         flush=True,
@@ -898,7 +996,7 @@ def main():
         # avatar, and the avatar shrinks as the scale drops, so the height in metres goes as 1/scale
         want = 1.45 / camM
         msg = (
-            f"SIZE CHECK FAILED for {a.clip}. Taking the person as 1.70 m makes 1 world unit "
+            f"Initial size is outside the target band for {a.clip}. Taking the person as 1.70 m makes 1 world unit "
             f"{mpu:.3f} m, which puts the handheld source camera {camM:.2f} m above the floor and the "
             f"room {f2c:.2f} m floor to ceiling. One of those is not a real room. A registration "
             f"scale of about {cfg['scale'] / want:.4f} (x{1 / want:.2f}) would put the camera at 1.45 m. "
@@ -906,8 +1004,6 @@ def main():
             f"depth map, so a global size error cancels in it. Check the world against something "
             f"real - floor tile pitch, ceiling height, a doorway - before shipping."
         )
-        if a.fail_on_size:
-            sys.exit(msg)
         print("  !! " + msg, flush=True)
 
     nF = max(len(r) for r in rows_per_track)
@@ -939,6 +1035,7 @@ def main():
                 open(a.report, "w"),
                 indent=1,
             )
+        require_valid_size(meta["sizeCheck"], a.fail_on_size)
         return
 
     # ---- ray geometry from the primary track
@@ -1009,7 +1106,7 @@ def main():
         flush=True,
     )
     print(
-        f"    reprojection cost    median {np.median(px):5.1f} px  p90 {np.percentile(px, 90):5.1f} px  (1920 px source)",
+        f"    reprojection cost    median {np.median(px):5.1f} px  p90 {np.percentile(px, 90):5.1f} px  (source pixels)",
         flush=True,
     )
     print(f"    per-person constants {[round(float(x) * mpu * 100, 1) for x in kv]} cm", flush=True)
@@ -1087,7 +1184,6 @@ def main():
         noiseFloor=dict(contactCm=a.sigma_contact_cm, refusals=refusals, ok=not refusals),
         surface=meta,
     )
-    masks_path = a.masks or ROOT / ".context" / "run" / a.clip / "tracks" / "masks.npz"
     if a.silhouette_sigma_px > 0 and masks_path.exists() and cfg["contact"] == "floor":
         fits = silhouette_fit(
             feats,
@@ -1161,6 +1257,7 @@ def main():
             for key in ("medianM", "p10M", "p90M", "endToEndSlopeM"):
                 ct[key] *= factor
             sc["pass_"] = 1.15 <= sc["cameraHeightM"] <= 1.85
+            sc["ceilingPlausible"] = 2.10 <= sc["floorToCeilingM"] <= 3.60
             ct["drifted"] = abs(ct["endToEndSlopeM"]) > 0.20
             ct["verdict"] = (
                 "drift" if ct["drifted"] else "flat in band" if sc["pass_"] else "flat out of band"
@@ -1173,6 +1270,14 @@ def main():
     print(f"\n  wrote {out}", flush=True)
     if a.report:
         json.dump(doc, open(a.report, "w"), indent=1)
+    sc = doc["surface"]["sizeCheck"]
+    print(
+        f"  FINAL SIZE CHECK: {'PASS' if sc['pass_'] else 'FAIL'}; source camera "
+        f"{sc['cameraHeightM'] / 1.70:.3f} body-heights above the floor; "
+        "independent world scale and visual quality still require anchor checks",
+        flush=True,
+    )
+    require_valid_size(doc["surface"]["sizeCheck"], a.fail_on_size)
 
 
 if __name__ == "__main__":

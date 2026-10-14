@@ -23,12 +23,11 @@ CACHE = Path(".context/pose/masks")
 
 
 def seed_boxes(world, cams, seq, hw):
-    src = list(seq["sourceIndices"])
+    frame_by_source = ms.source_frame_paths(seq, (c["sourceIndex"] for c in cams))
     out = {}
     for c in cams:
         fi = c["sourceIndex"]
-        k = int(np.argmin(np.abs(np.array(src) - fi)))
-        v = PlyData.read(Path(world) / "person" / seq["frames"][k])["vertex"].data
+        v = PlyData.read(Path(world) / "person" / frame_by_source[fi])["vertex"].data
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sc = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
         sil = ms.splat_silhouette(xyz, np.asarray(v["opacity"]), sc, c, hw, 8000)

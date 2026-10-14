@@ -128,7 +128,18 @@ class Journal:
                 pending = None
         return pending
 
+    def control_status(self) -> str | None:
+        """An operator cancellation stays in effect until an explicit resume."""
+        for entry in reversed(self.entries()):
+            if entry.kind == "run.resumed":
+                break
+            if entry.kind == "run.finished" and entry.data.get("status") == "canceled":
+                return "canceled"
+        return "paused" if (self.run_dir / "paused").exists() else None
+
     def finished(self) -> str | None:
+        if self.control_status() == "canceled":
+            return "canceled"
         for entry in reversed(self.entries()):
             if entry.kind in {"run.resumed", "step.started"}:
                 return None
@@ -168,7 +179,7 @@ class RunProjection:
     def _apply(self, entry: Entry) -> None:
         data = entry.data
         if entry.kind == "run.resumed":
-            self.repository.reopen_run(self.run_id)
+            self.repository.reopen_run(self.run_id, resume_canceled=True)
         elif entry.kind == "step.started":
             self.repository.reopen_run(self.run_id)
             step = data["step"]

@@ -52,7 +52,7 @@ def runs_needing_work(root: Path) -> list[Path]:
         journal = Journal(run_dir)
         if journal.finished() or journal.unanswered():
             continue
-        if (run_dir / "paused").exists():
+        if journal.control_status():
             continue
         pending.append(run_dir)
     return pending
@@ -84,6 +84,8 @@ def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> str
 
     described = json.loads((run_dir / RUN_FILE).read_text())
     run_id = described["runId"]
+    if status := Journal(run_dir).control_status():
+        return f"{run_id}: {status} by the operator"
     if repository is not None:
         # A run being picked up again is a run being worked on, whatever it last said.
         try:

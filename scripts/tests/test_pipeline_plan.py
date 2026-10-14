@@ -2,6 +2,7 @@
 
 import itertools
 import sys
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -82,3 +83,37 @@ def test_object_detection_and_review_wait_for_required_outputs():
     assert "package_people" in many["objects"]
     assert {"objects", "anchors"} <= set(many["verify"])
     assert "finetune" not in many["verify"]
+
+
+@pytest.mark.parametrize("mode", MARBLE_MODES)
+@pytest.mark.parametrize("many,people", [(False, 1), (True, 1), (True, 3)])
+@pytest.mark.parametrize("objects,finetune", itertools.product((False, True), (False, True)))
+def test_final_world_is_refined_before_placement_and_anchors(mode, many, people, objects, finetune):
+    stages, dependencies = (
+        multiperson_graph(people, mode, objects, finetune)
+        if many
+        else single_graph(mode, objects, finetune)
+    )
+    # A missing dependency or cycle would leave the supervisor unable to finish this graph.
+    ordered = list(TopologicalSorter(dependencies).static_order())
+    assert set(ordered) == set(stages)
+    assert len(stages) == len(set(stages))
+    if mode == "none":
+        assert not {"scale_fit", "finetune", "place_fit", "anchors", "verify"} & set(stages)
+        return
+
+    assert dependencies["place_fit"] == ["scale_fit"] + (["finetune"] if finetune else [])
+    assert dependencies["anchors"] == ["place_fit"]
+    assert dependencies["verify"] == (
+        ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
+    )
+    tail = ["scale_fit"]
+    if finetune:
+        assert dependencies["finetune"] == ["scale_fit"]
+        tail.append("finetune")
+    else:
+        assert "finetune" not in stages
+    tail += ["place_fit", "anchors", "verify"]
+    # Keep the runner's stage list in the same final-world order as its dependency graph.
+    assert [stage for stage in stages if stage in tail] == tail
+    assert [stage for stage in ordered if stage in tail] == tail

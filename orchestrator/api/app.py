@@ -32,7 +32,7 @@ from orchestrator.api.progress import register_progress_routes
 from orchestrator.api.reviews import register_review_routes
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
-from orchestrator.repository import PipelineRepository
+from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES
 from orchestrator.steps import RunOptions
 
 GRAPH_VERSION = "wander.agent-run/1"
@@ -332,7 +332,20 @@ def create_app(
     @app.get("/api/pipeline")
     async def list_runs(user: str = Depends(actor)):
         del user
-        return {"runs": repository.list_runs()}
+        return {"runs": [with_live_state(summary) for summary in repository.list_runs()]}
+
+    def with_live_state(summary: dict) -> dict:
+        # Pause is a directory marker the supervisor honours, so read the same durable
+        # state for both the list and detail view, including after an API restart.
+        try:
+            paused = (runs.journal(summary["id"]).run_dir / "paused").exists()
+        except KeyError:
+            summary["live"] = {"source": "journal", "available": False}
+            return summary
+        summary["live"] = {"source": "journal", "paused": paused}
+        if paused and summary["status"] not in TERMINAL_RUN_STATUSES:
+            summary["status"] = "paused"
+        return summary
 
     @app.get("/api/pipeline/runs/{run_id}")
     async def get_run(run_id: str, user: str = Depends(actor)):
@@ -341,8 +354,7 @@ def create_app(
             summary = repository.run_summary(run_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        summary["live"] = {"source": "journal"}
-        return summary
+        return with_live_state(summary)
 
     @app.post("/api/pipeline/runs/{run_id}/messages", status_code=202)
     async def add_message(run_id: str, request: MessageRequest, user: str = Depends(actor)):
@@ -412,6 +424,13 @@ def create_app(
     ):
         if command not in {"reject", "retry", "pause", "resume", "cancel"}:
             raise HTTPException(status_code=404)
+        # Validate before recording a command. A stale operator tab must receive a
+        # useful 404 without appending an event or creating a stray run directory.
+        try:
+            repository.run_summary(run_id)
+            journal = runs.journal(run_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
         repository.append_event(
             run_id,
             "approval" if command == "reject" else "run",
@@ -423,7 +442,6 @@ def create_app(
                 "parameters": request.parameters,
             },
         )
-        journal = runs.journal(run_id)
         if command in {"retry", "resume"}:
             journal.append("run.resumed", reason=request.rationale)
         if command in {"reject", "retry"}:
@@ -435,7 +453,8 @@ def create_app(
                 step=request.node_id,
             )
         elif command == "cancel":
-            journal.append("run.finished", status="blocked", summary=request.rationale)
+            journal.append("run.finished", status="canceled", summary=request.rationale)
+            runs.pause(run_id, False)
         else:
             runs.pause(run_id, command == "pause")
         return {"accepted": True}

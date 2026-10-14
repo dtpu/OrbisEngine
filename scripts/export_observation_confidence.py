@@ -15,14 +15,10 @@ AND the pixel it lands on was not covered by the walker in that frame.
 That last clause is the fix for the defect share/METHODS-REVIEW.md §2.8 names: with no person mask,
 the splats in the walker's occlusion shadow are the front surface of the cloud on the pixels he
 covered, so the single worst artifact in every world was being marked "observed" and never faded.
-The mask is the packaged avatar's own splats projected at the same camera and dilated -- the person
-sequence is already registered to these frames, so it costs nothing and needs no detector. Pass
---no-person-mask to reproduce the old (wrong) numbers.
-
---anchors <pi3x/anchors.npz> adds the other half: a splat that sits in front of the SfM anchor
-surface by more than --tol at an anchor frame is a floater, not geometry, and a floater in front of
-a real wall is exactly the case the self z-buffer scores as "observed" while dimming the wall
-behind it.
+Pass --masks to use source-index-mapped tracking or tight person masks. Every selected camera must
+have a mask, including an explicitly empty mask when no person was present. Without --masks the
+legacy mode projects and dilates the packaged avatar; --no-person-mask disables that fallback.
+The sidecar measures visibility under these inputs; it does not establish reconstruction quality.
 
     confidence = min(1, seen_frames / --saturate)     quantised to uint8
 
@@ -130,8 +126,52 @@ def person_pixels(world_dir: Path, cam, gw, gh, ds, dilate=6):
     return m
 
 
-def observe(xyz_raw, cams, scale, ds=4, tol=0.03, near=0.05, device="cpu", world_dir=None):
+def load_source_masks(path: Path, world_dir: Path, cams):
+    """Load explicit source masks without falling back to historical caches or avatars."""
+    from world_ruler import person_masks_for
+
+    if not path.is_file():
+        raise ValueError(f"--masks is not a file: {path}")
+    try:
+        with np.load(path) as archive:
+            if "masks" in archive.files:
+                indices = archive["indices"]
+                shape = tuple(int(v) for v in archive["shape"])
+                if (
+                    len(shape) != 3
+                    or min(shape) < 1
+                    or indices.dtype.kind not in "iu"
+                    or indices.shape != (shape[0],)
+                    or len(np.unique(indices)) != len(indices)
+                    or archive["masks"].dtype != np.uint8
+                    or archive["masks"].shape != (shape[0], shape[1], (shape[2] + 7) // 8)
+                ):
+                    raise ValueError("invalid tight-mask shape or source indices")
+        masks = person_masks_for("", masks=path, world_dir=world_dir, dilate=False)
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+        raise ValueError(f"invalid --masks {path}: {error}") from error
+    require_mask_coverage(masks, cams)
+    return masks
+
+
+def require_mask_coverage(masks, cams):
+    if not isinstance(masks, dict):
+        raise ValueError("source masks must map source frame indices to masks")
+    for camera in cams:
+        index = camera.get("sourceIndex")
+        mask = masks.get(index)
+        if mask is None:
+            raise ValueError(f"source masks have no coverage for camera sourceIndex {index}")
+        if not isinstance(mask, np.ndarray) or mask.ndim != 2 or not mask.size:
+            raise ValueError(f"invalid source mask for sourceIndex {index}")
+
+
+def observe(
+    xyz_raw, cams, scale, ds=4, tol=0.03, near=0.05, device="cpu", world_dir=None, person_masks=None
+):
     """Frames-seen count per splat. xyz_raw = raw Marble coords; cams = cameras.json['cameras']."""
+    if person_masks is not None:
+        require_mask_coverage(person_masks, cams)
     P = torch.as_tensor(xyz_raw, dtype=torch.float32, device=device)
     P = torch.stack([P[:, 0], -P[:, 1], -P[:, 2]], 1)  # the viewer's Rx(pi)
     n = P.shape[0]
@@ -161,7 +201,17 @@ def observe(xyz_raw, cams, scale, ds=4, tol=0.03, near=0.05, device="cpu", world
         zbuf.scatter_reduce_(0, idx, zi, reduce="amin", include_self=True)
         front = zi <= zbuf[idx] * (1.0 + tol) + 1e-3
 
-        if world_dir is not None:
+        if person_masks is not None:
+            import cv2
+
+            pm = cv2.resize(
+                person_masks[c["sourceIndex"]].astype(np.uint8),
+                (gw, gh),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+            covered = torch.as_tensor(pm.reshape(-1), device=device)[idx]
+            front &= ~covered
+        elif world_dir is not None:
             pm = person_pixels(Path(world_dir), c, gw, gh, ds)
             if pm is not None:
                 covered = torch.as_tensor(pm.reshape(-1), device=device)[idx]
@@ -179,7 +229,15 @@ def main():
     ap.add_argument(
         "clips", nargs="*", default=[], help=f"any of {', '.join(WORLDS)} (default: all)"
     )
-    ap.add_argument("--world"), ap.add_argument("--cameras"), ap.add_argument("--out")
+    ap.add_argument("--world", type=Path)
+    ap.add_argument("--cameras", type=Path)
+    ap.add_argument("--out", type=Path)
+    ap.add_argument(
+        "--world-dir", type=Path, help="packaged world directory; default: camera parent"
+    )
+    ap.add_argument(
+        "--masks", type=Path, help="tracked/tight person masks with source-frame indices"
+    )
     ap.add_argument("--scale", type=float)
     ap.add_argument("--saturate", type=int, default=8, help="frames at which confidence reaches 1")
     ap.add_argument(
@@ -204,12 +262,31 @@ def main():
     )
     a = ap.parse_args()
 
+    if a.masks and a.no_person_mask:
+        ap.error("--masks cannot be combined with --no-person-mask")
+    if a.ds < 1 or a.saturate < 1:
+        ap.error("--ds and --saturate must be positive")
+    for label, path in (("world", a.world), ("cameras", a.cameras), ("masks", a.masks)):
+        if path is not None and not path.is_file():
+            ap.error(f"--{label} is not a file: {path}")
+    if a.world_dir is not None and not a.world_dir.is_dir():
+        ap.error(f"--world-dir is not a directory: {a.world_dir}")
     if a.world:
-        jobs = [("custom", Path(a.world), Path(a.cameras), a.scale, Path(a.out))]
+        if a.cameras is None or a.scale is None or a.out is None:
+            ap.error("--world requires --cameras, --scale and --out")
+        if not np.isfinite(a.scale) or a.scale <= 0:
+            ap.error("--scale must be finite and positive")
+        jobs = [("custom", a.world, a.cameras, a.scale, a.out)]
     else:
+        if a.cameras is not None or a.out is not None:
+            ap.error("--cameras and --out require --world")
         names = a.clips or list(WORLDS)
+        if (a.masks is not None or a.world_dir is not None) and len(names) != 1:
+            ap.error("--masks and --world-dir require --world or exactly one historical clip")
         jobs = []
         for k in names:
+            if k not in WORLDS:
+                ap.error(f"unknown historical clip: {k}")
             w, d, s = WORLDS[k]
             place = ROOT / d / "placement.json"
             if place.exists():
@@ -226,13 +303,28 @@ def main():
 
     rows = []
     for name, world, camf, scale, out in jobs:
-        xyz = read_spz_xyz(world)
         cams = json.load(open(camf))["cameras"]
-        wdir = None if a.no_person_mask else Path(camf).parent
+        if not cams:
+            ap.error(f"no source cameras in {camf}")
+        mask_root = a.world_dir or Path(camf).parent
+        try:
+            masks = load_source_masks(a.masks, mask_root, cams) if a.masks else None
+        except ValueError as error:
+            ap.error(str(error))
+        xyz = read_spz_xyz(world)
+        wdir = None if a.no_person_mask else mask_root
         seen, infront = observe(
-            xyz, cams, scale, ds=a.ds, tol=a.tol, device=a.device, world_dir=wdir
+            xyz,
+            cams,
+            scale,
+            ds=a.ds,
+            tol=a.tol,
+            device=a.device,
+            world_dir=wdir,
+            person_masks=masks,
         )
         conf = np.minimum(1.0, seen / a.saturate)
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(np.round(conf * 255).astype(np.uint8).tobytes())
         obs = float((seen > 0).mean())
         rows.append(

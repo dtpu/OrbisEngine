@@ -32,13 +32,28 @@ def _observed_frames(log: str, name: str) -> tuple[Fraction, list[dict]]:
     bases = re.findall(prefix + r"config in time_base: (\d+/\d+)", log)
     if len(bases) != 1:
         raise ValueError(f"Missing or changing {name} filter timebase")
-    frames = [
-        {"index": int(index), "pts": int(pts), "checksum": checksum}
-        for index, pts, checksum in re.findall(
-            prefix + r"n:\s*(\d+) pts:\s*(-?\d+) .*? checksum:([0-9A-F]+) ", log
-        )
-    ]
-    if [f["index"] for f in frames] != list(range(len(frames))):
+    frames = []
+    pending = None
+    for event in re.finditer(rf"({prefix})([^\n]*)", log):
+        instance, message = event.groups()
+        header = re.match(r"n:\s*(\d+) pts:\s*(-?\d+) ", message)
+        checksum = re.search(r"(?:^| )checksum:([0-9A-F]+)(?: |$)", message)
+        if header:
+            if pending is not None:
+                raise ValueError(f"Incomplete {name} frame diagnostics")
+            pending = (instance, int(header[1]), int(header[2]))
+        if checksum:
+            if pending is None or instance != pending[0]:
+                raise ValueError(f"Orphan or wrong-instance {name} checksum diagnostics")
+            if not header and not message.startswith("checksum:"):
+                raise ValueError(f"Invalid {name} checksum continuation")
+            frames.append({"index": pending[1], "pts": pending[2], "checksum": checksum[1]})
+            pending = None
+        elif pending is not None and not header:
+            raise ValueError(f"Incomplete {name} frame diagnostics")
+        # FFmpeg can interleave another thread's message before a showinfo
+        # checksum. Only its same-instance continuation can finish that frame.
+    if pending is not None or [f["index"] for f in frames] != list(range(len(frames))):
         raise ValueError(f"Incomplete {name} frame diagnostics")
     return Fraction(bases[0]), frames
 

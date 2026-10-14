@@ -6,7 +6,7 @@ acceptable reconstruction quality. The doctor reports those separately.
 
 ## What is tested
 
-`uv run --locked --group dev pytest` includes:
+`uv run --locked --group dev --group inference pytest` includes:
 
 - Production API, SQLite and filesystem storage: uploads, replay from source artifacts, hash
   verification, extensions, conflicts, failed-submission compensation and restart discovery.
@@ -22,9 +22,74 @@ acceptable reconstruction quality. The doctor reports those separately.
 - Setup diagnostics for missing tools, dependencies, selected credentials/caches, fine-tune
   hosts and discontinuous footage. Remote diagnostics never launch model work.
 
+The suite needs the locked inference dependencies for local tensor-based observation and
+packaging checks. CI installs that group explicitly; these synthetic checks do not download
+model weights or submit provider jobs.
+
 The admin's `bun test ./tests` checks schema-derived options and queue decisions. Its production
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.
+
+The run-control regressions cover pause/cancel during stage admission, a detached child starting
+after cancellation, stale agent completion, and journal replay. Canceled runs cannot reopen from
+a late stage event; explicit operator resume is required. Already submitted provider work keeps
+its completion records.
+
+Source-timing tests compare emitted pixels with the exact decoded source frames, including
+variable frame rates and duplicated samples. FFmpeg can split a diagnostic row when another
+thread logs an EOF message; only a checksum continuation from the same filter instance completes
+that row. Missing, displaced or conflicting records still fail before paid submission.
+
+Avatar input selection retains its front-facing preference when that produces a positive score.
+When no front-facing score is positive, positive-quality candidates are ranked by projected-joint
+coverage before the existing quality score, with the fallback recorded in prepared metadata. This
+avoids preferring a larger cropped torso to a more complete back view. Explicit any-facing mode
+retains its quality ranking. Projected coverage is a selection heuristic, not observed body coverage. An explicit source-frame request must exist in the track, and an empty track
+fails before image preparation. These checks establish selection behavior, not avatar fidelity.
+
+Placement and anchor regressions use separate run/output roots. The runner passes exact world,
+camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead
+of selecting a historical demo. The size gate evaluates the final silhouette fit, and the printed
+viewer link enables a successful placement. These checks establish input routing and acceptance
+behavior, not visual reconstruction quality.
+
+When enabled, fine-tuning finishes before placement and anchors. Those checks, observation
+confidence, static-world review and the viewer link select the same final world. Scale fitting
+and fine-tune export/import use the original provider world. Failed or missing fine-tune output
+cannot silently fall back to another file. Placement records the world and report hashes plus
+an input receipt covering packaged cameras, person manifests and frames, tracking masks and
+motion metadata, effective scale/floor, size-gate setting and measurement code. Changed or
+missing inputs invalidate its viewer setting and rerun the local placement/anchor stages on
+a full resume. Existing placements without these receipts need that local recheck too;
+successful paid-stage records remain intact.
+Anchor receipts additionally bind the source video, ruler settings/model, measurement code,
+anchor report and observation sidecar. Selecting only `verify` cannot accept stale dependencies.
+Inputs are compared before and after measurement so edits during execution cannot receive a
+current acceptance receipt. Provider metadata follows the selected video, image or multi-image mode.
+
+Before checking observation confidence, the runner rebuilds the sidecar from the current world,
+cameras and fitted registration. Tracked runs exclude the source person masks; missing camera
+coverage fails instead of silently using the avatar. Single-person runs retain the documented
+projected-avatar estimate. Confidence measures visibility and is not proof of accurate geometry.
+
+Metric-depth predictions are cached by source-content hash, model identifier and frame index.
+Changing camera poses can reuse a prediction; replacing an upload with the same filename cannot.
+Legacy filename-only caches are retained but ignored because their source is unverified.
+
+Silhouette fitting uses the tracker's projected body bounds to flag potentially cropped head/foot
+edges even when the segmentation mask stops short of the image border. Those bounds only mark
+which edges are unavailable; they never replace source-mask measurements. A cropped person cannot
+supply a complete-body height. Motion metadata maps source frames to the original mask samples,
+including after sequence subsetting, and malformed mappings fail explicitly.
+The ruler and visibility exporter use those same per-track mappings and union masks only for
+matching source frames. Missing selected frames fail; legacy tracks without motion metadata
+retain the documented manifest-order fallback. Silhouette scoring and detector seed boxes also
+require exact source-frame poses. Diagnostic image shifts discard pixels outside the frame
+instead of wrapping them to the opposite edge.
+The silhouette solver validates each base, perturbed and final avatar projection. Insufficient
+points in front of the camera, invalid rows/depth, or nonfinite equations/updates stop the fit
+with the affected track and source frame identified, instead of producing a generic exception
+or an accepted result from invalid measurements. Valid fits keep the same objective and weights.
 
 ## Existing demo replay, 2026-10-12
 
@@ -48,8 +113,8 @@ old default Modal credentials were rejected with `AuthError`; another saved work
 authenticated and exposed the model-cache volumes. Normal Hugging Face snapshot symlinks are
 reported as unverified rather than missing because metadata alone cannot validate their targets.
 The optional local inference environment has been installed separately from the base environment.
-Fresh inference remains unverified and is held pending confirmation of the operator's $30-per-account
-workspace limit. No other account or provider receives a separate retry allowance.
+Fresh inference remains unverified and is held pending an operator-confirmed run budget.
+Changing accounts or providers does not create a separate retry allowance.
 
 The scene is not accepted as a quality pass. The animated person visibly floats above the floor
 and disagrees with the source framing. The archive's scale-spread check failed; its old review
@@ -63,9 +128,87 @@ not committed. To repeat the check, use [shared asset recovery](shared-assets.md
 the named source and retained run, verify their hashes, and rebuild into a new candidate directory.
 Do not copy an old `state.json` wholesale or launch replacement worlds for existing demos.
 
+### Cropped-track diagnosis, 2026-10-14
+
+All 75 tracker records project the lower body outside the image, even though the segmentation
+masks stop before its border. The measurement conservatively censors these edges and reports
+no complete-body height. This is a tracker-derived classification, not proof that the footage
+never shows the feet: at six seconds the boots are visible, with mask bottom near pixel 518
+in a 534-pixel image while the projected body extends to about pixel 562. The disagreement
+requires investigation of the tracked geometry; the resulting placement is still rejected.
+Reprojecting all 75 retained sets of 3D foot joints through their source intrinsics matches the
+stored 2D predictions within 0.86 pixels. The padding/intrinsics conversion also matches the
+pinned estimator's contract. This rules out a large post-model export shift; 2D and 3D predictions
+are internally consistent but do not establish agreement with the visible boots. Animation fixes
+canonical body shape while its motion-joint labels retain the original per-frame shape estimates,
+so those labels are not independent measurements of the animated body's geometry either.
+
+A read-only comparison isolates the placement contribution. At source frames 0, 90 and 185,
+the raw packaged person's silhouette IoU is 0.873, 0.816 and 0.718. With the crop-aware
+placement it is 0.704, 0.644 and 0.551. Its 12-frame mean area ratio is 1.584, outside the
+unchanged 0.85–1.15 target, and its contact residual falls below the noise floor. The live
+viewer loads all 75 frames without request or script failures, but source comparisons remain
+visibly oversized and world alignment is not accepted. Neither raw geometry nor placement
+is promoted as a passing reconstruction. Evidence is retained under
+`.context/evidence/production-readiness/placement-isolation.json`, `cropped-quality.json`
+and `cropped-placement-browser/`.
+
+A separately authorized local visible-width experiment improved the 12-frame silhouette IoU
+from 0.631 to 0.799, but its area ratio of 1.171 still exceeds 1.15 and its contact residual remains
+below the noise floor. Width depends on avatar shape and is not an independent ruler. The
+prototype remains outside the production runner; this candidate is rejected. Evidence is in
+`.context/evidence/production-readiness/width-quality.json` and `width-placement-browser/`.
+
+## Fresh source integration check, 2026-10-14
+
+After explicit approval for four Modal calls within a $10 allowance, candidate
+`tos-fresh-source-20261014-01` rebuilt cameras, tracking, canonical appearance and animation from
+the same six-second source, reusing the existing world. The workspace usage limit was temporarily
+lowered to $9 with separate headroom and restored to its previous $100 after all four owned apps
+stopped. No paid retries, replacement world, placement fit, quality promotion or publication ran.
+The provider calls used the reviewed implementation at `e60c543`; the local audio packaging
+repair described below was discovered during the viewer check afterward.
+
+The fresh track contains 75/75 distinct source samples. Camera continuity passed, and the camera,
+source and canonical hashes bind the animation to its inputs. The finalized canonical and motion
+checkpoints contain 13 and 83 verified files respectively. All 75 animation PLYs contain 40,000
+finite splats; exported poses equal the 75 saved tracker seeds, without missing-pose recovery,
+pose interpolation or duplicate output frame hashes. Local canonical tensor inspection could
+not import a required model module, so that check remains unverified; the worker loaded the
+checkpoint successfully. These are interface and internal-consistency checks, not pose accuracy.
+
+The original fallback chose source frame 28 with the legs cropped. The general coverage ranking
+selected frame 185, whose source and mask visibly include both boots. A native-camera Gaussian
+render preserves the observed back-view clothing; hidden front/face appearance remains inferred.
+All 75 tracked body bounds still project below the image. Their internal 2D/3D consistency does
+not resolve that disagreement with visible source pixels.
+
+The real viewer loaded the 799,996-splat world, all 75 fresh animation frames and the 6.233-second
+source; seeking and playback advanced together without request or uncaught JavaScript failures.
+The first check exposed missing audio metadata: Vite returned HTML for absent `audio.json`, and
+the silent clip offered an enable-sound control. Both person packagers now probe the actual input
+streams and emit source-audio metadata with the package timeline. This describes embedded audio
+availability; it does not synthesize sound or certify soundtrack timing or speaker identity. The
+repackaged scene reports no audio error and disables its “No soundtrack available” control; all
+75 person frame hashes are unchanged. Conflicting authored audio manifests are refused before
+either a direct packager or the runner changes the destination.
+
+The candidate remains rejected for reconstruction quality. Read-only raw silhouette measurements
+at 12 source samples give mean IoU 0.836 and mean area ratio 1.123, but only 7/12 samples lie within
+0.85–1.15 and the final sample reaches 1.302. Person-only native-camera views confirm the late
+silhouette/boot mismatch. Unfitted world views do not align with the source scene. No new placement
+or contact acceptance was measured; the earlier failed placement remains failed. The source is
+silent and no headset test was performed.
+
+Private receipts, numeric audits, raw measurements and viewer screenshots are retained under
+`.context/evidence/production-readiness/tos-fresh-source-20261014-01/`. Generated media and provider
+credentials are not committed. The shared ledger now exhausts the ordinary camera and animation
+allowances for this original source; candidate renaming does not reset them.
+
 ## Remaining boundaries
 
-- Fresh inference needs confirmed spending controls and compatible model caches. World generation
+- The bounded fresh Modal check above verified its selected workspace and models. New inference
+  still requires an applicable budget and remaining shared attempt allowance. World generation
   additionally needs verified World Labs/OpenAI access; existing demo worlds must be reused.
 - The directory ledger bounds paid attempts; it is not a cross-provider dollar meter. The API
   refuses custom monetary/run budgets that this runner cannot enforce.

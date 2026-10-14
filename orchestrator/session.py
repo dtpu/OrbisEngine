@@ -234,9 +234,26 @@ class RunSession:
         except OSError:
             return None
 
+    def admission_outcome(self, journal: Journal) -> SessionOutcome | None:
+        """Check durable controls again on every turn, including a session already in memory."""
+        control = journal.control_status()
+        finished = "canceled" if control == "canceled" else journal.finished()
+        if finished:
+            return SessionOutcome(finished=finished, waiting=None, steps_run=0)
+        if control == "paused":
+            return SessionOutcome(
+                finished=None,
+                waiting=None,
+                steps_run=0,
+                error="Run is paused; an operator must resume it before another turn.",
+            )
+        return None
+
     def turn(self) -> SessionOutcome:
         """Give the agent one turn, then read the journal to see what it did."""
         journal = self.journal()
+        if stopped := self.admission_outcome(journal):
+            return stopped
         before = len([e for e in journal.entries() if e.kind == "step.started"])
         described = self.described
         brief = render_brief(
@@ -249,6 +266,8 @@ class RunSession:
         )
         (self.run_dir / BRIEF_FILE).write_text(brief)
         install_skill(self.run_dir)
+        if stopped := self.admission_outcome(journal):
+            return stopped
         outcome = self.harness.run(
             None,
             self.run_dir,

@@ -69,6 +69,18 @@ def iou(a, b):
     return float((a & b).sum() / u) if u else 0.0
 
 
+def translate_mask(mask, dy, dx):
+    """Translate within the image bounds, discarding pixels that move outside them."""
+    h, w = mask.shape
+    shifted = np.zeros_like(mask)
+    if abs(dy) >= h or abs(dx) >= w:
+        return shifted
+    shifted[max(0, dy) : min(h, h + dy), max(0, dx) : min(w, w + dx)] = mask[
+        max(0, -dy) : min(h, h - dy), max(0, -dx) : min(w, w - dx)
+    ]
+    return shifted
+
+
 def best_shift_iou(pred, gt, radius=80, step=4):
     """IoU after the translation that maximises it: pose quality with placement divided out."""
     if not pred.any() or not gt.any():
@@ -83,27 +95,41 @@ def best_shift_iou(pred, gt, radius=80, step=4):
         rng = radius if s == step * 4 else step * 4
         for dy in range(dy0 - rng, dy0 + rng + 1, s):
             for dx in range(dx0 - rng, dx0 + rng + 1, s):
-                v = iou(np.roll(np.roll(pred, dy, 0), dx, 1), gt)
+                v = iou(translate_mask(pred, dy, dx), gt)
                 if v > best:
                     best, arg = v, (dy, dx)
         dy0, dx0 = arg
     return best, arg
 
 
+def source_frame_paths(seq, selected_indices):
+    """Resolve exact source samples, rejecting ambiguous or unavailable sequence evidence."""
+    src = list(seq["sourceIndices"])
+    frames = seq["frames"]
+    if len(src) != len(frames):
+        raise ValueError(f"person sequence has {len(src)} sourceIndices but {len(frames)} frames")
+    if len(set(src)) != len(src):
+        raise ValueError("person sequence has duplicate sourceIndices")
+    frame_by_source = dict(zip(src, frames, strict=True))
+    missing = sorted(set(selected_indices) - frame_by_source.keys())
+    if missing:
+        raise ValueError(f"person sequence has no pose for selected sourceIndices: {missing}")
+    return frame_by_source
+
+
 def audit(world, masks_path, limit=None, subsample=30000):
     world = Path(world)
     cams = json.loads((world / "cameras.json").read_text())["cameras"]
     seq = json.loads((world / "person" / "sequence.json").read_text())
-    src = list(seq["sourceIndices"])
     gt, hw = load_masks(masks_path)
     rows = []
     cand = [c for c in cams if c["sourceIndex"] in gt]
     if limit and len(cand) > limit:
         cand = [cand[i] for i in np.linspace(0, len(cand) - 1, limit).round().astype(int)]
+    frame_by_source = source_frame_paths(seq, (c["sourceIndex"] for c in cand))
     for c in cand:
         fi = c["sourceIndex"]
-        k = int(np.argmin(np.abs(np.array(src) - fi)))
-        v = PlyData.read(world / "person" / seq["frames"][k])["vertex"].data
+        v = PlyData.read(world / "person" / frame_by_source[fi])["vertex"].data
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sc = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
         pred = splat_silhouette(xyz, np.asarray(v["opacity"]), sc, c, hw, subsample)

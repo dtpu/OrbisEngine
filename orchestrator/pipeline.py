@@ -54,11 +54,11 @@ def _finish_world(stages, deps, world, package, objects, finetune):
     if world:
         tail = {
             "scale_fit": ["pi3x", "frame_align", package, world],
-            "place_fit": ["scale_fit"],
-            "anchors": ["place_fit"],
         }
         if finetune:
             tail["finetune"] = ["scale_fit"]
+        tail["place_fit"] = ["scale_fit"] + (["finetune"] if finetune else [])
+        tail["anchors"] = ["place_fit"]
         tail["verify"] = (
             ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
         )

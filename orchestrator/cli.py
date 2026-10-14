@@ -182,6 +182,32 @@ def source_problem(context: RunContext) -> str | None:
     return None
 
 
+def refuse_controlled_step(
+    context: RunContext, journal: Journal, step: str, attempt: str | None = None
+) -> bool:
+    """Reject new work, closing only a pending local attempt that has not launched yet."""
+    status = journal.control_status()
+    if status is None:
+        return False
+    problem = f"Run is {status}; an operator must resume it before more work can start."
+    if attempt:
+        for entry in reversed(journal.entries()):
+            if entry.data.get("attempt") != attempt:
+                continue
+            if entry.kind == "step.started":
+                journal.append(
+                    "step.finished",
+                    step=step,
+                    attempt=attempt,
+                    status="blocked",
+                    error=problem,
+                    preflight=True,
+                )
+            break
+    print(problem, file=sys.stderr)
+    return True
+
+
 def command_step(context: RunContext, args: argparse.Namespace) -> int:
     take_our_flags(args)
     """Start a step. By default it runs on its own and this returns at once.
@@ -190,8 +216,13 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     holding a session open to do nothing. So the work is detached and journalled by the child
     that runs it: start it, stop your turn, and you will be given another when it lands.
     """
-    if problem := source_problem(context):
-        journal = context.journal()
+    journal = context.journal()
+    if refuse_controlled_step(context, journal, args.step, args.attempt):
+        return 2
+    problem = source_problem(context)
+    if refuse_controlled_step(context, journal, args.step, args.attempt):
+        return 2
+    if problem:
         number = args.number or journal.attempt_number(args.step)
         attempt = args.attempt or f"{context.run_id}:{args.step}:{number}"
         if not args.attempt:
@@ -224,6 +255,8 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if refuse_controlled_step(context, journal, args.step, args.attempt):
+        return 2
     if not args.wait:
         return detach(context, args)
     step = args.step
@@ -250,6 +283,8 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             paid=bool(described and described.paid),
             log=str(log.relative_to(context.run_dir)),
         )
+    if refuse_controlled_step(context, journal, step, attempt):
+        return 2
     started = time.monotonic()
     status, error = "succeeded", None
     try:
@@ -307,6 +342,8 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
     if os.environ.get("WANDER_STEP_CHILD"):
         raise SystemExit("a detached step tried to detach again; refusing to spawn")
     journal = context.journal()
+    if refuse_controlled_step(context, journal, args.step, args.attempt):
+        return 2
     number = journal.attempt_number(args.step)
     attempt = f"{context.run_id}:{args.step}:{number}"
     log = Path(LOG_DIR) / f"{args.step}.{number}.log"
@@ -337,6 +374,8 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
         args.step,
         *args.rest,
     ]
+    if refuse_controlled_step(context, journal, args.step, attempt):
+        return 2
     subprocess.Popen(
         command,
         cwd=context.repository,
@@ -593,6 +632,10 @@ def command_answer(context: RunContext, args: argparse.Namespace) -> int:
 
 
 def command_finish(context: RunContext, args: argparse.Namespace) -> int:
+    journal = context.journal()
+    if journal.control_status() == "canceled":
+        print("cannot finish: run was canceled; an operator must resume it first", file=sys.stderr)
+        return 2
     if args.status == "succeeded":
         if problem := source_problem(context):
             print(problem, file=sys.stderr)
@@ -677,7 +720,10 @@ def command_finish(context: RunContext, args: argparse.Namespace) -> int:
         except (OSError, ValueError, TypeError) as error:
             print(f"cannot finish: {error}", file=sys.stderr)
             return 1
-    context.journal().append("run.finished", status=args.status, summary=args.summary)
+    if journal.control_status() == "canceled":
+        print("cannot finish: run was canceled; an operator must resume it first", file=sys.stderr)
+        return 2
+    journal.append("run.finished", status=args.status, summary=args.summary)
     return 0
 
 
