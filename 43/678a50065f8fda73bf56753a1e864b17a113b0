@@ -1,0 +1,42 @@
+orchestrator/session.py
+  s_988a422339b8f1::t_15b1aa2af1758f 237-251,255-256,269-270
+admin/README.md
+  s_988a422339b8f1::t_14e9c0853b07dc 6-9
+  s_988a422339b8f1::t_4692da5e01b171 46-63
+orchestrator/api/app.py
+  s_988a422339b8f1::t_e04e6d313123ed 457
+  s_988a422339b8f1::t_4be5659b7ff911 35,335-348,357,427-433,456
+orchestrator/repository.py
+  s_988a422339b8f1::t_15b1aa2af1758f 623,636-637,650-651
+orchestrator/cli.py
+  s_988a422339b8f1::t_15b1aa2af1758f 185-210,219-225,258-259,286-287,345-346,377-378,635-638,723-726
+admin/scripts/live-smoke.ts
+  s_988a422339b8f1::t_0dec0795a03b95 1-69,79,91-96,98-101,104-109,111-126
+  s_988a422339b8f1::t_30346990ca2e5f 70-78,80-90,97,102-103,110
+orchestrator/journal.py
+  s_988a422339b8f1::t_15b1aa2af1758f 131-139,141-142,182
+scripts/tests/test_admin_live_commands.py
+  s_988a422339b8f1::t_e04e6d313123ed 1-110
+  s_988a422339b8f1::t_328f82903e137e 111-132
+orchestrator/supervisor.py
+  s_988a422339b8f1::t_b0850ee27e9b19 88
+  s_988a422339b8f1::t_15b1aa2af1758f 55,87
+scripts/tests/test_run_controls.py
+  s_988a422339b8f1::t_080331b4394ebe 1-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43678a50065f8fda73bf56753a1e864b17a113b0",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
