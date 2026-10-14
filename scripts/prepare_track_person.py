@@ -12,9 +12,10 @@ often a back view, because shoulder spread is the same from behind. This adds th
   the body faces the lens. Checked against a frame read by eye (elevator track 1, sample 85, a
   3/4 front view) which scores -0.63; back views of the same clip score around +0.8.
 
-When no sample has a positive facing-weighted fit, positive base-quality scores use the existing
-any-facing ranking, recorded as facingPreferenceAvailable=false and any-facing-fallback. These
-selection heuristics do not establish the chosen frame's appearance or full-body visibility.
+When no sample has a positive facing-weighted fit, positive base-quality candidates first prefer
+more projected body joints inside the image, then the existing any-facing quality score. This
+avoids preferring a large cropped body when all candidates have some out-of-image joints. The
+fallback is recorded explicitly; projected coverage is not proof of actual full-body visibility.
 
 The mask then comes from Mask R-CNN restricted to this track's box, so a two-person frame yields
 the right identity instead of whichever person Mask R-CNN scored higher.
@@ -45,7 +46,9 @@ def rank(records, prefer_front=True):
         spread = float(abs(j[16, 0] - j[17, 0]) / max(height, 1.0))  # 16/17 = SMPL-X shoulders
         forward_z = float((rodrigues(r["rootRotationVector"]) @ np.array([0.0, 0.0, 1.0]))[2])
         facing = max(0.0, -forward_z) if prefer_front else 1.0
-        full = 1.0 if all(r["jointProjectionInImage"]) else 0.2
+        in_frame = np.asarray(r["jointProjectionInImage"], dtype=bool)
+        coverage = float(in_frame.mean()) if in_frame.size else 0.0
+        full = 1.0 if coverage == 1.0 else 0.2
         clear = 1.0 - float(r.get("occludedFraction", 0.0))
         base_fit = spread * r["heightFraction"] * r["score"] * full * clear
         fit = facing * spread * r["heightFraction"] * r["score"] * full * clear
@@ -60,6 +63,7 @@ def rank(records, prefer_front=True):
                 heightFraction=r["heightFraction"],
                 score=r["score"],
                 fullyInFrame=full == 1.0,
+                projectedJointInFrameFraction=coverage,
                 occludedFraction=r.get("occludedFraction", 0.0),
                 box=r["maskBox"],
             )
@@ -77,8 +81,22 @@ def rank(records, prefer_front=True):
     for r in out:
         if fallback:
             r["fit"] = r["anyFacingFit"]
-        r.update(facingPreferenceAvailable=facing_available, selectionPolicy=policy)
-    out.sort(key=lambda d: -d["fit"])
+        r.update(
+            facingPreferenceAvailable=facing_available,
+            selectionPolicy=policy,
+            selectionPriority="projected-joint-coverage-then-quality" if fallback else "quality",
+        )
+    if fallback:
+        out.sort(
+            key=lambda d: (
+                d["fit"] > 0,
+                d["projectedJointInFrameFraction"] if d["fit"] > 0 else 0.0,
+                d["fit"],
+            ),
+            reverse=True,
+        )
+    else:
+        out.sort(key=lambda d: -d["fit"])
     return out
 
 

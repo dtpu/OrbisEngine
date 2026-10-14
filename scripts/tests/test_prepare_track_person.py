@@ -101,6 +101,32 @@ def test_no_positive_quality_is_reported_without_inventing_a_valid_front_sample(
     assert prepare_track_person.rank([]) == []
 
 
+def test_back_view_fallback_prefers_more_complete_projection_over_larger_crop():
+    cropped = record(10, height=1.4, score=0.95, full=False)
+    cropped["jointProjectionInImage"] = [True] * 8 + [False] * 10
+    complete = record(90, height=0.7, score=0.8, full=False)
+    complete["jointProjectionInImage"] = [True] * 16 + [False] * 2
+    assert quality(cropped) > quality(complete)
+
+    ranked = prepare_track_person.rank([cropped, complete])
+
+    assert [row["sourceIndex"] for row in ranked] == [90, 10]
+    assert ranked[0]["projectedJointInFrameFraction"] == pytest.approx(16 / 18)
+    assert ranked[0]["selectionPriority"] == "projected-joint-coverage-then-quality"
+    # Coverage is a model projection, not proof that the source shows the full body.
+    assert ranked[0]["fullyInFrame"] is False
+
+
+def test_back_view_coverage_does_not_promote_zero_quality_or_override_equal_coverage():
+    unsupported = record(0, score=0.0)
+    best = record(5, height=0.7, score=0.9, full=False)
+    weaker = record(9, height=0.7, score=0.6, full=False)
+
+    ranked = prepare_track_person.rank([unsupported, weaker, best])
+
+    assert [row["sourceIndex"] for row in ranked] == [5, 9, 0]
+
+
 @pytest.fixture
 def prepare_cli(tmp_path, monkeypatch):
     tracks = tmp_path / "tracks"
