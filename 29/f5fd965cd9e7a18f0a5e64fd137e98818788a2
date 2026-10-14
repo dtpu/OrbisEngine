@@ -1,0 +1,23 @@
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_608a8834cc3e9a 39-44,134-139
+scripts/prepare_track_person.py
+  s_988a422339b8f1::t_4372addc5211a3 15-18,50,55,67-80,103-106,109,111-114
+scripts/tests/test_prepare_track_person.py
+  s_988a422339b8f1::t_f6e0072cac4aec 1-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29f5fd965cd9e7a18f0a5e64fd137e98818788a2",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
