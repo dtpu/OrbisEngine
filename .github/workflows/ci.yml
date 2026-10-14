@@ -24,6 +24,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx --bun tsc --noEmit
       - run: bun run format:check
+      - name: Install Python packager dependencies before timed viewer tests
+        run: uv sync --locked
       - run: bun run test
 
   site:
