@@ -1,0 +1,33 @@
+scripts/tests/test_lhm_head_input.py
+  s_988a422339b8f1::t_04d11c3105fc89 1,63-65
+  s_988a422339b8f1::t_80cfb4000fee12 2-62,66-74
+worker/stages/lhm_person.py
+  s_988a422339b8f1::t_04d11c3105fc89 82
+  s_988a422339b8f1::t_7e4d7c5d01bee5 83-86,89-96,99-102,232
+  s_988a422339b8f1::t_80cfb4000fee12 81,87-88,97-98,103-105,184
+scripts/tests/test_prepare_lhm_person.py
+  s_988a422339b8f1::t_e58a082932c0e7 1-208
+  s_988a422339b8f1::t_d8794299ebdbbb 209-211
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_bc0a6ec25abe48 50-63
+scripts/prepare_lhm_person.py
+  s_988a422339b8f1::t_6232271ab8e820 2,5,110-117,131-132,135,138,183-184,251,258,260-272,287-292,298-302
+  s_988a422339b8f1::t_e58a082932c0e7 4,293-297
+  s_988a422339b8f1::t_e3e7a86f930c99 3,303-304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "674305eb441d70503bacc66598e6f9491423024b",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
