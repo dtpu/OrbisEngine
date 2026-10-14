@@ -43,6 +43,22 @@ inline; everything else is served as an octet-stream download.
 Run `bun run test` for the form/schema contract checks and `bun run build` to check TypeScript
 and the production bundle. Setup checks do not contact paid providers or approve a review.
 
+Once a run has its packaged people, cameras, soundtrack metadata, copied source and selected
+world (or explicitly no world), **Preview packaged scene** opens its isolated assets in the
+local viewer. Start that viewer from the repository root with the same API credentials:
+
+```sh
+WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bunx --bun vite --port 5399 --host 127.0.0.1
+```
+
+The viewer server attaches the token only to its read-only run-preview proxy; it never sends
+the token to the browser. Assets stay inside the run directory and are neither copied into
+the shared demo nor published. Each link names its run, so several runs can be inspected
+without restarting the viewer. Source seeking uses byte ranges. The preview is explicitly
+unfitted and unverified: it does not enable a placement receipt or change a quality verdict.
+Recorded global fitted scale/floor can be shown, while unfitted provider units are recomputed
+from the current metric metadata instead of trusting an old printed height.
+
 For a live browser smoke test, start the API factory (`uv run --locked python -m uvicorn
 orchestrator.api.service:create_service --factory --host 127.0.0.1 --port 8000`) and this admin
 against an isolated database, `WANDER_RUNS_ROOT` and local `WANDER_ARTIFACT_ROOT`. Keep the

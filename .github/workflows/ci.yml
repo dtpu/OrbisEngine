@@ -27,6 +27,7 @@ jobs:
       - name: Install Python packager dependencies before timed viewer tests
         run: uv sync --locked
       - run: bun run test
+      - run: bun test ./scripts/test-pipeline-preview-server.ts
 
   site:
     runs-on: ubuntu-latest

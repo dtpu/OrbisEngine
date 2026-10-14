@@ -218,6 +218,17 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
     assert packaged["sourceSha256"] == hashlib.sha256(clip.read_bytes()).hexdigest()
     for frame, digest in zip(packaged["frames"], packaged["frame_sha256"], strict=True):
         assert hashlib.sha256((world / "person" / frame).read_bytes()).hexdigest() == digest
+    scene = client.get(f"/api/pipeline/runs/{run_id}/viewer/scene.json")
+    assert scene.status_code == 200, scene.text
+    params = scene.json()["params"]
+    assert params["world"] == "none" and params["place"] == "0"
+    assert client.get(params["video"]).content == clip.read_bytes()
+    delivered = client.get(params["person"]).json()
+    person_url = params["person"].rsplit("/", 1)[0]
+    for frame, digest in zip(delivered["frames"], delivered["frame_sha256"], strict=True):
+        response = client.get(f"{person_url}/{frame}")
+        assert response.status_code == 200
+        assert hashlib.sha256(response.content).hexdigest() == digest
     progress = client.get(f"/api/pipeline/runs/{run_id}/progress").json()
     assert progress["finished"] == "succeeded" and not progress["stopped"]
     source = next(item for item in progress["previews"] if item["label"] == "Source clip")

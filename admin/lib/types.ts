@@ -226,6 +226,7 @@ export interface RunPreview {
 }
 
 export interface RunProgress {
+  viewerPath?: string | null;
   runId: string;
   finished: string | null;
   paused: boolean;

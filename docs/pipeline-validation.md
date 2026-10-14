@@ -30,6 +30,22 @@ The admin's `bun test ./tests` checks schema-derived options and queue decisions
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.
 
+Packaged API runs now have an authenticated, read-only scene preview route. The admin link and
+isolated runner summary use that route instead of requesting files from the unrelated shared
+public directory. The local Vite proxy supplies credentials server-side and streams source byte
+ranges; tests cover authentication, path confinement, selected-world routing and all cast members.
+The packaging integration checks delivered frame bytes against their hashes. Optional compact
+motion remains an acceleration with the existing PLY fallback, not a prerequisite for preview.
+The preview starts at the packaged camera-0 origin and explicitly leaves placement disabled;
+that navigation default does not establish source/world camera correspondence.
+
+A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
+The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
+source video. Delivered world and compact-motion hashes matched the retained files. No requests
+or uncaught scripts failed; the silent source remained labeled as having no soundtrack. This was
+read-only delivery validation, with no inference or placement fit. The avatar and room alignment
+remain unaccepted. Evidence is under `.context/evidence/production-readiness/run-preview-delivery/`.
+
 The run-control regressions cover pause/cancel during stage admission, a detached child starting
 after cancellation, stale agent completion, and journal replay. Canceled runs cannot reopen from
 a late stage event; explicit operator resume is required. Already submitted provider work keeps
