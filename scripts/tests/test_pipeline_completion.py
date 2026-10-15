@@ -37,6 +37,22 @@ def package(tmp_path, monkeypatch):
             {"people": people, "all_people": all_people, "marble": marble, "objects": False},
             digest,
         )
+        write_json(
+            tmp_path / "run.json",
+            {
+                "runId": context.run_id,
+                "name": context.name,
+                "source": str(source),
+                "sourceSha256": digest,
+                "repository": str(ROOT),
+                "options": context.options,
+            },
+        )
+        delivered_source = tmp_path / "public/clips/example/source.mp4"
+        delivered_source.parent.mkdir(parents=True)
+        delivered_source.write_bytes(source.read_bytes())
+        if marble != "none":
+            (tmp_path / "public/marble-example-clean.spz").write_bytes(b"retained world")
         write_json(tmp_path / "tracks/tracks.json", {"trackCount": people})
         write_json(
             tmp_path / "state.json",
@@ -44,6 +60,14 @@ def package(tmp_path, monkeypatch):
         )
         world = tmp_path / "public/worlds/example-4d"
         write_json(world / "cameras.json", {"cameras": [{"sourceIndex": 0}]})
+        write_json(
+            world / "audio.json",
+            {
+                "schema": "wander.audio/1",
+                "source": {"hasAudio": False, "sha256": digest},
+                "timeline": {"durationSeconds": 1},
+            },
+        )
         entries = []
         for index in range(people):
             name = "person" if index == 0 else f"person_{index:02d}"
@@ -84,6 +108,66 @@ def test_complete_package_is_accepted(package, people, all_people):
     context, _ = package(people=people, all_people=all_people)
     assert finish(context) == 0
     assert Journal(context.run_dir).finished() == "succeeded"
+
+
+@pytest.mark.parametrize("missing", ["source", "audio", "world", "finetuned_world"])
+def test_completion_requires_viewer_delivery_files(package, missing, capsys):
+    context, world = package(marble="video")
+    state_path = context.run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    state["stages"]["_verify"] = {"passed": True}
+    write_json(state_path, state)
+    if missing == "source":
+        (context.run_dir / "public/clips/example/source.mp4").unlink()
+    elif missing == "audio":
+        (world / "audio.json").unlink()
+    elif missing == "world":
+        (context.run_dir / "public/marble-example-clean.spz").unlink()
+    else:
+        context.options["finetune"] = True
+        described_path = context.run_dir / "run.json"
+        described = json.loads(described_path.read_text())
+        described["options"] = context.options
+        write_json(described_path, described)
+        # A successful fine-tune record and the base world do not deliver its final output.
+        state["stages"]["finetune"] = {"status": "ok"}
+        write_json(state_path, state)
+    assert finish(context) == 1
+    assert "viewer scene" in capsys.readouterr().err
+    assert Journal(context.run_dir).finished() is None
+
+
+def test_exported_source_bytes_must_match_submitted_source(package, capsys):
+    context, _ = package()
+    (context.run_dir / "public/clips/example/source.mp4").write_bytes(b"wrong exported clip")
+    assert finish(context) == 1
+    assert "exported source" in capsys.readouterr().err
+    assert Journal(context.run_dir).finished() is None
+
+
+@pytest.mark.parametrize(
+    "damage", ["truncated", "array", "schema", "has_audio", "duration", "source_hash"]
+)
+def test_audio_metadata_must_be_readable_and_describe_its_source(package, damage):
+    context, world = package()
+    audio = world / "audio.json"
+    document = json.loads(audio.read_text())
+    if damage == "truncated":
+        audio.write_text('{"schema":')
+    else:
+        if damage == "array":
+            document = []
+        elif damage == "schema":
+            document["schema"] = "unknown"
+        elif damage == "has_audio":
+            document["source"]["hasAudio"] = "false"
+        elif damage == "duration":
+            document["timeline"]["durationSeconds"] = float("nan")
+        else:
+            document["source"]["sha256"] = "0" * 64
+        write_json(audio, document)
+    assert finish(context) == 1
+    assert Journal(context.run_dir).finished() is None
 
 
 @pytest.mark.parametrize(

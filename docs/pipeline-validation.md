@@ -51,6 +51,20 @@ after cancellation, stale agent completion, and journal replay. Canceled runs ca
 a late stage event; explicit operator resume is required. Already submitted provider work keeps
 its completion records.
 
+Rerunning a stage now invalidates its transitive downstream results before execution. A full
+resume rebuilds selected dependents; `--only` leaves excluded dependents pending for a later
+resume. This prevents repackaging from deleting object files while their stage still reports
+success. Unchanged successful stages and genuinely vacant person slots remain reusable, and
+paid outputs and recovery receipts are retained. This is dependency invalidation, not a complete
+code/parameter fingerprint for every stage.
+
+Run completion also requires the same packaged files as the dashboard viewer link, including
+the selected final world, audio metadata and exported source video. The exported source must
+match the submitted SHA-256; malformed base audio metadata or a conflicting source identity
+cannot receive a successful completion record. Integration coverage removes and restores an
+actual packaged audio manifest to check viewer availability and completion agree. These delivery
+checks do not certify spatial audio, reconstruction fidelity or new provider execution.
+
 Source-timing tests compare emitted pixels with the exact decoded source frames, including
 variable frame rates and duplicated samples. FFmpeg can split a diagnostic row when another
 thread logs an EOF message; only a checksum continuation from the same filter instance completes

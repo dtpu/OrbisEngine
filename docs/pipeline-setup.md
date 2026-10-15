@@ -132,5 +132,9 @@ for placement, anchors, selected object work and fine-tuning, and still requires
 
 The directory is authoritative. Its journal can explicitly resume a finished run; cached successful
 stages are reused while failed stages remain visible. Source hashes and packaged frame hashes are
-checked before accepting completion. This does not yet fingerprint every successful stage's code
+checked before accepting completion, along with the viewer's required files and exported source
+bytes. A rerun invalidates downstream stages before replacing outputs. `--only` does not start
+excluded descendants; they remain pending until selected or a full resume. Paid artifacts and
+receipts remain subject to their existing recovery and attempt limits.
+This does not yet fingerprint every successful stage's code
 and parameters: use a new candidate when those inputs change, and retain the paid ledger.

@@ -209,10 +209,18 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
     assert calls.count("pi3x") == 1
     assert calls.count("lhm_frozen") == 1
     assert calls.count("lhm_motion") == 2
+    world = root / "public/worlds" / f"{context.name}-4d"
+    # A completed stage list is not deliverable if a required viewer file was lost.
+    audio = world / "audio.json"
+    retained_audio = audio.read_bytes()
+    audio.unlink()
+    assert cli.main(["finish", "succeeded", "missing delivery file"]) == 1
+    assert Journal(root).finished() is None
+    assert client.get(f"/api/pipeline/runs/{run_id}/progress").json()["viewerPath"] is None
+    audio.write_bytes(retained_audio)
     assert cli.main(["finish", "succeeded", "simulated providers; actual packaging passed"]) == 0
     assert Journal(root).finished() == "succeeded"
     assert repository.run_summary(run_id)["status"] == "succeeded"
-    world = root / "public/worlds" / f"{context.name}-4d"
     packaged = json.loads((world / "person/sequence.json").read_text())
     assert packaged["allNativeGaussianAttributesFinite"] is True
     assert packaged["sourceSha256"] == hashlib.sha256(clip.read_bytes()).hexdigest()

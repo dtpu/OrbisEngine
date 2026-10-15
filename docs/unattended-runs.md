@@ -162,10 +162,11 @@ Selection and recovery order:
   This is paid. `--reuse-world` only prevents a new Marble generation; cleaning, prompting,
   verification and GPU reconstruction still cost. The final regression must retain each clip's
   recorded settings and stages. Keep `--marble none` for clips on that lane.
-- The runner cache is stage-status based and does not invalidate on changed code, source, settings
-  or missing outputs; `--force` does not invalidate descendants and `--only` skips prerequisites.
-  Prefer fresh candidate state, log every stage that actually ran, and rerun all affected
-  descendants. Copying old `state.json` defeats a rerun.
+- The runner cache is stage-status based and does not fingerprint every stage's code, settings
+  or output. A rerun invalidates its descendants; `--only` leaves excluded descendants pending
+  and requires its dependencies to be settled. Prefer fresh candidate state when inputs change,
+  log every stage that actually ran, and resume all affected descendants. Copying old
+  `state.json` defeats a rerun. Source identity and placement/anchor receipts have additional checks.
 - Treat each stage as a recorded contract: source hash/time mapping, parameters/model/code version,
   input/output hashes, status, attempt, timing, provider IDs and cost. Exit codes and manifests alone
   do not prove execution; check models loaded and outputs cover the expected frames/people/objects.

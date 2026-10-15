@@ -229,6 +229,18 @@ class RunThroughTests(unittest.TestCase):
             )
         )
         (world / "cameras.json").write_text(json.dumps({"cameras": [{}]}))
+        (world / "audio.json").write_text(
+            json.dumps(
+                {
+                    "schema": "wander.audio/1",
+                    "source": {"hasAudio": False},
+                    "timeline": {"durationSeconds": 1},
+                }
+            )
+        )
+        delivered_source = directory / "public/clips/demo/source.mp4"
+        delivered_source.parent.mkdir(parents=True)
+        shutil.copyfile(self.clip, delivered_source)
         policy = self.agent('subprocess.run(["wander", "finish", "succeeded", "done"])')
         self.assertIn("finished succeeded", work_on(self.runs / "demo", None, policy, 2))
         self.assertEqual(runs_needing_work(self.runs), [], "a finished run is not picked up again")
