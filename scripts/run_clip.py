@@ -90,6 +90,21 @@ def validate_shared_scale(value: str, people_limit: int, *, orchestrated: bool =
         )
 
 
+def validate_retained_scene(args):
+    if not getattr(args, "retained_scene", None):
+        return
+    if args.orchestrated:
+        raise ValueError("--retained-scene is a stage parameter; use wander step")
+    if (args.people or (4 if args.all_people else 0)) <= 0:
+        raise ValueError("--retained-scene requires --all-people or --people")
+    if args.only != "package_people":
+        raise ValueError("--retained-scene requires --only package_people")
+    if args.skip_marble or args.marble == "none":
+        raise ValueError("--retained-scene requires a world-enabled run")
+    if not args.skip_finetune:
+        raise ValueError("--retained-scene requires --skip-finetune")
+
+
 def parse_object_spec(spec: str) -> dict:
     """`id:motion:prompt[:roi]` -> a dict for the objects stage.
 
@@ -1494,6 +1509,14 @@ class Pipeline:
 
     def package_people(self):
         shared_scale = getattr(self.a, "shared_scale", "auto")
+        retained = None
+        if getattr(self.a, "retained_scene", None):
+            from retained_scene import RetainedScene
+
+            retained = RetainedScene(Path(self.a.retained_scene), self.clip)
+            if shared_scale != "auto" and shared_scale != retained.shared_scale:
+                raise ValueError("--shared-scale conflicts with the retained scene reference")
+            shared_scale = retained.shared_scale
         validate_shared_scale(shared_scale, self.people_limit)
         out = public_dir() / "worlds" / f"{self.name}-4d"
         motions = []
@@ -1508,10 +1531,9 @@ class Pipeline:
         if shared_scale not in {"auto", "none"} and int(shared_scale) not in available_tracks:
             raise ValueError("--shared-scale reference track has no completed animation")
         tracks = json.loads((self.ctx / "tracks" / "tracks.json").read_text())
-        source_audio_manifest(self.clip, tracks["duration"], out)
-        shutil.rmtree(out, ignore_errors=True)
-        run(
-            [
+
+        def package(destination):
+            command = [
                 PY,
                 "scripts/package_multiperson.py",
                 *motions,
@@ -1524,10 +1546,53 @@ class Pipeline:
                 "--shared-scale",
                 shared_scale,
                 "--out",
-                str(out),
-            ],
-            self.ctx / "package_people.log",
-        )
+                str(destination),
+            ]
+            run(command, self.ctx / "package_people.log")
+
+        if retained is None:
+            source_audio_manifest(self.clip, tracks["duration"], out)
+            shutil.rmtree(out, ignore_errors=True)
+            package(out)
+            return
+
+        # Retained delivery owns a new package only. Validation and asset copying happen
+        # in staging, so incompatible inputs cannot replace an authored viewer scene.
+        if out.exists() or out.is_symlink():
+            raise ValueError("--retained-scene requires a fresh package destination")
+        if not self.a.skip_finetune:
+            raise ValueError("--retained-scene requires --skip-finetune")
+        suffix = WORLD_SUFFIXES[self.marble]
+        world = public_dir() / f"marble-{self.name}-{suffix}.spz"
+        if world.is_symlink() or (world.exists() and file_sha256(world) != retained.world_sha256):
+            raise ValueError("retained world conflicts with the destination SPZ")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".retained-", dir=out.parent) as temporary:
+            staging = Path(temporary)
+            staged_package, staged_world = staging / out.name, staging / world.name
+            package(staged_package)
+            receipt = retained.apply(staged_package, staged_world, self.video_url)
+            created_world = False
+            try:
+                # Exclusive creation protects a concurrent writer's world; the package
+                # directory rename is the final publication step.
+                if not world.exists():
+                    try:
+                        os.link(staged_world, world)
+                        created_world = True
+                    except FileExistsError:
+                        pass
+                if world.is_symlink() or file_sha256(world) != retained.world_sha256:
+                    raise ValueError("retained world changed during packaging")
+                if out.exists() or out.is_symlink():
+                    raise ValueError("package destination appeared during packaging")
+                staged_package.rename(out)
+            except Exception:
+                if created_world:
+                    world.unlink()
+                raise
+        (self.ctx / "retained-delivery.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        self.state.record("_retained_delivery", status="ok", **receipt)
 
     def objects(self):
         """Objects in the clip that are neither a body nor the static scene. Format: docs/objects.md.
@@ -2696,6 +2761,12 @@ class Pipeline:
             f"&person=/worlds/{self.name}-4d/person/sequence.json{people_arg}"
             f"&video={self.video_url}"
         )
+        if getattr(self.a, "retained_scene", None) and (manifest.parent / "scene.json").is_file():
+            scene = f"/worlds/{self.name}-4d/scene.json"
+            print(f"{base}&scene={quote(scene, safe='')}&place=0")
+            print("  Retained presentation; reconstruction quality is unverified.")
+            print("=" * 78)
+            return
         if p.get("floor") is not None:
             # fourd.html reads scale before height, and the fitted scale0 is the number to use.
             ps = self.state.data["stages"].get("_placement_solve")
@@ -3286,6 +3357,11 @@ def main():
         "nondefault values are unsupported for single-person runs or --orchestrated",
     )
     ap.add_argument(
+        "--retained-scene",
+        help="hash-pinned retained scene config for local --only package_people; "
+        "requires a fresh destination and exact source, camera, timing and person geometry",
+    )
+    ap.add_argument(
         "--det-thresh",
         type=float,
         default=0.15,
@@ -3362,6 +3438,7 @@ def main():
     )
     a = ap.parse_args()
     try:
+        validate_retained_scene(a)
         validate_shared_scale(
             a.shared_scale, a.people or (4 if a.all_people else 0), orchestrated=a.orchestrated
         )

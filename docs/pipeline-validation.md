@@ -56,6 +56,18 @@ end-of-clip pose holding, and visible navigation boundaries passed. This checks 
 asset delivery and playback; the run stays paused and does not claim fresh reconstruction
 or acceptance of the existing hand/contact geometry.
 
+A subsequent check delivered the same bottle scene through
+`wander step --wait package_people --retained-scene CONFIG`, replacing the one-off delivery
+helper. It used a fresh isolated API run, 277 verified saved input files, and zero provider
+calls. All 240 packaged person frames, the room, original audio, prop models, and presentation
+matched the prior delivery. The viewer matched rendered people and object transforms at
+12 timestamps, including all three throws; audio playback, tail holding, looping, and
+unrestricted exploration passed. Original placement/collision diagnostic reports were excluded,
+and no placement or quality acceptance was imported. This proves retained packaging and
+playback, not fresh reconstruction, walking support, or improved hand/contact geometry.
+The run remains paused. Evidence: `.context/evidence/retained-scene-delivery/final/`.
+See [retained scene delivery](paid-recovery.md#deliver-a-retained-tracked-scene-locally).
+
 A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
 The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
 source video. Delivered world and compact-motion hashes matched the retained files. No requests

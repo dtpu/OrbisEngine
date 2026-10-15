@@ -521,6 +521,12 @@ STEPS: dict[str, Step] = {
                     "reviewed reference within the configured people slots",
                     pattern=r"^(auto|none|[0-9]+)$",
                 ),
+                retained_scene=knob(
+                    "string",
+                    None,
+                    "hash-pinned retained scene config for local packaging into a fresh "
+                    "destination; requires exact source, camera, timing and person geometry",
+                ),
             ),
         ),
         Step(
