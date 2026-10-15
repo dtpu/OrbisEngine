@@ -304,7 +304,12 @@ def test_subset_review_cannot_accept_stale_dependencies(pipeline, monkeypatch, o
     assert p.go() == 1
     assess.assert_not_called()
     assert not p.state.done("verify")
-    assert "rerun place_fit and anchors" in p.state.data["stages"]["verify"]["error"]
+    if only == "verify":
+        assert "rerun place_fit and anchors" in p.state.data["stages"]["verify"]["error"]
+    else:
+        # Rerunning an ancestor dirties the excluded anchors before stage admission.
+        assert p.state.data["stages"]["anchors"]["status"] == "pending"
+        assert p.state.data["stages"]["verify"]["error"] == "dependency did not finish: ['anchors']"
 
 
 def test_resume_rechecks_anchors_after_placement_only_rerun(pipeline, monkeypatch):

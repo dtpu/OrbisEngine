@@ -2743,7 +2743,15 @@ class Pipeline:
             say("Review inputs require verify in this run's selected stages")
             return 1
         forced = set(a.force.split(",")) if a.force else set()
-        todo = {s for s in wanted if s in self.stages and (s in forced or not self.state.done(s))}
+        todo = {
+            s
+            for s in wanted
+            if s in self.stages
+            and (
+                s in forced
+                or self.state.data["stages"].get(s, {}).get("status") not in {"ok", "skipped"}
+            )
+        }
         if "place_fit" in wanted and "place_fit" not in todo:
             try:
                 current = self.placement_is_current(self.world_spz())
@@ -2762,6 +2770,19 @@ class Pipeline:
             # Stage success is not an evidence cache: re-import and hash the review on every
             # resume, including legacy verify=ok and changes to source/world/cameras/images.
             todo.add("verify")
+        # Replacing an upstream output invalidates every derived success, even outside --only.
+        # In particular, packaging replaces the scene directory containing object outputs.
+        # Retain all artifacts/paid receipts; their stage-specific recovery guards still apply.
+        affected = set(todo)
+        while descendants := {
+            stage
+            for stage in self.stages
+            if stage not in affected and any(dep in affected for dep in self.deps[stage])
+        }:
+            affected.update(descendants)
+        for stage in sorted(affected - todo):
+            self.state.record(stage, status="pending")
+        todo.update(affected & wanted)
         if "verify" in self.stages and todo:
             self.state.record("_verify", status="blocked", passed=False, errors=["Review pending"])
             self.state.record("verify", status="pending")
@@ -2820,20 +2841,23 @@ class Pipeline:
             return th
 
         def status(dep):
-            # a slot skipped in an earlier run (identity audit, no track) is recorded as "skipped",
-            # not "ok", and must not block a resume the way a failed one does
-            if (
-                dep in vacant
-                or self.vacant(dep)
-                or self.state.data["stages"].get(dep, {}).get("status") == "skipped"
-            ):
-                return "ok"
+            if dep in running or dep in pending:
+                return "wait"
             if dep in gated:
                 return "gate"
             if dep in failed or dep in blocked:
                 return "dead"
-            if dep in running or dep in pending:
-                return "wait"
+            # a slot skipped in an earlier run (identity audit, no track) is recorded as "skipped",
+            # not "ok", and must not block a resume the way a failed one does
+            saved = self.state.data["stages"].get(dep, {}).get("status")
+            if (
+                dep in vacant
+                or saved == "skipped"
+                # The orchestrator only executes occupied slots. Settled tracking can
+                # certify an excluded surplus slot, including after its count decreases.
+                or (saved in {None, "pending"} and self.state.done("tracks") and self.vacant(dep))
+            ):
+                return "ok"
             return "ok" if self.state.done(dep) else "dead"
 
         pending = set(todo)

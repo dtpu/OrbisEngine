@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -717,6 +718,38 @@ def command_finish(context: RunContext, args: argparse.Namespace) -> int:
                 state = json.loads((context.run_dir / "state.json").read_text())
                 if state.get("stages", {}).get("_verify", {}).get("passed") is not True:
                     raise ValueError("the static world has no passed manual review")
+            # Stage records and person hashes alone do not deliver a replay. Use the
+            # same readiness contract as the dashboard link, including the selected
+            # final world, audio metadata and run-scoped source copy.
+            from orchestrator.api.viewer import asset_path, scene_manifest
+
+            if scene_manifest(context.run_dir) is None:
+                raise ValueError(
+                    "packaged viewer scene is incomplete; restore or repackage its source, "
+                    "audio metadata and selected world before finishing"
+                )
+            audio = json.loads((world / "audio.json").read_text())
+            if not (
+                isinstance(audio, dict)
+                and audio.get("schema") == "wander.audio/1"
+                and isinstance(audio.get("source"), dict)
+                and type(audio["source"].get("hasAudio")) is bool
+                and isinstance(audio.get("timeline"), dict)
+                and type(audio["timeline"].get("durationSeconds")) in (int, float)
+                and math.isfinite(audio["timeline"]["durationSeconds"])
+                and audio["timeline"]["durationSeconds"] > 0
+            ):
+                raise ValueError("packaged audio metadata is malformed")
+            if audio["source"].get("sha256", context.source_sha256) != context.source_sha256:
+                raise ValueError("packaged audio metadata names a different source clip")
+            exported_source = asset_path(
+                context.run_dir, f"clips/{context.name}/source{context.source.suffix.lower()}"
+            )
+            with exported_source.open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != context.source_sha256:
+                    raise ValueError(
+                        "packaged exported source bytes differ from the submitted clip"
+                    )
         except (OSError, ValueError, TypeError) as error:
             print(f"cannot finish: {error}", file=sys.stderr)
             return 1
