@@ -36,8 +36,25 @@ public directory. The local Vite proxy supplies credentials server-side and stre
 ranges; tests cover authentication, path confinement, selected-world routing and all cast members.
 The packaging integration checks delivered frame bytes against their hashes. Optional compact
 motion remains an acceleration with the existing PLY fallback, not a prerequisite for preview.
-The preview starts at the packaged camera-0 origin and explicitly leaves placement disabled;
+The preview defaults to the packaged camera-0 origin and explicitly leaves placement disabled;
 that navigation default does not establish source/world camera correspondence.
+
+Recovered packages can preserve reviewed presentation settings in
+`public/worlds/<run-name>-4d/scene.json`, using `wander.viewer-scene/1` with a string-valued
+`params` object. Supported settings are `pos`, `floor`, `scale` or `height` (not both),
+`feetmode`, `feetlock`, `camdrift`, `fovsrc`, `clamp`, `box`, and `cam`. These defaults override
+inferred presentation values; the viewer still honors explicit URL overrides. Asset paths,
+scene identity, and `place` cannot be overridden by this file. Invalid settings hide the preview
+instead of silently displaying a differently aligned scene. Required exported files are still
+checked, and presentation metadata never marks reconstruction quality accepted.
+
+A retained bottle-scene delivery check restored 240 person PLYs byte-for-byte against their
+saved hashes and preserved the world, original soundtrack, bottle and backpack models.
+The run-scoped viewer matched the existing demo's rendered people and object transforms at
+12 timestamps, including all three throws. Original audio playback, video byte ranges,
+end-of-clip pose holding, and visible navigation boundaries passed. This checks retained
+asset delivery and playback; the run stays paused and does not claim fresh reconstruction
+or acceptance of the existing hand/contact geometry.
 
 A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
 The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the

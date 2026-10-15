@@ -138,6 +138,98 @@ def test_private_paths_traversal_cross_run_and_symlinks_are_rejected(packaged):
     )
 
 
+def test_exported_presentation_defaults_preserve_recovered_scene_alignment(packaged):
+    case, root, world, source = packaged
+    (root / "state.json").write_text(
+        json.dumps({"stages": {"_placement": {"metricScaleFactor": 2}}})
+    )
+    defaults = {
+        "scale": "1.08",
+        "floor": "-0.61",
+        "pos": "0,0,0",
+        "feetmode": "sfm",
+        "feetlock": "0",
+        "camdrift": "1",
+        "cam": "-0.95,0.42,0.52,0.12,-0.16,-1.60",
+        "box": "-1,-0.4,-3.275,1.75,0.5,0.6",
+    }
+    (world / "scene.json").write_text(
+        json.dumps({"schema": "wander.viewer-scene/1", "params": defaults})
+    )
+    response = case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH)
+    assert response.status_code == 200
+    params = response.json()["params"]
+    assert all(params[key] == value for key, value in defaults.items())
+    assert "height" not in params
+    assert params["place"] == "0"
+    assert params["person"].startswith("/api/pipeline/runs/viewer-run/viewer/assets/")
+    (world / "person/frame_000.ply").unlink()
+    assert scene_manifest(root) is None
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        {"world": "https://example.com/world.spz"},
+        {"person": "/worlds/another-run/people.json"},
+        {"demo": "elevator"},
+        {"scene": "/other.json"},
+        {"place": "1"},
+        {"scale": 1.08},
+        {"scale": "1\n"},
+        {"scale": ""},
+        {"scale": "garbage"},
+        {"scale": "0"},
+        {"height": "-1"},
+        {"scale": "Infinity"},
+        {"scale": "1_000"},
+        {"floor": "NaN"},
+        {"floor": "1e309"},
+        {"pos": "0,1"},
+        {"cam": "bad"},
+        {"cam": "0,0,0,0,0,0"},
+        {"box": "1,1,1,-1,-1,-1"},
+        {"feetmode": "unknown"},
+        {"feetlock": "false"},
+        {"fovsrc": "180"},
+        {"scale": "1", "height": "1.7"},
+    ],
+)
+def test_exported_defaults_cannot_replace_assets_or_bypass_delivery_checks(packaged, defaults):
+    case, root, world, source = packaged
+    (world / "scene.json").write_text(
+        json.dumps({"schema": "wander.viewer-scene/1", "params": defaults})
+    )
+    assert scene_manifest(root) is None
+
+
+def test_exported_height_replaces_inferred_scale(packaged):
+    case, root, world, source = packaged
+    (world / "scene.json").write_text(
+        json.dumps({"schema": "wander.viewer-scene/1", "params": {"height": "1.7"}})
+    )
+    params = scene_manifest(root)["params"]
+    assert params["height"] == "1.7"
+    assert "scale" not in params
+
+
+def test_exported_defaults_symlink_cannot_escape_public_assets(packaged):
+    case, root, world, source = packaged
+    private = root / "private-scene.json"
+    private.write_text(json.dumps({"schema": "wander.viewer-scene/1", "params": {"scale": "2"}}))
+    (world / "scene.json").symlink_to(private)
+    assert scene_manifest(root) is None
+
+
+@pytest.mark.parametrize(
+    "contents", ["broken", "{}", '{"schema":"wander.viewer-scene/1","params":[]}']
+)
+def test_invalid_exported_scene_is_not_silently_ignored(packaged, contents):
+    case, root, world, source = packaged
+    (world / "scene.json").write_text(contents)
+    assert scene_manifest(root) is None
+
+
 @pytest.mark.parametrize("motion", ["legacy-invalid", {"file": "missing.f32"}, "absolute"])
 def test_optional_compact_motion_does_not_hide_playable_plys(packaged, motion):
     case, root, world, source = packaged

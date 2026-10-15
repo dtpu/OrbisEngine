@@ -55,6 +55,9 @@ export async function resolveSceneConfig(
     ) {
       throw new Error(`Invalid scene manifest parameter: ${key}.`);
     }
+    // Explicit sizing chooses a mode as well as a value: runtime gives scale priority.
+    if (key === 'scale' && query.has('height')) continue;
+    if (key === 'height' && query.has('scale')) continue;
     if (!resolved.has(key)) resolved.set(key, value);
   }
   return resolved;
