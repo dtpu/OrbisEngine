@@ -335,16 +335,20 @@ def create_app(
         return {"runs": [with_live_state(summary) for summary in repository.list_runs()]}
 
     def with_live_state(summary: dict) -> dict:
-        # Pause is a directory marker the supervisor honours, so read the same durable
-        # state for both the list and detail view, including after an API restart.
+        # Read the same durable holds as the supervisor, even when the database mirror
+        # missed a journal write or a question has no associated stage.
         try:
-            paused = (runs.journal(summary["id"]).run_dir / "paused").exists()
+            journal = runs.journal(summary["id"])
+            paused = (journal.run_dir / "paused").exists()
         except KeyError:
             summary["live"] = {"source": "journal", "available": False}
             return summary
         summary["live"] = {"source": "journal", "paused": paused}
-        if paused and summary["status"] not in TERMINAL_RUN_STATUSES:
-            summary["status"] = "paused"
+        if summary["status"] not in TERMINAL_RUN_STATUSES:
+            if paused:
+                summary["status"] = "paused"
+            elif journal.unanswered():
+                summary["status"] = "waiting_human"
         return summary
 
     @app.get("/api/pipeline/runs/{run_id}")

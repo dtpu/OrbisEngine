@@ -11,6 +11,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -223,6 +224,69 @@ class PolicyTests(unittest.TestCase):
     def test_a_negative_clock_is_refused(self):
         with self.assertRaisesRegex(ValueError, "negative"):
             HarnessPolicy(idle_seconds=-1)
+
+    def test_writable_roots_parse_json_and_preserve_spaces(self):
+        roots = ["/shared state/database", '/shared state/ledger "reviewed" 🗂']
+        policy = HarnessPolicy.from_environment({"WANDER_REVIEW_WRITE_ROOTS": json.dumps(roots)})
+        self.assertEqual(policy.writable_roots, tuple(roots))
+        self.assertEqual(policy.sandbox, "workspace-write")
+        self.assertEqual(HarnessPolicy.from_environment({}).writable_roots, ())
+        self.assertEqual(
+            HarnessPolicy.from_environment({"WANDER_REVIEW_WRITE_ROOTS": "[]"}).writable_roots, ()
+        )
+
+    def test_invalid_writable_roots_are_refused(self):
+        for raw in ("", "not-json", '"/shared"', "{}", "null", '[""]', '[" "]', "[1]", "[null]"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                HarnessPolicy.from_environment({"WANDER_REVIEW_WRITE_ROOTS": raw})
+        for roots in ("/shared", ("",), (" ",), (None,)):
+            with self.subTest(roots=roots), self.assertRaises(ValueError):
+                HarnessPolicy(writable_roots=roots)
+
+    def test_new_codex_session_adds_only_explicit_writable_roots(self):
+        roots = ("/shared state/database", "/shared state/ledger")
+        policy = HarnessPolicy(writable_roots=roots)
+        argv = policy.argv(Path("/ws"), Path("/ws/TASK.md"))
+        self.assertEqual(argv[-5:], ("--add-dir", roots[0], "--add-dir", roots[1], "-"))
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
+        self.assertEqual(argv[argv.index("--cd") + 1], "/ws")
+        default = HarnessPolicy().argv(Path("/ws"), Path("/ws/TASK.md"))
+        self.assertNotIn("--add-dir", default)
+
+    def test_resumed_codex_session_keeps_explicit_writable_roots(self):
+        roots = ("/shared state/database", '/shared state/ledger "reviewed" 🗂')
+        policy = HarnessPolicy(writable_roots=roots)
+        argv = policy.argv(Path("/ws"), Path("/ws/TASK.md"), session="abc-123")
+        self.assertEqual(argv[:4], ("codex", "exec", "resume", "abc-123"))
+        self.assertIn('sandbox_mode="workspace-write"', argv)
+        self.assertNotIn("--add-dir", argv)
+        roots_config = next(
+            part for part in argv if part.startswith("sandbox_workspace_write.writable_roots=")
+        )
+        parsed = tomllib.loads(roots_config)
+        self.assertEqual(parsed["sandbox_workspace_write"]["writable_roots"], list(roots))
+        default = HarnessPolicy().argv(Path("/ws"), Path("/ws/TASK.md"), session="abc-123")
+        self.assertFalse(any("writable_roots=" in part for part in default))
+
+    def test_claude_keeps_workspace_and_adds_explicit_roots(self):
+        roots = ("/shared state/database", "/shared state/ledger")
+        argv = HarnessPolicy(kind="claude", writable_roots=roots).argv(
+            Path("/ws"), Path("/ws/TASK.md")
+        )
+        directories = [argv[index + 1] for index, part in enumerate(argv) if part == "--add-dir"]
+        self.assertEqual(directories, ["/ws", *roots])
+
+    def test_custom_command_receives_no_writable_root_arguments(self):
+        policy = HarnessPolicy.from_environment(
+            {
+                "WANDER_REVIEW_COMMAND": "custom-harness {workspace} {session}",
+                "WANDER_REVIEW_WRITE_ROOTS": '["/shared state/database"]',
+            }
+        )
+        for session in (None, "abc-123"):
+            with self.subTest(session=session):
+                argv = policy.argv(Path("/ws"), Path("/ws/TASK.md"), session=session)
+                self.assertEqual(argv, ("custom-harness", "/ws", session or ""))
 
     def test_a_resumed_session_keeps_the_sandbox_and_drops_the_directory(self):
         """`codex exec resume` accepts neither --cd nor --sandbox; the config override is how."""

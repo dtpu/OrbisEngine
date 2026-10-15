@@ -137,6 +137,87 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(self.check(report, "tool.ffmpeg")["status"], "blocked")
         self.assertTrue(self.check(report, "tool.ffmpeg")["action"])
 
+    def test_builtin_harness_missing_executable_blocks_without_probe(self):
+        for kind in ("codex", "claude"):
+            with self.subTest(kind=kind):
+                os.environ["WANDER_REVIEW_AGENT"] = kind
+                self.probes.clear()
+                with patch.object(
+                    doctor.shutil,
+                    "which",
+                    side_effect=lambda name: None if name == kind else f"/bin/{name}",
+                ):
+                    report = doctor.inspect_setup()
+                self.assertEqual(self.check(report, "tool.harness")["status"], "blocked")
+                self.assertFalse(any(kind in argv[0] for argv, _ in self.probes))
+
+    def test_builtin_harness_startup_success_leaves_access_unverified(self):
+        for kind in ("codex", "claude"):
+            with self.subTest(kind=kind):
+                os.environ["WANDER_REVIEW_AGENT"] = kind
+                self.probes.clear()
+
+                def version_output(argv, **kwargs):
+                    result = self.probe(argv, **kwargs)
+                    return ("private-version-output", 0) if argv[0] == f"/bin/{kind}" else result
+
+                with patch.object(doctor, "_probe", side_effect=version_output):
+                    report = doctor.inspect_setup()
+                self.assertEqual(self.check(report, "tool.harness")["status"], "okay")
+                self.assertEqual(self.check(report, "harness.access")["status"], "unverified")
+                harness_probes = [
+                    (argv, kwargs) for argv, kwargs in self.probes if argv[0] == f"/bin/{kind}"
+                ]
+                self.assertEqual(harness_probes, [([f"/bin/{kind}", "--version"], {"timeout": 5})])
+                self.assertNotIn("private-version-output", json.dumps(report))
+
+    def test_builtin_harness_broken_wrapper_or_timeout_blocks(self):
+        for kind in ("codex", "claude"):
+            for failure in ("probe exited 1", "probe exceeded 5s"):
+                with self.subTest(kind=kind, failure=failure):
+                    os.environ["WANDER_REVIEW_AGENT"] = kind
+
+                    def fail_harness(argv, **kwargs):
+                        if argv[0] == f"/bin/{kind}":
+                            self.assertEqual(argv, [f"/bin/{kind}", "--version"])
+                            self.assertEqual(kwargs, {"timeout": 5})
+                            raise doctor.ProbeError(failure)
+                        return self.probe(argv, **kwargs)
+
+                    with patch.object(doctor, "_probe", side_effect=fail_harness):
+                        report = doctor.inspect_setup()
+                    harness = self.check(report, "tool.harness")
+                    self.assertEqual(harness["status"], "blocked")
+                    self.assertIn("repair", harness["action"])
+                    self.assertFalse(report["ready"])
+
+    def test_custom_harness_only_checks_path_and_never_executes_command(self):
+        # Even a command naming a built-in harness must not be probed with appended flags.
+        for command in ("custom-harness --submit-work", "codex exec --submit-work"):
+            with self.subTest(command=command):
+                os.environ["WANDER_REVIEW_COMMAND"] = command
+                self.probes.clear()
+                report = doctor.inspect_setup()
+                harness = self.check(report, "tool.harness")
+                self.assertEqual(harness["status"], "unverified")
+                self.assertIn("executable was found", harness["detail"])
+                self.assertIn("startup was not tested", harness["detail"])
+                self.assertEqual(self.check(report, "harness.access")["status"], "unverified")
+                self.assertFalse(
+                    any(argv[0] == f"/bin/{command.split()[0]}" for argv, _ in self.probes)
+                )
+
+    def test_custom_harness_missing_executable_blocks_without_execution(self):
+        os.environ["WANDER_REVIEW_COMMAND"] = "missing-custom --submit-work"
+        with patch.object(
+            doctor.shutil,
+            "which",
+            side_effect=lambda name: None if name == "missing-custom" else f"/bin/{name}",
+        ):
+            report = doctor.inspect_setup()
+        self.assertEqual(self.check(report, "tool.harness")["status"], "blocked")
+        self.assertFalse(any("missing-custom" in argv[0] for argv, _ in self.probes))
+
     def test_remote_timeout_cannot_promote_configured_credentials(self):
         def fail_remote(argv, **kwargs):
             if "_modal_inventory" in " ".join(argv):
@@ -287,9 +368,14 @@ class ProbeTests(unittest.TestCase):
     def test_failed_probe_never_returns_private_stderr(self):
         with self.assertRaises(doctor.ProbeError) as caught:
             doctor._probe(
-                [sys.executable, "-c", "import sys; sys.stderr.write('private-token'); sys.exit(2)"]
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; print('private-stdout'); sys.stderr.write('private-token'); sys.exit(2)",
+                ]
             )
         self.assertNotIn("private-token", str(caught.exception))
+        self.assertNotIn("private-stdout", str(caught.exception))
 
     def test_remote_inventory_uses_existing_volumes_and_rejects_partial_model(self):
         from modal.types import FileEntryType
