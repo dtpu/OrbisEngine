@@ -1,0 +1,30 @@
+scripts/tests/test_orchestrator_parameters.py
+  s_988a422339b8f1::t_dfa87feb283453 32,109-114
+  s_988a422339b8f1::t_5f4e3f5655556c 115
+docs/paid-recovery.md
+  s_988a422339b8f1::t_d864b4ad6b091d 75-87
+scripts/run_clip.py
+  s_988a422339b8f1::t_dfa87feb283453 42,1371-1374,1450,3229-3235,3332-3339
+  s_988a422339b8f1::t_fbe30f4c360334 3340-3341
+scripts/tests/test_missing_pose_recovery.py
+  s_988a422339b8f1::t_153ff5d4922306 63,65-69,82-85,90-157
+  s_988a422339b8f1::t_63d2799367980f 158-173
+orchestrator/steps.py
+  s_988a422339b8f1::t_dfa87feb283453 478-484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed319fc0bff17341ce8382f53cf403634ce6fa74",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
