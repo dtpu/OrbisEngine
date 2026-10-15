@@ -39,6 +39,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from orchestrator.config import resolve_runs_root, resolve_stage_ledger  # noqa: E402
 from orchestrator.pipeline import MARBLE_MODES, multiperson_graph, single_graph, world_half  # noqa: E402,F401
+from worker.stages.lhm_execution import animation_options  # noqa: E402
 
 # A clean clone uses its own toolchain and ignored output directories.
 PY = os.environ.get("WANDER_PYTHON", sys.executable)
@@ -70,6 +71,23 @@ def public_dir() -> Path:
 SCALE_RATIO_BAND = (0.95, 1.05)
 SCALE_SPREAD_BAND = (0.90, 1.10)
 WORLD_SUFFIXES = {"video": "clean", "both": "clean", "image": "image", "multi": "multi"}
+
+
+def validate_shared_scale(value: str, people_limit: int, *, orchestrated: bool = False):
+    if not isinstance(value, str) or not re.fullmatch(r"auto|none|[0-9]+", value):
+        raise ValueError("--shared-scale must be auto, none, or a nonnegative track id")
+    if value == "auto":
+        return
+    if people_limit <= 0:
+        raise ValueError("--shared-scale requires --all-people or --people")
+    if orchestrated:
+        raise ValueError(
+            "--shared-scale is a stage parameter; use wander step for an orchestrated run"
+        )
+    if value != "none" and int(value) >= people_limit:
+        raise ValueError(
+            f"--shared-scale track id must be within configured slots 0..{people_limit - 1}"
+        )
 
 
 def parse_object_spec(spec: str) -> dict:
@@ -1367,6 +1385,10 @@ class Pipeline:
         )
 
     def lhm_motion(self, idx=None):
+        execution_timeout = getattr(self.a, "execution_timeout", 0)
+        animation_options(execution_timeout=execution_timeout)
+        if execution_timeout and idx is None:
+            raise ValueError("--execution-timeout requires tracked-person animation")
         recover_missing = getattr(self.a, "recover_missing_poses", False)
         fixed_scale = getattr(self.a, "fixed_world_scale", None)
         if recover_missing and (idx is None or fixed_scale is None):
@@ -1442,6 +1464,7 @@ class Pipeline:
                 str(self.ctx / "pi3x" / f"frame_{first:03d}.ply"),
                 "--out",
                 str(dest),
+                *(["--execution-timeout", str(execution_timeout)] if execution_timeout else []),
                 *(["--recover-missing-poses"] if recover_missing else []),
                 *(["--fixed-world-scale", str(fixed_scale)] if fixed_scale is not None else []),
             ],
@@ -1470,14 +1493,20 @@ class Pipeline:
         )
 
     def package_people(self):
+        shared_scale = getattr(self.a, "shared_scale", "auto")
+        validate_shared_scale(shared_scale, self.people_limit)
         out = public_dir() / "worlds" / f"{self.name}-4d"
         motions = []
+        available_tracks = set()
         for i in range(self.people_limit):
             folder = self.ctx / f"lhm-motion-{i:02d}"
             if (folder / "sequence.json").exists():
                 motions += ["--motion", f"{i}={folder}"]
+                available_tracks.add(i)
         if not motions:
             raise RuntimeError("no per-track animation finished")
+        if shared_scale not in {"auto", "none"} and int(shared_scale) not in available_tracks:
+            raise ValueError("--shared-scale reference track has no completed animation")
         tracks = json.loads((self.ctx / "tracks" / "tracks.json").read_text())
         source_audio_manifest(self.clip, tracks["duration"], out)
         shutil.rmtree(out, ignore_errors=True)
@@ -1492,6 +1521,8 @@ class Pipeline:
                 str(self.ctx / "pi3x" / "cameras.json"),
                 "--clip",
                 str(self.clip),
+                "--shared-scale",
+                shared_scale,
                 "--out",
                 str(out),
             ],
@@ -3221,6 +3252,13 @@ def main():
     )
     ap.add_argument("--person-method", default="maskrcnn", choices=["segformer", "maskrcnn"])
     ap.add_argument(
+        "--execution-timeout",
+        type=int,
+        default=0,
+        help="tracked-person animation worker deadline in seconds (1..3600); "
+        "0 keeps the worker default; unsupported for single-person animation or --orchestrated",
+    )
+    ap.add_argument(
         "--recover-missing-poses",
         action="store_true",
         help="estimate only missing saved-track poses from source pixels in a fresh candidate; "
@@ -3239,6 +3277,13 @@ def main():
     )
     ap.add_argument(
         "--people", type=int, help="like --all-people with an explicit cap on the person count"
+    )
+    ap.add_argument(
+        "--shared-scale",
+        default="auto",
+        help="tracked-person packaging: auto chooses the depth-supported reference, none keeps "
+        "each track's scale, or use a track id within configured people slots; "
+        "nondefault values are unsupported for single-person runs or --orchestrated",
     )
     ap.add_argument(
         "--det-thresh",
@@ -3316,6 +3361,19 @@ def main():
         help="keep this run local; normally outputs are archived privately without viewer promotion",
     )
     a = ap.parse_args()
+    try:
+        validate_shared_scale(
+            a.shared_scale, a.people or (4 if a.all_people else 0), orchestrated=a.orchestrated
+        )
+        animation_options(execution_timeout=a.execution_timeout)
+    except ValueError as error:
+        ap.error(str(error))
+    if a.execution_timeout and (a.people or (4 if a.all_people else 0)) <= 0:
+        ap.error("--execution-timeout requires --all-people or --people")
+    if a.execution_timeout and a.orchestrated:
+        ap.error(
+            "--execution-timeout is a stage parameter; use wander step for an orchestrated run"
+        )
     if a.clean_masks and a.moved_mask:
         ap.error("--clean-masks cannot be combined with --moved-mask")
     if a.clean_masks and a.orchestrated:

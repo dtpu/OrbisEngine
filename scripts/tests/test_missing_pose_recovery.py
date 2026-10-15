@@ -60,9 +60,13 @@ class MissingPoseRecoveryTests(unittest.TestCase):
         repair, _, _ = command_identity(base + ["--recover-missing-poses"], root)
         self.assertNotEqual(normal, repair)
 
-    def test_runner_passes_recovery_and_scale_to_saved_track_worker(self):
+    def motion_pipeline(self, execution_timeout=0):
         pipeline = object.__new__(run_clip.Pipeline)
-        pipeline.a = types.SimpleNamespace(recover_missing_poses=True, fixed_world_scale=0.2)
+        pipeline.a = types.SimpleNamespace(
+            recover_missing_poses=True,
+            fixed_world_scale=0.2,
+            execution_timeout=execution_timeout,
+        )
         pipeline.ctx = self.root
         pipeline.clip = self.inputs / "source.mp4"
         pipeline.track_or_skip = Mock(return_value={"quality": {"firstSample": 1}})
@@ -75,10 +79,98 @@ class MissingPoseRecoveryTests(unittest.TestCase):
         (track / "motion.json").write_text(
             json.dumps({"frames": [{"sample": 1, "maskBox": [10, 20, 30, 40]}]})
         )
+        return pipeline
+
+    def test_runner_passes_recovery_and_scale_to_saved_track_worker(self):
+        pipeline = self.motion_pipeline()
         pipeline.lhm_motion(0)
         command = pipeline.paid_run.call_args.args[1]
         self.assertIn("--recover-missing-poses", command)
         self.assertEqual(command[-2:], ["--fixed-world-scale", "0.2"])
+        self.assertNotIn("--execution-timeout", command)
+
+    def test_runner_forwards_nonzero_timeout_only_to_tracked_animation(self):
+        pipeline = self.motion_pipeline(execution_timeout=600)
+        pipeline.lhm_motion(0)
+        command = pipeline.paid_run.call_args.args[1]
+        self.assertIn("worker/modal_multiperson.py::animate", command)
+        self.assertEqual(command[command.index("--execution-timeout") + 1], "600")
+
+    def test_single_person_timeout_is_rejected_before_recovery_or_launch(self):
+        pipeline = self.motion_pipeline(execution_timeout=600)
+        with self.assertRaisesRegex(ValueError, "tracked-person animation"):
+            pipeline.lhm_motion()
+        pipeline.recover_lhm.assert_not_called()
+        pipeline.paid_run.assert_not_called()
+
+    def test_invalid_timeout_is_rejected_before_recovery_or_launch(self):
+        pipeline = self.motion_pipeline()
+        for timeout in (-1, 3601, True, 1.5):
+            with self.subTest(timeout=timeout):
+                pipeline.a.execution_timeout = timeout
+                with self.assertRaisesRegex(ValueError, "Execution timeout"):
+                    pipeline.lhm_motion(0)
+                pipeline.recover_lhm.assert_not_called()
+                pipeline.paid_run.assert_not_called()
+
+    def test_timeout_changes_paid_identity(self):
+        root = Path(__file__).resolve().parents[2]
+        command = ["modal", "run", "worker/modal_multiperson.py::animate"]
+        default, _, _ = command_identity(command, root)
+        bounded, _, _ = command_identity(command + ["--execution-timeout", "600"], root)
+        self.assertNotEqual(default, bounded)
+
+    def test_cli_rejects_invalid_or_unsupported_timeout_before_source_inspection(self):
+        for arguments in (
+            ["--all-people", "--execution-timeout", "-1"],
+            ["--all-people", "--execution-timeout", "3601"],
+            ["--all-people", "--execution-timeout", "1.5"],
+            ["--execution-timeout", "600"],
+            ["--orchestrated", "--all-people", "--execution-timeout", "600"],
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["run_clip.py", "--clip", "fixture.mp4", "--name", "fixture", *arguments],
+                ),
+                patch.object(run_clip, "resolve_shots") as resolve,
+                patch("sys.stderr"),
+                self.assertRaises(SystemExit) as exited,
+            ):
+                run_clip.main()
+            self.assertEqual(exited.exception.code, 2)
+            resolve.assert_not_called()
+
+    def test_cli_accepts_default_and_tracked_timeout_boundaries(self):
+        for arguments, expected in (
+            ([], 0),
+            (["--all-people", "--execution-timeout", "0"], 0),
+            (["--all-people", "--execution-timeout", "1"], 1),
+            (["--people", "1", "--execution-timeout", "3600"], 3600),
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "run_clip.py",
+                        "--clip",
+                        "fixture.mp4",
+                        "--name",
+                        "fixture",
+                        "--no-publish",
+                        *arguments,
+                    ],
+                ),
+                patch.object(run_clip, "resolve_shots", return_value=[]) as resolve,
+                self.assertRaises(SystemExit) as exited,
+            ):
+                run_clip.main()
+            self.assertEqual(exited.exception.code, 0)
+            self.assertEqual(resolve.call_args.args[0].execution_timeout, expected)
 
     def test_worker_only_enables_estimation_with_explicit_recovery(self):
         for enabled in (False, True):

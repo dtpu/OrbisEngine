@@ -72,6 +72,33 @@ cores and memory at 64 GiB. The subprocess stops before the provider deadline to
 60 seconds for output hashing and volume commit. Hard kills or failed commits can still leave an
 unresolved checkpoint and must not trigger resubmission.
 
+The same deadline is available through `scripts/run_clip.py --execution-timeout 600`
+with `--people` or `--all-people`, and through a tracked run's stage command:
+
+```sh
+wander step --wait lhm_motion_00 --execution-timeout 600
+```
+
+The runner forwards it only to tracked-person animation; it does not limit tracking, camera,
+or canonical generation. Zero keeps the worker default. A nonzero value is rejected for
+single-person animation and `run_clip.py --orchestrated` submission, which cannot carry this
+stage parameter. The deadline bounds a function's execution time, not total provider spending;
+retain the shared ledger, reviewed retry hypothesis, and provider spending controls.
+
+For local tracked-person packaging, `run_clip.py --shared-scale auto|none|<track id>` forwards
+the existing packager choice only to `package_people`. The default `auto` uses the registration
+with the most supporting depth points; `none` preserves each track's scale. A reviewed explicit
+track id preserves the intended body-height reference when retained fixed scales have no new
+depth-fit point counts. The id must be within the configured `--people` slots (four with
+`--all-people`) and have a completed animation. For an orchestrated tracked run, use
+`wander step --wait package_people --shared-scale <track id>` for an unfinished package. If the
+stage is already complete, add `--force package_people` to this command or the direct runner;
+changing the flag alone does not rebuild cached output. Existing authored audio still blocks
+replacement, so use a fresh candidate when preserving an authored package. Nondefault values are
+rejected by single-person mode and `run_clip.py --orchestrated`, whose API submission cannot carry stage knobs.
+This is local packaging, not a depth refit or a paid inference retry. Review the resulting scale
+and placement before adoption.
+
 A sparse saved-pose input retains its full source grid. Exporting all intended non-null seeds does
 not mean the full recording was reconstructed: the recovery manifest stays partial and the local
 command exits with that status after downloading outputs. Validate exact intended sample IDs and

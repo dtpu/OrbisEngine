@@ -221,6 +221,7 @@ def runner_inputs(root, monkeypatch, clip, multiple, duration=0.7):
     monkeypatch.setenv("WANDER_PUBLIC_DIR", str(public))
     pipeline = object.__new__(run_clip.Pipeline)
     pipeline.name, pipeline.ctx, pipeline.clip, pipeline.people_limit = "fixture", ctx, clip, 2
+    pipeline.a = SimpleNamespace(shared_scale="auto")
     out = public / "worlds" / "fixture-4d"
     out.mkdir(parents=True)
     child = Mock()

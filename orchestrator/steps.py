@@ -475,6 +475,13 @@ STEPS: dict[str, Step] = {
             writes="lhm-motion/ (sequence.json, motion.json, frame_*.ply)",
             after=("lhm_frozen", "pi3x"),
             parameters=tunables(
+                execution_timeout=knob(
+                    "integer",
+                    0,
+                    "tracked-person animation worker deadline in seconds; 0 keeps the worker default; nonzero is rejected for single-person animation",
+                    minimum=0,
+                    maximum=3600,
+                ),
                 recover_missing_poses=knob(
                     "boolean",
                     False,
@@ -505,6 +512,16 @@ STEPS: dict[str, Step] = {
             summary="Package every tracked person into one viewer world",
             writes="public/worlds/<name>-4d/",
             after=("lhm_motion", "frame_align"),
+            parameters=tunables(
+                shared_scale=knob(
+                    "string",
+                    "auto",
+                    "auto uses the track with the most registration depth points as the body-height "
+                    "reference; none keeps each track's scale; a nonnegative track id selects a "
+                    "reviewed reference within the configured people slots",
+                    pattern=r"^(auto|none|[0-9]+)$",
+                ),
+            ),
         ),
         Step(
             name="objects",
