@@ -111,7 +111,7 @@ try {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
     await page.goto(
-      `http://127.0.0.1:5399/fourd.html?demo=stairs2&walk=1&xr=1&fakexr=1&fakefloor=${localFloor ? 1 : 0}&xrwalkgain=1.5&fakew=512&fakeh=512&xradapt=0`,
+      `http://127.0.0.1:5399/fourd.html?demo=stairs2&walk=1&freedom=tight&xr=1&fakexr=1&fakefloor=${localFloor ? 1 : 0}&xrwalkgain=1.5&fakew=512&fakeh=512&xradapt=0`,
       { waitUntil: 'load', timeout: 120000 },
     );
     await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });

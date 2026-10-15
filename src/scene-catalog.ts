@@ -22,7 +22,7 @@ export const CLIPS: SceneClip[] = [
     src: '/clips/elevator.mp4',
     poster: 1.4,
     sub: 'Two men, a lift lobby, and a bottle moving between them',
-    free: 'Explore close to the recorded path; the railings set the boundary',
+    free: 'Roam freely around the lift lobby and beyond the recorded path',
     lead: 'Two men are reconstructed from one phone clip in the lift lobby where they were filmed. The source shows several bottle throws and catches; the viewer includes the bottle and backpack alongside the people.',
     proof: [
       'Two principal people remain visible through the source clip',
@@ -30,7 +30,7 @@ export const CLIPS: SceneClip[] = [
       'The source contains throws around 0.9–1.3 s, 5.6–6.5 s, and 7.7–8.2 s',
     ],
     caveat:
-      'The floor and door headers soften away from the recorded views. The bottle and backpack are present, while their fine timing and the wider walking boundary remain uncertain.',
+      'The floor and door headers soften away from the recorded views. The bottle and backpack are present, while their fine timing and geometry away from the recording remain uncertain.',
     srctxt:
       'One 10-second phone clip of two men talking by a lift. Nothing else went in: no rig, no scan, no second angle.',
   },

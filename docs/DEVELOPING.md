@@ -92,7 +92,7 @@ Left-stick walking follows the direction you face, with analog speed and immedia
 response instead of acceleration or release drift. Physical leaning, walking
 and crouching remain tracked. For a small play space, `?xr=1&xrmove=smooth&xrwalkgain=1.5` makes horizontal
 physical steps cover up to 50% more scene distance. `xrwalkgain` defaults to 1 and accepts 1–2;
-only the extra travel is limited by the scene boundary and, in walk mode, obstacle checks.
+only the extra travel is subject to walk-mode obstacle checks and any explicitly enabled scene limits.
 Physical head tracking remains unrestricted; the gain does not magnify head rotation, eye height
 or crouching. Re-enter VR after changing these options.
 VR shows illustrative gloves at your tracked controller poses, with finger curls driven by the
@@ -137,11 +137,13 @@ With `xr=1`, the room and its background layers use adaptive detail even if the 
 requests `lod=0`. This lets `xrlod` (500,000 by default) and frame-time adjustment limit the static
 world workload. People and props still add their own rendering cost. CPU colour-blending modes
 keep their required raw data; `xrworldlod=0` preserves the desktop scene's detail choice for
-comparison. Desktop navigation keeps the scene visible at the movement boundary and shows a
-Back to scene button that restores the starting camera without seeking or resetting people.
-Explicit scene/URL `edgefade` settings can still enable desktop grading. VR retains its boundary
-vignette by default; `edgefade=0` disables that darkening while retaining the brief blink for
-teleport and snap turns.
+comparison. Exploration defaults to `freedom=unlimited`: desktop and XR movement can leave the
+recorded path and scene box, including in older packages containing `clamp=1`. There is no scene
+boundary overlay or edge darkening during unrestricted exploration. R returns to the starting
+view. Walk mode still follows its floor and obstacle geometry; fly mode uses WASD and Q/E.
+For reconstruction diagnostics, `freedom=tight` restores a scene's configured limits and
+`freedom=free` expands them. Only these bounded modes apply optional `edgefade` grading and the
+XR boundary vignette. Teleport and snap-turn blinks remain available in every mode.
 
 Recorded people and props update at up to 36 fps in VR (`xranimfps`), using the current video
 time on each update. Head tracking, controllers, interactive props and rendering keep the headset

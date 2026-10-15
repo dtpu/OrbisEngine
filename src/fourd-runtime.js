@@ -62,6 +62,8 @@ export async function createFourD({ search, renderer, root, scope }) {
   if (explicitQuery.get('xr') === '1' && !explicitQuery.has('exact')) {
     explicitQuery.set('exact', '0');
   }
+  // Saved reconstruction limits must not fence in ordinary exploration.
+  if (!explicitQuery.has('freedom')) explicitQuery.set('freedom', 'unlimited');
   const q = await resolveSceneConfig(explicitQuery, ALL, scope);
   let interactionOn = q.get('interact') === '1';
   let interaction = null;
@@ -3171,23 +3173,21 @@ export async function createFourD({ search, renderer, root, scope }) {
     }
   };
   if (demo) element('hint').style.display = '';
-  // soft clamp: ?clamp=1 keeps the camera inside ?box=minx,miny,minz,maxx,maxy,maxz (world units),
-  // the region where the world holds up; outside it the camera is eased back every frame
-  // ?freedom=tight|free|unlimited: how much of the invented world the camera may walk into.
-  //   tight      (the default, so every shipping preset is byte-for-byte what it was) the preset's
-  //              measured cliff box - the distance past which the world stops resembling the real place
+  // Exploration is unrestricted by default, including scenes with legacy clamp/box settings.
+  // ?freedom=tight|free opts into measured-region limits for reconstruction diagnostics:
+  //   tight      the preset's measured box
   //   free       that box with every horizontal face pushed out by FREE_M metres, the measured distance
   //              at which the world stops being READABLE at all rather than merely invented
   //              (share/nonsense-<clip>.png, table in share/FOURD-README.md). Everything between the
   //              two is generation that still holds together, and ?obsfade= is what labels it as such.
-  //   unlimited  no clamp anywhere
+  //   unlimited  (default) no box or recorded-path limit
   // ?freem= overrides the margin in metres. y gets half of it: ceilings and floors really do end.
   // Calibrated with scripts/calibrate-freedom.mjs against the readable limit read off
   // share/nonsense-<clip>.png. Roughly doubles each clip's reach off the recorded track; clips nobody
   // has measured yet get the conservative 1.5.
   const FREE_M = { lobby: 2.0, atrium: 1.3, stairs2: 1.6, elevator: 2.6, tos31: 1.5 };
-  const freedom = q.get('freedom') || 'tight';
-  const walkOn = q.get('walk') === '1'; // ?walk=1 first person: below, after the path and the box. Always clamped, to the box grown to the floor it knows
+  const freedom = q.get('freedom') || 'unlimited';
+  const walkOn = q.get('walk') === '1'; // First-person floor and obstacle checks remain independent of scene limits.
   const clampOn = (q.get('clamp') === '1' || walkOn) && freedom !== 'unlimited';
   const freeM =
     freedom === 'free'
@@ -4049,15 +4049,8 @@ export async function createFourD({ search, renderer, root, scope }) {
     .getSize(new THREE.Vector3())
     .multiplyScalar(0.5)
     .max(new THREE.Vector3(1e-4, 1e-4, 1e-4));
-  const BIG = freedom === 'unlimited' ? 1e6 : 0; // ?freedom=unlimited also frees the reel keys and R/home, which land through place()
-  const hardMin = boxC
-    .clone()
-    .sub(boxH.clone().multiplyScalar(1 + overshoot))
-    .subScalar(BIG);
-  const hardMax = boxC
-    .clone()
-    .add(boxH.clone().multiplyScalar(1 + overshoot))
-    .addScalar(BIG);
+  const hardMin = boxC.clone().sub(boxH.clone().multiplyScalar(1 + overshoot));
+  const hardMax = boxC.clone().add(boxH.clone().multiplyScalar(1 + overshoot));
   const hardR = pathR * (1 + overshoot);
   const SOFT_LO = 1 - softMargin,
     SOFT_HI = 1 + overshoot;
@@ -4147,21 +4140,8 @@ export async function createFourD({ search, renderer, root, scope }) {
   // the optional grading effect; movement limits apply independently of this presentation.
   const edgeFade = Math.max(0, num('edgefade', 0));
   const fadeEl = element('edgefade');
-  const boundaryEl = element('scene-boundary');
-  scope.listenActive(element('boundary-return'), 'click', () => {
-    reel = null;
-    keysDown.clear();
-    camera.position.copy(home);
-    camera.quaternion.copy(homeQ);
-    prevPos.copy(home);
-    walkFloor = walkHomeFloor;
-    walkHasSupport = false;
-    edge = edgeAt(home);
-    applyEdgeFade();
-  });
   let fadeK = -1;
   function applyEdgeFade() {
-    boundaryEl.hidden = !clampOn || edge <= 0.05 || renderer.xr.isPresenting || !!possess;
     const e = clampOn ? THREE.MathUtils.clamp(edge * edgeFade, 0, 1) : 0,
       k = e * e * (3 - 2 * e);
     if (Math.abs(k - fadeK) < 0.004) return;
@@ -4304,11 +4284,12 @@ export async function createFourD({ search, renderer, root, scope }) {
   function lookAt(x, y, z) {
     camera.lookAt(x, y, z);
   }
-  // put the camera exactly at p (hard limit still applies) without the soft falloff reading it as motion
+  // Place exactly, applying the diagnostic region only when limits were explicitly enabled.
   function place(p, look) {
-    camera.position.set(p[0], p[1], p[2]).clamp(hardMin, hardMax);
+    camera.position.set(p[0], p[1], p[2]);
+    if (clampOn) camera.position.clamp(hardMin, hardMax);
     prevPos.copy(camera.position);
-    edge = edgeAt(camera.position);
+    edge = clampOn ? edgeAt(camera.position) : 0;
     if (look) camera.lookAt(look[0], look[1], look[2]);
     applyEdgeFade();
   }
@@ -4320,10 +4301,8 @@ export async function createFourD({ search, renderer, root, scope }) {
       !!c.inside &&
       Number.isFinite(c.floor) &&
       !walkBlocked(x, z, c.floor) &&
-      x >= clampBox.min.x &&
-      x <= clampBox.max.x &&
-      z >= clampBox.min.z &&
-      z <= clampBox.max.z
+      (!clampOn ||
+        (x >= clampBox.min.x && x <= clampBox.max.x && z >= clampBox.min.z && z <= clampBox.max.z))
     );
   }
   function walkStand(x, z) {
