@@ -72,6 +72,19 @@ cores and memory at 64 GiB. The subprocess stops before the provider deadline to
 60 seconds for output hashing and volume commit. Hard kills or failed commits can still leave an
 unresolved checkpoint and must not trigger resubmission.
 
+The same deadline is available through `scripts/run_clip.py --execution-timeout 600`
+with `--people` or `--all-people`, and through a tracked run's stage command:
+
+```sh
+wander step --wait lhm_motion_00 --execution-timeout 600
+```
+
+The runner forwards it only to tracked-person animation; it does not limit tracking, camera,
+or canonical generation. Zero keeps the worker default. A nonzero value is rejected for
+single-person animation and `run_clip.py --orchestrated` submission, which cannot carry this
+stage parameter. The deadline bounds a function's execution time, not total provider spending;
+retain the shared ledger, reviewed retry hypothesis, and provider spending controls.
+
 A sparse saved-pose input retains its full source grid. Exporting all intended non-null seeds does
 not mean the full recording was reconstructed: the recovery manifest stays partial and the local
 command exits with that status after downloading outputs. Validate exact intended sample IDs and

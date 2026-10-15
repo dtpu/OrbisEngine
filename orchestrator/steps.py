@@ -475,6 +475,13 @@ STEPS: dict[str, Step] = {
             writes="lhm-motion/ (sequence.json, motion.json, frame_*.ply)",
             after=("lhm_frozen", "pi3x"),
             parameters=tunables(
+                execution_timeout=knob(
+                    "integer",
+                    0,
+                    "tracked-person animation worker deadline in seconds; 0 keeps the worker default; nonzero is rejected for single-person animation",
+                    minimum=0,
+                    maximum=3600,
+                ),
                 recover_missing_poses=knob(
                     "boolean",
                     False,

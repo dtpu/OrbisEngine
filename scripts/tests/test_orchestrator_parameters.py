@@ -29,6 +29,7 @@ SCRIPTS = {
     "clean_first": "run_clip.py",
     "clean_multi": "run_clip.py",
     "tracks": "run_clip.py",
+    "lhm_motion": "run_clip.py",
     "scale_fit": "run_clip.py",
     "anchors": "run_clip.py",
     "finetune": "run_clip.py",
@@ -104,6 +105,13 @@ class DeclaredDefaultTests(unittest.TestCase):
         """`scale0` and the reference `frame` mean "let the step decide" when unset."""
         self.assertNotIn("default", STEPS["scale_fit"].parameters["properties"]["scale0"])
         self.assertNotIn("default", STEPS["person_prep"].parameters["properties"]["frame"])
+
+    def test_animation_timeout_declares_bounds_and_tracked_person_scope(self):
+        rule = STEPS["lhm_motion"].parameters["properties"]["execution_timeout"]
+        self.assertEqual((rule["type"], rule["default"]), ("integer", 0))
+        self.assertEqual((rule["minimum"], rule["maximum"]), (0, 3600))
+        self.assertIn("tracked-person", rule["description"])
+        self.assertIn("single-person", rule["description"])
 
 
 class CatalogueTests(unittest.TestCase):
