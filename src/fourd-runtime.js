@@ -2509,7 +2509,7 @@ export async function createFourD({ search, renderer, root, scope }) {
   // must keep behaving byte for byte as before - it is printed next to it so the two can be seen to
   // disagree, which on four shipped clips they would have.
   let ruler = null;
-  {
+  if (q.get('ruler') !== '0') {
     const ru =
       q.get('ruler') ||
       (() => {

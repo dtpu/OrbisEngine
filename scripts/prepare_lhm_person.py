@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Prepared-person input for worker/modal_lhm.py --prepared: source.png, mask.png, prepared.json.
+"""Prepared-person input: source.png, observed-mask.png, mask.png, prepared.json.
+
+observed-mask.png preserves the selected segmentation estimate in source pixels, not ground truth. mask.png
+is the optionally dilated LHM input; its padding is not source observation evidence.
 
   KMP_DUPLICATE_LIB_OK=TRUE uv run --locked --group inference python scripts/prepare_lhm_person.py clip.mp4 \
       --frame 120 --out .context/<clip>/prepared-person
@@ -104,6 +107,14 @@ def maskrcnn_person(rgb, bbox=None):
 
 
 def person_mask(rgb, dilate, method="segformer", bbox=None):
+    """Return the padded model mask, preserving the existing caller contract."""
+    return person_masks(rgb, dilate, method, bbox)[1]
+
+
+def person_masks(rgb, dilate, method="segformer", bbox=None):
+    """Segment once and return the undilated observation and padded model input (0/255)."""
+    if dilate < 0:
+        raise ValueError("dilation must be nonnegative")
     if method == "maskrcnn":
         m = maskrcnn_person(rgb, bbox)
     else:
@@ -117,12 +128,14 @@ def person_mask(rgb, dilate, method="segformer", bbox=None):
             m = m * keep
     n, lab, stats, _ = cv2.connectedComponentsWithStats(m, 8)
     if n <= 1:
-        return np.zeros_like(m)
+        empty = np.zeros_like(m)
+        return empty, empty.copy()
     largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     m = (lab == largest).astype(np.uint8)
+    observed = m * 255
     if dilate > 0:
         m = cv2.dilate(m, np.ones((2 * dilate + 1, 2 * dilate + 1), np.uint8))
-    return m * 255
+    return observed, m * 255
 
 
 def box_report(m, w, h):
@@ -167,6 +180,8 @@ def main():
         "box instead of the highest-scoring one (multi-person clips)",
     )
     a = ap.parse_args()
+    if a.dilate < 0:
+        ap.error("--dilate must be nonnegative")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     bbox = [float(v) for v in a.bbox.split(",")] if a.bbox else None
     if a.candidates:
@@ -233,14 +248,28 @@ def main():
         sys.exit("no scorable frame found in this clip")
     rgb, fps, count = decode(a.video, a.frame)
     h, w = rgb.shape[:2]
-    m = person_mask(rgb, a.dilate, a.method, bbox)
+    observed, m = person_masks(rgb, a.dilate, a.method, bbox)
     rep = box_report(m, w, h)
     if rep.get("empty") or not rep["portrait"]:
         sys.exit(f"unusable person mask: {rep}")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     Image.fromarray(rgb).save(out / "source.png")
+    Image.fromarray(observed).save(out / "observed-mask.png")
     Image.fromarray(m).save(out / "mask.png")
+    observed_rep = box_report(observed, w, h)
+
+    def mask_artifact(name, mask, report, dilation, purpose):
+        return dict(
+            path=name,
+            sha256=hashlib.sha256((out / name).read_bytes()).hexdigest(),
+            bounds=report["box"],
+            areaPixels=int(np.count_nonzero(mask)),
+            areaFraction=report["areaFraction"],
+            dilationPx=dilation,
+            purpose=purpose,
+        )
+
     meta = dict(
         video=str(Path(a.video).resolve()),
         sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
@@ -255,6 +284,24 @@ def main():
         maskMethod=f"{a.method}: largest component, dilate {a.dilate}px"
         + (f", instance selected by IoU with track box {a.bbox}" if bbox else ""),
         trackBox=bbox,
+        sourceImage=dict(
+            path="source.png",
+            sha256=hashlib.sha256((out / "source.png").read_bytes()).hexdigest(),
+        ),
+        maskCoordinates="full-resolution source pixels; bounds are inclusive [x0, y0, x1, y1]",
+        observedMask=mask_artifact(
+            "observed-mask.png",
+            observed,
+            observed_rep,
+            0,
+            "undilated selected segmentation estimate, not ground truth",
+        ),
+        modelMask=dict(
+            **mask_artifact(
+                "mask.png", m, rep, a.dilate, "padded LHM input, not observation evidence"
+            ),
+            derivedFrom="observed-mask.png",
+        ),
     )
     (out / "prepared.json").write_text(json.dumps(meta, indent=2))
     print(json.dumps(meta, indent=2))

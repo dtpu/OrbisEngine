@@ -13,6 +13,7 @@ from orchestrator.api.reviews import run_directories
 from orchestrator.cli import RunContext, completed, graph_shape, in_flight, plan_for
 from orchestrator.journal import Journal
 from orchestrator.steps import STEPS, base_step, needs_of
+from orchestrator.api.viewer import register_viewer_routes, scene_manifest
 
 
 def read_json(path: Path) -> dict:
@@ -135,6 +136,11 @@ def describe_progress(root: Path) -> dict:
         "stopped": stopped,
         "stages": rows,
         "previews": inputs,
+        "viewerPath": (
+            f"/fourd.html?scene={quote(f'/api/pipeline/runs/{context.run_id}/viewer/scene.json', safe='')}"
+            if scene_manifest(root) is not None
+            else None
+        ),
     }
 
 
@@ -149,6 +155,8 @@ def register_progress_routes(app, repository, actor, workspace_root: Path | None
         if candidate is None or not candidate.resolve().is_relative_to(root):
             raise HTTPException(404, "run directory unavailable")
         return candidate
+
+    register_viewer_routes(app, actor, directory)
 
     @app.get("/api/pipeline/runs/{run_id}/progress")
     def progress(run_id: str, user: str = Depends(actor)):

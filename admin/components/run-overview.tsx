@@ -94,6 +94,14 @@ export function RunOverview({
         <p className="field__hint">Progress refresh failed: {error}. Showing the last update.</p>
       ) : null}
       {progress.question ? <p className="notice notice--warn">{progress.question}</p> : null}
+      {progress.viewerPath ? (
+        <p className="field__hint">
+          <a href={`http://127.0.0.1:5399${progress.viewerPath}`} target="_blank" rel="noreferrer">
+            Preview packaged scene
+          </a>{' '}
+          — unfitted preview; reconstruction quality is unverified.
+        </p>
+      ) : null}
       {progress.paused ? (
         <p className="field__hint">Resume this run to allow new work to start.</p>
       ) : null}

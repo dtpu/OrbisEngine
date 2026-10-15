@@ -30,6 +30,22 @@ The admin's `bun test ./tests` checks schema-derived options and queue decisions
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.
 
+Packaged API runs now have an authenticated, read-only scene preview route. The admin link and
+isolated runner summary use that route instead of requesting files from the unrelated shared
+public directory. The local Vite proxy supplies credentials server-side and streams source byte
+ranges; tests cover authentication, path confinement, selected-world routing and all cast members.
+The packaging integration checks delivered frame bytes against their hashes. Optional compact
+motion remains an acceleration with the existing PLY fallback, not a prerequisite for preview.
+The preview starts at the packaged camera-0 origin and explicitly leaves placement disabled;
+that navigation default does not establish source/world camera correspondence.
+
+A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
+The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
+source video. Delivered world and compact-motion hashes matched the retained files. No requests
+or uncaught scripts failed; the silent source remained labeled as having no soundtrack. This was
+read-only delivery validation, with no inference or placement fit. The avatar and room alignment
+remain unaccepted. Evidence is under `.context/evidence/production-readiness/run-preview-delivery/`.
+
 The run-control regressions cover pause/cancel during stage admission, a detached child starting
 after cancellation, stale agent completion, and journal replay. Canceled runs cannot reopen from
 a late stage event; explicit operator resume is required. Already submitted provider work keeps
@@ -46,6 +62,20 @@ coverage before the existing quality score, with the fallback recorded in prepar
 avoids preferring a larger cropped torso to a more complete back view. Explicit any-facing mode
 retains its quality ranking. Projected coverage is a selection heuristic, not observed body coverage. An explicit source-frame request must exist in the track, and an empty track
 fails before image preparation. These checks establish selection behavior, not avatar fidelity.
+
+Preparation preserves the selected full-resolution segmentation as `observed-mask.png` before
+dilation, alongside the padded `mask.png` used by LHM. Metadata binds both masks and the source
+PNG by hash and records their source-pixel bounds, areas and dilation. The observed mask remains
+a segmentation estimate, not ground truth; older outputs without it cannot recover that evidence
+by reversing the padding. Model inputs and existing silhouette acceptance targets are unchanged.
+
+Head conditioning uses the same selected-person mask for detection and the expanded head crop.
+Previously the pinned [LHM head detector](https://github.com/aigc3d/LHM/blob/4f88aaeb3629249fbbddb4d0784a06962d9e1338/LHM/utils/face_detector.py)
+received the full frame and selected its largest detected head, which could belong to a bystander.
+Offline regressions reproduce that selection error, check exclusion of pixels outside the supplied
+mask even in an expanded crop, and preserve the existing zero-head fallback for unusable detection.
+Mask errors and dilation can still include unrelated pixels; this does not establish face fidelity
+or fix the retained single-person body's projection mismatch. No new model execution is implied.
 
 Placement and anchor regressions use separate run/output roots. The runner passes exact world,
 camera, source-video, placement and tracking-mask paths; an invalid explicit path fails instead

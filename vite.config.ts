@@ -3,6 +3,7 @@ import { sharedAssets } from './server/shared-assets.ts';
 import { bottleAgent } from './server/bottle-agent.ts';
 import { questView } from './server/quest-view.ts';
 import { preparedWorlds, SPARK_BUILD_ID } from './server/prepared-worlds.ts';
+import { pipelinePreview } from './server/pipeline-preview.ts';
 import path from 'node:path';
 
 export default defineConfig(({ mode }) => {
@@ -15,6 +16,7 @@ export default defineConfig(({ mode }) => {
   return {
     define: { __WANDER_SPARK_BUILD_ID__: JSON.stringify(SPARK_BUILD_ID) },
     plugins: [
+      pipelinePreview(environment),
       bottleAgent(loaded),
       questView(),
       preparedWorlds(),

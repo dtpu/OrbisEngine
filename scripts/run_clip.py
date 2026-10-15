@@ -2618,6 +2618,22 @@ class Pipeline:
                     {k: (round(v, 4) if isinstance(v, float) else v) for k, v in p.items()}
                 )
             )
+        if os.environ.get("WANDER_RUN_DIR"):
+            from orchestrator.api.viewer import scene_manifest
+
+            manifest = self.ctx / "run.json"
+            if manifest.is_file():
+                described = json.loads(manifest.read_text())
+                if scene_manifest(self.ctx) is not None:
+                    scene = f"/api/pipeline/runs/{described['runId']}/viewer/scene.json"
+                    print(f"\n  http://127.0.0.1:5399/fourd.html?scene={quote(scene, safe='')}")
+                    print("  Unfitted preview; reconstruction quality is unverified.")
+                    print(
+                        "  Start the local viewer with WANDER_PIPELINE_API and WANDER_API_TOKEN configured."
+                    )
+                else:
+                    print("  Viewer preview unavailable until the selected scene is packaged.")
+                return
         try:
             world = self.world_spz()
         except RuntimeError as error:
