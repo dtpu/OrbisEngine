@@ -1,0 +1,33 @@
+scripts/tests/test_orchestrator_parameters.py
+  s_988a422339b8f1::t_6943f7d0bcf1e5 33,117-120
+  s_988a422339b8f1::t_77c83d86275852 121-123
+scripts/tests/test_package_source_audio.py
+  s_988a422339b8f1::t_39a2f12200e236 224
+orchestrator/steps.py
+  s_988a422339b8f1::t_6943f7d0bcf1e5 515-524
+docs/paid-recovery.md
+  s_988a422339b8f1::t_6943f7d0bcf1e5 88-93,99-101
+  s_988a422339b8f1::t_3df8a2d17ec8b8 94-98
+scripts/run_clip.py
+  s_988a422339b8f1::t_6943f7d0bcf1e5 76-92,1496-1497,1500,1505
+  s_988a422339b8f1::t_f2b51d1e3d9430 1508-1509,1524-1525,3281-3287,3365-3367
+scripts/tests/test_run_clip_shared_scale.py
+  s_988a422339b8f1::t_c9f11396a4d82e 1-135
+  s_988a422339b8f1::t_faccaf8098405a 136-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0df746ab294e7ba987c482e70d11e1bcda362b73",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
