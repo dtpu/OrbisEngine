@@ -33,6 +33,47 @@ ASSET_SUFFIXES = {
     ".m4a",
     ".ogg",
 }
+# Exported presentation defaults may preserve a recovered scene's measured alignment
+# and navigation. Asset selection and the diagnostic placement mode stay run-scoped.
+PRESENTATION_PARAMS = {
+    "pos",
+    "floor",
+    "scale",
+    "height",
+    "feetmode",
+    "feetlock",
+    "camdrift",
+    "fovsrc",
+    "clamp",
+    "box",
+    "cam",
+}
+
+
+def valid_presentation_value(key: str, value: str) -> bool:
+    if key == "feetmode":
+        return value in {"local", "flat", "sfm"}
+    if key in {"feetlock", "camdrift", "clamp"}:
+        return value in {"0", "1"}
+    parts = value.split(",")
+    expected = 3 if key == "pos" else 6 if key in {"cam", "box"} else 1
+    if len(parts) != expected or any(
+        not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", part.strip())
+        for part in parts
+    ):
+        return False
+    numbers = [float(part) for part in parts]
+    if not all(math.isfinite(number) for number in numbers):
+        return False
+    if key in {"scale", "height"}:
+        return numbers[0] > 0
+    if key == "fovsrc":
+        return 0 < numbers[0] < 180
+    if key == "box":
+        return all(numbers[index] < numbers[index + 3] for index in range(3))
+    if key == "cam":
+        return numbers[:3] != numbers[3:]
+    return True
 
 
 def read_json(path: Path) -> dict:
@@ -203,6 +244,31 @@ def scene_manifest(root: Path) -> dict | None:
                     params["floor"] = str(-ground / factor)
             else:
                 params["scale"] = "1"
+        defaults_path = root / "public" / base / "scene.json"
+        if defaults_path.exists():
+            defaults = read_json(asset_path(root, base + "scene.json"))
+            values = defaults.get("params")
+            if defaults.get("schema") != "wander.viewer-scene/1" or not isinstance(values, dict):
+                return None
+            for key, value in values.items():
+                if (
+                    key not in PRESENTATION_PARAMS
+                    or not isinstance(value, str)
+                    or not value
+                    or len(value) > 1024
+                    or re.search(r"[\x00-\x1f\x7f]", value)
+                    or not valid_presentation_value(key, value)
+                ):
+                    return None
+            # Height and scale are alternative sizing modes. Do not leave an inferred
+            # height active when the export explicitly selects a registration scale.
+            if "height" in values and "scale" in values:
+                return None
+            if "scale" in values:
+                params.pop("height", None)
+            elif "height" in values:
+                params.pop("scale", None)
+            params.update(values)
         return {"schema": "wander.viewer-scene/1", "params": params}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None

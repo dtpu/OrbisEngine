@@ -46,6 +46,20 @@ describe('private scene configuration', () => {
   });
 
   test.each([
+    ['height', 'scale'],
+    ['scale', 'height'],
+  ])('explicit %s overrides the manifest sizing mode %s', async (explicit, fallback) => {
+    const { scope } = fixture(manifest({ [fallback]: '1.08' }));
+    const result = await resolveSceneConfig(
+      new URLSearchParams({ demo: 'reviewed-scene', [explicit]: '2' }),
+      catalog,
+      scope,
+    );
+    expect(result.get(explicit)).toBe('2');
+    expect(result.has(fallback)).toBe(false);
+  });
+
+  test.each([
     'https://other.test/scene.json',
     '//other.test/scene.json',
     '/\\other.test/scene.json',
