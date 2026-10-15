@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { VideoProjectionLayer as BaseVideoProjectionLayer } from '/src/video-projection.ts';
 import { FourDAudio } from '/src/audio/fourd-audio.ts';
-import { normalizePlaybackTime } from '/src/playback-time.ts';
+import { normalizePlaybackTime, sampleAnimationFrame } from '/src/playback-time.ts';
 import { validateBakedTrack } from '/src/object-track.ts';
 import { loadMotionOrPlys, verifySha256 } from '/src/person-motion.ts';
 import { parseGaussianPly } from '/src/gaussian-ply.ts';
@@ -1630,14 +1630,6 @@ export async function createFourD({ search, renderer, root, scope }) {
       Array.isArray(seq.timestamps) && seq.timestamps.length === nF
         ? seq.timestamps
         : frames.map((_, i) => i / fps);
-    function frameAt(tt) {
-      // -> [i, u]: keyframe index and fraction toward the next
-      let i = 0;
-      while (i + 1 < nF && ts[i + 1] <= tt) i++;
-      const next = i + 1 < nF ? ts[i + 1] : dur;
-      const u = next > ts[i] ? Math.min(1, (tt - ts[i]) / (next - ts[i])) : 0;
-      return [i, u];
-    }
     const person = new THREE.Group();
     scene.add(person);
     const P = {
@@ -2309,13 +2301,13 @@ export async function createFourD({ search, renderer, root, scope }) {
     );
     // advance this person to time tt; returns the ms its splat interpolation took
     function step(tt, snapOn) {
-      let [i, u] = frameAt(tt);
+      let [i, u] = sampleAnimationFrame(tt, ts);
       const on = visibleAt(tt);
       if (person.visible !== on) person.visible = on;
       if (shadow) shadow.visible = on;
       if (!on) return 0;
       if (snapOn) {
-        if (u >= 0.5) i = (i + 1) % nF;
+        if (u >= 0.5) i = Math.min(i + 1, nF - 1);
         u = 0;
       }
       if (!interp) {
@@ -2327,7 +2319,7 @@ export async function createFourD({ search, renderer, root, scope }) {
         refreshPlacement();
         return 0;
       }
-      const j = (i + 1) % nF;
+      const j = Math.min(i + 1, nF - 1);
       const A = keys[i],
         B = keys[j];
       if (!A) return 0;
@@ -4151,15 +4143,26 @@ export async function createFourD({ search, renderer, root, scope }) {
     prevPos.copy(p);
     edge = edgeAt(p);
   }
-  // ?edgefade=: past the measured box the whole frame darkens and desaturates, reaching mostly black at
-  // the hard limit — the world falling off into darkness where the recording stops knowing it. It is a
-  // composite over the canvas, so the world, the avatar, its shadow and the video-projection surface all
-  // fade together and nothing is left floating in the dark. ?edgefade=0 disables it.
-  const edgeFade = Math.max(0, num('edgefade', 1));
+  // Keep desktop navigation visible at the boundary. Explicit scene/URL edgefade settings retain
+  // the optional grading effect; movement limits apply independently of this presentation.
+  const edgeFade = Math.max(0, num('edgefade', 0));
   const fadeEl = element('edgefade');
+  const boundaryEl = element('scene-boundary');
+  scope.listenActive(element('boundary-return'), 'click', () => {
+    reel = null;
+    keysDown.clear();
+    camera.position.copy(home);
+    camera.quaternion.copy(homeQ);
+    prevPos.copy(home);
+    walkFloor = walkHomeFloor;
+    walkHasSupport = false;
+    edge = edgeAt(home);
+    applyEdgeFade();
+  });
   let fadeK = -1;
   function applyEdgeFade() {
-    const e = THREE.MathUtils.clamp(edge * edgeFade, 0, 1),
+    boundaryEl.hidden = !clampOn || edge <= 0.05 || renderer.xr.isPresenting || !!possess;
+    const e = clampOn ? THREE.MathUtils.clamp(edge * edgeFade, 0, 1) : 0,
       k = e * e * (3 - 2 * e);
     if (Math.abs(k - fadeK) < 0.004) return;
     fadeK = k;
@@ -4377,7 +4380,7 @@ export async function createFourD({ search, renderer, root, scope }) {
   scope.listenActive(window, 'keydown', (e) => {
     const enter = e.code === 'Enter' || e.code === 'NumpadEnter';
     if (
-      enter &&
+      (enter || e.code === 'Space') &&
       (e.metaKey ||
         e.ctrlKey ||
         e.altKey ||

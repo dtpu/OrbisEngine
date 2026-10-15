@@ -145,6 +145,33 @@ class PackageObjectTimingTests(unittest.TestCase):
                     lift_object_3d.main()
                 self.assertEqual(output.read_text(), "previous accepted fit")
 
+    def test_packaged_drift_indices_follow_rounded_person_sample_grid(self):
+        for start in (0, 40):
+            with self.subTest(start=start), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args, output = self.package_fixture(root, 30)
+                indices = [start + offset for offset in (0, 2, 5, 8, 10)]
+                people_path = root / "world/people.json"
+                people = json.loads(people_path.read_text())
+                people["samples"] = len(indices)
+                people["sourceIndices"] = indices
+                people["timestamps"] = [index / 30 for index in indices]
+                people["floorFit"]["sharedCameraDrift"] = {
+                    "samples": list(range(len(indices))),
+                    "offsetYUnits": [0, 0.2, 0.5, 0.8, 1],
+                }
+                people_path.write_text(json.dumps(people))
+                (root / "cameras.json").write_text(
+                    json.dumps({"cameras": [self.camera(i, i / 30) for i in indices]})
+                )
+                with patch.object(sys, "argv", args), contextlib.redirect_stdout(io.StringIO()):
+                    package_objects.main()
+                samples = json.loads(output.read_text())["objects"][0]["bakedTrack"]["sampleIndex"]
+                self.assertEqual([samples[index] for index in indices], [0, 1, 2, 3, 4])
+                self.assertEqual(samples[start + 1], 0.5)
+                self.assertAlmostEqual(samples[start + 4], 1.6667)
+                self.assertEqual(samples[0], 0)
+
     def test_real_package_rejects_conflicting_fit_before_overwriting_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             args, output = self.package_fixture(Path(directory), 60, fit_fps=30)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePlaybackTime } from '../src/playback-time.ts';
+import { normalizePlaybackTime, sampleAnimationFrame } from '../src/playback-time.ts';
 
 test('preserves exact nonnegative in-range timestamps and adjacent boundaries', () => {
   const duration = 9;
@@ -30,4 +30,24 @@ test('maps invalid values and invalid durations to a safe origin', () => {
   assert.equal(normalizePlaybackTime(Infinity, 9), 0);
   assert.equal(normalizePlaybackTime(2, 0), 0);
   assert.equal(normalizePlaybackTime(2, Number.NaN), 0);
+});
+
+test('holds the last recorded pose until the playback clock actually loops', () => {
+  const times = [0, 2 / 30, 5 / 30, 8 / 30];
+  const duration = 10 / 30;
+  for (const time of [times.at(-1)!, 9 / 30, duration - 1e-8]) {
+    assert.deepEqual(sampleAnimationFrame(time, times), [3, 0]);
+  }
+  assert.deepEqual(sampleAnimationFrame(normalizePlaybackTime(duration, duration), times), [0, 0]);
+});
+
+test('interpolates actual sample times and clamps before the first observation', () => {
+  const times = [1, 1.1, 1.4];
+  assert.deepEqual(sampleAnimationFrame(0.5, times), [0, 0]);
+  assert.deepEqual(sampleAnimationFrame(1.1, times), [1, 0]);
+  const [i, u] = sampleAnimationFrame(1.25, times);
+  assert.equal(i, 1);
+  assert.ok(Math.abs(u - 0.5) < 1e-12);
+  assert.deepEqual(sampleAnimationFrame(1.8, times), [2, 0]);
+  assert.deepEqual(sampleAnimationFrame(1.8, [1.2]), [0, 0]);
 });

@@ -676,7 +676,9 @@ def main():
         space="raw SfM world, identical to the person PLYs before transform.translation",
         fps=source_fps,
         sourceFrames=frames.tolist(),
-        sampleIndex=(frames / (pj["sourceIndices"][-1] / (pj["samples"] - 1))).round(4).tolist(),
+        # Rounded source-frame sampling is not uniformly spaced (for example,
+        # 12 fps samples from a 30 fps clip). Match the actual person grid.
+        sampleIndex=np.interp(frames, src, np.arange(len(src))).round(4).tolist(),
         positions=np.round(raw, 5).tolist(),
         quaternionsXYZW=np.round(
             bake_orientation(
