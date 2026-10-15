@@ -99,6 +99,49 @@ rejected by single-person mode and `run_clip.py --orchestrated`, whose API submi
 This is local packaging, not a depth refit or a paid inference retry. Review the resulting scale
 and placement before adoption.
 
+## Deliver a retained tracked scene locally
+
+When new packaging uses exactly the same source and person geometry, preserve the reviewed
+room, person transforms, floor fit, original audio, object models and timing, and viewer
+settings with a pinned config:
+
+```sh
+uv run --locked python scripts/retained_scene.py \
+  --package /absolute/retained/public/worlds/example-4d \
+  --world /absolute/retained/public/marble-example-clean.spz \
+  --clip /absolute/source.mp4 --out /absolute/retained-scene.json
+
+wander step --wait package_people --retained-scene /absolute/retained-scene.json
+```
+
+The first command hashes the supported manifests and their referenced assets without copying
+them. The second runs the ordinary packager, validates the result, and delivers the retained
+assets in the same local step. Use a **fresh candidate package destination** with completed
+tracked-person animations and the correct camera inputs. The direct runner equivalent requires
+`--people N --only package_people --retained-scene CONFIG --skip-finetune` and a world-enabled
+Marble mode. The run must have finetuning disabled. It does not generate or fine-tune a world.
+`run_clip.py --orchestrated` cannot transport this stage option; use `wander step` instead.
+
+The retained scale reference is selected automatically; a conflicting explicit `--shared-scale`
+is rejected. Compatibility requires the exact source hash, cast identities, sample grid,
+camera matrices and effective alignment, canonical hashes, per-person scale and reframe, and
+every freshly packaged PLY hash. Retained sequence manifests can come from compact archives
+without PLY files; any retained PLYs that are present must match their recorded hashes too.
+A mismatch stops publication. Config, source, and retained
+asset hashes are checked again before applying the overlay. Existing package directories and
+conflicting destination SPZs are preserved; changing the option does not rebuild an already
+successful cached stage. Use another fresh candidate instead of overwriting an authored package.
+
+This bounded path supports `wander.objects/2` and original audio, including a hash-pinned
+original recording paired with a silent source clip. Spatial stems are not supported. It does
+not rerun providers, invent audio, solve placement, or advance downstream quality checks.
+`retained-delivery.json` records the copied hashes and `acceptance: none`. Placement, collision,
+and frame-alignment diagnostic reports are excluded because their world provenance may be stale;
+old placement, anchor, and verification state is never imported. The run remains subject to normal placement,
+object, quality, and completion gates. Inspect the delivered viewer before adoption.
+
+## Repair incomplete saved-track output
+
 A sparse saved-pose input retains its full source grid. Exporting all intended non-null seeds does
 not mean the full recording was reconstructed: the recovery manifest stays partial and the local
 command exits with that status after downloading outputs. Validate exact intended sample IDs and
