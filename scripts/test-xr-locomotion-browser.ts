@@ -29,7 +29,8 @@ try {
   await page.addInitScript({ path: new URL('./fake-webxr.js', import.meta.url).pathname });
   // This suite covers snap pivots; test-xr-turning-browser covers smooth mode's continuous default.
   await page.goto(
-    'http://127.0.0.1:5399/fourd.html?demo=stairs2&xr=1&fakexr=1&xrmove=smooth&xrturnmode=snap&xrwalkgain=1.3&fakew=512&fakeh=512&xradapt=0',
+    process.env.XR_LOCOMOTION_URL ||
+      'http://127.0.0.1:5399/fourd.html?demo=stairs2&xr=1&fakexr=1&xrmove=smooth&xrturnmode=snap&xrwalkgain=1.3&fakew=512&fakeh=512&xradapt=0',
     { waitUntil: 'load', timeout: 120000 },
   );
   await page.waitForFunction(() => window.wander?.ready, null, { timeout: 180000 });
