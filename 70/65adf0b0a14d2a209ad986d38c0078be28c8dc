@@ -1,0 +1,41 @@
+src/playback-time.ts
+  s_988a422339b8f1::t_c376af57f124e2 10-18
+  s_988a422339b8f1::t_1efb56e263b6fc 19-21
+scripts/test-scene-boundary-browser.ts
+  s_988a422339b8f1::t_507354c3df73dc 1-8,10-32,43-48,50-59,62,68-69,85,89-92
+  s_988a422339b8f1::t_1049832f80d55d 9,33-42,49
+  s_988a422339b8f1::t_d5578481546585 60-61,63-67,70-84,86-88
+scripts/test-person-timing-browser.ts
+  s_988a422339b8f1::t_62dedd36fe1ef7 1-79
+  s_988a422339b8f1::t_79c2f72e7bd8bc 80-100
+src/fourd-runtime.js
+  s_988a422339b8f1::t_961f5a4cd8a2cb 4146-4148,4150-4161,4164-4165
+  s_988a422339b8f1::t_d5578481546585 4383
+  s_988a422339b8f1::t_c376af57f124e2 4,2304,2310,2322
+fourd.html
+  s_988a422339b8f1::t_961f5a4cd8a2cb 51-79,106-108,139-142
+docs/DEVELOPING.md
+  s_988a422339b8f1::t_961f5a4cd8a2cb 140-144
+scripts/tests/test_package_objects_timing.py
+  s_988a422339b8f1::t_404a2723f7c606 148-174
+scripts/package_objects.py
+  s_988a422339b8f1::t_404a2723f7c606 679-681
+scripts/test-playback-time.ts
+  s_988a422339b8f1::t_62dedd36fe1ef7 3,34-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7065adf0b0a14d2a209ad986d38c0078be28c8dc",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
