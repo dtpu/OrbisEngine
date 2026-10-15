@@ -7,3 +7,15 @@ export function normalizePlaybackTime(value: number, duration: number): number {
   const normalized = wrapped < 0 ? wrapped + duration : wrapped;
   return normalized === 0 || normalized === duration ? 0 : normalized;
 }
+
+/** Sample recorded poses without blending the last observation back to the first. */
+export function sampleAnimationFrame(
+  time: number,
+  timestamps: readonly number[],
+): [number, number] {
+  let i = 0;
+  while (i + 1 < timestamps.length && timestamps[i + 1] <= time) i++;
+  if (i + 1 >= timestamps.length || time <= timestamps[i]) return [i, 0];
+  const span = timestamps[i + 1] - timestamps[i];
+  return [i, span > 0 ? Math.min(1, (time - timestamps[i]) / span) : 0];
+}

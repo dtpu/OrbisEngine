@@ -48,6 +48,35 @@
     color: #fff;
     font: 16px system-ui;
   }
+  #scene-boundary {
+    position: fixed;
+    left: 50%;
+    bottom: 64px;
+    transform: translateX(-50%);
+    z-index: 9;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px 8px 14px;
+    border: 1px solid #ffffff30;
+    border-radius: 10px;
+    background: #202124ed;
+    color: #f5f5f5;
+    font: 13px system-ui;
+    white-space: nowrap;
+  }
+  #scene-boundary[hidden] {
+    display: none;
+  }
+  #boundary-return {
+    border: 0;
+    border-radius: 6px;
+    padding: 7px 10px;
+    background: #f5f5f5;
+    color: #202124;
+    font: inherit;
+    cursor: pointer;
+  }
   /* phone: the HUD is 950 px of pre-formatted text and the PiP is 320 px wide, so both run off a
    narrow screen. Wrap one and shrink the other; nothing changes above 760 px. */
   @media (max-width: 760px) {
@@ -73,6 +102,9 @@
       transform: none !important;
       text-align: center;
       margin-bottom: 96px;
+    }
+    #scene-boundary {
+      bottom: 150px;
     }
   }
 </style>
@@ -104,6 +136,10 @@
     P = 20 s showreel · WASD + drag = free camera · Enter / Space = play/pause · V = source video
   </div>
   <video id="pip" muted loop playsinline autoplay></video>
+  <div id="scene-boundary" hidden>
+    <span role="status">Scene boundary</span>
+    <button id="boundary-return" type="button">Back to scene</button>
+  </div>
   <div
     id="edgefade"
     style="

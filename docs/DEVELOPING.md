@@ -137,8 +137,11 @@ With `xr=1`, the room and its background layers use adaptive detail even if the 
 requests `lod=0`. This lets `xrlod` (500,000 by default) and frame-time adjustment limit the static
 world workload. People and props still add their own rendering cost. CPU colour-blending modes
 keep their required raw data; `xrworldlod=0` preserves the desktop scene's detail choice for
-comparison. The scene's `edgefade` setting also applies in VR; `edgefade=0` disables boundary
-darkening while retaining the brief blink for teleport and snap turns.
+comparison. Desktop navigation keeps the scene visible at the movement boundary and shows a
+Back to scene button that restores the starting camera without seeking or resetting people.
+Explicit scene/URL `edgefade` settings can still enable desktop grading. VR retains its boundary
+vignette by default; `edgefade=0` disables that darkening while retaining the brief blink for
+teleport and snap turns.
 
 Recorded people and props update at up to 36 fps in VR (`xranimfps`), using the current video
 time on each update. Head tracking, controllers, interactive props and rendering keep the headset
