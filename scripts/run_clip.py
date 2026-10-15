@@ -73,6 +73,23 @@ SCALE_SPREAD_BAND = (0.90, 1.10)
 WORLD_SUFFIXES = {"video": "clean", "both": "clean", "image": "image", "multi": "multi"}
 
 
+def validate_shared_scale(value: str, people_limit: int, *, orchestrated: bool = False):
+    if not isinstance(value, str) or not re.fullmatch(r"auto|none|[0-9]+", value):
+        raise ValueError("--shared-scale must be auto, none, or a nonnegative track id")
+    if value == "auto":
+        return
+    if people_limit <= 0:
+        raise ValueError("--shared-scale requires --all-people or --people")
+    if orchestrated:
+        raise ValueError(
+            "--shared-scale is a stage parameter; use wander step for an orchestrated run"
+        )
+    if value != "none" and int(value) >= people_limit:
+        raise ValueError(
+            f"--shared-scale track id must be within configured slots 0..{people_limit - 1}"
+        )
+
+
 def parse_object_spec(spec: str) -> dict:
     """`id:motion:prompt[:roi]` -> a dict for the objects stage.
 
@@ -1476,14 +1493,20 @@ class Pipeline:
         )
 
     def package_people(self):
+        shared_scale = getattr(self.a, "shared_scale", "auto")
+        validate_shared_scale(shared_scale, self.people_limit)
         out = public_dir() / "worlds" / f"{self.name}-4d"
         motions = []
+        available_tracks = set()
         for i in range(self.people_limit):
             folder = self.ctx / f"lhm-motion-{i:02d}"
             if (folder / "sequence.json").exists():
                 motions += ["--motion", f"{i}={folder}"]
+                available_tracks.add(i)
         if not motions:
             raise RuntimeError("no per-track animation finished")
+        if shared_scale not in {"auto", "none"} and int(shared_scale) not in available_tracks:
+            raise ValueError("--shared-scale reference track has no completed animation")
         tracks = json.loads((self.ctx / "tracks" / "tracks.json").read_text())
         source_audio_manifest(self.clip, tracks["duration"], out)
         shutil.rmtree(out, ignore_errors=True)
@@ -1498,6 +1521,8 @@ class Pipeline:
                 str(self.ctx / "pi3x" / "cameras.json"),
                 "--clip",
                 str(self.clip),
+                "--shared-scale",
+                shared_scale,
                 "--out",
                 str(out),
             ],
@@ -3254,6 +3279,13 @@ def main():
         "--people", type=int, help="like --all-people with an explicit cap on the person count"
     )
     ap.add_argument(
+        "--shared-scale",
+        default="auto",
+        help="tracked-person packaging: auto chooses the depth-supported reference, none keeps "
+        "each track's scale, or use a track id within configured people slots; "
+        "nondefault values are unsupported for single-person runs or --orchestrated",
+    )
+    ap.add_argument(
         "--det-thresh",
         type=float,
         default=0.15,
@@ -3330,6 +3362,9 @@ def main():
     )
     a = ap.parse_args()
     try:
+        validate_shared_scale(
+            a.shared_scale, a.people or (4 if a.all_people else 0), orchestrated=a.orchestrated
+        )
         animation_options(execution_timeout=a.execution_timeout)
     except ValueError as error:
         ap.error(str(error))

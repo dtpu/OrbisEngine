@@ -30,6 +30,7 @@ SCRIPTS = {
     "clean_multi": "run_clip.py",
     "tracks": "run_clip.py",
     "lhm_motion": "run_clip.py",
+    "package_people": "run_clip.py",
     "scale_fit": "run_clip.py",
     "anchors": "run_clip.py",
     "finetune": "run_clip.py",
@@ -112,6 +113,13 @@ class DeclaredDefaultTests(unittest.TestCase):
         self.assertEqual((rule["minimum"], rule["maximum"]), (0, 3600))
         self.assertIn("tracked-person", rule["description"])
         self.assertIn("single-person", rule["description"])
+
+    def test_shared_scale_default_matches_underlying_packager(self):
+        rule = STEPS["package_people"].parameters["properties"]["shared_scale"]
+        self.assertEqual(
+            rule["default"], script_arguments("package_multiperson.py")["--shared-scale"]
+        )
+        self.assertNotIn("shared_scale", STEPS["package"].parameters.get("properties", {}))
 
 
 class CatalogueTests(unittest.TestCase):
