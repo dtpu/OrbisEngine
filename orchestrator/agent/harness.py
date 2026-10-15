@@ -74,6 +74,8 @@ class HarnessPolicy:
     # the whole timeout in silence and the stage learns nothing from it. 0 disables the clock.
     idle_seconds: int = 300
     idle_nudges: int = 2
+    # Explicit operator grants for shared state outside the review workspace; never inferred.
+    writable_roots: tuple[str, ...] = ()
     command: tuple[str, ...] = ()
     # Only these host variables reach the harness. API credentials must be listed explicitly.
     passthrough: tuple[str, ...] = ("PATH", "HOME", "OPENAI_API_KEY")
@@ -92,6 +94,10 @@ class HarnessPolicy:
             raise ValueError("the idle clock cannot be negative")
         if self.idle_nudges < 0:
             raise ValueError("the nudge count cannot be negative")
+        if not isinstance(self.writable_roots, tuple) or any(
+            not isinstance(root, str) or not root.strip() for root in self.writable_roots
+        ):
+            raise ValueError("writable roots must be a tuple of nonempty directory strings")
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> HarnessPolicy:
@@ -100,6 +106,14 @@ class HarnessPolicy:
         command = tuple(environ.get("WANDER_REVIEW_COMMAND", "").split())
         if command:
             kind = "command"
+        try:
+            writable_roots = json.loads(environ.get("WANDER_REVIEW_WRITE_ROOTS", "[]"))
+        except ValueError:
+            raise ValueError(
+                "WANDER_REVIEW_WRITE_ROOTS must be a JSON list of directories"
+            ) from None
+        if not isinstance(writable_roots, list):
+            raise ValueError("WANDER_REVIEW_WRITE_ROOTS must be a JSON list of directories")
         return cls(
             kind=kind,
             model=environ.get("WANDER_REVIEW_MODEL") or None,
@@ -107,6 +121,7 @@ class HarnessPolicy:
             timeout_seconds=int(environ.get("WANDER_REVIEW_TIMEOUT", "900")),
             idle_seconds=int(environ.get("WANDER_REVIEW_IDLE", "300")),
             idle_nudges=int(environ.get("WANDER_REVIEW_NUDGES", "2")),
+            writable_roots=tuple(writable_roots),
             command=command,
         )
 
@@ -116,7 +131,8 @@ class HarnessPolicy:
         if self.kind == "codex" and session:
             # Resuming keeps one session per run, so the agent remembers what it already
             # decided. `resume` takes neither --cd nor --sandbox, so the workspace comes from
-            # the process directory and the sandbox from a config override.
+            # the process directory and the sandbox from config overrides. It also lacks
+            # --add-dir, so explicit writable roots use the equivalent config key.
             command = [
                 "codex",
                 "exec",
@@ -129,6 +145,12 @@ class HarnessPolicy:
             ]
             if self.model:
                 command += ["--model", self.model]
+            if self.writable_roots:
+                command += [
+                    "-c",
+                    "sandbox_workspace_write.writable_roots="
+                    + json.dumps(self.writable_roots, ensure_ascii=False),
+                ]
             return (*command, "-")
         if self.kind == "codex":
             # Prompt on stdin ("-"); edits are confined to the workspace by Codex's own sandbox.
@@ -144,6 +166,8 @@ class HarnessPolicy:
             ]
             if self.model:
                 command += ["--model", self.model]
+            for root in self.writable_roots:
+                command += ["--add-dir", root]
             return (*command, "-")
         if self.kind == "claude":
             command = [
@@ -166,6 +190,8 @@ class HarnessPolicy:
             ]
             if self.model:
                 command += ["--model", self.model]
+            for root in self.writable_roots:
+                command += ["--add-dir", root]
             return (*command, "-")
         # A custom harness that can continue a session says so by taking ``{session}``; that is
         # also what makes it worth nudging rather than starting over.

@@ -39,7 +39,25 @@ to retain previous accounting. The `wander` command and direct runner share that
 Keep the same absolute ledger across candidates and worktrees that share an allowance.
 A differing `WANDER_PYTHON` is explicitly
 unverified. The default reviewing harness is Codex; `WANDER_REVIEW_AGENT` and
-`WANDER_REVIEW_COMMAND` select alternatives. No harness model session is started.
+`WANDER_REVIEW_COMMAND` select alternatives. Built-in Codex and Claude harnesses must pass a
+five-second `--version` startup probe; a found but broken wrapper blocks setup. Custom commands
+are only checked for executable presence and remain unverified because their startup is not
+tested. Harness probe output is never included in the report. No harness model session is started.
+
+Reviewing agents use `workspace-write` by default. If a shared SQLite database or paid-stage
+ledger lives outside the run directory, explicitly grant only its required parent directory:
+
+```sh
+export WANDER_REVIEW_WRITE_ROOTS='["/absolute/path/to/shared state"]'
+```
+
+This variable accepts a JSON list of nonempty directory strings, preserving spaces in paths;
+use absolute paths. Its default is an empty list. Built-in Codex sessions receive `--add-dir`
+for each root; resumed sessions use the equivalent
+`sandbox_workspace_write.writable_roots` config override because `codex exec resume` lacks
+`--add-dir`. Claude receives additional `--add-dir` arguments. Custom command arguments are
+unchanged. The harness never infers shared roots or silently grants the whole repository;
+SQLite needs its directory writable for journal/WAL files as well as the database itself.
 
 Credentials come from the selected shared stage plan. World generation needs `WLT_API_KEY`,
 source-grounded world prompts and object descriptions need `OPENAI_API_KEY`, and Modal needs

@@ -135,6 +135,33 @@ class ApiTests(unittest.TestCase):
         listing = self.client.get("/api/pipeline", headers=AUTH)
         self.assertEqual([run["id"] for run in listing.json()["runs"]], ["run-1", "source-fixture"])
 
+    def test_run_question_updates_list_and_detail_without_database_projection(self):
+        self.create_run()
+        journal = self.runs.journal("run-1")
+        journal.append("question", question="Review the processing plan before starting.")
+        self.assertEqual(self.repository.list_messages("run-1"), [])
+        for endpoint in ("/api/pipeline/runs/run-1", "/api/pipeline"):
+            response = self.client.get(endpoint, headers=AUTH).json()
+            summary = response if "id" in response else response["runs"][0]
+            self.assertEqual(summary["status"], "waiting_human")
+        response = self.client.post(
+            "/api/pipeline/runs/run-1/messages", headers=AUTH, json={"message": "Continue"}
+        )
+        self.assertEqual(response.status_code, 202)
+        summary = self.client.get("/api/pipeline/runs/run-1", headers=AUTH).json()
+        self.assertNotEqual(summary["status"], "waiting_human")
+
+    def test_question_does_not_override_pause_or_terminal_status(self):
+        self.create_run()
+        journal = self.runs.journal("run-1")
+        journal.append("question", question="Review the processing plan before starting.")
+        (journal.run_dir / "paused").touch()
+        summary = self.client.get("/api/pipeline/runs/run-1", headers=AUTH).json()
+        self.assertEqual(summary["status"], "paused")
+        self.repository.finish_run("run-1", "canceled")
+        summary = self.client.get("/api/pipeline/runs/run-1", headers=AUTH).json()
+        self.assertEqual(summary["status"], "canceled")
+
     def test_messages_approvals_and_commands_are_durable_before_signal(self):
         self.create_run()
         message = self.client.post(

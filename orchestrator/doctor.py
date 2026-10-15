@@ -304,12 +304,28 @@ def inspect_setup(
     try:
         policy = HarnessPolicy.from_environment()
         executable = policy.command[0] if policy.kind == "command" else policy.kind
-        require(
-            "tool.harness",
-            shutil.which(executable),
-            "Configured reviewing harness executable",
-            "Install the selected harness or configure WANDER_REVIEW_AGENT / WANDER_REVIEW_COMMAND.",
-        )
+        available = shutil.which(executable)
+        if policy.kind == "command" and available:
+            add(
+                "tool.harness",
+                "unverified",
+                "Custom reviewing harness executable was found; startup was not tested.",
+                "Verify the custom command privately; the doctor does not execute custom harnesses.",
+            )
+        else:
+            working = False
+            if available:
+                try:
+                    _probe([available, "--version"], timeout=5)
+                    working = True
+                except ProbeError:
+                    pass
+            require(
+                "tool.harness",
+                working,
+                "Configured reviewing harness startup",
+                "Install or repair the selected harness, or configure WANDER_REVIEW_AGENT / WANDER_REVIEW_COMMAND.",
+            )
     except (ValueError, IndexError):
         add(
             "tool.harness",
