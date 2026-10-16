@@ -82,6 +82,16 @@ Dashboard summaries and progress now read the same dynamic stage plan from the r
 Saved-input provenance is displayed separately from actual attempt history; presenting a reused
 stage as complete never creates an inference attempt or a quality decision.
 
+A local dashboard handoff check asked a question before any agent transcript existed and sent
+the answer through the Codex reply box. The run and stage cleared “needs you” automatically;
+the stage returned to pending without an attempt or quality decision. The run was then paused.
+The paid-attempt ledger was unchanged. Regression coverage preserves successful/failed stage
+results, independent review holds, pause/cancel controls, and questions outside the original plan.
+Questions now hold the journal without overwriting stage results. Older overwritten nodes are
+normalized only in API responses when their event history proves the hold came from a question;
+ambiguous or missing history remains held. This verifies the operator reply path, not autonomous
+agent execution or fresh inference. Evidence: `.context/evidence/review-answer-handoff/`.
+
 A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
 The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
 source video. Delivered world and compact-motion hashes matched the retained files. No requests

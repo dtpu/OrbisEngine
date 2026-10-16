@@ -241,6 +241,7 @@ class PipelineRepository:
                         "selectedAttemptId": node.selected_attempt_id,
                         "blockedReason": node.blocked_reason,
                         "definition": node.stage_definition,
+                        "updatedAt": node.updated_at.isoformat(),
                     }
                     for node in nodes
                 ],
@@ -533,12 +534,14 @@ class PipelineRepository:
         stage_type: str,
         definition: dict[str, Any],
         dependencies: list[str] | None = None,
+        refresh_existing: bool = True,
     ) -> None:
         """Make sure a step has a row, adding one if the run never planned it.
 
         The plan a run opens with is a suggestion, so the agent may run something that was not
         in it. Without this such a step is invisible: the dashboard shows the plan and not the
-        work. An existing row keeps its status and history; only its description is refreshed.
+        work. An existing row keeps its status and history; its description is refreshed unless
+        the caller is recording a question, which must not change an existing stage at all.
         """
         now = datetime.now(timezone.utc)
         with self.sessions.begin() as session:
@@ -546,8 +549,9 @@ class PipelineRepository:
                 NodeRecord, {"run_id": run_id, "node_id": node_id}, with_for_update=True
             )
             if node is not None:
-                node.stage_definition = definition
-                node.updated_at = now
+                if refresh_existing:
+                    node.stage_definition = definition
+                    node.updated_at = now
                 return
             session.add(
                 NodeRecord(
