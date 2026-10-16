@@ -13,6 +13,7 @@ the agent stops without doing either, which is itself a thing to report.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import dataclasses
 import os
 import sys
 
-from orchestrator.agent.harness import HarnessAgent
+from orchestrator.agent.harness import HarnessAgent, TRANSCRIPT_FILE, read_session
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.steps import STEPS, people_steps, planned_steps
 
@@ -163,10 +164,17 @@ class SessionOutcome:
     error: str | None = None
     # Steps started and not yet finished when the turn ended.
     running: int = 0
+    # Journal length observed before deriving the outcome. Later events must wake the run.
+    observed_entries: int = 0
 
     @property
     def wants_another_turn(self) -> bool:
         return self.finished is None and self.waiting is None and self.error is None
+
+
+class AdmissionStopped(Exception):
+    def __init__(self, outcome: SessionOutcome):
+        self.outcome = outcome
 
 
 class RunSession:
@@ -244,16 +252,24 @@ class RunSession:
 
     def admission_outcome(self, journal: Journal) -> SessionOutcome | None:
         """Check durable controls again on every turn, including a session already in memory."""
+        observed_entries = len(journal.entries())
         control = journal.control_status()
         finished = "canceled" if control == "canceled" else journal.finished()
         if finished:
-            return SessionOutcome(finished=finished, waiting=None, steps_run=0)
+            return SessionOutcome(
+                finished=finished, waiting=None, steps_run=0, observed_entries=observed_entries
+            )
         if control == "paused":
             return SessionOutcome(
                 finished=None,
                 waiting=None,
                 steps_run=0,
                 error="Run is paused; an operator must resume it before another turn.",
+                observed_entries=observed_entries,
+            )
+        if waiting := journal.unanswered():
+            return SessionOutcome(
+                finished=None, waiting=waiting, steps_run=0, observed_entries=observed_entries
             )
         return None
 
@@ -276,19 +292,41 @@ class RunSession:
         install_skill(self.run_dir)
         if stopped := self.admission_outcome(journal):
             return stopped
-        outcome = self.harness.run(
-            None,
-            self.run_dir,
-            brief,
-            session=self.read_session(),
-        )
-        if outcome.session:
-            (self.run_dir / SESSION_FILE).write_text(outcome.session + "\n")
-        elif outcome.result.status == "stalled":
+
+        spawned = False
+
+        @contextmanager
+        def spawn_guard():
+            nonlocal spawned
+            with journal.admission_lock():
+                if stopped := self.admission_outcome(journal):
+                    raise AdmissionStopped(stopped)
+                yield
+                spawned = True
+
+        try:
+            outcome = self.harness.run(
+                None,
+                self.run_dir,
+                brief,
+                session=self.read_session(),
+                spawn_guard=spawn_guard,
+            )
+        except AdmissionStopped as stopped:
+            # A question can stop a watchdog nudge after the first process has run.
+            # Preserve that session for the answer, without reviving an older transcript.
+            if spawned and (session := read_session(self.run_dir / TRANSCRIPT_FILE)):
+                (self.run_dir / SESSION_FILE).write_text(session + "\n")
+            return stopped.outcome
+        if outcome.result.status == "stalled":
             # A session that stopped answering is not the one to ask again; the journal is
             # this run's memory, not the conversation.
             (self.run_dir / SESSION_FILE).unlink(missing_ok=True)
+        elif outcome.session:
+            (self.run_dir / SESSION_FILE).write_text(outcome.session + "\n")
         after = self.journal()
+        entries = after.entries()
+        observed_entries = len(entries)
         error = None
         if outcome.result.status not in {"completed", "stalled"}:
             error = outcome.result.error
@@ -297,9 +335,10 @@ class RunSession:
         return SessionOutcome(
             finished=after.finished(),
             waiting=after.unanswered(),
-            steps_run=len([e for e in after.entries() if e.kind == "step.started"]) - before,
+            steps_run=len([e for e in entries if e.kind == "step.started"]) - before,
             error=error,
             running=len(after.active_attempts()),
+            observed_entries=observed_entries,
         )
 
     def work(self, turns: int = 12) -> SessionOutcome:
@@ -309,7 +348,12 @@ class RunSession:
         lost the thread or has nothing left to do, and either way another identical turn is
         unlikely to differ.
         """
-        outcome = SessionOutcome(finished=None, waiting=None, steps_run=0)
+        outcome = SessionOutcome(
+            finished=None,
+            waiting=None,
+            steps_run=0,
+            observed_entries=len(self.journal().entries()),
+        )
         for _ in range(turns):
             outcome = self.turn()
             if not outcome.wants_another_turn:
@@ -319,9 +363,13 @@ class RunSession:
                 # change instead of immediately asking it to launch the same step.
                 return outcome
             if outcome.steps_run == 0:
-                self.journal().append(
+                journal = self.journal()
+                note = journal.append(
                     "note",
                     text="the agent took a turn without running a step or deciding anything",
                 )
+                entries = journal.entries()
+                if len(entries) == outcome.observed_entries + 1 and entries[-1] == note:
+                    outcome = dataclasses.replace(outcome, observed_entries=len(entries))
                 return outcome
         return outcome

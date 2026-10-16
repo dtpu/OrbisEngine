@@ -183,14 +183,21 @@ def source_problem(context: RunContext) -> str | None:
     return None
 
 
+def stage_hold_reason(journal: Journal) -> str | None:
+    if status := journal.control_status():
+        return f"Run is {status}; an operator must resume it before more work can start."
+    if journal.unanswered():
+        return "Run is waiting for an operator answer; answer the pending question before more work can start."
+    return None
+
+
 def refuse_controlled_step(
     context: RunContext, journal: Journal, step: str, attempt: str | None = None
 ) -> bool:
     """Reject new work, closing only a pending local attempt that has not launched yet."""
-    status = journal.control_status()
-    if status is None:
+    problem = stage_hold_reason(journal)
+    if problem is None:
         return False
-    problem = f"Run is {status}; an operator must resume it before more work can start."
     if attempt:
         for entry in reversed(journal.entries()):
             if entry.data.get("attempt") != attempt:
@@ -349,8 +356,8 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
             # Operator controls take this same short lock. Once a pause/cancel has
             # returned, no new stage can slip between the final check and launch.
             with journal.admission_lock():
-                if control := journal.control_status():
-                    status, error = "blocked", f"Run is {control}; no subprocess was launched."
+                if problem := stage_hold_reason(journal):
+                    status, error = "blocked", problem
                     return 2
                 process = subprocess.Popen(
                     command,
@@ -698,7 +705,12 @@ def command_note(context: RunContext, args: argparse.Namespace) -> int:
 
 
 def command_ask(context: RunContext, args: argparse.Namespace) -> int:
-    context.journal().append("question", question=args.question, step=args.step)
+    if not args.question.strip():
+        print("A question must contain non-whitespace text.", file=sys.stderr)
+        return 2
+    journal = context.journal()
+    with journal.admission_lock():
+        journal.append("question", question=args.question, step=args.step)
     print(
         "asked, and the run is waiting. An operator answers with `wander answer`; "
         "stop working on this and finish your turn.",

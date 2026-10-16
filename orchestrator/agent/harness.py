@@ -15,6 +15,7 @@ import signal
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -244,6 +245,7 @@ class HarnessAgent:
         instructions: str,
         session: str | None = None,
         heartbeat: Callable[[], None] | None = None,
+        spawn_guard: Callable[[], AbstractContextManager] | None = None,
     ) -> HarnessOutcome:
         """Review one attempt, nudging the agent back to work if it goes silent.
 
@@ -263,7 +265,6 @@ class HarnessAgent:
         if packet is not None:
             atomic_json(packet_path, packet.model_dump(mode="json"))
         instructions_path.write_text(instructions)
-        decision_path.unlink(missing_ok=True)
         environment = {key: os.environ[key] for key in self.policy.passthrough if key in os.environ}
         environment.update(self.policy.extra_environment)
 
@@ -284,6 +285,7 @@ class HarnessAgent:
                     mode,
                     budget,
                     heartbeat,
+                    spawn_guard,
                 )
             except subprocess.TimeoutExpired:
                 result = AgentResult(
@@ -358,6 +360,7 @@ class HarnessAgent:
         mode: str,
         budget: float,
         heartbeat: Callable[[], None] | None = None,
+        spawn_guard: Callable[[], AbstractContextManager] | None = None,
     ) -> int:
         """Run one harness process, raising :class:`Stalled` if it stops writing.
 
@@ -365,36 +368,42 @@ class HarnessAgent:
         against a child that has not started reading yet. Silence is measured by the size of the
         transcript, which the child appends to as it works.
         """
-        with prompt_path.open("rb") as prompt, transcript.open(mode) as output:
-            process = subprocess.Popen(
-                argv,
-                cwd=workspace,
-                env=environment,
-                stdin=prompt,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            started = time.monotonic()
-            quiet_since = started
-            written = transcript.stat().st_size
-            while True:
-                try:
-                    return process.wait(timeout=POLL_SECONDS)
-                except subprocess.TimeoutExpired:
-                    pass
-                if heartbeat:
-                    heartbeat()
-                now = time.monotonic()
-                size = transcript.stat().st_size
-                if size != written:
-                    written, quiet_since = size, now
-                if now - started > budget:
-                    _halt(process)
-                    raise subprocess.TimeoutExpired(argv, budget)
-                if self.policy.idle_seconds and now - quiet_since > self.policy.idle_seconds:
-                    _halt(process)
-                    raise Stalled()
+        with prompt_path.open("rb") as prompt:
+            # A run may acquire a hold while the prompt is prepared, including before
+            # a watchdog resume. Serialize admission, artifact reset and spawn only.
+            with spawn_guard() if spawn_guard is not None else nullcontext():
+                if mode == "wb":
+                    (workspace / DECISION_FILE).unlink(missing_ok=True)
+                with transcript.open(mode) as output:
+                    process = subprocess.Popen(
+                        argv,
+                        cwd=workspace,
+                        env=environment,
+                        stdin=prompt,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+        started = time.monotonic()
+        quiet_since = started
+        written = transcript.stat().st_size
+        while True:
+            try:
+                return process.wait(timeout=POLL_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            if heartbeat:
+                heartbeat()
+            now = time.monotonic()
+            size = transcript.stat().st_size
+            if size != written:
+                written, quiet_since = size, now
+            if now - started > budget:
+                _halt(process)
+                raise subprocess.TimeoutExpired(argv, budget)
+            if self.policy.idle_seconds and now - quiet_since > self.policy.idle_seconds:
+                _halt(process)
+                raise Stalled()
 
 
 def _halt(process: subprocess.Popen) -> None:

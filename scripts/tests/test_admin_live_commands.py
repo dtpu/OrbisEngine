@@ -125,7 +125,7 @@ def test_stale_supervisor_selection_cannot_reopen_operator_stopped_run(
     session = Mock()
     monkeypatch.setattr(supervisor, "RunSession", session)
     result = supervisor.work_on(selected[0], repository, Mock(), turns=1)
-    assert "operator" in result
+    assert "operator" in result.message
     repository.reopen_run.assert_not_called()
     session.assert_not_called()
     summary = api.get("/api/pipeline/runs/operator-test").json()
