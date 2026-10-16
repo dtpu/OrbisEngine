@@ -137,6 +137,8 @@ New runs retain a source SHA-256 in `run.json`. Stages refuse missing or changed
 before launching; existing outputs stay on disk. Legacy manifests without a digest need a new
 submission instead of blindly reusing cached state. Orchestrated runs reject cuts instead of
 silently trimming into another run directory. The direct runner retains its explicit shot controls.
+Reject-only cut checks skip shot ranking and its model loads; their detector arguments match
+the cache key. Cut detection and rejection still run before any stage.
 
 `wander step` admits one unresolved attempt per step in a run directory. A filesystem lock
 serializes admission, then releases before execution so independent steps can proceed. Detached

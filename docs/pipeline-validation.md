@@ -104,6 +104,20 @@ sign-in; inherited unrelated MCP sign-in and duplicate-hook warnings did not pre
 turn. The broken system CLI was then updated to that version and its exec/resume startup
 checks passed. Evidence: `.context/evidence/worker-reply-resume/`.
 
+A further bottle delivery check used the real Codex agent to inspect the retained inputs,
+launch one detached `package_people` stage, end its turn, and resume when packaging finished.
+The stage completed in 78.3 seconds; the agent read its result and requested viewer review.
+The live admin showed one successful attempt and distinguished five saved-input stages from
+fresh execution. All 240 animated person frames, room, object assets, original audio, and
+presentation matched the prior delivery. Camera/source URLs correctly named the new run.
+Browser checks loaded both people, enabled the original soundtrack, advanced playback, reached
+frame 119 at 9.93 seconds, wrapped to frame zero, and moved beyond the room without an edge
+fade. No console errors were observed. The supervisor stopped and the run was paused.
+This was the explicitly requested fifth packaging execution after four successful delivery
+checks, with no automatic retry, provider commands, paid-ledger change, or quality acceptance.
+It joins actual agent control to retained packaging and viewer delivery; fresh reconstruction
+and headset behavior remain unverified. Evidence: `.context/evidence/bottle-agent-delivery/`.
+
 Regression tests cover questions arriving before stage/agent launch, blocked watchdog resumes,
 retained transcript/session evidence, and answers arriving between a turn's final journal read
 and the supervisor's next pass. Quiet turns do not repeatedly wake on their own status notes.
