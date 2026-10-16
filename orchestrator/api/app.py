@@ -35,6 +35,7 @@ from orchestrator.api.progress import (
     stage_snapshot,
 )
 from orchestrator.api.reviews import register_review_routes
+from orchestrator.api.questions import apply_question_hold, restore_legacy_question_states
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES, live_run_status
@@ -93,12 +94,15 @@ def with_stage_snapshot(summary: dict, snapshot: StageSnapshot) -> dict:
                 node[field] = stage[field]
         nodes.append(node)
     planned = {stage["name"] for stage in snapshot.stages}
+    pending = snapshot.journal.pending_question()
+    question_step = pending.data.get("step") if pending is not None else None
     # A seeded, never-started node from the original one-person graph is stale once
     # tracking exposes more people. Actual attempts and operator decisions remain visible.
     for node in summary["nodes"]:
         if node["id"] in planned or not (
             node["id"] in attempted
             or node["id"] in reviewed
+            or node["id"] == question_step
             or node.get("selectedAttemptId")
             or node["status"] not in {"queued", "pending"}
         ):
@@ -423,11 +427,17 @@ def create_app(
         except (KeyError, OSError, ValueError, TypeError, AttributeError):
             summary["live"] = {"source": "journal", "available": False}
             return summary
+        restore_legacy_question_states(summary, journal, repository)
         snapshot = stage_snapshot(journal.run_dir)
         if snapshot is not None and snapshot.run_id == summary["id"]:
             with_stage_snapshot(summary, snapshot)
         summary["live"] = {"source": "journal", "paused": paused}
         if summary["status"] not in TERMINAL_RUN_STATUSES:
+            apply_question_hold(summary, journal)
+            summary["status"] = live_run_status(
+                summary.get("recordedStatus", summary["status"]),
+                [node["status"] for node in summary["nodes"]],
+            )
             if paused:
                 summary["status"] = "paused"
             elif journal.unanswered():

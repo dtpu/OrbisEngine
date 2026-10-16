@@ -301,6 +301,200 @@ class ProductionSubmissionTests(unittest.TestCase):
                 self.assertEqual(unavailable.status_code, 503, unavailable.text)
                 self.assertEqual(unavailable.json()["detail"], "run progress unavailable")
 
+    def test_answer_releases_only_the_question_hold_in_list_detail_and_progress(self):
+        for result in ("pending", "succeeded", "failed", "waiting_human"):
+            with self.subTest(result=result):
+                run_id = f"question-{result}"
+                self.assertEqual(self.upload(run_id=run_id).status_code, 201)
+                journal = self.app.state.runs.journal(run_id)
+                if result in {"succeeded", "failed"}:
+                    journal.append("step.started", step="clean", attempt=f"{run_id}:1", number=1)
+                    journal.append(
+                        "step.finished",
+                        step="clean",
+                        attempt=f"{run_id}:1",
+                        status=result,
+                        error="stage failed" if result == "failed" else None,
+                    )
+                elif result == "waiting_human":
+                    self.repository.set_node_status(run_id, "clean", result, "quality approval")
+                before = self.repository.run_summary(run_id)
+                journal.append("question", question="Use this source clip?", step="clean")
+                held = self.client.get(f"/api/pipeline/runs/{run_id}", headers=AUTH).json()
+                self.assertEqual(held["status"], "waiting_human")
+                self.assertEqual(
+                    next(n for n in held["nodes"] if n["id"] == "clean")["status"],
+                    "waiting_human",
+                )
+                progress = self.client.get(
+                    f"/api/pipeline/runs/{run_id}/progress", headers=AUTH
+                ).json()
+                self.assertEqual(
+                    next(s for s in progress["stages"] if s["name"] == "clean")["status"],
+                    "waiting_human",
+                )
+                # An unscoped answer still answers the latest question. Each API call uses
+                # a new Journal/Projection, so the handoff cannot rely on process memory.
+                answered = self.client.post(
+                    f"/api/pipeline/runs/{run_id}/messages",
+                    headers=AUTH,
+                    json={"message": "Use the retained source; no new inference."},
+                )
+                self.assertEqual(answered.status_code, 202, answered.text)
+                detail = self.client.get(f"/api/pipeline/runs/{run_id}", headers=AUTH).json()
+                listed = next(
+                    r
+                    for r in self.client.get("/api/pipeline", headers=AUTH).json()["runs"]
+                    if r["id"] == run_id
+                )
+                for summary in (detail, listed):
+                    node = next(n for n in summary["nodes"] if n["id"] == "clean")
+                    self.assertEqual(node["status"], result)
+                    self.assertEqual(summary["attempts"], before["attempts"])
+                    self.assertEqual(summary["reviews"], before["reviews"])
+                    if result == "waiting_human":
+                        self.assertEqual(node["blockedReason"], "quality approval")
+                    else:
+                        self.assertNotEqual(summary["status"], "waiting_human")
+                self.assertIsNone(self.app.state.runs.journal(run_id).unanswered())
+
+    def test_question_answer_preserves_pause_cancel_and_other_stage_review(self):
+        self.assertEqual(self.upload(run_id="held").status_code, 201)
+        journal = self.app.state.runs.journal("held")
+        self.repository.set_node_status("held", "pi3x", "waiting_human", "independent review")
+        for control in ("paused", "canceled"):
+            if control == "paused":
+                self.app.state.runs.pause("held", True)
+            else:
+                journal.append("run.finished", status="canceled")
+            journal.append("question", question="Source question", step="clean")
+            response = self.client.post(
+                "/api/pipeline/runs/held/messages",
+                headers=AUTH,
+                json={"message": "Answer only", "node_id": "clean"},
+            )
+            self.assertEqual(response.status_code, 202)
+            summary = self.client.get("/api/pipeline/runs/held", headers=AUTH).json()
+            self.assertEqual(summary["status"], control)
+            review = next(n for n in summary["nodes"] if n["id"] == "pi3x")
+            self.assertEqual(
+                (review["status"], review["blockedReason"]), ("waiting_human", "independent review")
+            )
+
+    def test_question_on_unplanned_stage_stays_visible_until_answered(self):
+        self.assertEqual(self.upload(run_id="unplanned-question").status_code, 201)
+        journal = self.app.state.runs.journal("unplanned-question")
+        journal.append("question", question="Include a world?", step="marble_video")
+        detail = self.client.get("/api/pipeline/runs/unplanned-question", headers=AUTH).json()
+        listed = next(
+            run
+            for run in self.client.get("/api/pipeline", headers=AUTH).json()["runs"]
+            if run["id"] == "unplanned-question"
+        )
+        for summary in (detail, listed):
+            node = next(n for n in summary["nodes"] if n["id"] == "marble_video")
+            self.assertEqual(
+                (node["status"], node["blockedReason"]), ("waiting_human", "Include a world?")
+            )
+            self.assertFalse(summary["attempts"])
+        self.assertEqual(
+            self.client.post(
+                "/api/pipeline/runs/unplanned-question/messages",
+                headers=AUTH,
+                json={"message": "Keep the original plan."},
+            ).status_code,
+            202,
+        )
+        answered = self.client.get("/api/pipeline/runs/unplanned-question", headers=AUTH).json()
+        self.assertNotIn("marble_video", [node["id"] for node in answered["nodes"]])
+        self.assertNotEqual(answered["status"], "waiting_human")
+
+    def test_legacy_question_projection_restores_history_without_clearing_independent_holds(self):
+        from orchestrator.journal import Entry, Journal, RunProjection
+        from datetime import UTC, datetime
+
+        for prior, later in (
+            ("queued", None),
+            ("waiting_human", None),
+            ("queued", "quality"),
+            ("queued", "same-text"),
+        ):
+            with self.subTest(prior=prior, later=later):
+                run_id = f"legacy-{prior}-{later}"
+                self.assertEqual(self.upload(run_id=run_id).status_code, 201)
+                root = self.app.state.runs._dir(run_id)
+                journal = Journal(root)
+                if prior == "waiting_human":
+                    self.repository.set_node_status(run_id, "clean", prior, "independent review")
+                entry = Entry(
+                    "question",
+                    datetime.now(UTC).isoformat(),
+                    {"step": "clean", "question": "Source question"},
+                )
+                journal.path.write_text(
+                    json.dumps({"kind": entry.kind, "at": entry.at, "data": entry.data}) + "\n"
+                )
+                # Reproduce the exact pre-fix projection, including its event/message pair.
+                self.repository.set_node_status(run_id, "clean", "waiting_human", "Source question")
+                self.repository.add_message(
+                    run_id=run_id, author="agent", message="Source question", node_id="clean"
+                )
+                # Recovery replays and subsequent questions must not invalidate the old
+                # status event's ownership by touching the underlying node timestamp.
+                RunProjection(self.repository, run_id).replay(journal)
+                if later:
+                    self.repository.set_node_status(
+                        run_id,
+                        "clean",
+                        "waiting_human",
+                        "Source question" if later == "same-text" else "new quality approval",
+                    )
+                self.assertEqual(
+                    self.client.post(
+                        f"/api/pipeline/runs/{run_id}/messages",
+                        headers=AUTH,
+                        json={"message": "Continue", "node_id": "clean"},
+                    ).status_code,
+                    202,
+                )
+                summary = self.client.get(f"/api/pipeline/runs/{run_id}", headers=AUTH).json()
+                node = next(n for n in summary["nodes"] if n["id"] == "clean")
+                if later or prior == "waiting_human":
+                    expected = (
+                        "Source question"
+                        if later == "same-text"
+                        else "new quality approval"
+                        if later
+                        else "independent review"
+                    )
+                    self.assertEqual(
+                        (node["status"], node["blockedReason"]), ("waiting_human", expected)
+                    )
+                else:
+                    self.assertEqual(node["status"], "pending")
+                    self.assertNotEqual(summary["status"], "waiting_human")
+                # Compatibility is a read-only response repair, not a history rewrite.
+                raw = self.repository.run_summary(run_id)
+                self.assertEqual(
+                    next(n for n in raw["nodes"] if n["id"] == "clean")["status"], "waiting_human"
+                )
+                if later is None and prior == "queued":
+                    self.app.state.runs.journal(run_id).append(
+                        "question", question="One more question", step="clean"
+                    )
+                    self.assertEqual(
+                        self.client.post(
+                            f"/api/pipeline/runs/{run_id}/messages",
+                            headers=AUTH,
+                            json={"message": "Answered again"},
+                        ).status_code,
+                        202,
+                    )
+                    after = self.client.get(f"/api/pipeline/runs/{run_id}", headers=AUTH).json()
+                    self.assertEqual(
+                        next(n for n in after["nodes"] if n["id"] == "clean")["status"], "pending"
+                    )
+
     def test_json_replay_hydrates_and_verifies_existing_artifact(self):
         uploaded = self.upload().json()
         replay = self.replay(uploaded)

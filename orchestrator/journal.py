@@ -76,6 +76,10 @@ class Journal:
     def append(self, kind: str, **data: Any) -> Entry:
         if kind not in KINDS:
             raise ValueError(f"not a kind of thing that happens: {kind}")
+        if kind == "question":
+            # Older question projections overwrote node status. New questions are journal
+            # holds, so readers can distinguish them when repairing legacy rows.
+            data["statusSource"] = "journal"
         entry = Entry(kind=kind, at=_now(), data=data)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(
@@ -172,15 +176,20 @@ class Journal:
             and self.last_status(entry.data["step"]) == "succeeded"
         }
 
-    def unanswered(self) -> str | None:
-        """The question this run is waiting on, if it is waiting on one."""
-        pending = None
+    def pending_question(self) -> Entry | None:
+        """The latest question not yet cleared by an answer or run finish."""
+        pending: Entry | None = None
         for entry in self.entries():
             if entry.kind == "question":
-                pending = entry.data.get("question")
+                pending = entry
             if entry.kind in {"answer", "run.finished"}:
                 pending = None
         return pending
+
+    def unanswered(self) -> str | None:
+        """The question this run is waiting on, if it is waiting on one."""
+        pending = self.pending_question()
+        return pending.data.get("question") if pending is not None else None
 
     def control_status(self) -> str | None:
         """An operator cancellation stays in effect until an explicit resume."""
@@ -267,10 +276,7 @@ class RunProjection:
         elif entry.kind == "question":
             step = data.get("step")
             if step:
-                self._ensure_node(step)
-                self.repository.set_node_status(
-                    self.run_id, step, "waiting_human", data.get("question")
-                )
+                self._ensure_node(step, refresh_existing=False)
             self.repository.add_message(
                 run_id=self.run_id,
                 author="agent",
@@ -287,7 +293,7 @@ class RunProjection:
         elif entry.kind == "run.finished":
             self.repository.finish_run(self.run_id, data.get("status", "succeeded"))
 
-    def _ensure_node(self, step: str) -> None:
+    def _ensure_node(self, step: str, *, refresh_existing: bool = True) -> None:
         """Make a row for a step the run is doing but did not plan.
 
         The plan is a suggestion, so the agent may run something that was never in it. A step
@@ -310,4 +316,5 @@ class RunProjection:
                 "parameter_schema": getattr(described, "parameters", {}) or {},
             },
             dependencies=dependencies,
+            refresh_existing=refresh_existing,
         )

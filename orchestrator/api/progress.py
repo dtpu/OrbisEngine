@@ -111,6 +111,7 @@ def _stage_snapshot(root: Path) -> StageSnapshot | None:
     people, many = graph_shape(context)
     rows = []
     running = in_flight(journal)
+    pending = journal.pending_question()
     latest_results = {
         entry.data["step"]: entry.data
         for entry in journal.entries()
@@ -155,6 +156,10 @@ def _stage_snapshot(root: Path) -> StageSnapshot | None:
             action = "Processing; follow the live transcript."
         else:
             action = "No action needed."
+        if pending is not None and pending.data.get("step") == name:
+            status = "waiting_human"
+            reason = pending.data.get("question")
+            action = "Answer the pending question to release this hold."
         row = {
             "name": name,
             "summary": STEPS[base_step(name)].summary,

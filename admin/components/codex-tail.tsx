@@ -143,11 +143,11 @@ export function CodexTail({ runId }: { runId: string }) {
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || sending || !current?.runId) return;
+    if (!text || sending) return;
     setSending(true);
     setNote(null);
     try {
-      await sendMessage(current.runId, { message: text, node_id: current.nodeId });
+      await sendMessage(runId, { message: text, node_id: current?.nodeId });
       setDraft('');
       const step = stepOf(current);
       setNote(step ? `Sent. The agent reads it at its next review of ${step}.` : 'Sent.');
@@ -239,7 +239,7 @@ export function CodexTail({ runId }: { runId: string }) {
             <input
               type="text"
               value={draft}
-              disabled={!target?.runId}
+              disabled={!mounted || sending}
               aria-label="Message the agent"
               title={note ?? 'The agent reads this at its next review.'}
               placeholder={
@@ -250,7 +250,7 @@ export function CodexTail({ runId }: { runId: string }) {
             <button
               className="button button--small"
               type="submit"
-              disabled={sending || !draft.trim() || !target?.runId}
+              disabled={sending || !draft.trim() || !mounted}
             >
               Send
             </button>

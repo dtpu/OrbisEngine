@@ -54,10 +54,37 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(self.journal.done(), set())
 
     def test_a_question_holds_the_run_until_it_is_answered(self):
-        self.journal.append("question", question="is this clip truncated?", step="clean")
+        first = self.journal.append("question", question="is this clip truncated?", step="clean")
+        self.assertEqual(first.data["statusSource"], "journal")
+        self.assertEqual(self.journal.pending_question(), first)
         self.assertEqual(self.journal.unanswered(), "is this clip truncated?")
-        self.journal.append("answer", text="yes, use the trimmed copy")
+        latest = self.journal.append("question", question="use the trimmed copy?", step="pi3x")
+        self.assertEqual(Journal(self.root).pending_question(), latest)
+        self.journal.append("answer", text="yes, use the trimmed copy", step="clean")
+        self.assertIsNone(self.journal.pending_question())
         self.assertIsNone(self.journal.unanswered())
+
+    def test_finishing_clears_a_pending_question(self):
+        self.journal.append("question", question="can this run continue?", step="clean")
+        self.journal.append("run.finished", status="blocked", summary="cannot continue")
+        self.assertIsNone(Journal(self.root).pending_question())
+
+    def test_legacy_question_without_status_source_remains_pending(self):
+        self.journal.path.write_text(
+            json.dumps(
+                {
+                    "kind": "question",
+                    "at": "2026-01-01T00:00:00+00:00",
+                    "data": {"question": "Legacy question?", "step": "clean"},
+                }
+            )
+            + "\n"
+        )
+        pending = Journal(self.root).pending_question()
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.data["question"], "Legacy question?")
+        self.assertNotIn("statusSource", pending.data)
+        self.assertEqual(self.journal.unanswered(), "Legacy question?")
 
     def test_the_history_survives_a_line_that_is_not_one(self):
         """A crash mid-write, or something else appending, must not lose the rest."""
@@ -172,6 +199,63 @@ class ProjectionTests(unittest.TestCase):
         self.journal = Journal(
             self.root, projection=RunProjection(self.repository, "run-1", catalogue=STEPS)
         )
+
+    def test_a_question_only_creates_a_queued_node_without_an_attempt(self):
+        question = self.journal.append("question", question="Which input?", step="clean")
+        summary = self.repository.run_summary("run-1")
+        node = next(node for node in summary["nodes"] if node["id"] == "clean")
+        self.assertEqual(node["status"], "queued")
+        self.assertIsNone(node["blockedReason"])
+        self.assertEqual(summary["attempts"], [])
+        self.assertEqual(self.journal.done(), set())
+        self.assertEqual(self.journal.pending_question(), question)
+        self.assertEqual(self.repository.list_messages("run-1")[0]["message"], "Which input?")
+
+    def test_questions_leave_existing_stage_states_alone_after_answer_and_replay(self):
+        for step, status, reason in (
+            ("pi3x", "succeeded", None),
+            ("clean", "failed", "source could not decode"),
+        ):
+            attempt = f"run-1:{step}:1"
+            self.journal.append("step.started", step=step, attempt=attempt, number=1)
+            self.journal.append(
+                "step.finished", step=step, attempt=attempt, status=status, error=reason
+            )
+        self.repository.ensure_node(
+            run_id="run-1",
+            node_id="review",
+            stage_type="review",
+            definition={"id": "review"},
+        )
+        self.repository.set_node_status("run-1", "review", "waiting_human", "manual review")
+
+        expected = {
+            "pi3x": ("succeeded", None),
+            "clean": ("failed", "source could not decode"),
+            "review": ("waiting_human", "manual review"),
+        }
+
+        def assert_underlying_states():
+            nodes = {node["id"]: node for node in self.repository.run_summary("run-1")["nodes"]}
+            self.assertEqual(
+                {step: (nodes[step]["status"], nodes[step]["blockedReason"]) for step in expected},
+                expected,
+            )
+
+        for step in expected:
+            self.journal.append("question", question=f"Question about {step}?", step=step)
+            assert_underlying_states()
+            restarted = Journal(
+                self.root,
+                projection=RunProjection(self.repository, "run-1", catalogue=STEPS),
+            )
+            restarted.append("answer", text="Continue")
+            assert_underlying_states()
+
+        projection = RunProjection(self.repository, "run-1", catalogue=STEPS)
+        projection.replay(Journal(self.root))
+        projection.replay(Journal(self.root))
+        assert_underlying_states()
 
     def test_a_step_the_run_never_planned_still_gets_a_row(self):
         """The plan is a suggestion, so the dashboard has to show what was really done."""
