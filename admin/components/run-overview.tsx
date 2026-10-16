@@ -60,6 +60,9 @@ export function RunOverview({
   const done = progress.stages.filter((stage) =>
     ['succeeded', 'skipped'].includes(stage.status),
   ).length;
+  const reused = progress.stages.filter(
+    (stage) => stage.freshInference === false && ['succeeded', 'skipped'].includes(stage.status),
+  );
   const videos = progress.previews.filter((preview) => preview.kind === 'video');
   const images = progress.previews.filter((preview) => preview.kind === 'image');
   const reports = progress.previews.filter((preview) => preview.kind === 'report');
@@ -94,12 +97,19 @@ export function RunOverview({
         <p className="field__hint">Progress refresh failed: {error}. Showing the last update.</p>
       ) : null}
       {progress.question ? <p className="notice notice--warn">{progress.question}</p> : null}
+      {reused.length ? (
+        <p className="field__hint">
+          {reused.length} completed stages use saved inputs:{' '}
+          {reused.map((stage) => stage.name).join(', ')}. No fresh inference was performed for these
+          stages.
+        </p>
+      ) : null}
       {progress.viewerPath ? (
         <p className="field__hint">
           <a href={`http://127.0.0.1:5399${progress.viewerPath}`} target="_blank" rel="noreferrer">
             Preview packaged scene
           </a>{' '}
-          — unfitted preview; reconstruction quality is unverified.
+          — reconstruction quality is unverified.
         </p>
       ) : null}
       {progress.paused ? (
@@ -125,7 +135,7 @@ export function RunOverview({
             </article>
           ))}
         </div>
-      ) : ready && !progress.finished && !progress.paused ? (
+      ) : ready && !progress.finished && !progress.paused && !progress.question ? (
         <p className="field__hint">
           Next: {ready.name}. {ready.nextAction}
         </p>

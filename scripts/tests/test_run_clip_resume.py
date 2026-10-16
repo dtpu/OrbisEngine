@@ -45,6 +45,34 @@ def settle(p):
         p.state.record(stage, status="ok")
 
 
+def test_direct_rerun_replaces_reused_provenance_and_preserves_untouched_inputs(
+    pipeline, monkeypatch
+):
+    p = pipeline
+    p.stages = ["upstream", "downstream", "unrelated"]
+    p.deps = {"upstream": [], "downstream": ["upstream"], "unrelated": []}
+    for stage in p.stages:
+        p.state.record(
+            stage,
+            status="ok",
+            execution="retained-input-replay",
+            freshInference=False,
+            sourceRun="earlier-run",
+        )
+    p.state.record("unrelated", note="Still the saved input")
+    p.a.force = p.a.only = "upstream"
+    monkeypatch.setattr(p, "stage_fn", lambda _: lambda: None)
+    assert p.go() == 0
+    saved = run_clip.State(p.ctx / "state.json").data["stages"]
+    assert saved["upstream"]["status"] == "ok"
+    assert saved["downstream"]["status"] == "pending"
+    for stage in ("upstream", "downstream"):
+        for field in ("execution", "freshInference", "sourceRun"):
+            assert field not in saved[stage]
+    assert saved["unrelated"]["freshInference"] is False
+    assert saved["unrelated"]["sourceRun"] == "earlier-run"
+
+
 @pytest.mark.parametrize("multi", [False, True])
 @pytest.mark.parametrize("subset", [False, True])
 def test_repackage_restores_objects_from_retained_inputs(pipeline, monkeypatch, multi, subset):

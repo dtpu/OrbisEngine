@@ -170,7 +170,13 @@ class State:
                 self.data = json.loads(self.path.read_text())
             if kw.get("status") in {"ok", "pending", "running"} and "error" not in kw:
                 kw["error"] = None
-            self.data["stages"].setdefault(stage, {}).update(kw)
+            record = self.data["stages"].setdefault(stage, {})
+            if "status" in kw:
+                # A rerun or invalidation replaces the old execution's provenance, even
+                # when run_clip is invoked directly without a wander journal entry.
+                for field in ("execution", "freshInference", "sourceRun"):
+                    record.pop(field, None)
+            record.update(kw)
             with tempfile.NamedTemporaryFile(
                 mode="w", dir=self.path.parent, prefix=".state-", delete=False
             ) as handle:

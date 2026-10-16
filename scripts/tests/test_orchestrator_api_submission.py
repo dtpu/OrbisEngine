@@ -129,6 +129,178 @@ class ProductionSubmissionTests(unittest.TestCase):
         self.assertEqual(restarted.state.runs._dir(body["id"]), manifest.parent)
         self.assertEqual(source.read_bytes(), VIDEO)
 
+    def test_summary_uses_dynamic_directory_plan_without_inventing_attempts_or_reviews(self):
+        response = self.upload(
+            run_id="two-person-run",
+            options='{"marble":"video","people":2,"all_people":true,"objects":true,"finetune":false}',
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        run_dir = self.app.state.runs._dir("two-person-run")
+        seeded = self.repository.run_summary("two-person-run")
+        (run_dir / "tracks").mkdir()
+        (run_dir / "tracks" / "tracks.json").write_text(json.dumps({"trackCount": 2}))
+        retained = {
+            name: {
+                "status": "ok",
+                "execution": "retained-input-replay",
+                "freshInference": False,
+                "sourceRun": "saved-input-run",
+            }
+            for name in ("pi3x", "tracks", "lhm_motion_00", "lhm_motion_01", "frame_align")
+        }
+        retained["frame_align"]["status"] = "skipped"
+        (run_dir / "state.json").write_text(json.dumps({"stages": retained}))
+        journal = self.app.state.runs.journal("two-person-run")
+        journal.append(
+            "step.started",
+            step="package_people",
+            attempt="two-person-run:package_people:1",
+            number=1,
+        )
+        journal.append(
+            "step.finished",
+            step="package_people",
+            attempt="two-person-run:package_people:1",
+            status="succeeded",
+        )
+        # An attempted stage outside this run's plan is still real history.
+        journal.append(
+            "step.started", step="clean_first", attempt="two-person-run:clean_first:1", number=1
+        )
+        journal.append(
+            "step.finished",
+            step="clean_first",
+            attempt="two-person-run:clean_first:1",
+            status="failed",
+        )
+
+        progress = self.client.get(
+            "/api/pipeline/runs/two-person-run/progress", headers=AUTH
+        ).json()
+        detail = self.client.get("/api/pipeline/runs/two-person-run", headers=AUTH).json()
+        listed = next(
+            run
+            for run in self.client.get("/api/pipeline", headers=AUTH).json()["runs"]
+            if run["id"] == "two-person-run"
+        )
+        stages = {stage["name"]: stage for stage in progress["stages"]}
+        self.assertEqual(len(seeded["nodes"]), 16)
+        self.assertEqual(len(stages), 19)
+        self.assertIn("person_prep_01", stages)
+        for summary in (detail, listed):
+            nodes = {node["id"]: node for node in summary["nodes"]}
+            self.assertEqual(set(stages) | {"clean_first"}, set(nodes))
+            self.assertEqual(
+                {name: nodes[name]["status"] for name in stages},
+                {name: stage["status"] for name, stage in stages.items()},
+            )
+            self.assertEqual(nodes["person_prep_01"]["dependencies"], ["tracks"])
+            self.assertEqual(stages["person_prep_01"]["dependencies"], [])
+            self.assertEqual(nodes["package_people"]["selectedAttemptId"], None)
+            self.assertEqual(len(summary["attempts"]), 2)
+            self.assertEqual(
+                {attempt["nodeId"] for attempt in summary["attempts"]},
+                {"package_people", "clean_first"},
+            )
+            self.assertEqual(summary["reviews"], [])
+            self.assertEqual(nodes["clean_first"]["status"], "failed")
+            self.assertEqual(nodes["clean_first"]["definition"]["executor"], "wander")
+            self.assertEqual(nodes["person_prep_01"]["definition"]["kind"], "compute")
+            self.assertEqual(nodes["review"]["definition"]["kind"], "human")
+            self.assertIsNone(nodes["review"]["definition"]["executor"])
+            self.assertNotIn("freshInference", nodes["package_people"])
+            for name in retained:
+                self.assertEqual(nodes[name]["execution"], "retained-input-replay")
+                self.assertIs(nodes[name]["freshInference"], False)
+                self.assertEqual(nodes[name]["sourceRun"], "saved-input-run")
+                self.assertIs(stages[name]["freshInference"], False)
+        # State.record merges keys. A subsequent real attempt must not inherit a stale
+        # retained-input badge from its earlier state record.
+        journal.append("step.started", step="pi3x", attempt="two-person-run:pi3x:1", number=1)
+        active = self.client.get("/api/pipeline/runs/two-person-run", headers=AUTH).json()
+        active_node = next(node for node in active["nodes"] if node["id"] == "pi3x")
+        self.assertEqual(active_node["status"], "running")
+        self.assertNotIn("execution", active_node)
+        self.assertNotIn("freshInference", active_node)
+        active_stage = next(
+            stage
+            for stage in self.client.get(
+                "/api/pipeline/runs/two-person-run/progress", headers=AUTH
+            ).json()["stages"]
+            if stage["name"] == "pi3x"
+        )
+        self.assertNotIn("execution", active_stage)
+        self.repository.set_node_status("two-person-run", "verify", "waiting_agent")
+        waiting_agent = self.client.get("/api/pipeline/runs/two-person-run", headers=AUTH).json()
+        self.assertEqual(
+            next(node for node in waiting_agent["nodes"] if node["id"] == "verify")["status"],
+            "waiting_agent",
+        )
+        self.repository.set_node_status(
+            "two-person-run", "package_people", "waiting_human", "operator review"
+        )
+        waiting = self.client.get("/api/pipeline/runs/two-person-run", headers=AUTH).json()
+        self.assertEqual(waiting["status"], "waiting_human")
+        self.assertEqual(
+            next(node for node in waiting["nodes"] if node["id"] == "package_people")["status"],
+            "waiting_human",
+        )
+        self.repository.finish_run("two-person-run", "canceled")
+        terminal = self.client.get("/api/pipeline/runs/two-person-run", headers=AUTH).json()
+        self.assertEqual(terminal["status"], "canceled")
+
+    def test_summary_falls_back_to_database_when_run_manifest_is_missing(self):
+        self.assertEqual(self.upload(run_id="missing-directory").status_code, 201)
+        before = self.repository.run_summary("missing-directory")
+        run_dir = self.app.state.runs._dir("missing-directory")
+        (run_dir / "run.json").unlink()
+        detail = self.client.get("/api/pipeline/runs/missing-directory", headers=AUTH).json()
+        listed = next(
+            run
+            for run in self.client.get("/api/pipeline", headers=AUTH).json()["runs"]
+            if run["id"] == "missing-directory"
+        )
+        for summary in (detail, listed):
+            self.assertEqual(summary["nodes"], before["nodes"])
+            self.assertEqual(summary["attempts"], before["attempts"])
+            self.assertEqual(summary["status"], before["status"])
+
+    def test_corrupt_run_cannot_break_listing_or_another_runs_progress(self):
+        self.assertEqual(self.upload(run_id="healthy").status_code, 201)
+        self.assertEqual(self.upload(run_id="corrupt").status_code, 201)
+        corrupt = self.app.state.runs._dir("corrupt")
+        manifest = corrupt / "run.json"
+        original_manifest = json.loads(manifest.read_text())
+        original_nodes = self.repository.run_summary("corrupt")["nodes"]
+
+        for kind in ("state", "tracks", "manifest"):
+            with self.subTest(kind=kind):
+                manifest.write_text(json.dumps(original_manifest))
+                (corrupt / "state.json").write_text(json.dumps({"stages": {}}))
+                (corrupt / "tracks").mkdir(exist_ok=True)
+                (corrupt / "tracks" / "tracks.json").write_text('{"trackCount":1}')
+                if kind == "state":
+                    (corrupt / "state.json").write_text('{"stages":["not a stage map"]}')
+                elif kind == "tracks":
+                    (corrupt / "tracks" / "tracks.json").write_text('{"trackCount":"many"}')
+                else:
+                    manifest.write_text(json.dumps({**original_manifest, "source": 3}))
+
+                response = self.client.get("/api/pipeline", headers=AUTH)
+                self.assertEqual(response.status_code, 200, response.text)
+                listed = {run["id"]: run for run in response.json()["runs"]}
+                self.assertEqual(listed["corrupt"]["nodes"], original_nodes)
+                self.assertTrue(listed["healthy"]["nodes"])
+                self.assertEqual(
+                    self.client.get(
+                        "/api/pipeline/runs/healthy/progress", headers=AUTH
+                    ).status_code,
+                    200,
+                )
+                unavailable = self.client.get("/api/pipeline/runs/corrupt/progress", headers=AUTH)
+                self.assertEqual(unavailable.status_code, 503, unavailable.text)
+                self.assertEqual(unavailable.json()["detail"], "run progress unavailable")
+
     def test_json_replay_hydrates_and_verifies_existing_artifact(self):
         uploaded = self.upload().json()
         replay = self.replay(uploaded)

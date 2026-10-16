@@ -68,6 +68,20 @@ playback, not fresh reconstruction, walking support, or improved hand/contact ge
 The run remains paused. Evidence: `.context/evidence/retained-scene-delivery/final/`.
 See [retained scene delivery](paid-recovery.md#deliver-a-retained-tracked-scene-locally).
 
+The bottle scene was also uploaded through the real admin form and delivered by the local
+supervisor in a new run. While paused, the supervisor launched no work; after operator resume,
+a fixed command harness invoked exactly one retained packaging stage and stopped for review.
+Its explicit Python and disabled Modal executables reached the child process. The 277 saved
+inputs matched their hashes, the paid-attempt ledger stayed unchanged, and no provider command
+ran. Both people and objects matched the prior scene at 12 timestamps; original audio,
+end-of-clip holding, looping, and unrestricted exploration passed. This proves upload, local
+worker control, retained packaging and playback together; it does not test an autonomous
+agent's decisions or fresh inference. Evidence: `.context/evidence/bottle-worker-rehearsal/`.
+
+Dashboard summaries and progress now read the same dynamic stage plan from the run directory.
+Saved-input provenance is displayed separately from actual attempt history; presenting a reused
+stage as complete never creates an inference attempt or a quality decision.
+
 A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
 The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
 source video. Delivered world and compact-motion hashes matched the retained files. No requests

@@ -28,14 +28,89 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from orchestrator.api.artifacts import ArtifactReader, register_artifact_routes, safe_filename
-from orchestrator.api.progress import register_progress_routes
+from orchestrator.api.progress import (
+    StageSnapshot,
+    find_run_directory,
+    register_progress_routes,
+    stage_snapshot,
+)
 from orchestrator.api.reviews import register_review_routes
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
-from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES
-from orchestrator.steps import RunOptions
+from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES, live_run_status
+from orchestrator.steps import STEPS, RunOptions, base_step
 
 GRAPH_VERSION = "wander.agent-run/1"
+
+
+def stage_definition(name: str, existing: dict | None = None) -> dict:
+    described = STEPS[base_step(name)]
+    human_gate = name == "review"
+    return {
+        "id": name,
+        "title": described.summary,
+        "kind": "human" if human_gate else "compute",
+        "executor": None if human_gate else "wander",
+        "writes": described.writes,
+        "paid": described.paid,
+        "parameter_schema": described.parameters or {},
+        **(existing or {}),
+    }
+
+
+def with_stage_snapshot(summary: dict, snapshot: StageSnapshot) -> dict:
+    """Overlay the directory's current graph without fabricating database history."""
+    existing = {node["id"]: node for node in summary["nodes"]}
+    attempted = {attempt["nodeId"] for attempt in summary["attempts"]}
+    reviewed = {review["nodeId"] for review in summary["reviews"]}
+    nodes = []
+    for stage in snapshot.stages:
+        name = stage["name"]
+        old = existing.get(name, {})
+        old_status = old.get("status")
+        stage_status = stage["status"]
+        if old_status == "waiting_human" or (
+            old_status in {"waiting_agent", "running"} and stage_status in {"pending", "queued"}
+        ):
+            stage_status = old_status
+        node = {
+            **old,
+            "id": name,
+            "status": stage_status,
+            "dependencies": snapshot.required_dependencies[name],
+            "selectedAttemptId": old.get("selectedAttemptId"),
+            "blockedReason": (
+                old.get("blockedReason")
+                if old.get("status") == "waiting_human"
+                else (stage["reason"] or old.get("blockedReason"))
+                if stage["status"] in {"blocked", "failed"}
+                else None
+            ),
+            "definition": stage_definition(name, old.get("definition")),
+        }
+        for field in ("execution", "freshInference", "sourceRun"):
+            if field in stage:
+                node[field] = stage[field]
+        nodes.append(node)
+    planned = {stage["name"] for stage in snapshot.stages}
+    # A seeded, never-started node from the original one-person graph is stale once
+    # tracking exposes more people. Actual attempts and operator decisions remain visible.
+    for node in summary["nodes"]:
+        if node["id"] in planned or not (
+            node["id"] in attempted
+            or node["id"] in reviewed
+            or node.get("selectedAttemptId")
+            or node["status"] not in {"queued", "pending"}
+        ):
+            continue
+        if base_step(node["id"]) in STEPS:
+            node = {**node, "definition": stage_definition(node["id"], node.get("definition"))}
+        nodes.append(node)
+    summary["nodes"] = nodes
+    summary["status"] = live_run_status(
+        summary.get("recordedStatus", summary["status"]), [node["status"] for node in nodes]
+    )
+    return summary
 
 
 def source_filename(name: str) -> str:
@@ -338,11 +413,19 @@ def create_app(
         # Read the same durable holds as the supervisor, even when the database mirror
         # missed a journal write or a question has no associated stage.
         try:
-            journal = runs.journal(summary["id"])
+            directory = (
+                find_run_directory(review_workspace_root, summary["id"])
+                if review_workspace_root
+                else None
+            )
+            journal = Journal(directory) if directory else runs.journal(summary["id"])
             paused = (journal.run_dir / "paused").exists()
-        except KeyError:
+        except (KeyError, OSError, ValueError, TypeError, AttributeError):
             summary["live"] = {"source": "journal", "available": False}
             return summary
+        snapshot = stage_snapshot(journal.run_dir)
+        if snapshot is not None and snapshot.run_id == summary["id"]:
+            with_stage_snapshot(summary, snapshot)
         summary["live"] = {"source": "journal", "paused": paused}
         if summary["status"] not in TERMINAL_RUN_STATUSES:
             if paused:
