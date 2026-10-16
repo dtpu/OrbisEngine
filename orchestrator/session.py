@@ -24,9 +24,10 @@ from orchestrator.agent.harness import HarnessAgent
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.steps import STEPS, people_steps, planned_steps
 
-# What the steps themselves need. Modal authenticates through ~/.modal.toml, so HOME covers
-# it; Marble and OpenAI read a key from the environment and fail instantly without one.
-CREDENTIALS = (
+# Explicit provider credentials and runtime settings the local stages may need. Modal
+# authenticates through ~/.modal.toml when no token is set, so HOME is passed separately.
+# Omitted values keep the stage's own defaults; do not copy the whole supervisor environment.
+STAGE_ENVIRONMENT = (
     "OPENAI_API_KEY",
     "WLT_API_KEY",
     "MODAL_PROFILE",
@@ -39,6 +40,8 @@ CREDENTIALS = (
     "WANDER_GPU_KEY",
     "WANDER_RUNS_ROOT",
     "WANDER_STAGE_LEDGER",
+    "WANDER_PYTHON",
+    "WANDER_MODAL",
 )
 
 SESSION_FILE = "session.id"
@@ -195,7 +198,12 @@ class RunSession:
                     ),
                     **{
                         name: os.environ[name]
-                        for name in ("WANDER_DATABASE_URL", "HOME", "VIRTUAL_ENV", *CREDENTIALS)
+                        for name in (
+                            "WANDER_DATABASE_URL",
+                            "HOME",
+                            "VIRTUAL_ENV",
+                            *STAGE_ENVIRONMENT,
+                        )
                         if name in os.environ
                     },
                 },

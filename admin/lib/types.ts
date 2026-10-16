@@ -38,6 +38,9 @@ export interface RunNode {
   selectedAttemptId: string | null;
   blockedReason: string | null;
   definition: StageDefinition;
+  execution?: string;
+  freshInference?: boolean;
+  sourceRun?: string;
 }
 
 export interface AttemptCost {
@@ -215,6 +218,9 @@ export interface StageProgress {
   reason: string | null;
   nextAction: string;
   dependencies: string[];
+  execution?: string;
+  freshInference?: boolean;
+  sourceRun?: string;
 }
 
 export interface RunPreview {

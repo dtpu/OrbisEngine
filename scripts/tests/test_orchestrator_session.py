@@ -8,13 +8,14 @@ holding it in memory.
 """
 
 import json
+import os
 import shutil
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -207,6 +208,51 @@ class RunThroughTests(unittest.TestCase):
         self.assertIs(session.work(turns=3), admitted)
         session.turn.assert_called_once()
         self.assertEqual(Journal(run_dir).entries(), [])
+
+    def test_command_harness_passes_explicit_stage_executables_to_local_child(self):
+        run_dir = self.open()
+        fake_python = self.root / "local-python"
+        fake_modal = self.root / "modal-denied"
+        fake_python.write_text("#!/bin/sh\nprintf 'local-python\\n'\n")
+        fake_modal.write_text("#!/bin/sh\necho 'local Modal denied' >&2\nexit 83\n")
+        fake_python.chmod(0o755)
+        fake_modal.chmod(0o755)
+        child_code = (
+            "import json, os, subprocess; "
+            "p = os.environ['WANDER_PYTHON']; "
+            "m = os.environ['WANDER_MODAL']; "
+            "python = subprocess.run([p], capture_output=True, text=True); "
+            "modal = subprocess.run([m], capture_output=True, text=True); "
+            "print(json.dumps(dict(python_path=p, modal_path=m, "
+            "python_output=python.stdout.strip(), modal_exit=modal.returncode)))"
+        )
+        body = (
+            "import json, sys\n"
+            f"child_code = {child_code!r}\n"
+            "result = subprocess.run([sys.executable, '-c', child_code], "
+            "capture_output=True, text=True, check=True)\n"
+            "(brief.parent / 'runtime-observed.json').write_text(result.stdout)\n"
+            "subprocess.run(['wander', 'ready'], capture_output=True, text=True, check=True)\n"
+        )
+        policy = self.agent(body)
+        with patch.dict(
+            os.environ,
+            {"WANDER_PYTHON": str(fake_python), "WANDER_MODAL": str(fake_modal)},
+        ):
+            outcome = RunSession("run-1", run_dir, HarnessAgent(policy)).turn()
+        self.assertIsNone(outcome.error)
+        observed = json.loads((run_dir / "runtime-observed.json").read_text())
+        self.assertEqual(observed["python_path"], str(fake_python))
+        self.assertEqual(observed["modal_path"], str(fake_modal))
+        self.assertEqual(observed["python_output"], "local-python")
+        self.assertEqual(observed["modal_exit"], 83)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WANDER_PYTHON", None)
+            os.environ.pop("WANDER_MODAL", None)
+            session = RunSession("run-1", run_dir, HarnessAgent(policy))
+            self.assertNotIn("WANDER_PYTHON", session.harness.policy.extra_environment)
+            self.assertNotIn("WANDER_MODAL", session.harness.policy.extra_environment)
 
     def test_a_turn_that_decides_nothing_stops_rather_than_repeating(self):
         run_dir = self.open()

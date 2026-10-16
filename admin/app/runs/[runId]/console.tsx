@@ -624,6 +624,12 @@ export default function RunConsole({ runId }: { runId: string }) {
                   <Status status={selected.status} blockedReason={selected.blockedReason} />
                 </h2>
                 <p>{selected.definition.title}</p>
+                {selected.freshInference === false ? (
+                  <p className="field__hint">
+                    Uses saved inputs{selected.sourceRun ? ` from ${selected.sourceRun}` : ''}. No
+                    fresh inference was performed for this stage.
+                  </p>
+                ) : null}
                 <div className="inspect__facts">
                   <span>{KIND_LABEL[selected.definition.kind] ?? selected.definition.kind}</span>
                   {selected.definition.executor ? (
@@ -827,7 +833,9 @@ export default function RunConsole({ runId }: { runId: string }) {
                 }
                 empty={
                   attempts.length === 0
-                    ? 'This stage has not run yet, so there is nothing to look at.'
+                    ? selected.freshInference === false
+                      ? 'Saved inputs were reused without creating a new attempt.'
+                      : 'This stage has not run yet, so there is nothing to look at.'
                     : 'This attempt produced no files.'
                 }
               />
