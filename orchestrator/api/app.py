@@ -420,7 +420,7 @@ def create_app(
         return {"id": identifier}
 
     @app.post("/api/pipeline/runs/{run_id}/{command}", status_code=202)
-    async def command(
+    def command(
         run_id: str,
         command: str,
         request: DecisionRequest,
@@ -435,32 +435,37 @@ def create_app(
             journal = runs.journal(run_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        repository.append_event(
-            run_id,
-            "approval" if command == "reject" else "run",
-            request.node_id,
-            {
-                "command": command,
-                "actor": user,
-                "rationale": request.rationale,
-                "parameters": request.parameters,
-            },
-        )
-        if command in {"retry", "resume"}:
-            journal.append("run.resumed", reason=request.rationale)
-        if command in {"reject", "retry"}:
-            asked = "run again" if command == "retry" else "do not accept"
-            journal.append(
-                "answer",
-                text=f"{asked} `{request.node_id}`: {request.rationale}",
-                author=user,
-                step=request.node_id,
+        # The local executor holds this lock only until its subprocess starts. A control
+        # accepted after that point affects the next stage; one accepted before it stops
+        # the launch. This endpoint runs in FastAPI's threadpool so waiting on flock does
+        # not block unrelated async requests.
+        with journal.admission_lock():
+            repository.append_event(
+                run_id,
+                "approval" if command == "reject" else "run",
+                request.node_id,
+                {
+                    "command": command,
+                    "actor": user,
+                    "rationale": request.rationale,
+                    "parameters": request.parameters,
+                },
             )
-        elif command == "cancel":
-            journal.append("run.finished", status="canceled", summary=request.rationale)
-            runs.pause(run_id, False)
-        else:
-            runs.pause(run_id, command == "pause")
+            if command in {"retry", "resume"}:
+                journal.append("run.resumed", reason=request.rationale)
+            if command in {"reject", "retry"}:
+                asked = "run again" if command == "retry" else "do not accept"
+                journal.append(
+                    "answer",
+                    text=f"{asked} `{request.node_id}`: {request.rationale}",
+                    author=user,
+                    step=request.node_id,
+                )
+            elif command == "cancel":
+                journal.append("run.finished", status="canceled", summary=request.rationale)
+                runs.pause(run_id, False)
+            else:
+                runs.pause(run_id, command == "pause")
         return {"accepted": True}
 
     @app.get("/api/pipeline/runs/{run_id}/events")

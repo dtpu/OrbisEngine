@@ -14,13 +14,14 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.journal import Journal
-from orchestrator.session import RunSession, install_wander, render_brief
+from orchestrator.session import RunSession, SessionOutcome, install_wander, render_brief
 from orchestrator.steps import STEPS, people_steps, planned_steps
 from orchestrator.supervisor import open_run, runs_needing_work, work_on
 
@@ -195,6 +196,17 @@ class RunThroughTests(unittest.TestCase):
             "without running a step",
             " ".join(e.data.get("text", "") for e in Journal(run_dir).entries()),
         )
+
+    def test_starting_detached_work_yields_before_another_agent_turn(self):
+        run_dir = self.open()
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+        admitted = SessionOutcome(finished=None, waiting=None, steps_run=1, running=1)
+        session.turn = Mock(
+            side_effect=[admitted, AssertionError("wait for work before another turn")]
+        )
+        self.assertIs(session.work(turns=3), admitted)
+        session.turn.assert_called_once()
+        self.assertEqual(Journal(run_dir).entries(), [])
 
     def test_a_turn_that_decides_nothing_stops_rather_than_repeating(self):
         run_dir = self.open()

@@ -8,7 +8,9 @@ database, must not lose the run.
 import json
 import hashlib
 import os
+import select
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -82,6 +84,70 @@ class JournalTests(unittest.TestCase):
         entries = self.journal.entries()
         self.assertEqual(len(entries), 40)
         self.assertEqual([e.data["text"] for e in entries][-1], "note 39")
+
+    def test_active_attempts_keep_independent_starts_until_matching_finish(self):
+        first = self.journal.append("step.started", step="pi3x", attempt="first")
+        second = self.journal.append("step.started", step="pi3x", attempt="second")
+        self.assertEqual(
+            self.journal.active_attempts(), {"pi3x": {"first": first, "second": second}}
+        )
+
+        self.journal.append("step.finished", step="pi3x", attempt="first", status="failed")
+        self.assertEqual(self.journal.active_attempts(), {"pi3x": {"second": second}})
+        self.journal.append("step.finished", step="pi3x", attempt="first", status="failed")
+        self.assertEqual(self.journal.active_attempts(), {"pi3x": {"second": second}})
+        self.journal.append("step.finished", step="pi3x", attempt="second", status="succeeded")
+        self.assertEqual(self.journal.active_attempts(), {})
+
+        older = self.journal.append("step.started", step="clean", attempt="older")
+        self.journal.append("step.started", step="clean", attempt="newer")
+        self.journal.append("step.finished", step="clean", attempt="newer", status="failed")
+        self.assertEqual(self.journal.active_attempts(), {"clean": {"older": older}})
+
+    def test_legacy_finish_only_clears_a_legacy_start(self):
+        legacy = self.journal.append("step.started", step="clean")
+        modern = self.journal.append("step.started", step="clean", attempt="modern")
+        self.assertEqual(self.journal.active_attempts(), {"clean": {"": legacy, "modern": modern}})
+        self.journal.append("step.finished", step="clean", status="failed")
+        self.assertEqual(self.journal.active_attempts(), {"clean": {"modern": modern}})
+        self.journal.append("step.finished", step="clean", status="failed")
+        self.assertEqual(self.journal.active_attempts(), {"clean": {"modern": modern}})
+        self.journal.append("step.finished", step="clean", attempt="modern", status="succeeded")
+        self.assertEqual(self.journal.active_attempts(), {})
+
+    def test_execution_claim_survives_a_new_journal_and_finished_attempt(self):
+        self.journal.append("step.started", step="marble_video", attempt="one")
+        self.assertFalse(self.journal.execution_claimed("marble_video", "one"))
+        self.journal.append("step.executing", step="marble_video", attempt="one")
+        restarted = Journal(self.root)
+        self.assertTrue(restarted.execution_claimed("marble_video", "one"))
+        self.assertFalse(restarted.execution_claimed("marble_video", "two"))
+        self.assertFalse(restarted.execution_claimed("marble_image", "one"))
+        restarted.append("step.finished", step="marble_video", attempt="one", status="failed")
+        self.assertTrue(Journal(self.root).execution_claimed("marble_video", "one"))
+
+    def test_admission_lock_serializes_separate_processes(self):
+        child_code = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from orchestrator.journal import Journal\n"
+            "print('waiting', flush=True)\n"
+            "with Journal(Path(sys.argv[1])).admission_lock():\n"
+            "    print('entered', flush=True)\n"
+        )
+        with self.journal.admission_lock():
+            child = subprocess.Popen(
+                [sys.executable, "-c", child_code, str(self.root)],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(child.stdout.readline().strip(), "waiting")
+            self.assertFalse(select.select([child.stdout], [], [], 0.15)[0])
+        stdout, stderr = child.communicate(timeout=5)
+        self.assertEqual(child.returncode, 0, stderr)
+        self.assertEqual(stdout.strip(), "entered")
 
 
 class ProjectionTests(unittest.TestCase):
