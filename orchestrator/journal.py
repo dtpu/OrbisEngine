@@ -12,20 +12,24 @@ came of it.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from orchestrator.steps import base_step, needs_of
 
 JOURNAL_FILE = "journal.jsonl"
+ADMISSION_LOCK_FILE = ".step-admission.lock"
 
 # What a line can be. A step is work that ran; the rest is the agent or an operator speaking.
 KINDS = (
     "step.started",
+    "step.executing",
     "step.finished",
     "note",
     "question",
@@ -93,6 +97,56 @@ class Journal:
         except OSError:
             return []
         return [entry for entry in (Entry.parse(line) for line in lines) if entry is not None]
+
+    @contextmanager
+    def admission_lock(self) -> Iterator[None]:
+        """Serialize a short check, journal append, and child-spawn admission.
+
+        The file survives process restarts, but the operating system releases its lock if
+        the holder dies. Callers must release it before waiting for stage execution.
+        """
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self.run_dir / ADMISSION_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    def active_attempts(self) -> dict[str, dict[str, Entry]]:
+        """Return unresolved starts, preserving each attempt independently.
+
+        An empty attempt id represents legacy entries without an attempt field. Such a
+        finish cannot clear a modern attempt whose identity it does not establish.
+        """
+        active: dict[str, dict[str, Entry]] = {}
+        for entry in self.entries():
+            step = entry.data.get("step")
+            if not isinstance(step, str) or not step:
+                continue
+            attempt = entry.data.get("attempt")
+            key = attempt if isinstance(attempt, str) and attempt else ""
+            if entry.kind == "step.started":
+                active.setdefault(step, {})[key] = entry
+            elif entry.kind == "step.finished":
+                attempts = active.get(step)
+                if attempts is not None:
+                    attempts.pop(key, None)
+                    if not attempts:
+                        active.pop(step)
+        return active
+
+    def execution_claimed(self, step: str, attempt: str) -> bool:
+        """Whether this exact attempt has ever claimed stage execution."""
+        return any(
+            entry.kind == "step.executing"
+            and entry.data.get("step") == step
+            and entry.data.get("attempt") == attempt
+            for entry in self.entries()
+        )
 
     def attempt_number(self, step: str) -> int:
         """How many times this step has been started, plus one."""

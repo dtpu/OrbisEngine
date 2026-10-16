@@ -209,15 +209,47 @@ def refuse_controlled_step(
     return True
 
 
-def command_step(context: RunContext, args: argparse.Namespace) -> int:
-    take_our_flags(args)
-    """Start a step. By default it runs on its own and this returns at once.
+@dataclass(frozen=True)
+class AdmittedStep:
+    attempt: str
+    command: list[str]
+    log: Path
 
-    A step can take ten minutes on a GPU, and an agent that sits watching one is an agent
-    holding a session open to do nothing. So the work is detached and journalled by the child
-    that runs it: start it, stop your turn, and you will be given another when it lands.
-    """
-    journal = context.journal()
+
+def admit_step(
+    context: RunContext, args: argparse.Namespace, journal: Journal
+) -> AdmittedStep | int:
+    """Check and claim work while the caller holds the run's admission lock."""
+    if base_step(args.step) not in STEPS:
+        print(f"Unknown pipeline step: {args.step}", file=sys.stderr)
+        return 2
+    active = journal.active_attempts().get(args.step, {})
+    if args.attempt:
+        entry = active.get(args.attempt)
+        if (
+            not args.wait
+            or entry is None
+            or entry.data.get("detached") is not True
+            or len(active) != 1
+            or journal.execution_claimed(args.step, args.attempt)
+            or args.number != entry.data.get("number")
+            or run_clip_command(context, args.step, args.rest) != entry.data.get("command")
+        ):
+            print(
+                "Detached attempt is not pending or no longer matches its recorded command; inspect its journal and receipt.",
+                file=sys.stderr,
+            )
+            return 2
+    elif active:
+        print(
+            f"{args.step} already has an unresolved attempt ({', '.join(active)}). "
+            "Inspect its log and provider receipt before reconciling or starting more work.",
+            file=sys.stderr,
+        )
+        return 2
+    elif args.number is not None:
+        print("--number is reserved for an admitted detached attempt.", file=sys.stderr)
+        return 2
     if refuse_controlled_step(context, journal, args.step, args.attempt):
         return 2
     problem = source_problem(context)
@@ -250,18 +282,26 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     if absent:
         # Running it anyway spends a turn to be told by the stage itself, and for a paid step
         # an ambiguous failure is worse than none.
-        print(
+        problem = (
             f"{args.step} needs {', '.join(absent)} and this run does not have it. "
-            "That is an operator's to fix, not yours: `wander ask` for it.",
-            file=sys.stderr,
+            "That is an operator's to fix, not yours: `wander ask` for it."
         )
+        if args.attempt:
+            journal.append(
+                "step.finished",
+                step=args.step,
+                attempt=args.attempt,
+                status="blocked",
+                error=problem,
+                preflight=True,
+            )
+        print(problem, file=sys.stderr)
         return 2
     if refuse_controlled_step(context, journal, args.step, args.attempt):
         return 2
     if not args.wait:
         return detach(context, args)
     step = args.step
-    journal = context.journal()
     number = args.number or journal.attempt_number(step)
     attempt = args.attempt or f"{context.run_id}:{step}:{number}"
     command = run_clip_command(context, step, args.rest)
@@ -286,17 +326,39 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
         )
     if refuse_controlled_step(context, journal, step, attempt):
         return 2
+    # This durable claim is separate from the parent's admission. A restarted or
+    # duplicated child must never execute the same attempt a second time.
+    journal.append("step.executing", step=step, attempt=attempt, pid=os.getpid())
+    return AdmittedStep(attempt, command, log)
+
+
+def command_step(context: RunContext, args: argparse.Namespace) -> int:
+    """Admit one attempt atomically, then run it here or in a detached child."""
+    take_our_flags(args)
+    journal = context.journal()
+    with journal.admission_lock():
+        admitted = admit_step(context, args, journal)
+    if isinstance(admitted, int):
+        return admitted
+    step, attempt, command, log = args.step, admitted.attempt, admitted.command, admitted.log
     started = time.monotonic()
     status, error = "succeeded", None
+    process, execution_finished = None, False
     try:
         with log.open("wb") as handle:
-            process = subprocess.Popen(
-                command,
-                cwd=context.repository,
-                env=step_environment(context),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
+            # Operator controls take this same short lock. Once a pause/cancel has
+            # returned, no new stage can slip between the final check and launch.
+            with journal.admission_lock():
+                if control := journal.control_status():
+                    status, error = "blocked", f"Run is {control}; no subprocess was launched."
+                    return 2
+                process = subprocess.Popen(
+                    command,
+                    cwd=context.repository,
+                    env=step_environment(context),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
             for line in process.stdout:  # type: ignore[union-attr]
                 handle.write(line)
                 handle.flush()
@@ -304,6 +366,7 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
                     sys.stdout.buffer.write(line)
                     sys.stdout.flush()
             code = process.wait()
+            execution_finished = True
         try:
             record = json.loads((context.run_dir / "state.json").read_text())["stages"].get(
                 step, {}
@@ -326,20 +389,31 @@ def command_step(context: RunContext, args: argparse.Namespace) -> int:
     except BaseException as caught:  # noqa: BLE001 - the journal must say what happened
         status, error = "failed", f"{type(caught).__name__}: {caught}"
     finally:
-        journal.append(
-            "step.finished",
-            step=step,
-            attempt=attempt,
-            status=status,
-            error=error,
-            seconds=round(time.monotonic() - started, 1),
-            log=str(log.relative_to(context.run_dir)),
-        )
+        if process is not None and not execution_finished:
+            # Losing the local waiter does not establish that its child or provider
+            # stopped. Preserve ownership until its receipt/output can be reconciled.
+            journal.append(
+                "note",
+                step=step,
+                attempt=attempt,
+                text=f"Executor interrupted before confirming completion: {error}. "
+                "Attempt remains unresolved; inspect its log and provider receipt.",
+            )
+        else:
+            journal.append(
+                "step.finished",
+                step=step,
+                attempt=attempt,
+                status=status,
+                error=error,
+                seconds=round(time.monotonic() - started, 1),
+                log=str(log.relative_to(context.run_dir)),
+            )
     return 0 if status in {"succeeded", "skipped"} else 1
 
 
 def detach(context: RunContext, args: argparse.Namespace) -> int:
-    """Hand the step to a child that outlives this command, and say where to watch it."""
+    """Hand an admitted step to a child. The caller holds the admission lock."""
     if os.environ.get("WANDER_STEP_CHILD"):
         raise SystemExit("a detached step tried to detach again; refusing to spawn")
     journal = context.journal()
@@ -358,6 +432,7 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
         parameters=parse_flags(args.rest),
         paid=bool(described and described.paid),
         log=str(log),
+        detached=True,
     )
     # The flags go before the step name: `rest` is a REMAINDER, so anything after the name is
     # swallowed as a flag for run_clip.py. Putting --wait after it meant the child never saw
@@ -377,19 +452,31 @@ def detach(context: RunContext, args: argparse.Namespace) -> int:
     ]
     if refuse_controlled_step(context, journal, args.step, attempt):
         return 2
-    subprocess.Popen(
-        command,
-        cwd=context.repository,
-        env={
-            **os.environ,
-            "PYTHONPATH": str(context.repository),
-            "WANDER_STEP_CHILD": "1",
-        },
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            command,
+            cwd=context.repository,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(context.repository),
+                "WANDER_STEP_CHILD": "1",
+            },
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        journal.append(
+            "step.finished",
+            step=args.step,
+            attempt=attempt,
+            status="failed",
+            error=f"Could not start the local child: {error}",
+            preflight=True,
+        )
+        print(f"{args.step}: could not start the local child: {error}", file=sys.stderr)
+        return 1
     described = STEPS.get(base_step(args.step))
     print(
         f"{args.step} started"
@@ -493,14 +580,7 @@ def waiting_on(
 
 def in_flight(journal) -> dict[str, str]:
     """Steps started and not yet finished, by attempt."""
-    running: dict[str, str] = {}
-    for entry in journal.entries():
-        step = entry.data.get("step")
-        if entry.kind == "step.started" and step:
-            running[step] = entry.data.get("attempt", "")
-        elif entry.kind == "step.finished" and step:
-            running.pop(step, None)
-    return running
+    return {step: next(reversed(attempts)) for step, attempts in journal.active_attempts().items()}
 
 
 def command_ready(context: RunContext, args: argparse.Namespace) -> int:

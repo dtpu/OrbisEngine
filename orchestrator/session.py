@@ -286,19 +286,12 @@ class RunSession:
             error = outcome.result.error
         elif outcome.result.status == "stalled":
             error = outcome.result.error
-        started = {}
-        for entry in after.entries():
-            step = entry.data.get("step")
-            if entry.kind == "step.started" and step:
-                started[step] = True
-            elif entry.kind == "step.finished" and step:
-                started.pop(step, None)
         return SessionOutcome(
             finished=after.finished(),
             waiting=after.unanswered(),
             steps_run=len([e for e in after.entries() if e.kind == "step.started"]) - before,
             error=error,
-            running=len(started),
+            running=len(after.active_attempts()),
         )
 
     def work(self, turns: int = 12) -> SessionOutcome:
@@ -313,11 +306,11 @@ class RunSession:
             outcome = self.turn()
             if not outcome.wants_another_turn:
                 return outcome
+            if outcome.running:
+                # The agent has yielded to its detached work. Wait for a journal
+                # change instead of immediately asking it to launch the same step.
+                return outcome
             if outcome.steps_run == 0:
-                if outcome.running:
-                    # Work is in flight; the agent was right to stop, and the journal moving
-                    # is what brings it back. Saying nothing keeps the history readable.
-                    return outcome
                 self.journal().append(
                     "note",
                     text="the agent took a turn without running a step or deciding anything",

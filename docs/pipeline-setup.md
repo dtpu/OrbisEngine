@@ -138,6 +138,23 @@ before launching; existing outputs stay on disk. Legacy manifests without a dige
 submission instead of blindly reusing cached state. Orchestrated runs reject cuts instead of
 silently trimming into another run directory. The direct runner retains its explicit shot controls.
 
+`wander step` admits one unresolved attempt per step in a run directory. A filesystem lock
+serializes admission, then releases before execution so independent steps can proceed. Detached
+children must match their parent's recorded command and claim execution once; overlapping
+agents or supervisor restarts cannot launch that attempt again or overwrite its log. Completion
+only clears the matching attempt, including when older journals contain overlapping starts.
+API pause/cancel commands share the launch lock. They prevent subsequent launches and retain
+results from work that already started; the lock is never held while waiting for that work.
+The supervisor yields after a turn leaves detached work running, instead of immediately
+requesting another agent turn to start the same work.
+
+An executor that disappears without recording completion remains unresolved. Inspect its log,
+provider receipt and retained outputs before reconciling it; restarting the supervisor, removing
+the lock file, or inventing a new attempt must not resubmit uncertain work. Older unresolved starts
+without the child-claim record also require inspection. This guard applies to `wander step` on
+one shared filesystem, not direct `run_clip.py` or worker invocations. The shared paid ledger
+and [provider recovery rules](paid-recovery.md) still apply.
+
 Run budgets (`maximum_cost` and custom per-run attempt/provider caps) are rejected by the API
 because the directory runner does not enforce those database-policy settings. Use provider-side
 limits alongside the shared ledger; a configured API budget must never look like a spending cap

@@ -5,8 +5,11 @@ import sys
 import shutil
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -23,6 +26,7 @@ from orchestrator.api.storage import (
     FilesystemSourceStore,
 )
 from orchestrator.database import ArtifactRecord, AttemptRecord, Base
+from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository
 
 TOKEN = "test-token-with-at-least-24-characters"
@@ -187,6 +191,42 @@ class ApiTests(unittest.TestCase):
         self.assertEqual([event.sequence for event in events], list(range(1, len(events) + 1)))
         resumed = self.repository.events_after("run-1", events[0].sequence)
         self.assertEqual(resumed, events[1:])
+
+    def test_controls_wait_for_stage_launch_admission_before_acknowledging(self):
+        self.create_run()
+        journal = self.runs.journal("run-1")
+        original_lock = Journal.admission_lock
+
+        for command in ("pause", "cancel", "resume", "retry"):
+            with self.subTest(command=command):
+                attempting_lock = Event()
+                event_count = len(self.repository.events_after("run-1", 0))
+                previous_pause = self.runs.paused.get("run-1")
+
+                def observed_lock(instance):
+                    attempting_lock.set()
+                    return original_lock(instance)
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    # This represents the short section in which a local executor
+                    # performs its final control check and launches a subprocess.
+                    with (
+                        original_lock(journal),
+                        patch.object(Journal, "admission_lock", observed_lock),
+                    ):
+                        response = pool.submit(
+                            self.client.post,
+                            f"/api/pipeline/runs/run-1/{command}",
+                            headers=AUTH,
+                            json={"node_id": "clean", "rationale": "operator decision"},
+                        )
+                        self.assertTrue(attempting_lock.wait(5))
+                        with self.assertRaises(TimeoutError):
+                            response.result(timeout=0.1)
+                        self.assertEqual(len(self.repository.events_after("run-1", 0)), event_count)
+                        self.assertEqual(self.runs.paused.get("run-1"), previous_pause)
+                    self.assertEqual(response.result(timeout=5).status_code, 202)
+                self.assertEqual(len(self.repository.events_after("run-1", 0)), event_count + 1)
 
     def test_duplicate_run_is_conflict(self):
         self.create_run()
