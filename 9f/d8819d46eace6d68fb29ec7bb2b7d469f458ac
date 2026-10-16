@@ -1,0 +1,44 @@
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_faeb2eee6f2c9f 85-94
+scripts/tests/test_orchestrator_api_submission.py
+  s_988a422339b8f1::t_c425b7677c2647 304-312,317-338,341-344,350-371,374-379,411-412,414-415,422-428,437-438,445,460-462,473-477,497
+  s_988a422339b8f1::t_34783026ad673b 313-316,339-340,345-349,372-373,380-410,413,416-421,429-436,439-444,446-459,463-472,478-496
+admin/components/codex-tail.tsx
+  s_988a422339b8f1::t_b63ab9185f6b1e 146,150,242,253
+orchestrator/repository.py
+  s_988a422339b8f1::t_c7b6a54ef6bd5e 244
+  s_988a422339b8f1::t_a43c24112443f0 537,543-544,552-554
+orchestrator/api/progress.py
+  s_988a422339b8f1::t_c7b6a54ef6bd5e 114,159-162
+scripts/tests/test_orchestrator_journal.py
+  s_988a422339b8f1::t_b76c1c20b1070a 57,59,61-64,67-70,88,203-258
+  s_988a422339b8f1::t_f99ac4d46a472c 58,71-87
+  s_988a422339b8f1::t_b71b1564fe7c29 259
+orchestrator/journal.py
+  s_988a422339b8f1::t_cc64e878b50205 179-181,184,189-192
+  s_988a422339b8f1::t_b54bae493e1b6c 79-82
+  s_988a422339b8f1::t_e32c53d774eb40 279,296,319
+  s_988a422339b8f1::t_c635a04f5056e6 193
+orchestrator/api/questions.py
+  s_988a422339b8f1::t_c7b6a54ef6bd5e 1-8,14-52,54-69,71-78,80-103
+  s_988a422339b8f1::t_017fd2da59f1c3 9-13,53,70,79
+orchestrator/api/app.py
+  s_988a422339b8f1::t_34783026ad673b 97-98,105
+  s_988a422339b8f1::t_c7b6a54ef6bd5e 38,430,436-440
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fd8819d46eace6d68fb29ec7bb2b7d469f458ac",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
