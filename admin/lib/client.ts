@@ -10,6 +10,8 @@ import type {
   ReviewTranscript,
   RunArtifact,
   RunCommand,
+  PreparedSavedInputRun,
+  SavedInputsAvailability,
   TranscriptTail,
 } from './types';
 
@@ -47,6 +49,21 @@ export async function loadRun(runId: string): Promise<PipelineRun> {
   return (await unwrap(
     await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}`, { cache: 'no-store' }),
   )) as PipelineRun;
+}
+
+export async function checkSavedInputs(runId: string): Promise<SavedInputsAvailability> {
+  return (await unwrap(
+    await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}/saved-inputs`, { cache: 'no-store' }),
+  )) as SavedInputsAvailability;
+}
+
+export async function prepareSavedInputRun(
+  runId: string,
+  id?: string,
+): Promise<PreparedSavedInputRun> {
+  return (await send(`/runs/${encodeURIComponent(runId)}/saved-inputs`, {
+    id,
+  })) as PreparedSavedInputRun;
 }
 
 export async function uploadRun(input: {

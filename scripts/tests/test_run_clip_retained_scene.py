@@ -15,6 +15,7 @@ from orchestrator.cli import run_clip_command
 from scripts.tests import test_retained_scene as retained_fixtures
 
 scene = retained_fixtures.scene
+original_run = run_clip.run
 
 
 @pytest.fixture
@@ -37,7 +38,8 @@ def pipeline(scene, tmp_path):
     public = tmp_path / "public"
     public.mkdir()
 
-    def package(command, log):
+    def package(command, log, *, attempts):
+        assert attempts == 1
         assert command[command.index("--shared-scale") + 1] == "1"
         shutil.copytree(fresh, Path(command[command.index("--out") + 1]))
 
@@ -60,6 +62,24 @@ def test_delivers_package_and_selected_world_with_no_quality_acceptance(pipeline
     assert set(p.state.data["stages"]) == {"_retained_delivery"}
     execute.assert_called_once()
     assert not list((public / "worlds").glob(".retained-*"))
+
+
+def test_retained_packager_does_not_retry_rate_limit_errors(pipeline, monkeypatch):
+    p, _, _ = pipeline
+    calls = []
+
+    def fail(command, **kwargs):
+        calls.append(command)
+        kwargs["stdout"].write("rate limit: fixture failure\n")
+        kwargs["stdout"].flush()
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(run_clip.subprocess, "run", fail)
+    # Use the real command runner under the package fixture's mock.
+    with patch.object(run_clip, "run", original_run):
+        with pytest.raises(RuntimeError):
+            p.package_people()
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("conflict", ["package", "world", "scale", "missing_reference", "finetune"])

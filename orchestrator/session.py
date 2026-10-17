@@ -241,6 +241,21 @@ class RunSession:
         real number.
         """
         people = max(1, int(options.get("people") or 1))
+        if self.described.get("retainedDelivery") is not None:
+            from orchestrator.cli import RunContext, plan_for
+
+            described = self.described
+            return plan_for(
+                RunContext(
+                    self.run_id,
+                    self.run_dir,
+                    described["name"],
+                    Path(described["source"]),
+                    Path(described["repository"]),
+                    options,
+                    retained_delivery=described["retainedDelivery"],
+                )
+            )
         many = bool(options.get("all_people")) or people > 1
         return people_steps(planned_steps(options), people, multiperson=many)
 

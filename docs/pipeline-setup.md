@@ -127,6 +127,31 @@ clips are never uploaded by the doctor, and no paid operation is launched.
 
 ## Submission and recovery
 
+### Prepare a delivery from saved inputs
+
+On an existing run's admin page, choose **Use saved inputs**, then **Prepare paused run**.
+The source run must be paused or finished, with no unresolved stage attempts. This supports
+world-enabled tracked-person runs without fine-tuning, with complete local camera, tracking,
+animation and exported scene files. Object models must be self-contained PLY or GLB files;
+external glTF buffers and textures are not copied implicitly.
+
+The server verifies the source and exported frame hashes, copies the supported inputs, and
+pins every copied file before publishing a separate paused run. It retains the source run link,
+room, presentation, original audio and objects. It does not copy agent sessions, attempts,
+quality decisions, credentials or provider archives. Missing, changed or symlinked inputs stop
+preparation without publishing a partial run. Checking and preparing use no provider calls.
+
+After an operator resumes the prepared run, the local worker may launch **one** `package_people`
+attempt using its pinned scene configuration. Other stages, extra parameters and retries are
+rejected; the packager also disables its internal retry loop. The agent then asks for viewer
+review. Reused stages are explicitly labeled as saved inputs, and packaging grants no fresh
+inference or reconstruction quality acceptance. Preparation alone does not start a worker.
+
+The API exposes `GET /api/pipeline/runs/{id}/saved-inputs` for availability and
+`POST /api/pipeline/runs/{id}/saved-inputs` with an optional `id` for preparation.
+
+### Submit new work
+
 The admin reads its option defaults and supported world modes from `GET /api/pipeline/options`.
 `POST /api/pipeline/doctor` inspects the API server locally; it does not establish that a separate
 worker is ready. Uploads can be queued while worker setup is repaired. The API and supervisor

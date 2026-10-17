@@ -229,6 +229,7 @@ class PipelineRepository:
                 ],
                 "graphVersion": run.graph_version,
                 "sourceSha256": run.source_sha256,
+                "sourceArtifactId": run.source_artifact_id,
                 "configuration": run.configuration,
                 "budget": run.budget,
                 "createdAt": run.created_at.isoformat(),
