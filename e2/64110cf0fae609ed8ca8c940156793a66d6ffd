@@ -1,0 +1,90 @@
+docs/paid-recovery.md
+  s_988a422339b8f1::t_e630082eb76248 51,86-113
+  s_988a422339b8f1::t_6c2af8791c310a 11-21,57
+  s_988a422339b8f1::t_06625d02b7084b 30,58-85
+  s_988a422339b8f1::t_5e26192b05b51c 114
+scripts/tests/test_marble_world.py
+  s_988a422339b8f1::t_61fd6fe3367aa1 504-508
+docs/known-limits.md
+  s_988a422339b8f1::t_2c4fbaeb0c990c 7
+scripts/tests/test_orchestrator_api_submission.py
+  s_988a422339b8f1::t_92d83a6058e3fe 92-93,96-124
+  s_988a422339b8f1::t_c12cf33906a8de 94
+  s_988a422339b8f1::t_af166089730b0d 95
+orchestrator/pipeline.py
+  s_988a422339b8f1::t_3d7c0b6bcac86b 101-103
+scripts/tests/test_run_clip_resume.py
+  s_988a422339b8f1::t_c57453dea6a18b 200
+orchestrator/api/progress.py
+  s_988a422339b8f1::t_92d83a6058e3fe 45-48
+scripts/tests/test_select_world_mode.py
+  s_988a422339b8f1::t_d42cb76db8f51f 108-111,115-118
+  s_988a422339b8f1::t_9a09adb8f45539 17
+scripts/clean_candidates.py
+  s_988a422339b8f1::t_2d79280f141ce8 1-157
+  s_988a422339b8f1::t_cce3368392bdaf 158-159
+scripts/stage_attempts.py
+  s_988a422339b8f1::t_b56c77dc30ef0d 33-34,43,64-87,99-120
+  s_988a422339b8f1::t_290b71feb49c39 3,5,35-42,88-98,466-468,477-479,481-483,485-487
+  s_988a422339b8f1::t_06e092b29ed020 346,390-412
+  s_988a422339b8f1::t_a4fc0fce89ac6a 427,458-465,469-476,480,484,488,495,533-534
+  s_988a422339b8f1::t_7c1bfb05d00c92 121-122
+scripts/run_clip.py
+  s_988a422339b8f1::t_b467424553b113 37-41,128-130,566-568,578-580,585-589,628-630,898-903,1062-1063,1946-1949,3014-3016
+  s_988a422339b8f1::t_a069f2bee1eb32 633-640,642-652,654,671,710,715-717,745-747,758-759,761-762,766-769,773-781
+  s_988a422339b8f1::t_05bba073c7b459 375-376,598-612
+  s_988a422339b8f1::t_244f90085988c3 433,3432-3435,3675-3676
+  s_988a422339b8f1::t_48dad0c02fbdf6 737-739,750-754
+  s_988a422339b8f1::t_56002027bdad4a 711-714,748-749,755-757,760,763-765,770-772
+  s_988a422339b8f1::t_85284b00f1499e 571
+  s_988a422339b8f1::t_0c9293b4c34d17 36,42,115-127,372-374,563-565,569-570,572-577,581-584,590-597,613-627,631-632,641,653,664,666,668,670,673,785,831,891-894,1064,3007-3013,3431,3530-3534,3658
+  s_988a422339b8f1::t_e37d6f6dd060de 131-132,895-897
+scripts/tests/test_stage_attempts.py
+  s_988a422339b8f1::t_6b115b57aaebab 37-43,341-360,366,394-402,428-430,459-470,808-821,832-834,838-841,845-849,860-862
+  s_988a422339b8f1::t_ae94b5bc89a185 12,806-807,822-831,835-837,842-844,850-859,863-869
+  s_988a422339b8f1::t_d487ab6a9f6695 15,22,36,44,46,54,283-340,361-365,367-393,403-427,431-458
+  s_988a422339b8f1::t_f95d908e7d4e9d 930-932,936
+  s_988a422339b8f1::t_9cae117f051e76 471,870
+scripts/tracks_to_clean_masks.py
+  s_988a422339b8f1::t_61f7eb91012c53 2,4-5,7-10,12-13,16-21,27-30,33-60,63-88,90-115,118-160,162-177,179,181-188,190-196,200-203
+  s_988a422339b8f1::t_027903c2dcd057 61-62,116-117
+  s_988a422339b8f1::t_4072c5f5fa93b5 204-213
+scripts/tests/test_pipeline_integration.py
+  s_988a422339b8f1::t_5bdddefb0bf442 279-281
+orchestrator/steps.py
+  s_988a422339b8f1::t_34395b9fff957f 357-358
+scripts/tests/test_clean_candidates.py
+  s_988a422339b8f1::t_b5ff879dcfb459 1-361
+scripts/tests/test_pipeline_plan.py
+  s_988a422339b8f1::t_9ed47c70759762 88-105
+scripts/tests/test_source_timing.py
+  s_988a422339b8f1::t_1aed01a1bc6cf2 392-548
+scripts/tests/test_tracks_to_clean_masks.py
+  s_988a422339b8f1::t_07f215a6cf865d 1-322
+scripts/tests/test_vlm_budget.py
+  s_988a422339b8f1::t_5b836abfc46199 1-169
+worker/modal_clean_video.py
+  s_988a422339b8f1::t_4ab405fa391f16 102,116-160,193,258
+worker/stages/vlm_budget.py
+  s_988a422339b8f1::t_0fc2a840b4abdd 1-116
+worker/stages/vlm_judge.py
+  s_988a422339b8f1::t_01014781a6fe38 20-24,82-83,113-144
+worker/wander_worker/source_timing.py
+  s_988a422339b8f1::t_4ae12f9c46f3a3 117,121,134-139,141-144,170-183,206-210,218-220,235-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e264110cf0fae609ed8ca8c940156793a66d6ffd",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
