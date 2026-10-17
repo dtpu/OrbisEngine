@@ -389,6 +389,163 @@ class SourceTimingTests(unittest.TestCase):
                 invoke.assert_not_called()
             self.assertEqual(list(root.iterdir()), [])
 
+    def test_explicit_selection_keeps_exact_pixels_on_vfr_nonzero_pts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clip = self.make_clip(Path(directory), "30", 18, "setpts=5/TB+N*N/(30*TB)")
+            selection = [0, 2, 5, 8, 10, 12, 17]
+            raw, provenance = source_timing.select_source_frames(
+                clip, source_indices=selection, width=16, height=16
+            )
+            pixels = np.frombuffer(raw, np.uint8).reshape(-1, 16, 16, 3)
+            self.assertEqual(pixels[:, 0, 0, 0].tolist(), selection)
+            self.assertEqual(
+                raw,
+                b"".join(bytes([i, 255 - i, i // 2]) * 16 * 16 for i in selection),
+            )
+            probe = json.loads(
+                subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "frame=pts",
+                        "-of",
+                        "json",
+                        str(clip),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                ).stdout
+            )
+            self.assertEqual(
+                [f["sourcePts"] for f in provenance["frames"]],
+                [probe["frames"][i]["pts"] for i in selection],
+            )
+            self.assertEqual([f["sourceIndex"] for f in provenance["frames"]], selection)
+            self.assertEqual([f["frameIndex"] for f in provenance["frames"]], list(range(7)))
+            self.assertGreater(provenance["sourceFirstPts"], 0)
+            self.assertEqual(
+                provenance["sourceSha256"], hashlib.sha256(clip.read_bytes()).hexdigest()
+            )
+            _, mapping = source_timing.select_source_frames(clip, source_indices=selection)
+            self.assertEqual(mapping["frames"], provenance["frames"])
+            for indices in (None, [], [1, 1], [2, 1], [-1], [18], [True], [1.0]):
+                with self.subTest(indices=indices), self.assertRaises(ValueError):
+                    source_timing.select_source_frames(clip, source_indices=indices)
+            for options in (
+                {"fps": 0},
+                {"fps": float("nan")},
+                {"width": 1},
+                {"width": 1.5, "height": 2},
+            ):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    source_timing.select_source_frames(clip, source_indices=[0], **options)
+
+    def test_explicit_worker_metadata_validated_before_inpaint(self):
+        import modal_clean_video
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = self.make_clip(root, "30", 18)
+            selection = [0, 2, 5, 8, 10, 12]
+            _, provenance = source_timing.select_source_frames(clip, source_indices=selection)
+            base = {
+                "masks": np.packbits(np.zeros((6, 16, 16), bool), axis=-1),
+                "shape": np.array([6, 16, 16]),
+                "source_indices": np.array(selection),
+                "source_pts": np.array([f["sourcePts"] for f in provenance["frames"]]),
+                "source_time_base": np.array(provenance["sourceTimeBase"]),
+                "source_sha256": np.array(provenance["sourceSha256"]),
+            }
+            cases = [
+                {},
+                {"source_indices": None},
+                {"source_pts": np.array([0] * 6)},
+                {"source_time_base": np.array("1/1")},
+                {"source_sha256": np.array("0" * 64)},
+                {"shape": np.array([6, 15, 16])},
+                {"masks": np.zeros((5, 16, 2), np.uint8)},
+            ]
+            for number, changes in enumerate(cases):
+                archive = dict(base)
+                archive.update(changes)
+                archive = {k: v for k, v in archive.items() if v is not None}
+                buf = io.BytesIO()
+                np.savez_compressed(buf, **archive)
+                worker_root = root / f"worker-{number}"
+                worker_root.mkdir()
+                load_lama = Mock(return_value=None)
+                modules = {
+                    "cv2": SimpleNamespace(),
+                    "torch": SimpleNamespace(
+                        cuda=SimpleNamespace(is_available=lambda: True), device=str
+                    ),
+                    "simple_lama_inpainting": SimpleNamespace(SimpleLama=load_lama),
+                    "wander_worker.masks": SimpleNamespace(
+                        moved_content_masks=None, people_masks=None
+                    ),
+                }
+                with (
+                    self.subTest(changes=list(changes)),
+                    patch.dict(sys.modules, modules),
+                    patch.object(modal_clean_video.cache, "commit"),
+                    patch("tempfile.mkdtemp", return_value=str(worker_root)),
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    result = modal_clean_video.clean.local(
+                        clip.read_bytes(),
+                        fps=12,
+                        width=16,
+                        height=16,
+                        masks_npz=buf.getvalue(),
+                        encode=False,
+                        return_frames=True,
+                    )
+                if changes:
+                    self.assertIsNotNone(result["report"]["error"])
+                    load_lama.assert_not_called()
+                else:
+                    self.assertIsNone(result["report"]["error"])
+                    load_lama.assert_called_once()
+                    self.assertEqual(result["report"]["indices"], selection)
+                    with tarfile.open(fileobj=io.BytesIO(result["frames"])) as frames:
+                        for i, source_index in enumerate(selection):
+                            with frames.extractfile(f"f_{i:04d}.png") as image:
+                                self.assertEqual(
+                                    Image.open(image).getpixel((0, 0))[0], source_index
+                                )
+
+    def test_explicit_selection_rejects_changed_checksum_and_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clip = self.make_clip(Path(directory), "30", 18)
+            run = source_timing._run
+
+            def damaged(command):
+                result = run(command)
+                if command[0] == "ffmpeg" and command[-1] == "-":
+                    result.stderr = re.sub(
+                        rb"(\[showinfo@sampled[^\n]*? checksum:)[0-9A-F]+",
+                        rb"\g<1>BAD00000",
+                        result.stderr,
+                    )
+                return result
+
+            with (
+                patch.object(source_timing, "_run", side_effect=damaged),
+                self.assertRaisesRegex(ValueError, "emitted frame"),
+            ):
+                source_timing.select_source_frames(clip, source_indices=[0, 2])
+            with (
+                patch.object(source_timing, "_sha256", side_effect=["a", "b"]),
+                self.assertRaisesRegex(ValueError, "Source changed"),
+            ):
+                source_timing.select_source_frames(clip, source_indices=[0, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

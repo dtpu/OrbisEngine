@@ -17,6 +17,11 @@ Requires OPENAI_API_KEY (see ~/.openai-env).
 
 import argparse, base64, json, os, ssl, time, urllib.error, urllib.request
 
+try:
+    from . import vlm_budget
+except ImportError:  # Also supports direct script execution.
+    import vlm_budget
+
 CTX = ssl.create_default_context()
 try:
     import certifi
@@ -74,6 +79,8 @@ def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
             }
         )
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    if "WANDER_VLM_BUDGET" in os.environ:
+        return _ask_bounded(body, timeout)
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions",
         data=json.dumps(body).encode(),
@@ -101,6 +108,38 @@ def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
                 time.sleep(max(wait, 15 * 2**i))
             else:
                 time.sleep(2**i)
+
+
+def _ask_bounded(body, timeout):
+    receipt = None
+    usage = None
+    try:
+        # An empty path is configured-but-invalid, never permission to bypass the guard.
+        receipt = vlm_budget.claim(os.environ["WANDER_VLM_BUDGET"], body)
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout, context=CTX) as response:
+            result = json.load(response)
+        usage = result.get("usage")
+        txt = result["choices"][0]["message"]["content"].strip()
+        txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(txt)
+        vlm_budget.finish(receipt, "completed", usage=usage)
+        return parsed
+    except Exception as error:
+        if receipt is not None:
+            try:
+                vlm_budget.finish(receipt, "error", usage=usage, error=error)
+            except Exception:
+                pass  # The durable claim still consumes its allowance.
+        message = str(error) if isinstance(error, vlm_budget.BudgetError) else type(error).__name__
+        return {"error": f"bounded VLM request stopped: {message}"}
 
 
 def ask(model, img, prompt, retries=3):

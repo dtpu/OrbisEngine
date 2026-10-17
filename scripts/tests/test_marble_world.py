@@ -501,6 +501,11 @@ class MarbleContracts(unittest.TestCase):
         pipeline = object.__new__(run_clip.Pipeline)
         pipeline.ctx = self.root
         pipeline.name = "fixture"
+        pipeline.clip = self.root / "source.mp4"
+        pipeline.clip.write_bytes(b"original source fixture")
+        # The command-shape fixture uses the same synthetic input for image/video;
+        # a new video submission must still match the runner's selected clean path.
+        pipeline.clean_mp4 = self.png
         pipeline.key = "test-placeholder"
         pipeline.certs = "test-cert"
         pipeline.a = SimpleNamespace(

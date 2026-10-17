@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_clip
@@ -104,10 +105,17 @@ class VideoFirstPolicy(unittest.TestCase):
     def test_pipeline_forwards_the_clean_video_and_generated_description(self):
         pipeline = object.__new__(run_clip.Pipeline)
         pipeline.ctx = self.root
+        pipeline.name = "fixture"
+        pipeline.clip = self.root / "source.mp4"
+        pipeline.clip.write_bytes(b"original source fixture")
+        pipeline.a = SimpleNamespace(reuse_world=None)
         pipeline.clean_mp4 = self.root / "clean.mp4"
         pipeline.clean_mp4.write_bytes(b"complete cleaned clip")
         pipeline.prompt_json.write_text('{"text_prompt": "Source description"}')
-        with patch.object(pipeline, "marble_world") as generate:
+        with (
+            patch.object(run_clip, "MARBLE_DIR", self.root / "marble"),
+            patch.object(pipeline, "marble_world") as generate,
+        ):
             pipeline.marble_video()
         generate.assert_called_once_with(
             "video", pipeline.clean_mp4, "clean", ["--prompt-file", str(pipeline.prompt_json)]

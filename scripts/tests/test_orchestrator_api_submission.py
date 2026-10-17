@@ -89,6 +89,39 @@ class ProductionSubmissionTests(unittest.TestCase):
         self.assert_no_submission()
         self.assertFalse(list((self.root / "artifacts").rglob("*")))
 
+    def test_clean_candidates_are_previewable_without_exposing_other_candidate_files(self):
+        response = self.upload("clean-recovery")
+        self.assertEqual(response.status_code, 201, response.text)
+        run = self.manifests()[0].parent
+        candidate = run / "clean-candidates" / "tracked-masks"
+        candidate.mkdir(parents=True)
+        (candidate / "clean.mp4").write_bytes(VIDEO)
+        (candidate / "clean.log").write_text("private provider diagnostics")
+        outside = self.root / "outside-video.mp4"
+        outside.write_bytes(VIDEO)
+        escaped = run / "clean-candidates" / "escape"
+        escaped.mkdir()
+        (escaped / "clean.mp4").symlink_to(outside)
+
+        from orchestrator.api.progress import previews
+
+        media = previews(run)
+        preview = next(p for p in media if p["path"].startswith("clean-candidates/"))
+        self.assertEqual(preview["label"], "Cleaning candidate: tracked-masks")
+        self.assertEqual(preview["path"], "clean-candidates/tracked-masks/clean.mp4")
+        self.assertEqual(len([p for p in media if p["path"].startswith("clean-candidates/")]), 1)
+        video = self.client.get(
+            "/api/pipeline/runs/clean-recovery/files/clean-candidates/tracked-masks/clean.mp4",
+            headers=AUTH,
+        )
+        self.assertEqual(video.status_code, 200, video.text)
+        self.assertEqual(video.content, VIDEO)
+        for path in ("tracked-masks/clean.log", "escape/clean.mp4"):
+            denied = self.client.get(
+                f"/api/pipeline/runs/clean-recovery/files/clean-candidates/{path}", headers=AUTH
+            )
+            self.assertEqual(denied.status_code, 404, denied.text)
+
     def manifests(self):
         return list((self.root / "runs").glob("*/run.json"))
 

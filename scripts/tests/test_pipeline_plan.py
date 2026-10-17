@@ -85,6 +85,24 @@ def test_object_detection_and_review_wait_for_required_outputs():
     assert "finetune" not in many["verify"]
 
 
+@pytest.mark.parametrize("mode", ["video", "both", "none"])
+def test_tracked_video_clean_waits_for_camera_and_tracks(mode):
+    _, dependencies = multiperson_graph(2, mode)
+    order = list(TopologicalSorter(dependencies).static_order())
+    assert "tracks" in dependencies["clean"]
+    assert order.index("pi3x") < order.index("tracks") < order.index("clean")
+    _, single = single_graph(mode)
+    assert "tracks" not in single["clean"]
+
+
+@pytest.mark.parametrize("mode,operation", [("image", "clean_first"), ("multi", "clean_multi")])
+def test_still_image_cleaning_keeps_its_existing_prerequisites(mode, operation):
+    _, many = multiperson_graph(2, mode)
+    _, single = single_graph(mode)
+    assert many[operation] == single[operation]
+    assert "tracks" not in many[operation]
+
+
 @pytest.mark.parametrize("mode", MARBLE_MODES)
 @pytest.mark.parametrize("many,people", [(False, 1), (True, 1), (True, 3)])
 @pytest.mark.parametrize("objects,finetune", itertools.product((False, True), (False, True)))

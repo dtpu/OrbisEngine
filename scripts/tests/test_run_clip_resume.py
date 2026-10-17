@@ -197,7 +197,7 @@ def test_cached_skipped_slots_stay_settled_until_tracks_rerun(pipeline, monkeypa
     assert calls == []
     p.a.force = "tracks"
     assert p.go() == 0
-    expected = set(p.stages) - {"clean", "pi3x", "frame_align"}
+    expected = set(p.stages) - {"pi3x", "frame_align"}
     assert set(calls) == expected
     assert all(p.state.done(stage) for stage in skipped)
 

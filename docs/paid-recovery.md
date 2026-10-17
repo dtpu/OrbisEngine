@@ -8,6 +8,17 @@ This is not a universal spending cap: direct worker invocations, model-cache sta
 fine-tuning, OpenAI, and Marble generation are outside this ledger. Reported compute costs
 are estimates, not independently verified bills.
 
+For a bounded run, `WANDER_VLM_BUDGET` can point to an existing private JSON file with
+`schema: "wander.vlm-budget/1"`, positive integer `maxCalls` and `maxCompletionTokens`, an
+`allowedModels` list, and an initially empty `calls` list. Calls through
+`worker/stages/vlm_judge.py` reserve a request in that file before network access, include the
+completion-token limit, and do not retry. Duplicate request bodies are refused across processes
+and resumes, including after a failed or ambiguous response. Keep the same file for the whole
+run; recreating it would lose its accounting. Recorded usage excludes prompts, images, keys,
+and provider error text. This bounds requests and completion tokens for that helper, not input
+tokens, monetary charges, or other OpenAI clients. Without the environment variable its existing
+behavior is unchanged.
+
 The allowance is three executions per original source SHA-256 and logical stage. The clean,
 first-frame clean, and multi-image clean operations share the inpainting allowance; individual
 LHM track suffixes have separate allowances. `--marble both` sequences its two clean operations
@@ -16,7 +27,7 @@ allowance. A retry needs a new `--stage-hypothesis` and changed relevant paramet
 code. Each distinct clean operation can make its initial execution without a retry hypothesis,
 but all consume the same three-execution allowance. Pending or unknown attempts block further
 submissions for that source/logical stage until evidence is reconciled. Existing over-cap ledger
-history remains readable and reconcilable; it never grants another execution.
+history remains readable and reconcilable; history alone never grants another execution.
 
 The provider-agnostic `orchestrator/paid.py` policy likewise caps executions across run names
 by original source and logical stage. It persists retry hypotheses on the associated stage attempt
@@ -37,10 +48,69 @@ existing source: a fresh ledger does not establish that no earlier jobs were pai
 Existing result paths are retained. LHM destinations with compatible recovery receipts use
 read-only recovery; legacy or incompatible destinations stop for inspection. Other paid stages
 need retained-output inspection and, when justified, a fresh candidate with the same ledger.
+Full-video cleaning also supports the named same-run candidates described below.
 A successful subprocess is recorded as a completed execution, not a visual quality verdict.
 Additional selected shots share their original source's allowance and are treated as retries of
 the same stage. Automatic `--all-shots` processing can therefore stop after the first shot;
 review subsequent shots separately with distinct hypotheses instead of changing the source hash.
+
+## Explicit one-run operator authorization
+
+After explicit operator approval, the direct runner accepts `--stage-authorization /absolute/permit.json`
+(default `WANDER_STAGE_AUTHORIZATION`). The runner never creates a permit. A reviewed permit may
+authorize unchanged parameters or an execution above the normal cap, without resetting history.
+It does not bypass unresolved claims, retained-output checks, quality gates, or other provider budgets.
+It applies only to this runner's supported paid Modal operations; `--orchestrated` rejects it.
+
+The JSON must contain exactly these fields:
+
+- `schema`: `wander.paid-stage-authorization/1`.
+- `id`: a unique identifier (a UUID is suitable).
+- `sourceSha256`: the canonical original source's lowercase SHA-256, even when submitting an alias.
+- `candidate`: the exact runner candidate name.
+- `reason`: the reviewed reason for this execution.
+- `operatorApproval`: the operator's approval verbatim.
+- `expiresAtEpoch`: a finite positive Unix timestamp, later than the claim time.
+- `operations`: a nonempty object mapping concrete operation names to nonnegative integer counts
+  of **prior logical-stage executions** expected at submission. For example, `{"clean_first": 3,
+  "clean": 4}` authorizes those two operations in order against the shared inpainting count;
+  it does not authorize a retry of either one. Inspect the actual shared ledger when setting counts.
+
+Each claim reads and validates the permit under the ledger lock, records its exact file hash,
+absolute path, and full contents, and consumes that ID's operation immediately. Failed and unknown
+executions still consume it. Reconciliation never restores it. Reusing an ID with modified file
+contents is rejected, including attempts to change counts or add operations. Keep the same permit
+file unchanged while its distinct approved operations run. Candidate/source mismatches, expired or
+malformed permits, unlisted operations, and stale counts stop submission; they never fall back to
+the ordinary allowance. The shared ledger remains required across candidates, aliases, and worktrees.
+
+## Retain a corrected full-video clean within the same run
+
+Before any Marble submission for the run, `--clean-candidate <slug>` writes a fresh full-video
+clean under `clean-candidates/<slug>/` in that run. The slug uses 1–64 letters, digits, underscores
+or hyphens and starts with a letter or digit. Existing candidate directories are retained and
+refused. This option supports `--marble video` or `none`; it is rejected with still-image modes,
+`--orchestrated`, `--reuse-world`, or retained-world delivery. If `--only` is used, it must include
+`clean`. Use `--force clean` when replacing a cached successful clean; changing the slug alone
+cannot silently reuse that cached result.
+
+The fresh directory keeps the video, first frame, output masks, worker report, log, and any locally
+generated tracking masks. Original outputs remain unchanged. The ordinary shared paid ledger and
+retry/authorization rules still apply to the concrete `clean` operation and the same runner name;
+a stage-candidate slug grants no new execution allowance.
+
+After a successful clean with a matching source/video report, the runner retains a candidate
+`selection.json` and atomically writes `clean-selection.json` at the run root. The receipt pins
+the actual source SHA-256 and each selected artifact's path and SHA-256. Subsequent review and
+Marble commands use that selection without needing the candidate flag again. Missing, modified,
+or escaping artifacts and inconsistent receipts fail closed. A failed candidate leaves the prior
+selection intact, while the ordinary failed-stage/dependency state continues to block progression.
+Normal reruns invalidate downstream results; successful cleaning still requires visual review.
+
+Recorded Marble requests, uncertain submissions, operations, logs, or generated worlds block
+selection replacement before another clean is paid for. A run lock also serializes new Marble
+submissions with candidate cleaning. Existing operation polling and explicit world recovery remain
+read-only and do not require a new clean. This path cannot replace the input of an already-paid world.
 
 ## Recover LHM outputs without inference
 

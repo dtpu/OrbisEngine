@@ -33,6 +33,13 @@ from pathlib import Path
 from marble_world import submission_history
 from package_source_audio import source_audio_manifest
 from stage_attempts import StageAttempts, command_identity
+from clean_candidates import (
+    candidate_directory,
+    publish_selection,
+    read_selection,
+    selection_lock,
+    validate_slug,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -103,6 +110,24 @@ def validate_retained_scene(args):
         raise ValueError("--retained-scene requires a world-enabled run")
     if not args.skip_finetune:
         raise ValueError("--retained-scene requires --skip-finetune")
+
+
+def validate_clean_candidate(args):
+    candidate = getattr(args, "clean_candidate", None)
+    if candidate is None:
+        return
+    validate_slug(candidate)
+    if args.orchestrated:
+        raise ValueError("--clean-candidate is supported by the direct runner only")
+    mode = "none" if args.skip_marble else args.marble
+    if mode not in {"video", "none"}:
+        raise ValueError("--clean-candidate requires full-video cleaning (--marble video or none)")
+    if getattr(args, "reuse_world", None) or getattr(args, "retained_scene", None):
+        raise ValueError("--clean-candidate cannot replace input to an existing or retained world")
+    if args.only and "clean" not in args.only.split(","):
+        raise ValueError(
+            "--clean-candidate requires clean in --only; omit the flag to use the saved selection"
+        )
 
 
 def parse_object_spec(spec: str) -> dict:
@@ -344,6 +369,11 @@ class Pipeline:
             self.clip = dest.resolve()
         self.video_url = "/" + quote(self.clip.relative_to(public).as_posix())
         self.clean_mp4 = CLIPS / f"{self.name}-clean.mp4"
+        self.clean_report = self.ctx / "clean.json"
+        self.clean_masks_path = self.ctx / "masks.npz"
+        self.selected_clean_candidate = None
+        if not self.marble_recovery_only():
+            self.load_clean_selection()
         self.first_png = self.ctx / "first" / "f_0000.png"
         self.key = os.environ.get(a.marble_key or "WLT_API_KEY", "")
         self.people_limit = a.people if a.people else (4 if a.all_people else 0)
@@ -400,6 +430,7 @@ class Pipeline:
                 candidate=getattr(self, "name", self.ctx.name),
                 log=log,
                 results=outputs,
+                authorization=getattr(self.a, "stage_authorization", None),
             )
         except (OSError, ValueError, KeyError) as error:
             raise QualityStop("blocked", f"Paid {operation} was not submitted: {error}") from error
@@ -529,6 +560,98 @@ class Pipeline:
         )
 
     def clean(self):
+        candidate = getattr(self.a, "clean_candidate", None)
+        if candidate is None:
+            if getattr(self, "selected_clean_candidate", None):
+                raise ValueError(
+                    "A selected clean is retained; use a fresh --clean-candidate for another execution"
+                )
+            return self.clean_to(self.ctx, self.clean_mp4)
+        with selection_lock(self.ctx):
+            self.load_clean_selection()
+            self.assert_clean_selection_replaceable()
+            directory = candidate_directory(self.ctx, candidate)
+            directory.parent.mkdir(exist_ok=True)
+            try:
+                directory.mkdir()
+            except FileExistsError:
+                raise ValueError(
+                    "Clean candidate destination is retained; choose a fresh --clean-candidate"
+                ) from None
+            self.clean_to(directory, directory / "clean.mp4")
+            self.assert_clean_selection_replaceable()
+            publish_selection(self.ctx, self.clip, self.name, candidate)
+            self.load_clean_selection()
+            self.state.record(
+                "_clean_selection",
+                candidate=candidate,
+                receipt=str(self.ctx / "clean-selection.json"),
+            )
+
+    def load_clean_selection(self):
+        selected = read_selection(self.ctx, self.clip, self.name)
+        if selected:
+            self.selected_clean_candidate = selected["candidate"]
+            self.clean_mp4 = self.ctx / selected["files"]["video"]["path"]
+            self.clean_report = self.ctx / selected["files"]["report"]["path"]
+            self.clean_masks_path = self.ctx / selected["files"]["masks"]["path"]
+
+    def marble_recovery_only(self):
+        suffix = {"marble_video": "clean", "marble_image": "image", "marble_multi": "multi"}.get(
+            getattr(self.a, "only", None)
+        )
+        if suffix is None:
+            return False
+        if getattr(self.a, "reuse_world", None):
+            return True
+        kind, _ = submission_history(MARBLE_DIR, f"{self.name}-{suffix}")
+        return bool(
+            kind in {"world", "operation", "completed"}
+            or self.operation_id(self.ctx / f"marble_{suffix}.log")
+            or self.state.data["stages"].get("_marble", {}).get(suffix)
+        )
+
+    def assert_clean_selection_replaceable(self):
+        # Include uncertain/preparing receipts and legacy logs: none authorize replacing
+        # the input to a world that may already have been paid for.
+        saved = self.state.data["stages"]
+        for suffix in ("clean", "image", "multi"):
+            kind, _ = submission_history(MARBLE_DIR, f"{self.name}-{suffix}")
+            if (
+                kind != "new"
+                or (self.ctx / f"marble_{suffix}.log").exists()
+                or (public_dir() / f"marble-{self.name}-{suffix}.spz").exists()
+                or saved.get("_marble", {}).get(suffix)
+                or saved.get(f"marble_{'video' if suffix == 'clean' else suffix}", {}).get("status")
+                in {"ok", "running"}
+            ):
+                raise ValueError(
+                    "Cannot replace clean selection after a Marble submission or generated world"
+                )
+
+    def clean_to(self, directory, video):
+        flags = self.clean_flags()
+        if (
+            getattr(self, "multi", False)
+            and not getattr(self.a, "clean_masks", None)
+            and not self.a.moved_mask
+        ):
+            from tracks_to_clean_masks import build_clean_masks
+
+            masks = directory / "track-clean-masks.npz"
+            report = build_clean_masks(
+                self.ctx / "tracks",
+                clip=self.clip,
+                out=masks,
+                width=self.info["width"],
+                height=self.info["height"],
+                fps=self.a.fps,
+                dilate=self.a.dilate,
+                bottom_extra=self.a.bottom_extra,
+            )
+            self.validate_clean_masks(masks)
+            (directory / "track-clean-masks.json").write_text(json.dumps(report, indent=2))
+            flags += ["--masks-in", str(masks.resolve())]
         self.paid_run(
             "clean",
             [
@@ -538,16 +661,16 @@ class Pipeline:
                 "--clip",
                 str(self.clip),
                 "--out",
-                str(self.clean_mp4),
+                str(video),
                 "--frame0",
-                str(self.ctx / "clean-f0.png"),
+                str(directory / "clean-f0.png"),
                 "--masks",
-                str(self.ctx / "masks.npz"),
+                str(directory / "masks.npz"),
                 "--report",
-                str(self.ctx / "clean.json"),
-                *self.clean_flags(),
+                str(directory / "clean.json"),
+                *flags,
             ],
-            self.ctx / "clean.log",
+            directory / "clean.log",
         )
 
     def clean_flags(self):
@@ -584,6 +707,14 @@ class Pipeline:
             with np.load(path, allow_pickle=False) as archive:
                 packed = archive["masks"]
                 declared = archive["shape"] if "shape" in archive.files else None
+                selection_fields = {
+                    "source_indices",
+                    "source_pts",
+                    "source_time_base",
+                    "source_sha256",
+                }
+                selected = selection_fields.intersection(archive.files)
+                selection = {key: archive[key] for key in selected}
         except (OSError, ValueError, KeyError) as error:
             raise ValueError(f"Invalid --clean-masks archive {path}: {error}") from error
         expected_height, expected_width = self.info["height"], self.info["width"]
@@ -603,18 +734,55 @@ class Pipeline:
                 "--clean-masks shape "
                 f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
             )
-        if declared is not None and tuple(declared.tolist()) != (
-            expected_shape[0],
-            expected_height,
-            expected_width,
+        if declared is not None and (
+            declared.shape != (3,)
+            or tuple(declared.tolist()) != (expected_shape[0], expected_height, expected_width)
         ):
             raise ValueError(
                 "--clean-masks shape metadata does not match the observed sampled frame count "
                 "and source dimensions"
             )
+        if selected:
+            from worker.wander_worker.source_timing import select_source_frames
+
+            if getattr(self, "marble", getattr(self.a, "marble", None)) == "multi":
+                raise ValueError("Exact-source --clean-masks are not supported by --marble multi")
+            if (
+                selected != selection_fields
+                or declared is None
+                or not np.issubdtype(declared.dtype, np.integer)
+            ):
+                raise ValueError(
+                    "Explicit clean masks require complete source frame metadata and shape"
+                )
+            indices, pts = selection["source_indices"], selection["source_pts"]
+            if any(
+                value.shape != (expected_shape[0],) or not np.issubdtype(value.dtype, np.integer)
+                for value in (indices, pts)
+            ):
+                raise ValueError(
+                    "Explicit clean mask source indices and PTS must be integer frame arrays"
+                )
+            if any(
+                selection[key].shape != () or selection[key].dtype.kind != "U"
+                for key in ("source_time_base", "source_sha256")
+            ):
+                raise ValueError(
+                    "Explicit clean mask source hash and timebase must be text scalars"
+                )
+            _, provenance = select_source_frames(
+                self.clip, self.a.fps, source_indices=indices.tolist()
+            )
+            if (
+                selection["source_sha256"].item() != provenance["sourceSha256"]
+                or selection["source_time_base"].item() != provenance["sourceTimeBase"]
+                or pts.tolist() != [frame["sourcePts"] for frame in provenance["frames"]]
+            ):
+                raise ValueError("Explicit clean masks do not match the selected source pixels")
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
+        self.load_clean_selection()
         if self.a.reuse_world:
             say("   gate not applicable: --reuse-world generates nothing and spends nothing")
             return
@@ -660,7 +828,7 @@ class Pipeline:
                 shots.append(destination)
         if not shots:
             raise RuntimeError("nothing to review: the clean stage produced no frames")
-        report = self.ctx / "clean.json"
+        report = getattr(self, "clean_report", self.ctx / "clean.json")
         if report.exists():
             r = json.loads(report.read_text())
             say(
@@ -720,6 +888,19 @@ class Pipeline:
         if operation := self.marble_saved_operation(suffix):
             say(f"   recovering recorded operation {operation}; no new generation")
             return operation
+        with selection_lock(self.ctx):
+            return self.marble_submit_locked(input_type, target, suffix, extra)
+
+    def marble_submit_locked(self, input_type, target, suffix, extra=None):
+        if operation := self.marble_saved_operation(suffix):
+            say(f"   recovering recorded operation {operation}; no new generation")
+            return operation
+        if input_type == "video" and suffix == "clean":
+            self.load_clean_selection()
+            if Path(target) != self.clean_mp4:
+                raise ValueError(
+                    "Clean selection changed before Marble submission; inspect and resume"
+                )
         log = self.ctx / f"marble_{suffix}.log"
         try:
             run(
@@ -878,6 +1059,9 @@ class Pipeline:
         self.marble_world("image", self.first_png, "image", extra)
 
     def marble_video(self):
+        if self.a.reuse_world or self.marble_saved_operation("clean"):
+            return self.marble_world("video", None, "clean")
+        self.load_clean_selection()
         extra = ["--prompt-file", str(self.prompt_json)] if self.prompt_json.exists() else []
         self.marble_world("video", self.clean_mp4, "clean", extra)
 
@@ -1759,7 +1943,10 @@ class Pipeline:
             tracks, scale, masks = self.ctx / "tracks" / "tracks.json", world / "people.json", None
         else:
             tracks = world / "person" / "motion.json"
-            scale, masks = self.scale_file(world), self.ctx / "masks.npz"
+            scale, masks = (
+                self.scale_file(world),
+                getattr(self, "clean_masks_path", self.ctx / "masks.npz"),
+            )
         if scale is None:
             raise SkipStage(
                 "no metre scale on disk for this world yet (place_fit has not run), "
@@ -2817,6 +3004,16 @@ class Pipeline:
     # ---- scheduler ----------------------------------------------------------
     def go(self):
         a = self.a
+        candidate = getattr(a, "clean_candidate", None)
+        if (
+            candidate is not None
+            and self.state.done("clean")
+            and candidate != getattr(self, "selected_clean_candidate", None)
+            and "clean" not in (a.force or "").split(",")
+        ):
+            raise ValueError(
+                "Changing --clean-candidate requires --force clean when clean is cached"
+            )
         named = (set(a.only.split(",")) if a.only else set()) | (
             set(a.force.split(",")) if a.force else set()
         )
@@ -3232,6 +3429,11 @@ def main():
         help="New rationale for a paid retry; relevant parameters or code must also change",
     )
     ap.add_argument(
+        "--stage-authorization",
+        default=os.environ.get("WANDER_STAGE_AUTHORIZATION"),
+        help="Explicit one-run paid-stage authorization JSON; defaults to WANDER_STAGE_AUTHORIZATION",
+    )
+    ap.add_argument(
         "--marble-key",
         default="WLT_API_KEY",
         help="name of the env var holding the Marble key (never the key itself)",
@@ -3324,6 +3526,11 @@ def main():
         metavar="PATH",
         help="packed uint8 NPZ masks for the exact observed FFmpeg --fps sampling; skips the "
         "clean worker's segmentation, dilation, and contact-margin extension",
+    )
+    ap.add_argument(
+        "--clean-candidate",
+        metavar="SLUG",
+        help="write a fresh full-video clean under this run and select it after success; requires --force clean when cached",
     )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)
@@ -3448,6 +3655,7 @@ def main():
     a = ap.parse_args()
     try:
         validate_retained_scene(a)
+        validate_clean_candidate(a)
         validate_shared_scale(
             a.shared_scale, a.people or (4 if a.all_people else 0), orchestrated=a.orchestrated
         )
@@ -3464,6 +3672,8 @@ def main():
         ap.error("--clean-masks cannot be combined with --moved-mask")
     if a.clean_masks and a.orchestrated:
         ap.error("--clean-masks is currently supported by the direct runner only")
+    if a.stage_authorization is not None and a.orchestrated:
+        ap.error("--stage-authorization is currently supported by the direct runner only")
     if a.orchestrated:
         from run_pipeline import main as run_orchestrated
 
