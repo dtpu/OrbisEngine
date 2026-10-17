@@ -102,6 +102,7 @@ def _stage_snapshot(root: Path) -> StageSnapshot | None:
         Path(described["source"]),
         Path(described["repository"]),
         described.get("options") or {},
+        retained_delivery=described.get("retainedDelivery"),
     )
     journal = Journal(root)
     records = read_json(root / "state.json").get("stages", {})
@@ -134,6 +135,8 @@ def _stage_snapshot(root: Path) -> StageSnapshot | None:
         )
         status = {"ok": "succeeded", "gate": "blocked"}.get(status, status)
         required = needs_of(name, people, many, context.options)
+        if context.retained_delivery is not None:
+            required = [dependency for dependency in required if dependency in plan_for(context)]
         required_dependencies[name] = required
         missing = [dep for dep in required if dep not in done]
         latest = latest_results.get(name, {})

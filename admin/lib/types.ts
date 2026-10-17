@@ -162,7 +162,10 @@ export interface PipelineRun {
   branchKey?: string | null;
   graphVersion: string;
   sourceSha256: string;
-  configuration: { options: GraphOptions };
+  configuration: {
+    options: GraphOptions;
+    retainedDelivery?: { schema: string; sourceRunId: string };
+  };
   budget?: { currency: string; maximum_cost: number | null };
   createdAt?: string;
   updatedAt?: string;
@@ -174,6 +177,19 @@ export interface PipelineRun {
   /** Live run metadata derived from the journal. */
   live?: { paused?: boolean; canceled?: boolean } | null;
   liveError?: string | null;
+}
+
+export interface SavedInputsAvailability {
+  available: boolean;
+  reason?: string;
+  sourceRunId: string;
+  fileCount?: number;
+  byteCount?: number;
+}
+
+export interface PreparedSavedInputRun {
+  id: string;
+  status: 'paused';
 }
 
 export type RunCommand = 'reject' | 'retry' | 'pause' | 'resume' | 'cancel';

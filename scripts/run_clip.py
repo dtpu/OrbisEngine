@@ -1554,7 +1554,10 @@ class Pipeline:
                 "--out",
                 str(destination),
             ]
-            run(command, self.ctx / "package_people.log")
+            if retained:
+                run(command, self.ctx / "package_people.log", attempts=1)
+            else:
+                run(command, self.ctx / "package_people.log")
 
         if retained is None:
             source_audio_manifest(self.clip, tracks["duration"], out)

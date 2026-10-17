@@ -11,7 +11,7 @@ from pathlib import Path
 from orchestrator.api.app import ApiSettings, SourceStore, create_app
 from orchestrator.api.artifacts import ArtifactReader, safe_filename
 from orchestrator.api.storage import FilesystemArtifactReader, FilesystemSourceStore
-from orchestrator.config import resolve_runs_root
+from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.journal import Journal, RunProjection
 from orchestrator.repository import PipelineRepository
 from orchestrator.steps import STEPS
@@ -84,6 +84,117 @@ class FilesystemRuns:
             (run_dir / "run.json").write_text(json.dumps(described, indent=2))
             run_dir.rename(destination)
             return destination
+
+    def saved_inputs(self, run_id: str) -> dict:
+        from orchestrator.retained_inputs import inspect_inputs
+
+        summary = self.repository.run_summary(run_id)
+        try:
+            snapshot = inspect_inputs(self._dir(run_id), summary)
+            copies = snapshot["copies"]
+            return {
+                "available": True,
+                "sourceRunId": run_id,
+                "fileCount": len(copies),
+                "byteCount": sum(path.stat().st_size for path in copies.values()),
+            }
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            return {"available": False, "sourceRunId": run_id, "reason": str(error)}
+
+    def prepare_saved_inputs(self, source_id: str, run_id: str, *, settings, user: str) -> Path:
+        from orchestrator.contracts import Run
+        from orchestrator.retained_inputs import (
+            GOAL,
+            copy_inputs,
+            inspect_inputs,
+            verify_delivery_inputs,
+        )
+
+        source_dir = self._dir(source_id)
+        with Journal(source_dir).admission_lock():
+            summary = self.repository.run_summary(source_id)
+            snapshot = inspect_inputs(source_dir, summary)
+            original = snapshot["manifest"]
+            options = original["options"]
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id):
+                raise ValueError("invalid run id")
+            destination = self.root / name_for(self.root, run_id, run_id)
+            if destination.exists() or destination.is_symlink():
+                raise FileExistsError("run directory already exists")
+            staging_root = self.root / ".submissions"
+            staging_root.mkdir(exist_ok=True)
+            created = False
+            try:
+                with tempfile.TemporaryDirectory(prefix="retained-", dir=staging_root) as staging:
+                    run_dir = Path(staging) / "run"
+                    run_dir.mkdir()
+                    delivery = copy_inputs(snapshot, run_dir)
+                    source_name = Path(original["source"]).name
+                    described = {
+                        "runId": run_id,
+                        "repository": str(REPOSITORY_ROOT),
+                        "sourceArtifactId": summary.get("sourceArtifactId")
+                        or original.get("sourceArtifactId"),
+                        "name": destination.name,
+                        "source": str(destination / source_name),
+                        "sourceSha256": original["sourceSha256"],
+                        "options": options,
+                        "goal": GOAL,
+                        "retainedDelivery": delivery,
+                    }
+                    (run_dir / "run.json").write_text(json.dumps(described, indent=2))
+                    (run_dir / "paused").write_text(
+                        "Prepared saved-input delivery; resume explicitly.\n"
+                    )
+                    stages = [
+                        "pi3x",
+                        "tracks",
+                        *[f"lhm_motion_{i:02d}" for i in snapshot["tracks"]],
+                        "frame_align",
+                    ]
+                    state = {
+                        "stages": {
+                            stage: {
+                                "status": "skipped" if stage == "frame_align" else "ok",
+                                "execution": "retained-input-replay",
+                                "freshInference": False,
+                                "sourceRun": source_id,
+                            }
+                            for stage in stages
+                        }
+                    }
+                    (run_dir / "state.json").write_text(json.dumps(state, indent=2))
+                    verify_delivery_inputs(run_dir, delivery)
+                    self.repository.create_run_row(
+                        Run(
+                            id=run_id,
+                            graph_version="wander.agent-run/1",
+                            code_revision=settings.code_revision,
+                            container_digest=settings.container_digest,
+                            source_sha256=original["sourceSha256"],
+                            source_artifact_id=summary.get("sourceArtifactId")
+                            or original.get("sourceArtifactId"),
+                            configuration={"options": options, "retainedDelivery": delivery},
+                            status="paused",
+                            created_by=user,
+                            parent_run_id=source_id,
+                        )
+                    )
+                    created = True
+                    for stage in [*stages, "package_people"]:
+                        self.repository.ensure_node(
+                            run_id=run_id,
+                            node_id=stage,
+                            stage_type=stage,
+                            definition={"id": stage},
+                            dependencies=[],
+                        )
+                    run_dir.rename(destination)
+                    return destination
+            except Exception:
+                if created:
+                    self.repository.delete_unstarted_run(run_id)
+                raise
 
     def journal(self, run_id: str) -> Journal:
         run_dir = self._dir(run_id)

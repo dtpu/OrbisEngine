@@ -51,6 +51,7 @@ class RunContext:
     repository: Path
     options: dict[str, Any]
     source_sha256: str | None = None
+    retained_delivery: dict | None = None
 
     @classmethod
     def load(cls) -> RunContext:
@@ -71,6 +72,7 @@ class RunContext:
             ),
             options=described.get("options") or {},
             source_sha256=described.get("sourceSha256"),
+            retained_delivery=described.get("retainedDelivery"),
         )
 
     def journal(self) -> Journal:
@@ -128,6 +130,8 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
         command.append("--no-objects")
     if not options.finetune:
         command.append("--skip-finetune")
+    if getattr(context, "retained_delivery", None) is not None:
+        command += ["--retained-scene", str(context.run_dir / "retained/scene.json")]
     return command + extra
 
 
@@ -259,6 +263,20 @@ def admit_step(
         return 2
     if refuse_controlled_step(context, journal, args.step, args.attempt):
         return 2
+    if context.retained_delivery is not None:
+        problem = retained_delivery_problem(context, args, journal)
+        if problem:
+            if args.attempt:
+                journal.append(
+                    "step.finished",
+                    step=args.step,
+                    attempt=args.attempt,
+                    status="blocked",
+                    error=problem,
+                    preflight=True,
+                )
+            print(problem, file=sys.stderr)
+            return 2
     problem = source_problem(context)
     if refuse_controlled_step(context, journal, args.step, args.attempt):
         return 2
@@ -337,6 +355,21 @@ def admit_step(
     # duplicated child must never execute the same attempt a second time.
     journal.append("step.executing", step=step, attempt=attempt, pid=os.getpid())
     return AdmittedStep(attempt, command, log)
+
+
+def retained_delivery_problem(context: RunContext, args: argparse.Namespace, journal: Journal):
+    """A prepared delivery can package its pinned inputs once, without inference or retries."""
+    if args.step != "package_people" or args.rest:
+        return "Saved-input runs allow only package_people with the prepared inputs and no extra parameters."
+    if not args.attempt and any(entry.kind == "step.started" for entry in journal.entries()):
+        return "This saved-input run already used its packaging attempt. Inspect its result; retries are disabled."
+    from orchestrator.retained_inputs import verify_delivery_inputs
+
+    try:
+        verify_delivery_inputs(context.run_dir, context.retained_delivery)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return f"Saved inputs failed verification: {error}"
+    return None
 
 
 def command_step(context: RunContext, args: argparse.Namespace) -> int:
@@ -575,7 +608,19 @@ def plan_for(context: RunContext) -> list[str]:
     will never exist.
     """
     people, many = graph_shape(context)
+    if context.retained_delivery is not None:
+        return retained_delivery_steps(people)
     return people_steps(planned_steps(context.options), people, multiperson=many)
+
+
+def retained_delivery_steps(people: int) -> list[str]:
+    return [
+        "pi3x",
+        "tracks",
+        *[f"lhm_motion_{index:02d}" for index in range(people)],
+        "frame_align",
+        "package_people",
+    ]
 
 
 def waiting_on(

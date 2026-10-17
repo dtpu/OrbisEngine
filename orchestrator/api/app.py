@@ -168,6 +168,11 @@ class CreateRunRequest(BaseModel):
     budget: BudgetPolicy = Field(default_factory=BudgetPolicy)
 
 
+class SavedInputsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
 class MessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -453,6 +458,39 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         return with_live_state(summary)
 
+    @app.get("/api/pipeline/runs/{run_id}/saved-inputs")
+    def saved_inputs(run_id: str, user: str = Depends(actor)):
+        try:
+            repository.run_summary(run_id)
+            inspect = getattr(runs, "saved_inputs", None)
+            return (
+                inspect(run_id)
+                if inspect
+                else {
+                    "available": False,
+                    "sourceRunId": run_id,
+                    "reason": "Saved inputs are unavailable",
+                }
+            )
+        except KeyError as error:
+            raise HTTPException(404, "Unknown run") from error
+
+    @app.post("/api/pipeline/runs/{run_id}/saved-inputs", status_code=201)
+    def prepare_saved_inputs(run_id: str, request: SavedInputsRequest, user: str = Depends(actor)):
+        new_id = request.id or f"run-{uuid.uuid4().hex}"
+        require_new_run(new_id)
+        prepare = getattr(runs, "prepare_saved_inputs", None)
+        if prepare is None:
+            raise HTTPException(409, "Saved inputs are unavailable")
+        try:
+            repository.run_summary(run_id)
+            prepare(run_id, new_id, settings=settings, user=user)
+        except KeyError as error:
+            raise HTTPException(404, "Unknown run or missing saved inputs") from error
+        except (ValueError, OSError, IntegrityError) as error:
+            raise HTTPException(409, str(error)) from error
+        return {"id": new_id, "status": "paused"}
+
     @app.post("/api/pipeline/runs/{run_id}/messages", status_code=202)
     async def add_message(run_id: str, request: MessageRequest, user: str = Depends(actor)):
         identifier = repository.add_message(
@@ -524,7 +562,9 @@ def create_app(
         # Validate before recording a command. A stale operator tab must receive a
         # useful 404 without appending an event or creating a stray run directory.
         try:
-            repository.run_summary(run_id)
+            summary = repository.run_summary(run_id)
+            if command == "retry" and summary["configuration"].get("retainedDelivery") is not None:
+                raise HTTPException(409, "Stage retries are disabled for saved-input delivery runs")
             journal = runs.journal(run_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error

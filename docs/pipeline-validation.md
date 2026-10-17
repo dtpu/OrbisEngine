@@ -118,6 +118,17 @@ checks, with no automatic retry, provider commands, paid-ledger change, or quali
 It joins actual agent control to retained packaging and viewer delivery; fresh reconstruction
 and headset behavior remain unverified. Evidence: `.context/evidence/bottle-agent-delivery/`.
 
+The admin's saved-input preparation flow was then exercised with that paused bottle run.
+The browser checked 502 source files (about 1.35 GB), prepared a separate paused child run,
+and opened its detail page. All 503 resulting pins, including the generated retention config,
+verified. The page showed five reused prerequisites and only `package_people` pending, with
+no stage retry controls. The child was excluded from supervisor discovery while paused; its
+database contained zero attempts and zero quality reviews. The paid-stage ledger was unchanged.
+This check covered preparation and delivery admission, without another packaging execution or
+inference call. Tests cover detached admission, the one-attempt limit, internal retry suppression,
+corrupt/missing/symlinked inputs, incomplete receipts, publication rollback, and external object
+dependencies. Evidence: `.context/evidence/admin-saved-inputs/`.
+
 Regression tests cover questions arriving before stage/agent launch, blocked watchdog resumes,
 retained transcript/session evidence, and answers arriving between a turn's final journal read
 and the supervisor's next pass. Quiet turns do not repeatedly wake on their own status notes.

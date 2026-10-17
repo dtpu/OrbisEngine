@@ -543,6 +543,29 @@ a:hover {
   font-weight: 600;
   color: var(--ink-2);
 }
+.saved-inputs {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-stage);
+}
+.saved-inputs__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.saved-inputs__form .field {
+  flex: 1;
+  min-width: 0;
+}
+.saved-inputs__result {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
 .field {
   display: grid;
   gap: 6px;

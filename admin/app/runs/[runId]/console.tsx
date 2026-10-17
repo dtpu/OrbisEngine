@@ -8,6 +8,7 @@ import { leadArtifact } from '@/lib/blocks';
 import { GraphCanvas } from '@/components/graph-canvas';
 import { Progress } from '@/components/progress';
 import { RunOverview } from '@/components/run-overview';
+import { SavedInputs } from '@/components/saved-inputs';
 import { StageStrip } from '@/components/stage-strip';
 import { Status } from '@/components/status';
 import { useNow } from '@/components/use-now';
@@ -436,6 +437,7 @@ export default function RunConsole({ runId }: { runId: string }) {
     ? ['failed', 'blocked', 'succeeded', 'canceled'].includes(selected.status)
     : false;
   const paused = run.live?.paused === true || run.status === 'paused';
+  const savedDelivery = run.configuration.retainedDelivery?.schema === 'wander.saved-inputs/1';
 
   return (
     <main className="page" id="main">
@@ -526,6 +528,14 @@ export default function RunConsole({ runId }: { runId: string }) {
       </header>
 
       <RunOverview runId={runId} onSelectStage={setSelectedId} />
+      {savedDelivery ? (
+        <p className="notice">
+          Prepared from saved inputs. Resume to allow one local packaging attempt. Stage retries are
+          disabled; reconstruction quality remains unverified.
+        </p>
+      ) : (
+        <SavedInputs key={runId} runId={runId} />
+      )}
 
       {run.liveError ? (
         <p className="notice notice--warn" style={{ marginBottom: 16 }}>
@@ -864,37 +874,39 @@ export default function RunConsole({ runId }: { runId: string }) {
                   </div>
                 ) : null}
 
-                <div className="decide__actions">
-                  {isGate || selected.definition.kind === 'human' ? (
+                {!savedDelivery ? (
+                  <div className="decide__actions">
+                    {isGate || selected.definition.kind === 'human' ? (
+                      <button
+                        className="button button--approve"
+                        type="button"
+                        disabled={busy || !attempt}
+                        onClick={onApprove}
+                      >
+                        Approve
+                      </button>
+                    ) : null}
                     <button
-                      className="button button--approve"
-                      type="button"
-                      disabled={busy || !attempt}
-                      onClick={onApprove}
-                    >
-                      Approve
-                    </button>
-                  ) : null}
-                  <button
-                    className={`button${!isGate && canRetry ? ' button--primary' : ''}`}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onCommand('retry')}
-                  >
-                    Retry stage
-                  </button>
-                  <span className="gap" />
-                  {isGate || selected.definition.kind === 'human' ? (
-                    <button
-                      className="button button--danger"
+                      className={`button${!isGate && canRetry ? ' button--primary' : ''}`}
                       type="button"
                       disabled={busy}
-                      onClick={() => onCommand('reject')}
+                      onClick={() => onCommand('retry')}
                     >
-                      Reject
+                      Retry stage
                     </button>
-                  ) : null}
-                </div>
+                    <span className="gap" />
+                    {isGate || selected.definition.kind === 'human' ? (
+                      <button
+                        className="button button--danger"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onCommand('reject')}
+                      >
+                        Reject
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </>
           )}
