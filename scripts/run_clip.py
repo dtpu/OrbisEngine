@@ -3077,8 +3077,8 @@ def cut_check(a) -> dict:
         "--threshold",
         str(a.cut_threshold),
     ]
-    if a.shot is not None or a.all_shots:
-        cmd.append("--no-score")  # the choice is already made; do not pay to rank
+    if no_score:
+        cmd.append("--no-score")  # chosen shots and reject-only checks do not need ranking
     say("cut check: looking for cuts before anything is spent")
     try:
         p = subprocess.run(

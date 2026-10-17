@@ -61,13 +61,14 @@ class CutCacheTests(unittest.TestCase):
         run_clip.ROOT = self.old_root
         self.temp.cleanup()
 
-    def args(self, threshold=0.1, shot=None, all_shots=False):
+    def args(self, threshold=0.1, shot=None, all_shots=False, reject_cuts=False):
         return SimpleNamespace(
             clip=str(self.clip),
             name="same-run",
             cut_threshold=threshold,
             shot=shot,
             all_shots=all_shots,
+            reject_cuts=reject_cuts,
         )
 
     def cache_path(self):
@@ -132,6 +133,18 @@ class CutCacheTests(unittest.TestCase):
             run_clip.cut_check(self.args(shot=1))
         self.assertEqual(len(self.calls), 2)
         self.assertIn("--no-score", self.calls[-1])
+
+    def test_reject_cuts_skips_ranking_and_matches_its_cached_detector_args(self):
+        with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
+            run_clip.cut_check(self.args())
+            result = run_clip.cut_check(self.args(reject_cuts=True))
+            cached = run_clip.cut_check(self.args(reject_cuts=True))
+        self.assertEqual(len(self.calls), 2)
+        self.assertNotIn("--no-score", self.calls[0])
+        self.assertIn("--no-score", self.calls[1])
+        self.assertIn("--no-score", result["_cacheKey"]["detectorArgs"])
+        self.assertFalse(result["continuous"], "skipping ranking must retain cut detection")
+        self.assertEqual(result, cached)
 
     def test_detector_key_change_misses(self):
         with patch.object(run_clip.subprocess, "run", side_effect=self.fake):
