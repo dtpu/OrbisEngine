@@ -92,6 +92,22 @@ normalized only in API responses when their event history proves the hold came f
 ambiguous or missing history remains held. This verifies the operator reply path, not autonomous
 agent execution or fresh inference. Evidence: `.context/evidence/review-answer-handoff/`.
 
+A subsequent local check used the real Codex CLI worker with the retained bottle source.
+The agent verified the source/config hashes and asked a question; a reply through the admin
+woke the named supervisor watch and resumed the same saved session. The agent recorded the
+reply token in 9.1 seconds with the quiet retry timer set to one hour, rechecked both hashes,
+and asked for final review. The diagnostic was then paused and its supervisor stopped.
+No stage attempt, provider command, or quality acceptance occurred; the paid ledger and
+retained hashes were unchanged. This proves the live question/reply/resume path, not fresh
+reconstruction. The check used an isolated official CLI 0.163.0 with the existing ChatGPT
+sign-in; inherited unrelated MCP sign-in and duplicate-hook warnings did not prevent either
+turn. The broken system CLI was then updated to that version and its exec/resume startup
+checks passed. Evidence: `.context/evidence/worker-reply-resume/`.
+
+Regression tests cover questions arriving before stage/agent launch, blocked watchdog resumes,
+retained transcript/session evidence, and answers arriving between a turn's final journal read
+and the supervisor's next pass. Quiet turns do not repeatedly wake on their own status notes.
+
 A real admin-to-viewer check reused the retained six-second scene in an isolated paused run.
 The preview loaded all 75 samples, sought to frames 0, 36 and 74, and advanced playback with the
 source video. Delivered world and compact-motion hashes matched the retained files. No requests

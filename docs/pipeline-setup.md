@@ -148,6 +148,21 @@ results from work that already started; the lock is never held while waiting for
 The supervisor yields after a turn leaves detached work running, instead of immediately
 requesting another agent turn to start the same work.
 
+Pending `wander ask` questions also hold new agent and stage launches. Questions share the
+admission lock with launches; already-running work keeps its completion records. Answering
+wakes the supervisor on its next pass, including a reply that arrives as the prior turn ends.
+A stalled session is discarded so the next turn can recover from the journal.
+
+To watch just one run while answering questions, use:
+
+```sh
+uv run --locked python -m orchestrator.supervisor --run-id RUN_ID --watch
+```
+
+Without `--watch`, `--run-id` still makes one pass and exits. `--once` and `--watch` are
+mutually exclusive. The worker's `codex --version` and `codex exec --help` must start normally;
+an API doctor check does not test that executable or the worker's model sign-in.
+
 An executor that disappears without recording completion remains unresolved. Inspect its log,
 provider receipt and retained outputs before reconciling it; restarting the supervisor, removing
 the lock file, or inventing a new attempt must not resubmit uncertain work. Older unresolved starts

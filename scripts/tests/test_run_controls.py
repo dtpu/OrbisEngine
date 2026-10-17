@@ -66,6 +66,8 @@ def step_args(wait=False, *, attempt=None):
 def control(run, status):
     if status == "paused":
         (run.context.run_dir / "paused").write_text("paused by an operator\n")
+    elif status == "question":
+        run.journal.append("question", question="Which source should we use?", step="pi3x")
     else:
         run.journal.append("run.finished", status="canceled", summary="operator canceled")
 
@@ -83,7 +85,7 @@ def session(run):
     )
 
 
-@pytest.mark.parametrize("status", ["paused", "canceled"])
+@pytest.mark.parametrize("status", ["paused", "canceled", "question"])
 @pytest.mark.parametrize("wait", [False, True])
 def test_operator_control_rejects_stage_before_preflight_or_subprocess(
     run, monkeypatch, status, wait
@@ -103,7 +105,7 @@ def test_operator_control_rejects_stage_before_preflight_or_subprocess(
         assert run.repository.run_summary("run-1")["status"] == "canceled"
 
 
-@pytest.mark.parametrize("status", ["paused", "canceled"])
+@pytest.mark.parametrize("status", ["paused", "canceled", "question"])
 def test_detached_child_closes_pending_attempt_without_launch_or_receipt_change(
     run, monkeypatch, status
 ):
@@ -271,3 +273,90 @@ def test_cancellation_keeps_results_from_an_already_running_provider(run, monkey
     summary = run.repository.run_summary("run-1")
     assert summary["status"] == "canceled"
     assert summary["attempts"][0]["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_answer_releases_stage_hold_without_fabricating_work(run, monkeypatch, wait):
+    control(run, "question")
+    spawn = Mock(return_value=stage_process())
+    monkeypatch.setattr(cli.subprocess, "Popen", spawn)
+    assert cli.command_step(run.context, step_args(wait)) == 2
+    assert not run.repository.run_summary("run-1")["attempts"]
+    run.journal.append("answer", text="Use the saved source", author="operator")
+    assert cli.command_step(run.context, step_args(wait)) == 0
+    spawn.assert_called_once()
+
+
+def test_question_does_not_cancel_work_already_launched(run, monkeypatch):
+    def already_running(*args, **kwargs):
+        control(run, "question")
+        return stage_process()
+
+    spawn = Mock(side_effect=already_running)
+    monkeypatch.setattr(cli.subprocess, "Popen", spawn)
+    assert cli.command_step(run.context, step_args(True)) == 0
+    assert run.journal.last_status("pi3x") == "succeeded"
+    assert run.journal.unanswered() == "Which source should we use?"
+
+
+@pytest.mark.parametrize("status", ["paused", "canceled", "question"])
+def test_hold_during_harness_prompt_preparation_prevents_actual_spawn(run, monkeypatch, status):
+    turn = session(run)
+    transcript = run.context.run_dir / "transcript.jsonl"
+    decision = run.context.run_dir / "decision.json"
+    transcript.write_text("previous transcript\n")
+    decision.write_text("previous decision\n")
+    open_file = Path.open
+
+    def hold_before_reading_prompt(path, *args, **kwargs):
+        if path == run.context.run_dir / "prompt.txt" and args == ("rb",):
+            with run.journal.admission_lock():
+                control(run, status)
+        return open_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", hold_before_reading_prompt)
+    spawn = Mock(side_effect=AssertionError("must not spawn a held harness"))
+    monkeypatch.setattr("orchestrator.agent.harness.subprocess.Popen", spawn)
+    outcome = turn.turn()
+    spawn.assert_not_called()
+    assert transcript.read_text() == "previous transcript\n"
+    assert decision.read_text() == "previous decision\n"
+    assert not outcome.wants_another_turn
+    if status == "question":
+        assert outcome.waiting == "Which source should we use?"
+
+
+@pytest.mark.parametrize("text", ["", " \t\n"])
+def test_empty_question_is_rejected_without_changing_journal(run, text):
+    assert cli.command_ask(run.context, SimpleNamespace(question=text, step="pi3x")) == 2
+    assert run.journal.entries() == []
+
+
+def test_zero_turn_budget_does_not_forget_existing_journal_cursor(run):
+    run.journal.append("note", text="Existing retained work")
+    outcome = session(run).work(turns=0)
+    assert outcome.observed_entries == len(run.journal.entries()) == 1
+
+
+def test_question_before_watchdog_nudge_preserves_new_session(run, monkeypatch):
+    from dataclasses import replace
+    from orchestrator.agent import harness
+
+    turn = session(run)
+    turn.harness.policy = replace(turn.harness.policy, kind="codex", idle_nudges=1)
+    launches = []
+
+    def launch(*args, **kwargs):
+        launches.append(args)
+        kwargs["stdout"].write(b'{"type":"thread.started","thread_id":"asked-session"}\n')
+        kwargs["stdout"].flush()
+        control(run, "question")
+        process = Mock()
+        process.wait.side_effect = harness.Stalled()
+        return process
+
+    monkeypatch.setattr(harness.subprocess, "Popen", launch)
+    outcome = turn.turn()
+    assert outcome.waiting == "Which source should we use?"
+    assert len(launches) == 1
+    assert (run.context.run_dir / "session.id").read_text().strip() == "asked-session"

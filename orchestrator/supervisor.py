@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
@@ -79,13 +80,21 @@ def due(run_dir: Path, pushed: dict[str, tuple[float, int]], push_after: float) 
     return happened != seen or (time.monotonic() - when) >= push_after
 
 
-def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> str:
+@dataclass(frozen=True)
+class WorkOutcome:
+    message: str
+    observed_entries: int
+
+
+def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> WorkOutcome:
     import json
 
     described = json.loads((run_dir / RUN_FILE).read_text())
     run_id = described["runId"]
-    if status := Journal(run_dir).control_status():
-        return f"{run_id}: {status} by the operator"
+    journal = Journal(run_dir)
+    observed_entries = len(journal.entries())
+    if status := journal.control_status():
+        return WorkOutcome(f"{run_id}: {status} by the operator", observed_entries)
     if repository is not None:
         # A run being picked up again is a run being worked on, whatever it last said.
         try:
@@ -101,12 +110,14 @@ def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> str
     )
     outcome = session.work(turns=turns)
     if outcome.finished:
-        return f"{run_id}: finished {outcome.finished}"
-    if outcome.waiting:
-        return f"{run_id}: waiting on an operator — {outcome.waiting}"
-    if outcome.error:
-        return f"{run_id}: session ended without deciding — {outcome.error}"
-    return f"{run_id}: still going after {turns} turns"
+        message = f"{run_id}: finished {outcome.finished}"
+    elif outcome.waiting:
+        message = f"{run_id}: waiting on an operator — {outcome.waiting}"
+    elif outcome.error:
+        message = f"{run_id}: session ended without deciding — {outcome.error}"
+    else:
+        message = f"{run_id}: still going after {turns} turns"
+    return WorkOutcome(message, outcome.observed_entries)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,10 +127,18 @@ def main(argv: list[str] | None = None) -> int:
         default=str(resolve_runs_root()),
         help="directory holding one folder per run",
     )
-    parser.add_argument("--run-id", help="work on one run and stop")
-    parser.add_argument("--turns", type=int, default=12, help="turns per run before moving on")
     parser.add_argument(
+        "--run-id", help="select one run; stop after one pass unless --watch is set"
+    )
+    parser.add_argument("--turns", type=int, default=12, help="turns per run before moving on")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--once", action="store_true", help="make one pass over the runs instead of watching"
+    )
+    mode.add_argument(
+        "--watch",
+        action="store_true",
+        help="keep watching, including when --run-id selects one run",
     )
     parser.add_argument("--interval", type=float, default=15.0, help="seconds between passes")
     parser.add_argument(
@@ -129,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds before a run that went nowhere is given a fresh agent",
     )
     args = parser.parse_args(argv)
+    single_pass = args.once or (args.run_id and not args.watch)
 
     root = resolve_runs_root(args.runs)
     root.mkdir(parents=True, exist_ok=True)
@@ -157,11 +177,14 @@ def main(argv: list[str] | None = None) -> int:
             # started it, so a run whose journal has not moved is a run whose agent is
             # waiting on something -- handing it a second agent is how a 1600-credit world
             # gets submitted twice.
-            if not (args.once or args.run_id) and not due(run_dir, pushed, args.push_after):
+            if not single_pass and not due(run_dir, pushed, args.push_after):
                 continue
-            print(work_on(run_dir, repository, policy, args.turns), flush=True)
-            pushed[str(run_dir)] = (time.monotonic(), len(Journal(run_dir).entries()))
-        if args.once or args.run_id:
+            outcome = work_on(run_dir, repository, policy, args.turns)
+            print(outcome.message, flush=True)
+            # Keep the cursor the session actually observed. A reply can arrive between
+            # its final read and this assignment; reading again here would swallow it.
+            pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
+        if single_pass:
             return 0
         time.sleep(args.interval)
 

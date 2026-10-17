@@ -20,11 +20,12 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
+from orchestrator.agent.contracts import AgentResult
+from orchestrator.agent.harness import HarnessAgent, HarnessOutcome, HarnessPolicy
 from orchestrator.journal import Journal
 from orchestrator.session import RunSession, SessionOutcome, install_wander, render_brief
 from orchestrator.steps import STEPS, people_steps, planned_steps
-from orchestrator.supervisor import open_run, runs_needing_work, work_on
+from orchestrator.supervisor import due, open_run, runs_needing_work, work_on
 
 AGENT = """
 import os, pathlib, subprocess
@@ -183,6 +184,141 @@ class RunThroughTests(unittest.TestCase):
         self.assertIsNone(outcome.finished)
         self.assertEqual(runs_needing_work(self.runs), [], "a waiting run is not picked up again")
 
+    def test_a_held_session_stays_idle_until_the_answer_reaches_its_saved_session(self):
+        run_dir = self.open()
+        journal = Journal(run_dir)
+        journal.append("question", question="Use the retained clip?", step="clean")
+        (run_dir / "session.id").write_text("saved-thread\n")
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+        session.harness.run = Mock(
+            return_value=HarnessOutcome(
+                AgentResult(status="completed", transcript_path="inert"),
+                session="saved-thread",
+            )
+        )
+
+        held = session.turn()
+        self.assertEqual(held.waiting, "Use the retained clip?")
+        session.harness.run.assert_not_called()
+
+        journal.append("answer", text="Yes; use the retained clip without new inference")
+        resumed = session.turn()
+        self.assertIsNone(resumed.waiting)
+        session.harness.run.assert_called_once()
+        args, kwargs = session.harness.run.call_args
+        self.assertIsNone(args[0])
+        self.assertEqual(kwargs["session"], "saved-thread")
+        self.assertIn("answered: Yes; use the retained clip without new inference", args[2])
+        self.assertEqual((run_dir / "session.id").read_text(), "saved-thread\n")
+
+    def test_operator_controls_take_precedence_over_a_question_hold(self):
+        run_dir = self.open()
+        journal = Journal(run_dir)
+        journal.append("question", question="Use the retained clip?", step="clean")
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+        session.harness.run = Mock(side_effect=AssertionError("held run spawned an agent"))
+
+        (run_dir / "paused").touch()
+        paused = session.turn()
+        self.assertIn("paused", paused.error)
+        self.assertIsNone(paused.waiting)
+
+        (run_dir / "paused").unlink()
+        journal.append("run.finished", status="canceled")
+        canceled = session.turn()
+        self.assertEqual(canceled.finished, "canceled")
+        self.assertIsNone(canceled.waiting)
+        session.harness.run.assert_not_called()
+
+    def test_a_stalled_session_id_is_cleared_before_the_next_turn(self):
+        run_dir = self.open()
+        (run_dir / "session.id").write_text("stalled-thread\n")
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+        session.harness.run = Mock(
+            side_effect=[
+                HarnessOutcome(
+                    AgentResult(status="stalled", transcript_path="inert", error="silent"),
+                    session="stalled-thread",
+                ),
+                HarnessOutcome(
+                    AgentResult(status="completed", transcript_path="inert"),
+                    session="fresh-thread",
+                ),
+            ]
+        )
+
+        stalled = session.turn()
+        self.assertEqual(stalled.error, "silent")
+        self.assertFalse((run_dir / "session.id").exists())
+
+        recovered = session.turn()
+        self.assertIsNone(recovered.error)
+        self.assertEqual(session.harness.run.call_args_list[0].kwargs["session"], "stalled-thread")
+        self.assertIsNone(session.harness.run.call_args_list[1].kwargs["session"])
+        self.assertEqual((run_dir / "session.id").read_text(), "fresh-thread\n")
+
+    def test_answer_arriving_during_outcome_read_remains_after_observed_cursor(self):
+        run_dir = self.open()
+        journal = Journal(run_dir)
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+
+        def ask(*args, **kwargs):
+            journal.append("question", question="Use the retained clip?", step="clean")
+            return HarnessOutcome(AgentResult(status="completed", transcript_path="inert"))
+
+        session.harness.run = Mock(side_effect=ask)
+        original_finished = Journal.finished
+        replied = False
+
+        def finish_then_reply(current):
+            nonlocal replied
+            finished = original_finished(current)
+            if current.run_dir == run_dir and current.pending_question() and not replied:
+                replied = True
+                current.append("answer", text="Use the retained clip")
+            return finished
+
+        with patch.object(Journal, "finished", autospec=True, side_effect=finish_then_reply):
+            outcome = session.turn()
+
+        self.assertTrue(replied)
+        self.assertIsNone(outcome.waiting)
+        self.assertEqual(outcome.observed_entries, 1)
+        self.assertEqual(len(journal.entries()), 2)
+        self.assertTrue(
+            due(run_dir, {str(run_dir): (time.monotonic(), outcome.observed_entries)}, 3600)
+        )
+
+    def test_no_progress_note_advances_cursor_but_later_reply_wakes_run(self):
+        run_dir = self.open()
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+        session.harness.run = Mock(
+            return_value=HarnessOutcome(AgentResult(status="completed", transcript_path="inert"))
+        )
+
+        outcome = session.work(turns=1)
+        journal = Journal(run_dir)
+        self.assertEqual(outcome.observed_entries, len(journal.entries()))
+        pushed = {str(run_dir): (time.monotonic(), outcome.observed_entries)}
+        self.assertFalse(due(run_dir, pushed, 3600))
+
+        journal.append("answer", text="Continue with retained inputs")
+        self.assertTrue(due(run_dir, pushed, 3600))
+
+    def test_no_progress_note_leaves_cursor_behind_an_intervening_reply(self):
+        run_dir = self.open()
+        journal = Journal(run_dir)
+        session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+
+        def reply_after_observation():
+            journal.append("answer", text="Continue with retained inputs")
+            return SessionOutcome(finished=None, waiting=None, steps_run=0, observed_entries=0)
+
+        session.turn = Mock(side_effect=reply_after_observation)
+        outcome = session.work(turns=1)
+        self.assertEqual(outcome.observed_entries, 0)
+        self.assertEqual(len(journal.entries()), 2)
+
     def test_a_turn_with_work_in_flight_is_not_a_dead_end(self):
         """Stopping while a ten-minute step runs is correct, and not the same as giving up."""
         run_dir = self.open()
@@ -300,7 +436,7 @@ class RunThroughTests(unittest.TestCase):
         delivered_source.parent.mkdir(parents=True)
         shutil.copyfile(self.clip, delivered_source)
         policy = self.agent('subprocess.run(["wander", "finish", "succeeded", "done"])')
-        self.assertIn("finished succeeded", work_on(self.runs / "demo", None, policy, 2))
+        self.assertIn("finished succeeded", work_on(self.runs / "demo", None, policy, 2).message)
         self.assertEqual(runs_needing_work(self.runs), [], "a finished run is not picked up again")
 
     def test_a_run_holds_its_own_clip_and_its_own_plan(self):

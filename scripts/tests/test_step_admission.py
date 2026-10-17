@@ -213,7 +213,7 @@ def test_stale_completion_cannot_hide_older_running_attempt(run):
     assert cli.in_flight(run.journal) == {"pi3x": "older"}
 
 
-@pytest.mark.parametrize("status", ["paused", "canceled"])
+@pytest.mark.parametrize("status", ["paused", "canceled", "question"])
 def test_control_between_claim_and_launch_prevents_execution(run, monkeypatch, status):
     open_file = Path.open
 
@@ -233,7 +233,10 @@ def test_control_between_claim_and_launch_prevents_execution(run, monkeypatch, s
     spawn.assert_not_called()
 
 
-def test_launch_and_operator_control_are_serialized_without_waiting_for_execution(run, monkeypatch):
+@pytest.mark.parametrize("status", ["paused", "question"])
+def test_launch_and_operator_control_are_serialized_without_waiting_for_execution(
+    run, monkeypatch, status
+):
     at_launch, allow_launch, at_execution, finish = Event(), Event(), Event(), Event()
     control_requested, control_accepted = Event(), Event()
 
@@ -249,8 +252,11 @@ def test_launch_and_operator_control_are_serialized_without_waiting_for_executio
 
     def pause():
         control_requested.set()
-        with run.journal.admission_lock():
-            fixtures.control(run, "paused")
+        if status == "question":
+            cli.command_ask(run.context, SimpleNamespace(question="Review first", step="pi3x"))
+        else:
+            with run.journal.admission_lock():
+                fixtures.control(run, status)
         control_accepted.set()
 
     monkeypatch.setattr(cli.subprocess, "Popen", spawn)
@@ -270,7 +276,10 @@ def test_launch_and_operator_control_are_serialized_without_waiting_for_executio
             allow_launch.set()
             finish.set()
         assert owner.result(timeout=5) == 0
-    assert run.journal.control_status() == "paused"
+    if status == "question":
+        assert run.journal.unanswered() == "Review first"
+    else:
+        assert run.journal.control_status() == "paused"
 
 
 def test_real_detached_processes_share_admission_and_reject_child_replay(run, tmp_path):
