@@ -1,0 +1,33 @@
+orchestrator/agent/harness.py
+  s_988a422339b8f1::t_ce10f5fc7b6d90 80-81,94-97,124-126,135
+  s_988a422339b8f1::t_a4db8149b6f77b 165-169,187-191
+orchestrator/session.py
+  s_988a422339b8f1::t_198a4f6fd84f50 44-45
+docs/pipeline-setup.md
+  s_988a422339b8f1::t_ce10f5fc7b6d90 73-75,79-83
+  s_988a422339b8f1::t_198a4f6fd84f50 40-50
+  s_988a422339b8f1::t_a4db8149b6f77b 76-78
+scripts/tests/test_orchestrator_session.py
+  s_988a422339b8f1::t_198a4f6fd84f50 393-443
+scripts/tests/test_orchestrator_harness.py
+  s_988a422339b8f1::t_c8e7dd3ad857ff 314-316
+  s_988a422339b8f1::t_ce10f5fc7b6d90 213-233,235-239,257-270,272,274-276
+  s_988a422339b8f1::t_a4db8149b6f77b 240-256
+  s_988a422339b8f1::t_23c2c5f995739b 234,271,273,317-318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "306c922b0ad90adcfa51eddfbd1e1343004c7b59",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
