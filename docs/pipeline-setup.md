@@ -37,6 +37,17 @@ runner also accepts the legacy `WANDER_RUNS_DIR` override. `WANDER_STAGE_LEDGER`
 shared paid-stage ledger; its default stays at repository `.context/pipeline-attempts.json`
 to retain previous accounting. The `wander` command and direct runner share that ledger.
 Keep the same absolute ledger across candidates and worktrees that share an allowance.
+
+For an explicitly authorized run, set `WANDER_STAGE_AUTHORIZATION` to the absolute path of
+its bounded paid-stage authorization and `WANDER_VLM_BUDGET` to the absolute path of its VLM
+request budget before starting the supervisor. These two settings pass through the explicit
+environment allowlist to the reviewing harness and its stage subprocesses; their values are
+not included in the generated prompt or brief. Restrict that supervisor to the selected run
+and remove these settings before supervising unrelated runs. They do not create approvals:
+the runner still validates the authorization's source, candidate, operation, execution count
+and expiry against the same shared ledger, and the VLM budget separately limits requests.
+See [paid recovery](paid-recovery.md) for the authorization and recovery procedure.
+
 A differing `WANDER_PYTHON` is explicitly
 unverified. The default reviewing harness is Codex; `WANDER_REVIEW_AGENT` and
 `WANDER_REVIEW_COMMAND` select alternatives. Built-in Codex and Claude harnesses must pass a
@@ -58,6 +69,17 @@ for each root; resumed sessions use the equivalent
 `--add-dir`. Claude receives additional `--add-dir` arguments. Custom command arguments are
 unchanged. The harness never infers shared roots or silently grants the whole repository;
 SQLite needs its directory writable for journal/WAL files as well as the database itself.
+
+For authorized network-backed stages, set `WANDER_REVIEW_NETWORK=true` before starting the
+supervisor. This explicitly enables network access for commands in the Codex `workspace-write`
+sandbox, for both fresh and resumed sessions, without changing filesystem permissions.
+The default is off, explicitly enforced in both fresh and resumed Codex commands so host
+configuration or a previous session cannot implicitly enable it.
+Values `true/false`, `1/0`, `yes/no`, and `on/off` are accepted without
+case sensitivity; invalid values fail setup. Enabling it with another harness or sandbox
+mode is rejected. This setting is translated to Codex configuration, not passed through as
+an environment variable, and never triggers a fallback to a broader sandbox. Stage permits
+and request budgets remain separate requirements.
 
 Credentials come from the selected shared stage plan. World generation needs `WLT_API_KEY`,
 source-grounded world prompts and object descriptions need `OPENAI_API_KEY`, and Modal needs
