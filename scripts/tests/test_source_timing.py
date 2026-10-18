@@ -546,6 +546,47 @@ class SourceTimingTests(unittest.TestCase):
             ):
                 source_timing.select_source_frames(clip, source_indices=[0, 2])
 
+    def test_failed_decoder_reports_stderr_without_raw_rgb_stdout(self):
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=16x16",
+            "-vf",
+            "missing_filter_diagnostic_fixture",
+            "-f",
+            "null",
+            "-",
+        ]
+        with self.assertRaises(RuntimeError) as caught:
+            source_timing._run(command)
+        message = str(caught.exception)
+        self.assertIn("ffmpeg exited with status", message)
+        self.assertIn("missing_filter_diagnostic_fixture", message)
+        self.assertIn("stderr", message)
+
+        error = subprocess.CalledProcessError(
+            7,
+            command,
+            output=b"RAW_RGB_MUST_NOT_APPEAR" * 10000,
+            stderr=b"DISCARDED_PREFIX" + b"x" * 20000 + b"fatal decoder detail at end",
+        )
+        with patch.object(source_timing.subprocess, "run", side_effect=error) as run:
+            with self.assertRaises(RuntimeError) as caught:
+                source_timing._run(command)
+        run.assert_called_once_with(command, check=True, capture_output=True)
+        message = str(caught.exception)
+        self.assertIn("ffmpeg exited with status 7", message)
+        self.assertIn("truncated", message)
+        self.assertTrue(message.endswith("fatal decoder detail at end"))
+        self.assertNotIn("RAW_RGB_MUST_NOT_APPEAR", message)
+        self.assertNotIn("DISCARDED_PREFIX", message)
+        self.assertLess(len(message), 8300)
+
 
 if __name__ == "__main__":
     unittest.main()

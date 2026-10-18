@@ -24,7 +24,19 @@ def _sha256(path: Path) -> str:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=True, capture_output=True)
+    try:
+        return subprocess.run(command, check=True, capture_output=True)
+    except subprocess.CalledProcessError as error:
+        # The decoder stdout is raw RGB; retain only bounded text diagnostics.
+        stderr = error.stderr or b""
+        if isinstance(stderr, str):
+            stderr = stderr.encode("utf-8")
+        tail = stderr[-8192:].decode("utf-8", errors="replace")
+        truncated = " (tail; truncated)" if len(stderr) > 8192 else ""
+        raise RuntimeError(
+            f"{Path(command[0]).name} exited with status {error.returncode}; "
+            f"stderr{truncated}:\n{tail}"
+        ) from None
 
 
 def _observed_frames(log: str, name: str) -> tuple[Fraction, list[dict]]:
