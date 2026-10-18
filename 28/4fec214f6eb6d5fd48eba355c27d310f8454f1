@@ -1,0 +1,21 @@
+scripts/tests/test_source_timing.py
+  s_988a422339b8f1::t_5cb148e230c0cf 549-589
+worker/wander_worker/source_timing.py
+  s_988a422339b8f1::t_4fbfc3d74cc77b 27-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "284fec214f6eb6d5fd48eba355c27d310f8454f1",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
