@@ -587,6 +587,64 @@ class SourceTimingTests(unittest.TestCase):
         self.assertNotIn("DISCARDED_PREFIX", message)
         self.assertLess(len(message), 8300)
 
+    def test_long_explicit_selection_preserves_every_exact_source_frame(self):
+        for count in (129, 1025):
+            with self.subTest(selected=count), tempfile.TemporaryDirectory() as directory:
+                clip = Path(directory) / "long.mkv"
+                indices = list(range(1, count * 2 + 1, 2))
+                pixels = [
+                    bytes([i % 256, i // 256, (i * 17) % 256]) * 16 * 16
+                    for i in range(count * 2 + 3)
+                ]
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-f",
+                        "rawvideo",
+                        "-pix_fmt",
+                        "rgb24",
+                        "-s",
+                        "16x16",
+                        "-r",
+                        "30",
+                        "-i",
+                        "-",
+                        "-c:v",
+                        "ffv1",
+                        str(clip),
+                    ],
+                    input=b"".join(pixels),
+                    capture_output=True,
+                    check=True,
+                    timeout=30,
+                )
+                raw, provenance = source_timing.select_source_frames(
+                    clip,
+                    source_indices=indices,
+                    width=16,
+                    height=16,
+                )
+                self.assertEqual(raw, b"".join(pixels[i] for i in indices))
+                self.assertEqual([f["sourceIndex"] for f in provenance["frames"]], indices)
+                self.assertEqual(
+                    [f["frameIndex"] for f in provenance["frames"]], list(range(count))
+                )
+                expression = source_timing._selection_expression(indices)
+                self.assertIn(f"select={expression},", provenance["filter"])
+                # Structural regression for legacy parsers, independently of the local FFmpeg version.
+                depth = maximum = 0
+                for token in expression:
+                    if token == "(":
+                        depth += 1
+                        maximum = max(maximum, depth)
+                    elif token == ")":
+                        depth -= 1
+                self.assertEqual(depth, 0)
+                self.assertEqual(expression.count("("), 2 * count - 1)
+                self.assertLessEqual(maximum, (count - 1).bit_length() + 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -126,6 +126,18 @@ def _parse_selection(log: str, source_pts: list[int], time_base: Fraction) -> di
     }
 
 
+def _selection_expression(indices: list[int]) -> str:
+    # Older FFmpeg expression parsers exhaust their depth on a long flat sum.
+    # Pairing terms keeps parser depth logarithmic without changing the predicate.
+    terms = [f"eq(n\\,{index})" for index in indices]
+    while len(terms) > 1:
+        terms = [
+            f"({terms[i]}+{terms[i + 1]})" if i + 1 < len(terms) else terms[i]
+            for i in range(0, len(terms), 2)
+        ]
+    return terms[0]
+
+
 def _decode_source(
     source: str | Path,
     fps: float = 12.0,
@@ -189,7 +201,7 @@ def _decode_source(
             raise ValueError(
                 "Explicit source indices must be strictly increasing integers in range"
             )
-        expression = "+".join(f"eq(n\\,{i})" for i in source_indices)
+        expression = _selection_expression(source_indices)
         filters = f"showinfo@source,select={expression},showinfo@sampled"
     else:
         filters = f"showinfo@source,fps@sample={fps},showinfo@sampled"
