@@ -31,6 +31,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation, Slerp
 from source_clock import camera_source_fps, resolve_source_fps
+from object_coordinate_basis import resolve_object_basis
 
 CV = np.diag([1.0, -1.0, -1.0])
 
@@ -342,25 +343,16 @@ def main():
         pj = json.load(handle)
     with open(a.fit) as handle:
         fit = json.load(handle)
-    ff = pj["floorFit"]
-    mpu = ff["metresPerWorldUnit"]
+    try:
+        basis = resolve_object_basis(pj)
+        basis.validate_fit(fit)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    mpu = basis.metres_per_world_unit
     C = load_cameras(a.cameras)
-
     src = np.array(pj["sourceIndices"], float)
-    drift = ff["sharedCameraDrift"]
-    doff = np.array(drift["offsetYUnits"], float)
-    dsrc = src[np.array(drift["samples"], int)]
-    lvC = ff["levels"][[k for k in ff["levels"] if k.startswith("C_")][0]]["translationY"]
     by_track = {p["track"]: p for p in pj["people"]}
-    scale = {
-        t: by_track[t]["registrationScale"]
-        * by_track[t].get("sizeCorrection", {}).get("multiplier", 1.0)
-        for t in by_track
-    }
-    cconst = {t: lvC[by_track[t]["id"]] for t in by_track}
-
-    def drift_at(f):
-        return float(np.interp(f, dsrc, doff))
+    scale, cconst, drift_at = basis.scale, basis.constants, basis.drift_at
 
     # ---- normalise /1 and /2 fits to one list of flights
     if fit.get("schema") == "wander.object-fit/2":
@@ -636,8 +628,9 @@ def main():
             segments=segments,
         ),
         transform=dict(translation=[0.0, obj_const, 0.0], quaternionXYZW=[0, 0, 0, 1], scale=1.0),
-        appliesSharedCameraDrift=True,
+        appliesSharedCameraDrift=basis.provenance["mode"] == "floorFit",
         evidence=dict(
+            coordinateBasis=basis.provenance,
             freeSpans=len(flights),
             tracked2dFrames=int(sum(len(fl.get("frames", [])) for fl in flights)),
             totalSourceFrames=int(nsrc),
@@ -701,10 +694,11 @@ def main():
         sourceIndices=pj["sourceIndices"],
         timestamps=pj["timestamps"],
         metresPerWorldUnit=mpu,
+        coordinateBasis=basis.provenance,
         coordinates=(
             "Raw SfM world, OpenGL, camera 0 = identity - the same frame the person "
             "PLYs are written in. Apply the shared scale, then transform.translation, "
-            "then floorFit.sharedCameraDrift, exactly as for a person."
+            "then floorFit.sharedCameraDrift when present, exactly as for a person."
         ),
         people="people.json",
         objects=[obj],

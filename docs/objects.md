@@ -32,6 +32,11 @@ The writer emits `schema: "wander.objects/2"`, plus `clip`, `fps`, `samples`, `s
 `timestamps`, `metresPerWorldUnit`, `coordinates`, `people: "people.json"`, and `objects`.
 The top-level sample grid comes from `people.json`; it differs from the baked object's frame grid.
 
+New fits and packages also carry `coordinateBasis`, repeated in object `evidence`. It identifies
+the scale source and fingerprints the person registration scales, vertical constants, and shared
+drift on the source-frame grid. Packaging rejects a fit made against a different basis; re-lift
+after changing those corrections.
+
 | Object field | Meaning and current behavior |
 |---|---|
 | `id`, `label`, `prompt` | Stable object identifier, display name, and segmentation prompt. |
@@ -122,7 +127,7 @@ Explicit `--object` requests still enable the stage. Without a named request, it
 
 1. Runs `detect_object_flights.py` using camera poses, tracks, masks, and a metre scale.
 2. Stops with an empty result if no flights pass. Single-person worlds can record detections,
-   but cannot package them through this lane without multiperson floor fits and wrist poses.
+   but this lane needs a `people.json` package and per-track wrist poses to package them.
 3. Runs `lift_object_3d.py`, retaining flights that connect tracked wrists at both ends.
 4. Runs `describe_object.py` on observed crops; without `OPENAI_API_KEY` it uses `--no-vlm`.
 5. Optionally calls `worker/modal_image_to_3d.py`, then `object_appearance.py`. `--no-shape`
@@ -145,9 +150,27 @@ uv run --locked --group inference scripts/package_objects.py \
   --size-m 0.06,0.12,0.06 --shape-provenance 'Proxy; no reconstructed model'
 ```
 
-This requires `people.json` with `floorFit`, per-track `source-poses.pt`, and a reviewed
+This requires `people.json`, per-track `source-poses.pt`, and a reviewed
 `wander.object-fit/2` fit. A `/1` fit additionally needs `--thrower` and `--catcher`.
 Optional `--model`, `--orientation`, and provenance flags add reviewed appearance/rotation.
+
+Lifting and packaging share two supported coordinate bases. A fresh `package_multiperson.py`
+manifest has identity person transforms and no `floorFit`: its scale is
+`1.70 / sharedPlacement.bodyHeightUnits`, matching the detector's **avatar stature prior**.
+Shared drift and person vertical constants are zero; no floor measurement or metric anchor is
+invented. Its objects set `appliesSharedCameraDrift: false`. Sizes, gravity and wrist distances
+expressed in metres remain conditional on that assumed stature.
+The historical fit flag `driftCorrected: true` and segment space `driftCorrected` describe the
+coordinate convention after applying the chosen basis corrections. For this fresh basis those
+corrections are zero; these fields do not claim that camera drift was measured or removed.
+
+Legacy `floorFit` packages retain their metre scale, interpolated `sharedCameraDrift`, and
+`C_` level `translationY` constants. A present but incomplete or nonfinite floor fit fails instead
+of falling back to the stature prior. Person rotation, scale, and horizontal translation overrides
+are unsupported; fresh packages also reject vertical translation overrides. Legacy vertical
+translation is replaced by the existing level C constants. Fits without `coordinateBasis` remain
+accepted only with legacy floor-fit packages; fresh packages require a newly lifted, tagged fit.
+Reprojection, observation-count, wrist-contact, and source-clock gates apply unchanged in both bases.
 
 The named `--object ID:MOTION:PROMPT[:ROI]` lane is manual/experimental: it segments an ROI,
 uses fixed thrower/catcher indices for flight fitting, and reuses a supplied model when present.
