@@ -151,6 +151,7 @@ export interface GraphOptions {
   all_people: boolean;
   objects: boolean;
   finetune: boolean;
+  hands_off?: boolean;
 }
 
 export interface PipelineRun {
@@ -257,4 +258,13 @@ export interface RunProgress {
   stopped: StageProgress[];
   stages: StageProgress[];
   previews: RunPreview[];
+  handsOff?: boolean;
+  result?: {
+    summary: string;
+    delivery?: {
+      status: 'preview_ready' | 'unavailable';
+      qualityStatus: 'blocked' | 'failed';
+      reason: string;
+    } | null;
+  } | null;
 }

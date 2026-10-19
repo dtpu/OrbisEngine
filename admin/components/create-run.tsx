@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { checkSetup, loadOptionsSchema, uploadRun } from '@/lib/client';
 import { formatBytes } from '@/lib/format';
-import { optionFields, optionsFromSchema, setupBlocked } from '@/lib/options';
+import { automaticUploadOptions, optionFields, setupBlocked } from '@/lib/options';
 import type { GraphOptions, OptionsSchema, SetupReport } from '@/lib/types';
 
 const WORLD_LABELS: Record<string, string> = {
@@ -60,7 +60,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
   const loadOptions = useCallback(async () => {
     try {
       const description = await loadOptionsSchema();
-      const defaults = optionsFromSchema(description);
+      const defaults = automaticUploadOptions(description);
       setSchema(description);
       setOptions(defaults);
       setError(null);
@@ -142,6 +142,10 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
       <h2 className="create__title" id="create-title">
         Start a run
       </h2>
+      <p className="field__hint">
+        Upload once. Processing continues automatically and returns a scene preview or a failure
+        report. Failed checks remain visible; there are no automatic paid retries.
+      </p>
       <label
         className={`drop${over ? ' drop--over' : ''}`}
         onDragOver={(event) => {
@@ -272,11 +276,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
           type="submit"
           disabled={!file || !options || busy}
         >
-          {checking
-            ? 'Checking setup…'
-            : progress !== null
-              ? 'Uploading…'
-              : 'Check setup and create run'}
+          {checking ? 'Checking setup…' : progress !== null ? 'Uploading…' : 'Upload and process'}
         </button>
         <button
           className="button button--quiet"

@@ -212,6 +212,27 @@ def describe_progress(root: Path) -> dict:
         item["url"] = prefix + quote(item["path"], safe="/")
     stopped = [row for row in rows if row["status"] in {"failed", "blocked"}]
     current = [row["name"] for row in rows if row["status"] == "running"]
+    viewer_available = scene_manifest(root) is not None
+    result = None
+    if journal.finished():
+        finished = next(
+            (entry for entry in reversed(journal.entries()) if entry.kind == "run.finished"),
+            None,
+        )
+        if finished is not None:
+            result = {"summary": finished.data.get("summary", "")}
+            delivery = finished.data.get("delivery")
+            if (
+                isinstance(delivery, dict)
+                and delivery.get("status") in {"preview_ready", "unavailable"}
+                and delivery.get("qualityStatus") in {"blocked", "failed"}
+            ):
+                result["delivery"] = {
+                    # A retained receipt cannot promise a scene whose files are now missing.
+                    "status": delivery["status"] if viewer_available else "unavailable",
+                    "qualityStatus": delivery["qualityStatus"],
+                    "reason": delivery.get("reason", ""),
+                }
     return {
         "runId": snapshot.run_id,
         "finished": journal.finished(),
@@ -221,9 +242,12 @@ def describe_progress(root: Path) -> dict:
         "stopped": stopped,
         "stages": rows,
         "previews": inputs,
+        "handsOff": (read_json(root / "run.json").get("options") or {}).get("hands_off") is True,
+        "result": result,
         "viewerPath": (
             f"/fourd.html?scene={quote(f'/api/pipeline/runs/{snapshot.run_id}/viewer/scene.json', safe='')}"
-            if scene_manifest(root) is not None
+            if viewer_available
+            and (result or {}).get("delivery", {}).get("status") != "unavailable"
             else None
         ),
     }

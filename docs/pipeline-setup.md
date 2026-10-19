@@ -1,5 +1,9 @@
 # Pipeline setup diagnostics
 
+For upload-once processing and its delivery/quality distinction, see
+[automatic uploads](automatic-uploads.md). The dashboard opts new runs into that mode;
+the supervisor must be configured and running before it can process them.
+
 Run the read-only doctor in the same shell and Python environment as the pipeline:
 
 ```sh

@@ -12,6 +12,7 @@ the journal says the step started and the directory says what it left behind.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from orchestrator.agent.harness import HarnessAgent, HarnessPolicy
 from orchestrator.journal import Journal
+from orchestrator.run_policy import hands_off
 from orchestrator.session import RunSession
 from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.steps import (
@@ -51,8 +53,15 @@ def runs_needing_work(root: Path) -> list[Path]:
     for described in sorted(root.glob(f"*/{RUN_FILE}")):
         run_dir = described.parent
         journal = Journal(run_dir)
-        if journal.finished() or journal.unanswered():
+        if journal.finished():
             continue
+        if journal.unanswered():
+            try:
+                unattended = hands_off(json.loads(described.read_text()).get("options") or {})
+            except (OSError, ValueError, AttributeError):
+                unattended = False
+            if not unattended:
+                continue
         if journal.control_status():
             continue
         pending.append(run_dir)
@@ -96,6 +105,8 @@ def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> Wor
     observed_entries = len(journal.entries())
     if status := journal.control_status():
         return WorkOutcome(f"{run_id}: {status} by the operator", observed_entries)
+    if status := journal.finished():
+        return WorkOutcome(f"{run_id}: finished {status}", observed_entries)
     if repository is not None:
         # A run being picked up again is a run being worked on, whatever it last said.
         try:

@@ -306,6 +306,10 @@ class RunOptions(BaseModel):
         description="Detect thrown objects. Reconstructing them in 3D requires tracked-person mode (all_people or people > 1).",
     )
     finetune: bool = False
+    hands_off: bool = Field(
+        default=False,
+        description="Process without operator questions or automatic paid retries; preserve an unaccepted preview when checks cannot pass.",
+    )
 
     @model_validator(mode="before")
     @classmethod

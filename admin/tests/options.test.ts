@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { optionFields, optionsFromSchema, setupBlocked } from '../lib/options';
+import {
+  automaticUploadOptions,
+  optionFields,
+  optionsFromSchema,
+  setupBlocked,
+} from '../lib/options';
 import type { OptionsSchema, SetupReport } from '../lib/types';
 
 function schema(): OptionsSchema {
@@ -45,6 +50,19 @@ test('missing defaults are surfaced instead of silently guessing an expensive ch
   const description = schema();
   delete description.properties.finetune.default;
   assert.throws(() => optionsFromSchema(description), /did not provide a default/);
+});
+
+test('new uploads explicitly opt into hands-off processing without changing model choices', () => {
+  const description = schema();
+  description.properties.hands_off = { type: 'boolean', default: false };
+  assert.deepEqual(automaticUploadOptions(description), {
+    ...optionsFromSchema(description),
+    hands_off: true,
+  });
+});
+
+test('automatic uploads refuse an older server instead of silently requiring operator steps', () => {
+  assert.throws(() => automaticUploadOptions(schema()), /support automatic uploads/);
 });
 
 test('unverified provider readiness permits queuing and blocked checks require an explicit queue choice', () => {

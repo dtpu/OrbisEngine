@@ -23,6 +23,7 @@ import sys
 
 from orchestrator.agent.harness import HarnessAgent, TRANSCRIPT_FILE, read_session
 from orchestrator.journal import Journal, RunProjection
+from orchestrator.run_policy import finish_hands_off, hands_off
 from orchestrator.steps import STEPS, people_steps, planned_steps
 
 # Explicit provider credentials and runtime settings the local stages may need. Modal
@@ -92,7 +93,14 @@ def install_wander(run_dir: Path) -> Path:
 
 
 def render_brief(
-    run_id: str, run_dir: Path, name: str, journal: Journal, goal: str, plan: list[str]
+    run_id: str,
+    run_dir: Path,
+    name: str,
+    journal: Journal,
+    goal: str,
+    plan: list[str],
+    *,
+    hands_off_run: bool = False,
 ) -> str:
     """What the agent is told. Written to the run directory so it is auditable afterwards.
 
@@ -122,6 +130,23 @@ def render_brief(
         "and then end your turn: you will be given another when it finishes.",
         "",
     ]
+    if hands_off_run:
+        lines += [
+            "## Hands-off delivery contract",
+            "",
+            "This persisted run mode takes precedence over general advice to ask an operator or retry.",
+            "Do not ask questions, invent human approval, change models, or repeat a paid stage.",
+            "Use the submitted options and stage defaults; extra stage flags are disabled.",
+            "The clean-frame human pause is disabled; all quality checks still apply.",
+            "Continue independent work that can produce the requested preview without bypassing a failed prerequisite.",
+            "When no useful work remains, record the precise missing evidence or failure with",
+            '`wander finish blocked "reason"` (or `failed` for a measured failure). This ends the run.',
+            "A source-matched packaged preview is retained as preview_ready, separate from acceptance.",
+            "Use `succeeded` only when all existing completion and quality checks actually pass.",
+            "Do not fabricate or import an agent-authored human review. Missing manual review is blocked acceptance.",
+            "Never run pipeline scripts outside `wander step` to bypass these boundaries.",
+            "",
+        ]
     outstanding = [name for name in plan if name not in done]
     if outstanding:
         lines += ["Not done yet: " + ", ".join(outstanding), ""]
@@ -267,8 +292,30 @@ class RunSession:
         except OSError:
             return None
 
-    def admission_outcome(self, journal: Journal) -> SessionOutcome | None:
+    def context(self):
+        from orchestrator.cli import RunContext
+
+        described = self.described
+        return RunContext(
+            self.run_id,
+            self.run_dir,
+            described["name"],
+            Path(described["source"]),
+            Path(described.get("repository") or Path.cwd()),
+            described.get("options") or {},
+            source_sha256=described.get("sourceSha256"),
+            retained_delivery=described.get("retainedDelivery"),
+        )
+
+    def admission_outcome(self, journal: Journal, *, locked=False) -> SessionOutcome | None:
         """Check durable controls again on every turn, including a session already in memory."""
+        if hands_off(self.described.get("options") or {}) and (waiting := journal.unanswered()):
+            reason = f"Hands-off run cannot wait for operator input: {waiting}"
+            if locked:
+                finish_hands_off(self.context(), journal, reason)
+            else:
+                with journal.admission_lock():
+                    finish_hands_off(self.context(), journal, reason)
         observed_entries = len(journal.entries())
         control = journal.control_status()
         finished = "canceled" if control == "canceled" else journal.finished()
@@ -304,6 +351,7 @@ class RunSession:
             journal,
             self.goal,
             self.plan(described.get("options") or {}),
+            hands_off_run=hands_off(described.get("options") or {}),
         )
         (self.run_dir / BRIEF_FILE).write_text(brief)
         install_skill(self.run_dir)
@@ -316,7 +364,7 @@ class RunSession:
         def spawn_guard():
             nonlocal spawned
             with journal.admission_lock():
-                if stopped := self.admission_outcome(journal):
+                if stopped := self.admission_outcome(journal, locked=True):
                     raise AdmissionStopped(stopped)
                 yield
                 spawned = True
@@ -342,13 +390,26 @@ class RunSession:
         elif outcome.session:
             (self.run_dir / SESSION_FILE).write_text(outcome.session + "\n")
         after = self.journal()
-        entries = after.entries()
-        observed_entries = len(entries)
         error = None
         if outcome.result.status not in {"completed", "stalled"}:
             error = outcome.result.error
         elif outcome.result.status == "stalled":
             error = outcome.result.error
+        if hands_off(described.get("options") or {}):
+            with after.admission_lock():
+                entries = after.entries()
+                started = len([e for e in entries if e.kind == "step.started"]) - before
+                reason = None
+                if waiting := after.unanswered():
+                    reason = f"Hands-off run cannot wait for operator input: {waiting}"
+                elif error or outcome.result.status != "completed":
+                    reason = error or f"Agent session ended with {outcome.result.status}."
+                elif not started and not after.active_attempts():
+                    reason = "Hands-off agent stopped without runnable work or an accepted result."
+                if reason:
+                    finish_hands_off(self.context(), after, reason)
+        entries = after.entries()
+        observed_entries = len(entries)
         return SessionOutcome(
             finished=after.finished(),
             waiting=after.unanswered(),
