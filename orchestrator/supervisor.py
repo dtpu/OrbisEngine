@@ -84,6 +84,7 @@ def due(run_dir: Path, pushed: dict[str, tuple[float, int]], push_after: float) 
 class WorkOutcome:
     message: str
     observed_entries: int
+    resume_next_pass: bool = False
 
 
 def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> WorkOutcome:
@@ -117,7 +118,11 @@ def work_on(run_dir: Path, repository, policy: HarnessPolicy, turns: int) -> Wor
         message = f"{run_id}: session ended without deciding — {outcome.error}"
     else:
         message = f"{run_id}: still going after {turns} turns"
-    return WorkOutcome(message, outcome.observed_entries)
+    # A fast detached step may finish before the harness's final message. If the
+    # turn budget ends there, its finish is already in observed_entries, but the
+    # next agent turn still needs to react to it. This is progress, not idle time.
+    resume_next_pass = outcome.wants_another_turn and outcome.steps_run > 0 and outcome.running == 0
+    return WorkOutcome(message, outcome.observed_entries, resume_next_pass)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -181,9 +186,14 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             outcome = work_on(run_dir, repository, policy, args.turns)
             print(outcome.message, flush=True)
-            # Keep the cursor the session actually observed. A reply can arrive between
-            # its final read and this assignment; reading again here would swallow it.
-            pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
+            if outcome.resume_next_pass:
+                # Continue useful work on the next pass, still bounded by --turns
+                # and the ordinary admission checks. Do not fabricate an unseen event.
+                pushed.pop(str(run_dir), None)
+            else:
+                # Keep the cursor the session actually observed. A reply can arrive between
+                # its final read and this assignment; reading again here would swallow it.
+                pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
         if single_pass:
             return 0
         time.sleep(args.interval)

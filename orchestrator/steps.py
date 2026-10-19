@@ -354,7 +354,8 @@ STEPS: dict[str, Step] = {
             caution=(
                 "Look at the cleaned frames before spending on a world. Inpainting can take a "
                 "railing or a flight of stairs with the person, and that is only visible to "
-                "someone looking."
+                "someone looking. Tracked-person video cleaning waits for tracks and reuses "
+                "their complete instance masks on the recorded source frame grid."
             ),
         ),
         Step(

@@ -210,6 +210,70 @@ class IdleClockTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_network_access_is_explicit_for_fresh_and_resumed_codex(self):
+        for raw in ("true", "1", "yes", "on", " TRUE "):
+            policy = HarnessPolicy.from_environment({"WANDER_REVIEW_NETWORK": raw})
+            self.assertTrue(policy.network_access)
+            self.assertNotIn("WANDER_REVIEW_NETWORK", policy.passthrough)
+            self.assertEqual(policy.extra_environment, {})
+            for session in (None, "saved-session"):
+                with self.subTest(raw=raw, session=session):
+                    argv = policy.argv(Path("/workspace"), Path("/workspace/TASK.md"), session)
+                    setting = "sandbox_workspace_write.network_access=true"
+                    self.assertEqual(argv.count(setting), 1)
+                    self.assertEqual(argv[argv.index(setting) - 1], "-c")
+                    self.assertNotIn("danger-full-access", " ".join(argv))
+                    if session:
+                        self.assertIn('sandbox_mode="workspace-write"', argv)
+                    else:
+                        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
+
+    def test_network_access_is_disabled_by_default_and_explicit_false(self):
+        for environ in (
+            {},
+            *({"WANDER_REVIEW_NETWORK": raw} for raw in ("false", "0", "no", "off")),
+        ):
+            policy = HarnessPolicy.from_environment(environ)
+            self.assertFalse(policy.network_access)
+            for session in (None, "saved-session"):
+                argv = policy.argv(Path("/workspace"), Path("/workspace/TASK.md"), session)
+                setting = "sandbox_workspace_write.network_access=false"
+                self.assertEqual(argv.count(setting), 1)
+                self.assertEqual(argv[argv.index(setting) - 1], "-c")
+                self.assertNotIn("sandbox_workspace_write.network_access=true", argv)
+
+    def test_other_sandboxes_and_harnesses_receive_no_network_override(self):
+        for options in (
+            {"sandbox": "read-only"},
+            {"sandbox": "danger-full-access"},
+            {"kind": "claude"},
+            {"kind": "command", "command": ("custom-agent",)},
+        ):
+            policy = HarnessPolicy(**options)
+            for session in (None, "saved-session"):
+                with self.subTest(options=options, session=session):
+                    argv = policy.argv(Path("/workspace"), Path("/workspace/TASK.md"), session)
+                    self.assertFalse(any("network_access" in arg for arg in argv))
+
+    def test_invalid_or_inapplicable_network_access_is_refused(self):
+        for raw in ("", "auto", "2", "enabled", "null"):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, "WANDER_REVIEW_NETWORK"):
+                HarnessPolicy.from_environment({"WANDER_REVIEW_NETWORK": raw})
+        for value in ("false", 1, None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "boolean"):
+                HarnessPolicy(network_access=value)
+        for options in (
+            {"kind": "claude"},
+            {"kind": "command", "command": ("custom-agent",)},
+            {"sandbox": "read-only"},
+            {"sandbox": "danger-full-access"},
+        ):
+            with (
+                self.subTest(options=options),
+                self.assertRaisesRegex(ValueError, "Codex workspace-write"),
+            ):
+                HarnessPolicy(network_access=True, **options)
+
     def test_the_clock_is_configured_from_the_environment(self):
         policy = HarnessPolicy.from_environment(
             {"WANDER_REVIEW_IDLE": "120", "WANDER_REVIEW_NUDGES": "1"}
@@ -247,7 +311,11 @@ class PolicyTests(unittest.TestCase):
         roots = ("/shared state/database", "/shared state/ledger")
         policy = HarnessPolicy(writable_roots=roots)
         argv = policy.argv(Path("/ws"), Path("/ws/TASK.md"))
-        self.assertEqual(argv[-5:], ("--add-dir", roots[0], "--add-dir", roots[1], "-"))
+        directories = tuple(
+            argv[index + 1] for index, part in enumerate(argv) if part == "--add-dir"
+        )
+        self.assertEqual(directories, roots)
+        self.assertEqual(argv[-1], "-")
         self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
         self.assertEqual(argv[argv.index("--cd") + 1], "/ws")
         default = HarnessPolicy().argv(Path("/ws"), Path("/ws/TASK.md"))

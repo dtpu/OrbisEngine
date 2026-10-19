@@ -156,6 +156,180 @@ app = modal.App("wander-image-to-3d")
 cache = modal.Volume.from_name("wander-image-to-3d-cache", create_if_missing=True)
 
 
+CACHE_RECEIPTS = {
+    "object-weights-attempt.json": "wander.object-cache-attempt/1",
+    "object-aux-attempt.json": "wander.object-aux-attempt/1",
+}
+DINO_CHECKPOINT = "torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth"
+
+
+def checked_object_cache(
+    root="/cache", *, need_refiner=False, need_rembg=True, expected=None, hash_files=True
+):
+    """Validate staging receipts on CPU; GPU repeats scope/size and receipt-pin checks."""
+    import hashlib
+    import json
+    import re
+
+    root = Path(root).resolve()
+    documents, pins, records = {}, {}, {}
+    for filename, schema in CACHE_RECEIPTS.items():
+        path = root / "setup-receipts" / filename
+        raw = path.read_bytes()
+        doc = json.loads(raw)
+        if doc.get("schema") != schema or doc.get("status") != "completed":
+            raise ValueError("Object cache setup is not complete")
+        files = doc.get("files")
+        if not isinstance(files, list) or not files or len(files) > 2500:
+            raise ValueError("Object cache inventory is missing or unbounded")
+        inventory_hash = hashlib.sha256(
+            json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if inventory_hash != doc.get("inventorySha256"):
+            raise ValueError("Object cache inventory changed")
+        for record in files:
+            relative = record.get("path")
+            if (
+                not isinstance(relative, str)
+                or Path(relative).is_absolute()
+                or ".." in Path(relative).parts
+                or relative in records
+            ):
+                raise ValueError("Invalid object cache inventory path")
+            file = root / relative
+            if (
+                not file.resolve().is_relative_to(root)
+                or not file.is_file()
+                or type(record.get("bytes")) is not int
+                or file.stat().st_size != record["bytes"]
+            ):
+                raise ValueError("Object cache file missing, changed or escaping")
+            if hash_files:
+                with file.open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != record.get("sha256"):
+                        raise ValueError("Object cache file checksum changed")
+            records[relative] = record
+        documents[filename] = doc
+        pins[filename] = hashlib.sha256(raw).hexdigest()
+    if expected is not None and pins != expected:
+        raise ValueError("Object cache receipt changed after CPU preflight")
+    primary, auxiliary = (documents[name] for name in CACHE_RECEIPTS)
+    models = {}
+    for model in primary.get("snapshots", []):
+        repo, revision = model.get("repoId"), model.get("revision")
+        if (
+            repo not in (MODEL_ID, REFINER_ID)
+            or repo in models
+            or not isinstance(revision, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        ):
+            raise ValueError("Invalid retained model revision")
+        relative = f"huggingface/hub/models--{repo.replace('/', '--')}/snapshots/{revision}"
+        filename = "pipeline.json" if repo == MODEL_ID else "model_index.json"
+        if f"{relative}/{filename}" not in records:
+            raise ValueError("Pinned model configuration is missing")
+        models[repo] = {"path": str(root / relative), "revision": revision}
+    if MODEL_ID not in models or (need_refiner and REFINER_ID not in models):
+        raise ValueError("Required object model is not staged")
+    code = auxiliary.get("dinoCodePath")
+    revision = auxiliary.get("dinoRevision")
+    if (
+        not isinstance(revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or code != f"torch/hub/dinov2-{revision}"
+        or f"{code}/hubconf.py" not in records
+        or DINO_CHECKPOINT not in records
+    ):
+        raise ValueError("Pinned DINO code/checkpoint is missing")
+    if need_rembg and "u2net/u2net.onnx" not in records:
+        raise ValueError("Required background-removal model is not staged")
+    return {
+        "receipts": pins,
+        "models": models,
+        "dinoCodePath": str(root / code),
+        "dinoWeightsPath": str(root / DINO_CHECKPOINT),
+        "u2netPath": str(root / "u2net/u2net.onnx"),
+        "dinoRevision": revision,
+    }
+
+
+# This preflight function uses only a CPU image and does not import or load models.
+@app.function(
+    image=modal.Image.debian_slim(python_version="3.12"),
+    cpu=(1, 2),
+    memory=(1024, 4096),
+    timeout=900,
+    retries=0,
+    max_containers=1,
+    volumes={"/cache": cache},
+    scaledown_window=2,
+)
+def cache_preflight(need_refiner: bool = False, need_rembg: bool = True):
+    cache.reload()
+    return checked_object_cache(need_refiner=need_refiner, need_rembg=need_rembg)
+
+
+def offline_object_environment():
+    import os
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+
+
+def local_trellis_load(pipeline_class, retained):
+    """Route upstream torch.hub and rembg downloads to the verified retained files."""
+    from unittest.mock import patch
+    import torch
+    import huggingface_hub
+
+    original_load = torch.hub.load
+
+    def load_hub(repo, name, *args, **kwargs):
+        if (
+            repo != "facebookresearch/dinov2"
+            or name != "dinov2_vitl14_reg"
+            or args
+            or kwargs != {"pretrained": True}
+        ):
+            raise ValueError("Unexpected TRELLIS conditioning model request")
+        return original_load(retained["dinoCodePath"], name, source="local", pretrained=True)
+
+    def weights(url, **kwargs):
+        if (
+            url
+            != "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth"
+        ):
+            raise ValueError("Unexpected DINO checkpoint request")
+        return torch.load(
+            retained["dinoWeightsPath"],
+            map_location=kwargs.get("map_location", "cpu"),
+            weights_only=True,
+        )
+
+    def forbidden_download(*args, **kwargs):
+        raise ValueError("TRELLIS attempted an unstaged Hugging Face checkpoint")
+
+    with (
+        patch.object(torch.hub, "load", load_hub),
+        patch.object(torch.hub, "load_state_dict_from_url", weights),
+        patch.object(huggingface_hub, "hf_hub_download", forbidden_download),
+    ):
+        return pipeline_class.from_pretrained(retained["models"][MODEL_ID]["path"])
+
+
+def local_preprocess(pipeline, image, retained):
+    from unittest.mock import patch
+    from rembg.sessions.u2net import U2netSession
+
+    with patch.object(
+        U2netSession,
+        "download_models",
+        classmethod(lambda cls, *args, **kwargs: retained["u2netPath"]),
+    ):
+        return pipeline.preprocess_image(image)
+
+
 @app.function(
     image=image, cpu=4, memory=16384, timeout=900, volumes={"/cache": cache}, scaledown_window=2
 )
@@ -204,6 +378,7 @@ def refine_crop(
     text_only: bool = False,
     candidates: int = 1,
     pick: int = 0,
+    cache_receipts: dict | None = None,
 ) -> dict:
     """SDXL on the crop, so the 3D stage gets something with edges in it.
 
@@ -213,6 +388,11 @@ def refine_crop(
     whole object -- it exists because a crop that is only a label seen end-on has no bottle in it to
     recover, and meta records which of the two actually ran.
     """
+    offline_object_environment()
+    cache.reload()
+    retained = checked_object_cache(
+        need_refiner=True, expected=cache_receipts, hash_files=cache_receipts is None
+    )
     import hashlib, io, time
     import torch
     from PIL import Image
@@ -230,14 +410,22 @@ def refine_crop(
         from diffusers import StableDiffusionXLPipeline
 
         pipe = StableDiffusionXLPipeline.from_pretrained(
-            REFINER_ID, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+            retained["models"][REFINER_ID]["path"],
+            torch_dtype=torch.float16,
+            variant="fp16",
+            use_safetensors=True,
+            local_files_only=True,
         )
         common.update(height=size, width=size)
     else:
         from diffusers import StableDiffusionXLImg2ImgPipeline
 
         pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            REFINER_ID, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+            retained["models"][REFINER_ID]["path"],
+            torch_dtype=torch.float16,
+            variant="fp16",
+            use_safetensors=True,
+            local_files_only=True,
         )
         flat = Image.new("RGB", src.size, (255, 255, 255))
         flat.paste(src, (0, 0), src if src.mode == "RGBA" else None)
@@ -271,12 +459,7 @@ def refine_crop(
 
     buf = io.BytesIO()
     out.save(buf, format="PNG")
-    try:
-        from huggingface_hub import HfApi
-
-        revision = HfApi().model_info(REFINER_ID).sha
-    except Exception:
-        revision = None
+    revision = retained["models"][REFINER_ID]["revision"]
     meta = {
         "mode": "text-to-image (NO image conditioning)"
         if text_only
@@ -284,6 +467,7 @@ def refine_crop(
         "imageConditioned": not text_only,
         "model": REFINER_ID,
         "modelRevision": revision,
+        "cacheReceipts": retained["receipts"],
         "licence": "CreativeML Open RAIL++-M (open weights, use-based restrictions; not OSI)",
         "prompt": prompt,
         "negativePrompt": negative_prompt,
@@ -335,7 +519,13 @@ def image_to_3d(
     contact_px: int = 256,
     refiner: dict | None = None,
     note: str = "",
+    cache_receipts: dict | None = None,
 ) -> dict:
+    offline_object_environment()
+    cache.reload()
+    retained = checked_object_cache(
+        need_rembg=remove_bg, expected=cache_receipts, hash_files=cache_receipts is None
+    )
     import hashlib, io, json, os, time, traceback
     import numpy as np
     from PIL import Image
@@ -348,12 +538,12 @@ def image_to_3d(
     src = Image.open(io.BytesIO(png_bytes))
     sha = hashlib.sha256(png_bytes).hexdigest()
 
-    pipeline = TrellisImageTo3DPipeline.from_pretrained(MODEL_ID)
+    pipeline = local_trellis_load(TrellisImageTo3DPipeline, retained)
     pipeline.cuda()
     cache.commit()
 
     if remove_bg:
-        cond = pipeline.preprocess_image(src)
+        cond = local_preprocess(pipeline, src, retained)
     else:
         # TRELLIS's own preprocess_image, minus the rembg call: alpha-crop (or whole-frame when the
         # crop is opaque), 1.2x margin, 518px, premultiply. Keep in step with upstream if it moves.
@@ -439,16 +629,12 @@ def image_to_3d(
             preview_error = traceback.format_exc()
             print(preview_error, flush=True)
 
-    try:
-        from huggingface_hub import HfApi
-
-        model_revision = HfApi().model_info(MODEL_ID).sha
-    except Exception:
-        model_revision = None
-
+    model_revision = retained["models"][MODEL_ID]["revision"]
     meta = {
         "model": MODEL_ID,
         "modelRevision": model_revision,
+        "dinoCodeRevision": retained["dinoRevision"],
+        "cacheReceipts": retained["receipts"],
         "codeRepo": "https://github.com/microsoft/TRELLIS",
         "codeRevision": TRELLIS_REV,
         "licences": {
@@ -581,6 +767,10 @@ def main(
     dest = Path(out_dir)
     dest.mkdir(parents=True, exist_ok=True)
 
+    retained = cache_preflight.remote(
+        need_refiner=refine_first or refine_text_only,
+        need_rembg=remove_bg or refine_first or refine_text_only,
+    )
     refiner = None
     if refine_first or refine_text_only:
         r = refine_crop.remote(
@@ -594,6 +784,7 @@ def main(
             text_only=refine_text_only,
             candidates=refine_candidates,
             pick=refine_pick,
+            cache_receipts=retained["receipts"],
         )
         png, refiner = r["png"], r["meta"]
         (dest / "refined.png").write_bytes(png)
@@ -621,6 +812,7 @@ def main(
         preview_video=preview_video,
         refiner=refiner,
         note=note,
+        cache_receipts=retained["receipts"],
     )
     (dest / "object.ply").write_bytes(res["ply"])
     if res["glb"]:

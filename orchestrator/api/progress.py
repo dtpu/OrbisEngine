@@ -42,6 +42,10 @@ def previews(root: Path) -> list[dict]:
     source = Path(manifest.get("source") or root / "missing")
     candidates = [("Source clip", source, "video")]
     candidates += [("Cleaned clip", p, "video") for p in (root / "clips").glob("*-clean.mp4")]
+    candidates += [
+        (f"Cleaning candidate: {p.parent.name}", p, "video")
+        for p in sorted(root.glob("clean-candidates/*/clean.mp4"))
+    ]
     for pattern in (
         "first/*.png",
         "review/*.jpg",

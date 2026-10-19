@@ -390,6 +390,57 @@ class RunThroughTests(unittest.TestCase):
             self.assertNotIn("WANDER_PYTHON", session.harness.policy.extra_environment)
             self.assertNotIn("WANDER_MODAL", session.harness.policy.extra_environment)
 
+    def test_paid_controls_reach_harness_and_stage_without_entering_prompt(self):
+        run_dir = self.open()
+        stage_repo = self.root / "stage-repository"
+        (stage_repo / "scripts").mkdir(parents=True)
+        names = ("WANDER_STAGE_AUTHORIZATION", "WANDER_VLM_BUDGET")
+        unrelated = "WANDER_UNRELATED_PRIVATE_SETTING"
+        observe = (
+            "import json, os, pathlib\n"
+            f"values = {{key: os.environ.get(key) for key in {(*names, unrelated)!r}}}\n"
+            "pathlib.Path(os.environ['WANDER_RUN_DIR'], 'stage-environment.json')"
+            ".write_text(json.dumps(values))\n"
+        )
+        (stage_repo / "scripts/run_clip.py").write_text(observe)
+        described = json.loads((run_dir / "run.json").read_text())
+        described["repository"] = str(stage_repo)
+        (run_dir / "run.json").write_text(json.dumps(described))
+        policy = self.agent(
+            "import json\n"
+            f"values = {{key: os.environ.get(key) for key in {(*names, unrelated)!r}}}\n"
+            "(brief.parent / 'harness-environment.json').write_text(json.dumps(values))\n"
+            "subprocess.run(['wander', 'step', '--wait', 'clean'], check=True)\n"
+        )
+        controls = {
+            names[0]: str(self.root / "selected run authorization.json"),
+            names[1]: str(self.root / "selected run vlm budget.json"),
+        }
+        with patch.dict(
+            os.environ,
+            {**controls, unrelated: "must-stay-in-supervisor", "WANDER_REPOSITORY": str(ROOT)},
+        ):
+            outcome = RunSession("run-1", run_dir, HarnessAgent(policy)).turn()
+        self.assertIsNone(outcome.error)
+        self.assertEqual(outcome.steps_run, 1)
+        for filename in ("harness-environment.json", "stage-environment.json"):
+            observed = json.loads((run_dir / filename).read_text())
+            self.assertEqual(observed, {**controls, unrelated: None})
+        for filename in ("BRIEF.md", "TASK.md", "prompt.txt"):
+            prompt = (run_dir / filename).read_text()
+            for value in (*controls, *controls.values(), "must-stay-in-supervisor"):
+                self.assertNotIn(value, prompt)
+
+    def test_absent_paid_controls_are_not_added_to_harness_environment(self):
+        run_dir = self.open()
+        names = ("WANDER_STAGE_AUTHORIZATION", "WANDER_VLM_BUDGET")
+        with patch.dict(os.environ, {}, clear=False):
+            for name in names:
+                os.environ.pop(name, None)
+            session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))
+            for name in names:
+                self.assertNotIn(name, session.harness.policy.extra_environment)
+
     def test_a_turn_that_decides_nothing_stops_rather_than_repeating(self):
         run_dir = self.open()
         session = RunSession("run-1", run_dir, HarnessAgent(self.agent("pass")))

@@ -11,8 +11,8 @@ function progressTitle(progress: RunProgress): string {
   if (progress.finished) return `Run finished: ${progress.finished}`;
   if (progress.paused) return 'Run paused';
   if (progress.question) return 'Waiting for your answer';
-  if (progress.stopped.length) return 'Processing stopped';
   if (progress.currentStages.length) return `Running ${progress.currentStages.join(', ')}`;
+  if (progress.stopped.length) return 'Processing stopped';
   return 'Waiting for the supervisor';
 }
 

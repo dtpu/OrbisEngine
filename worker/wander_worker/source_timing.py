@@ -24,7 +24,19 @@ def _sha256(path: Path) -> str:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=True, capture_output=True)
+    try:
+        return subprocess.run(command, check=True, capture_output=True)
+    except subprocess.CalledProcessError as error:
+        # The decoder stdout is raw RGB; retain only bounded text diagnostics.
+        stderr = error.stderr or b""
+        if isinstance(stderr, str):
+            stderr = stderr.encode("utf-8")
+        tail = stderr[-8192:].decode("utf-8", errors="replace")
+        truncated = " (tail; truncated)" if len(stderr) > 8192 else ""
+        raise RuntimeError(
+            f"{Path(command[0]).name} exited with status {error.returncode}; "
+            f"stderr{truncated}:\n{tail}"
+        ) from None
 
 
 def _observed_frames(log: str, name: str) -> tuple[Fraction, list[dict]]:
@@ -114,10 +126,23 @@ def _parse_selection(log: str, source_pts: list[int], time_base: Fraction) -> di
     }
 
 
-def resample_source(
+def _selection_expression(indices: list[int]) -> str:
+    # Older FFmpeg expression parsers exhaust their depth on a long flat sum.
+    # Pairing terms keeps parser depth logarithmic without changing the predicate.
+    terms = [f"eq(n\\,{index})" for index in indices]
+    while len(terms) > 1:
+        terms = [
+            f"({terms[i]}+{terms[i + 1]})" if i + 1 < len(terms) else terms[i]
+            for i in range(0, len(terms), 2)
+        ]
+    return terms[0]
+
+
+def _decode_source(
     source: str | Path,
     fps: float = 12.0,
     *,
+    source_indices: list[int] | None = None,
     width: int | None = None,
     height: int | None = None,
 ) -> tuple[bytes, dict]:
@@ -130,9 +155,17 @@ def resample_source(
     the first decoded source frame, not container start_time or average FPS.
     """
     source = Path(source)
-    if not math.isfinite(fps) or fps <= 0:
+    if (
+        isinstance(fps, bool)
+        or not isinstance(fps, (int, float))
+        or not math.isfinite(fps)
+        or fps <= 0
+    ):
         raise ValueError("fps must be positive and finite")
-    if (width is None) != (height is None) or (width is not None and (width <= 0 or height <= 0)):
+    if (width is None) != (height is None) or (
+        width is not None
+        and (type(width) is not int or type(height) is not int or width <= 0 or height <= 0)
+    ):
         raise ValueError("Specify both positive output dimensions or neither")
     source_sha = _sha256(source)
     probe = json.loads(
@@ -158,7 +191,20 @@ def resample_source(
         raise ValueError("Source has missing decoded PTS") from error
     if not source_pts or any(b <= a for a, b in pairwise(source_pts)):
         raise ValueError("Source PTS must be present and strictly increasing")
-    filters = f"showinfo@source,fps@sample={fps},showinfo@sampled"
+    if source_indices is not None:
+        if (
+            not isinstance(source_indices, list)
+            or not source_indices
+            or any(type(i) is not int or not 0 <= i < len(source_pts) for i in source_indices)
+            or any(b <= a for a, b in pairwise(source_indices))
+        ):
+            raise ValueError(
+                "Explicit source indices must be strictly increasing integers in range"
+            )
+        expression = _selection_expression(source_indices)
+        filters = f"showinfo@source,select={expression},showinfo@sampled"
+    else:
+        filters = f"showinfo@source,fps@sample={fps},showinfo@sampled"
     output = ["-f", "null", "-"]
     if width is not None:
         filters += f",scale={width}:{height}"
@@ -181,7 +227,11 @@ def resample_source(
     ]
     decoded = _run(command)
     log = decoded.stderr.decode("utf-8", errors="replace")
-    provenance = _parse_selection(log, source_pts, time_base)
+    provenance = (
+        _parse_explicit_selection(log, source_pts, time_base, source_indices)
+        if source_indices is not None
+        else _parse_selection(log, source_pts, time_base)
+    )
     if width is not None and len(decoded.stdout) != len(provenance["frames"]) * width * height * 3:
         raise ValueError("RGB frame count does not match provenance")
     if _sha256(source) != source_sha:
@@ -189,7 +239,9 @@ def resample_source(
     version = _run(["ffmpeg", "-version"]).stdout.decode().splitlines()[0]
     provenance.update(
         schema="wander.source-frame-provenance/1",
-        method="ffmpeg-fps-observed-selection",
+        method="ffmpeg-explicit-observed-selection"
+        if source_indices is not None
+        else "ffmpeg-fps-observed-selection",
         sourceSha256=source_sha,
         sourceTimeBase=str(time_base),
         sourceFirstPts=source_pts[0],
@@ -202,6 +254,53 @@ def resample_source(
         timestampPolicy="ffmpeg-default-input-offset; output-passthrough",
     )
     return decoded.stdout, provenance
+
+
+def _parse_explicit_selection(log, source_pts, time_base, selection):
+    input_base, inputs = _observed_frames(log, "source")
+    output_base, outputs = _observed_frames(log, "sampled")
+    if len(inputs) != len(source_pts) or len(outputs) != len(selection):
+        raise ValueError("Explicit selection decoded counts disagree")
+    offsets = {
+        pts * time_base - frame["pts"] * input_base
+        for pts, frame in zip(source_pts, inputs, strict=True)
+    }
+    if len(offsets) != 1:
+        raise ValueError("FFmpeg and FFprobe decoded source timestamps disagree")
+    frames = []
+    for output, index in zip(outputs, selection, strict=True):
+        if (
+            output["pts"] * output_base != inputs[index]["pts"] * input_base
+            or output["checksum"] != inputs[index]["checksum"]
+        ):
+            raise ValueError("Explicit selection does not match the emitted frame")
+        frames.append(
+            {
+                "frameIndex": output["index"],
+                "sourceIndex": index,
+                "sourcePts": source_pts[index],
+                "sourceTimeSeconds": float(source_pts[index] * time_base),
+                "sourceRelativeTimeSeconds": float((source_pts[index] - source_pts[0]) * time_base),
+                "resampledPts": output["pts"],
+            }
+        )
+    return {
+        "sourceTimestampOffset": str(offsets.pop()),
+        "resampledTimeBase": str(output_base),
+        "frames": frames,
+    }
+
+
+def resample_source(source, fps=12.0, *, width=None, height=None):
+    """Return RGB24 bytes and observed FPS-filter provenance (or mapping only)."""
+    return _decode_source(source, fps, width=width, height=height)
+
+
+def select_source_frames(source, fps=12.0, *, source_indices, width=None, height=None):
+    """Decode exact source ordinals; fps labels the output, never changes its selection."""
+    if source_indices is None:
+        raise ValueError("Explicit source indices are required")
+    return _decode_source(source, fps, source_indices=source_indices, width=width, height=height)
 
 
 def select_provenance(provenance: dict, selection: list[int]) -> list[dict]:

@@ -315,6 +315,57 @@ def zbuffer_depth(points: np.ndarray, c2w: np.ndarray, K: np.ndarray, size, res,
     return d.astype(np.float32), sup
 
 
+def diagnostic_depth_ratios(pixel_indices, depths, source_depth, source_support, unmasked):
+    """Compare one generated front-center depth per supported source texel.
+
+    Inputs are live, in-frustum generated centers projected into the source depth grid.
+    Visibility comes only from the generated depths, never agreement with the reference.
+    This is a nearest-center z-buffer approximation, not Gaussian opacity rendering: it
+    does not account for projected splat extent, transparency or subpixel coverage.
+    Retain the old all-center ratios separately so changed measurements are explainable.
+    """
+    pixels = np.asarray(pixel_indices)
+    depths = np.asarray(depths)
+    source = np.asarray(source_depth).reshape(-1)
+    support = np.asarray(source_support, dtype=bool).reshape(-1)
+    unmasked = np.asarray(unmasked, dtype=bool)
+    if (
+        pixels.ndim != 1
+        or depths.shape != pixels.shape
+        or unmasked.shape != pixels.shape
+        or support.shape != source.shape
+        or not np.issubdtype(pixels.dtype, np.integer)
+        or np.any(pixels < 0)
+        or np.any(pixels >= source.size)
+    ):
+        raise ValueError("Invalid projected depth-diagnostic inputs")
+    if np.any(~np.isfinite(depths) | (depths <= 0)):
+        raise ValueError("Nonfinite or nonpositive generated depth in diagnostic support")
+    front = np.full(source.size, np.inf, dtype=np.float64)
+    np.minimum.at(front, pixels, depths)
+    # Mask the front sample, without revealing a hidden center behind a masked sample.
+    visible_unmasked = np.zeros(source.size, dtype=bool)
+    np.logical_or.at(visible_unmasked, pixels, unmasked & (depths == front[pixels]))
+    compared = visible_unmasked & support
+    if not compared.any():
+        raise ValueError("No supported, unmasked front-depth overlap for diagnostic")
+    legacy_samples = support[pixels] & unmasked
+    referenced = source[pixels[legacy_samples]]
+    if np.any(~np.isfinite(referenced) | (referenced <= 0)):
+        raise ValueError("Nonfinite or nonpositive source depth in diagnostic support")
+    ratios = front[compared] / source[compared]
+    legacy_ratios = depths[legacy_samples] / referenced
+    if any(np.any(~np.isfinite(values) | (values <= 0)) for values in (ratios, legacy_ratios)):
+        raise ValueError("Nonfinite or nonpositive depth ratio in diagnostic support")
+    counts = {
+        "sourceSupportedPixels": int(support.sum()),
+        "generatedFrontPixels": int(np.isfinite(front).sum()),
+        "comparedPixels": int(compared.sum()),
+        "legacySplats": int(legacy_samples.sum()),
+    }
+    return ratios, legacy_ratios, counts
+
+
 class JsonSource:
     def __init__(
         self,
@@ -625,6 +676,14 @@ def main():
     sum_w = torch.zeros(n, device=dev)
     count = torch.zeros(n, device=dev, dtype=torch.int32)
     ratio_log = []
+    legacy_ratio_log = []
+    if a.diag:
+        print(
+            "depth diagnostic metric: front-center-per-supported-texel/1 "
+            "(nearest-center z-buffer, not Gaussian opacity rendering); "
+            "legacy all-splat statistics are diagnostic only",
+            flush=True,
+        )
     frames = src.frames[:: a.stride]
     fig_frames = (
         [int(x) for x in a.fig_frames.split(",")]
@@ -653,6 +712,8 @@ def main():
         vis = live & (z > src.near * 0.5) & (u >= 0) & (u < SW) & (v >= 0) & (v < SH_)
         idx = torch.nonzero(vis).squeeze(1)
         if idx.numel() == 0:
+            if a.diag:
+                raise ValueError(f"frame {f}: no live generated centers in diagnostic frustum")
             continue
         uu, vv, zz = u[idx], v[idx], z[idx]
         dmap, dsup = src.depth_map(f)
@@ -676,11 +737,32 @@ def main():
             ]
         r = zz / torch.clamp(md, 1e-4)
         if a.diag:
-            rr = r[sp & (mk < 0.5)]
-            lr = torch.log(rr).cpu().numpy()
+            rr, legacy, coverage = diagnostic_depth_ratios(
+                flat.cpu().numpy(),
+                zz.cpu().numpy(),
+                dmap,
+                dsup,
+                (mk < 0.5).cpu().numpy(),
+            )
+            lr = np.log(rr)
             ratio_log.append((f, lr))
+            legacy_lr = np.log(legacy)
+            legacy_ratio_log.append((f, legacy_lr))
             print(
-                f"frame {f}: {idx.numel()} splats in frustum, {sp.float().mean().item() * 100:.0f}% on supported depth, log(splat/map depth) median {np.median(lr):+.3f} (ratio {np.exp(np.median(lr)):.3f}), p10 {np.exp(np.percentile(lr, 10)):.3f} p90 {np.exp(np.percentile(lr, 90)):.3f}",
+                f"frame {f}: {idx.numel()} splats in frustum; "
+                f"{coverage['comparedPixels']} compared rays / "
+                f"{coverage['sourceSupportedPixels']} source-supported texels, "
+                f"{coverage['generatedFrontPixels']} generated front texels; "
+                f"log(front-center/source depth) median {np.median(lr):+.3f} "
+                f"(ratio {np.exp(np.median(lr)):.3f}), "
+                f"p10 {np.exp(np.percentile(lr, 10)):.3f} p90 {np.exp(np.percentile(lr, 90)):.3f}",
+                flush=True,
+            )
+            print(
+                f"frame {f} legacy all-splat diagnostic only: {coverage['legacySplats']} samples, "
+                f"medianRatio={np.exp(np.median(legacy_lr)):.3f}, "
+                f"p10={np.exp(np.percentile(legacy_lr, 10)):.3f}, "
+                f"p90={np.exp(np.percentile(legacy_lr, 90)):.3f}",
                 flush=True,
             )
             continue
@@ -717,20 +799,34 @@ def main():
                 flush=True,
             )
 
+    if a.diag and not ratio_log:
+        raise ValueError("No sampled frames produced a depth diagnostic")
+
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     if a.diag:
-        fig, ax = plt.subplots(figsize=(8, 4))
+        fig, (ax, legacy_ax) = plt.subplots(1, 2, figsize=(12, 4))
         for f, lr in ratio_log:
             ax.hist(lr, bins=120, range=(-1.5, 1.5), histtype="step", label=f"frame {f}")
-        ax.axvline(0, color="k", lw=0.8)
-        ax.set_xlabel("log(Marble splat depth / source depth)  (0 = agree)")
-        ax.legend()
-        ax.set_title(
-            f"{a.world.name}, scale0 {scale0:.3f}: Marble geometry vs source depth along the same rays"
+        for f, lr in legacy_ratio_log:
+            legacy_ax.hist(
+                lr,
+                bins=120,
+                range=(-1.5, 1.5),
+                histtype="step",
+                label=f"frame {f}",
+            )
+        for axes in (ax, legacy_ax):
+            axes.axvline(0, color="k", lw=0.8)
+            axes.set_xlabel("log(generated depth / source depth)  (0 = agree)")
+            axes.legend()
+        ax.set_title("Front center per supported ray")
+        legacy_ax.set_title("Legacy all-splat: diagnostic only")
+        fig.suptitle(
+            f"{a.world.name}, scale0 {scale0:.3f}: nearest-center depth (not opacity rendered)"
         )
         fig.tight_layout()
         fig.savefig(a.share / f"{a.tag}-depth-ratio.png", dpi=110)

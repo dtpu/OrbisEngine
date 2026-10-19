@@ -25,10 +25,24 @@ The viewer discovers `audio.json` next to `people.json`, or in the world directo
 The timeline duration must match the viewer's people/sequence duration within 0.1 seconds. A track's sample zero occurs at `offsetSeconds` on the clip timeline, so sample time equals clip time minus offset. Trim original audio against the same original-video edit, retaining matching silence and verifying offsets. URLs resolve relative to `audio.json`. Additional provenance fields are allowed. Optional `provenance.attribution`, `provenance.license`, and `provenance.licenseUrl` show a visible audio excerpt credit while the original mix is selected; license links accept only HTTP(S) URLs. The recovered TOS package uses this credit for Blender Foundation's CC BY 3.0 source. Keep media and manifests in gitignored `public/worlds/<clip>-4d/` or `public/clips/audio/`; publish through the existing shared-assets snapshot only when authorized. PCM WAV and MP3 MIME entries already exist. No keys belong in manifests or client code. The attribution strip is currently shown only in original mode; it does not render per-stem credits or remain visible in spatial mode.
 
 The single-person and multiperson packagers probe the supplied local video with `ffprobe` and
-write a minimal `audio.json` containing its embedded-audio availability, SHA-256 and the package
-playback duration. Silent videos therefore show “No soundtrack available”; videos with an audio
-stream keep their original embedded soundtrack. A failed or malformed probe stops packaging
-before package files are written instead of guessing that the clip is silent.
+write `audio.json` containing soundtrack availability, the submitted source SHA-256 and the
+package playback duration. Silent videos therefore show “No soundtrack available”; ordinary
+AAC inputs keep their embedded soundtrack. A failed or malformed probe stops packaging before
+package files are written instead of guessing that the clip is silent.
+
+H.264 clips with original PCM audio use a separate browser delivery: `media/source.mp4` copies
+only the encoded video, and `media/original.wav` copies the original PCM samples. The source
+file remains unchanged. `source.hasAudio` is false for this silent delivery video,
+`source.videoUrl` selects it, and `original.url` selects the authentic external mix.
+`media/provenance.json` binds both output hashes to the submitted source. Packaging compares
+every encoded video packet and timestamp, its time base, the PCM sample hash, sample count,
+rate, channels and continuous audio timestamps before exposing the files. No encoding,
+resampling, normalization or timeline changes occur. Currently this path accepts one
+zero-origin H.264 video and one signed little-endian 16-, 24- or 32-bit PCM audio stream;
+unsupported PCM layouts fail explicitly. Run previews and completion validate the delivery
+hashes while still requiring the original exported source. The standalone printed viewer URL
+also selects the delivery MP4. These local checks establish media preservation; browser
+playback and audible synchronization still require actual viewer checks.
 
 An identical generated manifest can be reused. An existing manifest with different content,
 including authored external audio or reviewed stems, stops packaging before it changes the

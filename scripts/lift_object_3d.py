@@ -27,6 +27,7 @@ import torch
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation, Slerp
 from source_clock import camera_source_fps, resolve_source_fps
+from object_coordinate_basis import resolve_object_basis
 
 
 def load_cameras(path):
@@ -276,26 +277,13 @@ def main():
         raise SystemExit(str(exc)) from exc
     with open(args.people) as handle:
         pj = json.load(handle)
-    mpu = pj["floorFit"]["metresPerWorldUnit"]
+    try:
+        basis = resolve_object_basis(pj)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    mpu = basis.metres_per_world_unit
     g_units = 9.80665 / mpu
-    drift = pj["floorFit"]["sharedCameraDrift"]
-    doff = np.array(drift["offsetYUnits"], float)
-    src_of_sample = np.array(pj["sourceIndices"], float)
-    dsamp = src_of_sample[np.array(drift["samples"], int)]
-    lvC = pj["floorFit"]["levels"][[k for k in pj["floorFit"]["levels"] if k.startswith("C_")][0]]
-    ckey = [k for k in lvC if "translation" in k.lower()][0]
-    constC = lvC[ckey]
-
-    by_track = {p["track"]: p for p in pj["people"]}
-    scale = {
-        t: by_track[t]["registrationScale"]
-        * by_track[t].get("sizeCorrection", {}).get("multiplier", 1.0)
-        for t in by_track
-    }
-    cconst = {t: constC[by_track[t]["id"]] for t in by_track}
-
-    def drift_at(sf):
-        return float(np.interp(sf, dsamp, doff))
+    scale, cconst, drift_at = basis.scale, basis.constants, basis.drift_at
 
     # ---- assemble the list of flights to fit
     spans = []
@@ -396,6 +384,7 @@ def main():
         schema="wander.object-fit/2",
         clip=clip,
         metresPerWorldUnit=mpu,
+        coordinateBasis=basis.provenance,
         gravityUnitsPerS2=g_units,
         fps=fps,
         driftCorrected=True,

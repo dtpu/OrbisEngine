@@ -276,6 +276,9 @@ def test_multi_review_uses_hashed_cleaned_selection(tmp_path):
 
     runner = run_clip.Pipeline.__new__(run_clip.Pipeline)
     runner.ctx = tmp_path
+    runner.name = "fixture"
+    runner.clip = tmp_path / "source.mp4"
+    runner.clip.write_bytes(b"original source fixture")
     runner.state = run_clip.State(tmp_path / "state.json")
     runner.marble = "multi"
     runner.a = SimpleNamespace(reuse_world=None, gate_pass=False, no_gate=False)

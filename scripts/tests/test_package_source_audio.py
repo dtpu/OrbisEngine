@@ -37,6 +37,31 @@ def clips(tmp_path_factory):
         command += ["-c:a", "aac", "-shortest"] if has_audio else ["-an"]
         subprocess.run([*command, str(clip)], check=True, capture_output=True, timeout=30)
         outputs[has_audio] = clip
+    pcm = root / "source.mov"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(outputs[False]),
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "pcm_s16le",
+            "-ac",
+            "2",
+            str(pcm),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    outputs["pcm"] = pcm
     return outputs
 
 
@@ -276,3 +301,202 @@ def test_runner_matching_manifest_allows_repackage(
     child.side_effect = launched
     (pipeline.package_people if multiple else pipeline.package)()
     child.assert_called_once()
+
+
+@pytest.mark.parametrize("multiple", [False, True])
+def test_pcm_source_is_delivered_losslessly(tmp_path, monkeypatch, clips, multiple):
+    import wave
+
+    module, args = package_inputs(tmp_path, multiple)
+    out = tmp_path / "world"
+    clip = clips["pcm"]
+    before = clip.read_bytes()
+    run_package(monkeypatch, module, args, clip, out)
+    manifest = json.loads((out / "audio.json").read_text())
+    assert manifest["source"] == {
+        "hasAudio": False,
+        "sha256": hashlib.sha256(before).hexdigest(),
+        "videoUrl": "media/source.mp4",
+    }
+    assert manifest["original"] == {"url": "media/original.wav", "offsetSeconds": 0}
+    receipt = json.loads((out / "media/provenance.json").read_text())
+    assert receipt["sourceSha256"] == hashlib.sha256(before).hexdigest()
+    delivered = out / "media/source.mp4"
+    streams = json.loads(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-of",
+                "json",
+                str(delivered),
+            ]
+        )
+    )["streams"]
+    assert len(streams) == 1 and streams[0]["codec_type"] == "video"
+
+    # Independently compare decoded frames+timestamps, beyond the helper's encoded-packet check.
+    def frames(path):
+        return subprocess.check_output(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-f",
+                "framemd5",
+                "-",
+            ]
+        )
+
+    assert frames(clip) == frames(delivered)
+    with wave.open(str(out / "media/original.wav"), "rb") as audio:
+        assert (
+            audio.getnchannels(),
+            audio.getframerate(),
+            audio.getsampwidth(),
+            audio.getnframes(),
+        ) == (2, 48000, 2, 48000)
+        samples = audio.readframes(audio.getnframes())
+    original_samples = subprocess.check_output(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(clip),
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "copy",
+            "-f",
+            "s16le",
+            "-",
+        ]
+    )
+    assert samples == original_samples
+    assert clip.read_bytes() == before
+    assert (
+        package_source_audio.validate_source_media(
+            out, manifest, hashlib.sha256(before).hexdigest()
+        )
+        == "media/source.mp4"
+    )
+    run_package(monkeypatch, module, args, clip, out)
+    assert json.loads((out / "audio.json").read_text()) == manifest
+
+
+def test_failed_stream_preservation_does_not_change_destination(tmp_path, monkeypatch, clips):
+    out = tmp_path / "world"
+    out.mkdir()
+    (out / "keep.txt").write_text("existing package")
+    original = package_source_audio._video_packets
+
+    def changed_packets(path):
+        result = original(path)
+        if Path(path).name == "source.mp4":
+            result["packets"][0]["pts"] += 1
+        return result
+
+    monkeypatch.setattr(package_source_audio, "_video_packets", changed_packets)
+    with pytest.raises(ValueError, match="video packets or timing"):
+        package_source_audio.prepare_source_media(clips["pcm"], 1, out)
+    assert [path.name for path in out.iterdir()] == ["keep.txt"]
+    assert (out / "keep.txt").read_text() == "existing package"
+
+
+def test_changed_delivery_is_never_overwritten(tmp_path, clips):
+    out = tmp_path / "world"
+    manifest = package_source_audio.prepare_source_media(clips["pcm"], 1, out)
+    (out / "audio.json").write_text(json.dumps(manifest))
+    wav = out / "media/original.wav"
+    wav.write_bytes(b"authored replacement")
+    with pytest.raises(ValueError, match="fresh destination"):
+        package_source_audio.prepare_source_media(clips["pcm"], 1, out)
+    assert wav.read_bytes() == b"authored replacement"
+
+
+@pytest.mark.parametrize(
+    "stream_change", ["multiple-audio", "nonzero-start", "other-video", "unsupported-pcm"]
+)
+def test_unsupported_pcm_delivery_is_explicit(tmp_path, monkeypatch, clips, stream_change):
+    streams = [
+        {
+            "codec_type": "video",
+            "codec_name": "h264",
+            "start_time": "0.000000",
+            "time_base": "1/12800",
+        },
+        {"codec_type": "audio", "codec_name": "pcm_s16le", "start_time": "0.000000"},
+    ]
+    if stream_change == "multiple-audio":
+        streams.append(dict(streams[1]))
+    elif stream_change == "nonzero-start":
+        streams[1]["start_time"] = "0.100000"
+    elif stream_change == "other-video":
+        streams[0]["codec_name"] = "hevc"
+    else:
+        streams[1]["codec_name"] = "pcm_f32le"
+    monkeypatch.setattr(
+        package_source_audio.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"streams": streams})),
+    )
+    with pytest.raises(ValueError, match="zero-origin H.264"):
+        package_source_audio.source_audio_manifest(clips["pcm"], 1, tmp_path)
+    assert not (tmp_path / "audio.json").exists()
+
+
+@pytest.mark.parametrize("pts", [0, 1, 3])
+def test_pcm_gaps_and_overlaps_are_rejected(monkeypatch, pts):
+    probe = {
+        "streams": [{"sample_rate": "48000", "time_base": "1/48000"}],
+        "packets": [{"pts": 0, "duration": 2}, {"pts": pts, "duration": 2}],
+    }
+    monkeypatch.setattr(package_source_audio, "_run", lambda command: json.dumps(probe))
+    with pytest.raises(ValueError, match="gaps or overlaps"):
+        package_source_audio._audio_timing("fixture.mov")
+
+
+def test_pcm_authored_manifest_is_preserved_before_media_creation(tmp_path, clips):
+    manifest = {"original": {"url": "reviewed.wav"}, "provenance": {"attribution": "Owner"}}
+    path = tmp_path / "audio.json"
+    path.write_text(json.dumps(manifest))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="fresh destination"):
+        package_source_audio.prepare_source_media(clips["pcm"], 1, tmp_path)
+    assert path.read_bytes() == before
+    assert not (tmp_path / "media").exists()
+
+
+@pytest.mark.parametrize("multiple", [False, True])
+@pytest.mark.parametrize("asset", ["original.wav", "source.mp4", "provenance.json"])
+@pytest.mark.parametrize("failure", ["modified", "missing"])
+def test_runner_pcm_preflight_preserves_existing_delivery(
+    tmp_path, monkeypatch, clips, multiple, asset, failure
+):
+    pipeline, out, child = runner_inputs(tmp_path, monkeypatch, clips["pcm"], multiple)
+    manifest = package_source_audio.prepare_source_media(pipeline.clip, 0.7, out)
+    (out / "audio.json").write_text(json.dumps(manifest))
+    (out / "person").mkdir()
+    (out / "person/sequence.json").write_text("existing sequence")
+    target = out / "media" / asset
+    if failure == "modified":
+        target.write_bytes(b"modified existing asset")
+    else:
+        target.unlink()
+    before = {path.relative_to(out): path.read_bytes() for path in out.rglob("*") if path.is_file()}
+    deletion = Mock(side_effect=AssertionError("Preflight must fail before removing the package"))
+    monkeypatch.setattr(run_clip.shutil, "rmtree", deletion)
+    with pytest.raises(ValueError, match="Existing source-media delivery is missing or changed"):
+        (pipeline.package_people if multiple else pipeline.package)()
+    deletion.assert_not_called()
+    child.assert_not_called()
+    assert before == {
+        path.relative_to(out): path.read_bytes() for path in out.rglob("*") if path.is_file()
+    }

@@ -9,15 +9,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import json
+import os
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_clip
-from stage_attempts import CODE_FILES, StageAttempts, command_identity
+from stage_attempts import AUTHORIZATION_SCHEMA, CODE_FILES, StageAttempts, command_identity
 
 SOURCE = "a" * 64
 
@@ -31,9 +33,17 @@ class StageAttemptTests(unittest.TestCase):
         self.log = self.root / "worker.log"
         self.log.write_text("saved provider evidence\n")
 
-    def begin(self, operation="pi3x", number=0, hypothesis=None, candidate="candidate-a"):
+    def begin(
+        self,
+        operation="pi3x",
+        number=0,
+        hypothesis=None,
+        candidate="candidate-a",
+        authorization=None,
+        source=SOURCE,
+    ):
         return self.ledger.begin(
-            SOURCE,
+            source,
             operation,
             parameters={"setting": number},
             code_version={"worker.py": "code-v1"},
@@ -41,6 +51,7 @@ class StageAttemptTests(unittest.TestCase):
             candidate=candidate,
             log=self.log,
             results=[self.root / candidate / "result"],
+            authorization=authorization,
         )
 
     def finish(self, attempt, status="failed"):
@@ -268,6 +279,195 @@ class StageAttemptTests(unittest.TestCase):
         self.assertEqual(len(retained), 4)
         self.assertEqual(retained[:3], saved["attempts"][:3])
         self.assertTrue(retained[-1]["events"][-1]["reconciliation"])
+
+    def permit(self, **changes):
+        permit = {
+            "schema": AUTHORIZATION_SCHEMA,
+            "id": "reviewed-rebuild-1",
+            "sourceSha256": SOURCE,
+            "candidate": "candidate-a",
+            "reason": "Reviewed full source rebuild",
+            "operatorApproval": "okay now start it end to end",
+            "expiresAtEpoch": time.time() + 3600,
+            "operations": {"pi3x": 0},
+        }
+        permit.update(changes)
+        path = self.root / "authorization.json"
+        path.write_text(json.dumps(permit))
+        return path
+
+    def test_authorization_allows_one_unchanged_over_cap_execution_preserving_history(self):
+        for number in range(3):
+            attempt = self.begin(number=number, hypothesis=f"Reviewed variation {number}")
+            self.finish(attempt)
+        history = json.loads(self.ledger.path.read_text())["attempts"]
+        permit = self.permit(operations={"pi3x": 3})
+        approved = self.begin(number=2, authorization=permit)
+        self.assertEqual(approved["claim"]["number"], 4)
+        saved = approved["claim"]["authorization"]
+        self.assertEqual(saved["id"], "reviewed-rebuild-1")
+        self.assertEqual(saved["sha256"], hashlib.sha256(permit.read_bytes()).hexdigest())
+        self.assertEqual(saved["path"], str(permit.resolve()))
+        self.assertEqual(saved["operatorApproval"], "okay now start it end to end")
+        self.assertEqual(json.loads(self.ledger.path.read_text())["attempts"][:3], history)
+        self.finish(approved)
+        with self.assertRaisesRegex(ValueError, "consumed"):
+            self.begin(authorization=permit)
+        with self.assertRaisesRegex(ValueError, "three total"):
+            self.begin(number=4, hypothesis="Another variation")
+
+    def test_authorization_is_required_for_unchanged_retry_below_cap(self):
+        self.finish(self.begin())
+        with self.assertRaisesRegex(ValueError, "parameters or code"):
+            self.begin(hypothesis="Requested rebuild")
+        attempt = self.begin(authorization=self.permit(operations={"pi3x": 1}))
+        self.finish(attempt)
+
+    def test_authorization_rejects_wrong_source_candidate_operation_and_count(self):
+        cases = (
+            ({"sourceSha256": "b" * 64}, "canonical source"),
+            ({"candidate": "candidate-b"}, "candidate"),
+            ({"operations": {"tracks": 0}}, "operation"),
+            ({"operations": {"pi3x": 1}}, "count"),
+            ({"expiresAtEpoch": time.time() - 1}, "expired"),
+        )
+        for changes, message in cases:
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, message):
+                self.begin(authorization=self.permit(**changes))
+            self.assertFalse(self.ledger.path.exists())
+
+    def test_authorization_rejects_malformed_fields_and_duplicate_json_keys(self):
+        cases = (
+            {"schema": "unknown"},
+            {"id": ""},
+            {"id": 7},
+            {"candidate": " "},
+            {"reason": ""},
+            {"operatorApproval": None},
+            {"expiresAtEpoch": True},
+            {"expiresAtEpoch": float("nan")},
+            {"expiresAtEpoch": float("inf")},
+            {"expiresAtEpoch": 10**400},
+            {"expiresAtEpoch": "tomorrow"},
+            {"operations": {}},
+            {"operations": []},
+            {"operations": {"*": 0}},
+            {"operations": {"inpainting": 0}},
+            {"operations": {"pi3x": True}},
+            {"operations": {"pi3x": -1}},
+            {"operations": {"pi3x": 0.0}},
+            {"operations": {"pi3x": 0, "tracks": "1"}},
+            {"extra": "unrecognized"},
+        )
+        for changes in cases:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.begin(authorization=self.permit(**changes))
+        path = self.permit()
+        for raw in ("null", "[1]", "{", '{"id":"first","id":"second"}'):
+            path.write_text(raw)
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                self.begin(authorization=path)
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, "unreadable"):
+            self.begin(authorization=path)
+        self.assertFalse(self.ledger.path.exists())
+
+    def test_authorization_shared_inpainting_operations_use_logical_counts(self):
+        permit = self.permit(operations={"clean_first": 0, "clean": 1})
+        first = self.begin("clean_first", authorization=permit)
+        self.finish(first)
+        second = self.begin("clean", authorization=permit)
+        self.assertEqual(second["claim"]["number"], 2)
+        self.finish(second)
+        with self.assertRaisesRegex(ValueError, "consumed"):
+            self.begin("clean_first", authorization=permit)
+
+    def test_authorization_changed_file_cannot_reuse_id_for_new_operation(self):
+        permit = self.permit()
+        self.finish(self.begin(authorization=permit))
+        modified = self.permit(operations={"tracks": 0})
+        with self.assertRaisesRegex(ValueError, "already bound"):
+            self.begin("tracks", authorization=modified)
+
+    def test_authorization_must_name_canonical_source_even_for_alias_submission(self):
+        alias = "b" * 64
+        self.ledger.path.write_text(
+            json.dumps(
+                {
+                    "schema": "wander.pipeline-attempts/1",
+                    "attempts": [],
+                    "sourceAliases": {alias: SOURCE},
+                }
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "canonical source"):
+            self.begin(source=alias, authorization=self.permit(sourceSha256=alias))
+        permit = self.permit()
+        attempt = self.begin(source=alias, authorization=permit)
+        self.assertEqual(attempt["claim"]["sourceSha256"], SOURCE)
+        self.assertEqual(attempt["claim"]["submittedSourceSha256"], alias)
+        self.finish(attempt)
+        with self.assertRaisesRegex(ValueError, "consumed"):
+            self.begin(authorization=permit)
+
+    def test_authorization_never_bypasses_pending_or_unknown_claims(self):
+        pending = self.begin()
+        permit = self.permit(operations={"pi3x": 1})
+        for status in ("pending", "unknown"):
+            if status == "unknown":
+                self.finish(pending, status=status)
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "reconciliation"):
+                self.begin(authorization=permit)
+
+    def test_authorized_unknown_execution_is_consumed_after_reconciliation(self):
+        permit = self.permit()
+        attempt = self.begin(authorization=permit)
+        self.finish(attempt, status="unknown")
+        with self.assertRaisesRegex(ValueError, "reconciliation"):
+            self.begin(authorization=permit)
+        self.ledger.reconcile(
+            attempt["id"], status="failed", evidence=self.log, reason="Observed failure"
+        )
+        with self.assertRaisesRegex(ValueError, "consumed"):
+            self.begin(authorization=permit)
+
+    def test_concurrent_authorization_claims_consume_exactly_once(self):
+        permit = self.permit()
+        barrier = threading.Barrier(2)
+        attempts, errors = [], []
+
+        def claim():
+            barrier.wait(timeout=5)
+            try:
+                attempts.append(self.begin(authorization=permit))
+            except ValueError as error:
+                errors.append(str(error))
+
+        workers = [threading.Thread(target=claim) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("reconciliation", errors[0])
+
+    def test_expired_saved_authorization_does_not_prevent_reconciliation(self):
+        attempt = self.begin(authorization=self.permit())
+        with patch("stage_attempts.time.time", return_value=time.time() + 7200):
+            self.ledger.reconcile(
+                attempt["id"], status="failed", evidence=self.log, reason="Observed failure"
+            )
+
+    def test_malformed_saved_authorization_blocks_further_claims(self):
+        attempt = self.begin(authorization=self.permit())
+        self.finish(attempt)
+        saved = json.loads(self.ledger.path.read_text())
+        saved["attempts"][0]["claim"]["authorization"]["operations"]["pi3x"] = 1
+        self.ledger.path.write_text(json.dumps(saved))
+        with self.assertRaisesRegex(ValueError, "saved paid-stage authorization"):
+            self.begin("tracks")
 
 
 class CommandIdentityTests(unittest.TestCase):
@@ -603,6 +803,71 @@ class PaidRunIntegrationTests(unittest.TestCase):
             self.pipeline.paid_run("pi3x", command, self.root / "new.log")
         provider.assert_not_called()
 
+    def test_runner_passes_authorization_and_rejects_reuse_before_provider(self):
+        path = self.root / "authorization.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": AUTHORIZATION_SCHEMA,
+                    "id": "integration-approval",
+                    "sourceSha256": SOURCE,
+                    "candidate": self.pipeline.name,
+                    "reason": "Reviewed full rebuild",
+                    "operatorApproval": "start it end to end",
+                    "expiresAtEpoch": time.time() + 3600,
+                    "operations": {"pi3x": 0},
+                }
+            )
+        )
+        self.pipeline.a.stage_authorization = str(path)
+        with patch.object(run_clip, "run") as provider:
+            self.pipeline.paid_run("pi3x", self.command(self.root / "output"), self.root / "log")
+        provider.assert_called_once()
+        saved = json.loads(Path(self.pipeline.a.stage_ledger).read_text())["attempts"]
+        self.assertEqual(saved[0]["claim"]["authorization"]["id"], "integration-approval")
+        with (
+            patch.object(run_clip, "run") as provider,
+            self.assertRaisesRegex(run_clip.QualityStop, "consumed"),
+        ):
+            self.pipeline.paid_run(
+                "pi3x", self.command(self.root / "other-output"), self.root / "log2"
+            )
+        provider.assert_not_called()
+
+    def test_cli_authorization_environment_default_and_explicit_override(self):
+        for extra, expected in (
+            ([], "/env-permit.json"),
+            (["--stage-authorization", "/cli-permit.json"], "/cli-permit.json"),
+        ):
+            with (
+                self.subTest(extra=extra),
+                patch.dict(os.environ, {"WANDER_STAGE_AUTHORIZATION": "/env-permit.json"}),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["run_clip.py", "--clip", "unused", "--name", "test", "--no-publish", *extra],
+                ),
+                patch.object(run_clip, "resolve_shots", return_value=[]) as resolve,
+                self.assertRaises(SystemExit) as exited,
+            ):
+                run_clip.main()
+            self.assertEqual(exited.exception.code, 0)
+            self.assertEqual(resolve.call_args.args[0].stage_authorization, expected)
+
+    def test_cli_rejects_authorization_for_orchestrated_submission(self):
+        with (
+            patch.dict(os.environ, {"WANDER_STAGE_AUTHORIZATION": "/env-permit.json"}),
+            patch.object(
+                sys, "argv", ["run_clip.py", "--clip", "unused", "--name", "test", "--orchestrated"]
+            ),
+            patch.object(run_clip, "resolve_shots") as resolve,
+            patch("sys.stderr"),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            run_clip.main()
+        self.assertEqual(exited.exception.code, 2)
+        resolve.assert_not_called()
+
     def test_existing_output_is_preserved_and_blocks_before_provider_call(self):
         output = self.root / "paid-output"
         output.mkdir()
@@ -662,13 +927,13 @@ class PaidRunIntegrationTests(unittest.TestCase):
         self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
 
     def test_both_mode_sequences_shared_inpainting_allowance(self):
-        for graph in (
-            lambda: run_clip.single_graph("both"),
-            lambda: run_clip.multiperson_graph(2, "both"),
+        for graph, clean_dependencies in (
+            (lambda: run_clip.single_graph("both"), ["clean_first"]),
+            (lambda: run_clip.multiperson_graph(2, "both"), ["clean_first", "tracks"]),
         ):
             _stages, dependencies = graph()
             self.assertEqual(dependencies["clean_first"], [])
-            self.assertEqual(dependencies["clean"], ["clean_first"])
+            self.assertEqual(dependencies["clean"], clean_dependencies)
             self.assertIn("clean", dependencies["review"])
 
     def latest_event(self, operation):

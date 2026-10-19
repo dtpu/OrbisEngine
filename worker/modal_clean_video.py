@@ -99,7 +99,7 @@ def clean(
     import cv2
     import numpy as np
     from PIL import Image
-    from wander_worker.source_timing import resample_source, select_provenance
+    from wander_worker.source_timing import resample_source, select_provenance, select_source_frames
 
     t0 = time.time()
     root = Path(tempfile.mkdtemp(prefix="cleanvid-"))
@@ -113,7 +113,51 @@ def clean(
     frames_tar = b""
     try:
         t = time.time()
-        raw, provenance = resample_source(src, fps, width=W, height=H)
+        supplied = None
+        explicit = False
+        if masks_npz:
+            with np.load(io.BytesIO(masks_npz), allow_pickle=False) as archive:
+                supplied = {key: archive[key] for key in archive.files}
+            fields = {"source_indices", "source_pts", "source_time_base", "source_sha256"}
+            present = fields.intersection(supplied)
+            if present and present != fields:
+                raise ValueError("Supplied masks have incomplete explicit source metadata")
+            explicit = bool(present)
+        if explicit:
+            source_indices = supplied["source_indices"]
+            source_pts = supplied["source_pts"]
+            if any(a.ndim != 1 or a.dtype.kind not in "iu" for a in (source_indices, source_pts)):
+                raise ValueError("Supplied source indices and PTS must be integer vectors")
+            if any(
+                supplied[key].shape != () or supplied[key].dtype.kind != "U"
+                for key in ("source_time_base", "source_sha256")
+            ):
+                raise ValueError("Supplied source timebase and hash must be scalar strings")
+            if str(supplied["source_sha256"]) != hashlib.sha256(video_bytes).hexdigest():
+                raise ValueError("Supplied masks source hash mismatch")
+            raw, provenance = select_source_frames(
+                src, fps, source_indices=source_indices.tolist(), width=W, height=H
+            )
+            if (
+                source_pts.tolist() != [f["sourcePts"] for f in provenance["frames"]]
+                or str(supplied["source_time_base"]) != provenance["sourceTimeBase"]
+                or str(supplied["source_sha256"]) != provenance["sourceSha256"]
+            ):
+                raise ValueError("Supplied masks source PTS/timebase/hash mismatch")
+            expected = [len(source_indices), H, W]
+            shape = supplied.get("shape")
+            packed = supplied.get("masks")
+            if (
+                shape is None
+                or shape.dtype.kind not in "iu"
+                or shape.tolist() != expected
+                or packed is None
+                or packed.dtype != np.uint8
+                or packed.shape != (len(source_indices), H, (W + 7) // 8)
+            ):
+                raise ValueError("Supplied masks shape does not match exact decoded grid")
+        else:
+            raw, provenance = resample_source(src, fps, width=W, height=H)
         imgs = np.frombuffer(raw, np.uint8).reshape(-1, H, W, 3)
         del raw
         timings["decode"] = time.time() - t
@@ -146,9 +190,7 @@ def clean(
         elif masks_npz:
             # supplied masks (the quality gate feeds in the CPU reference's own) skip segmentation
             # and the extension below, so the comparison isolates LaMa
-            masks = np.unpackbits(np.load(io.BytesIO(masks_npz))["masks"], axis=-1)[
-                :, :H, :W
-            ].astype(bool)
+            masks = np.unpackbits(supplied["masks"], axis=-1)[:, :H, :W].astype(bool)
             timings["masks"] = time.time() - t
         else:
             masks[need] = people_masks(imgs[need], dilate_px=dilate, batch_size=mask_batch)
@@ -213,6 +255,7 @@ def clean(
             masks=np.packbits(masks, axis=-1),
             shape=np.array([n, H, W]),
             indices=np.array(indices),
+            source_indices=np.array(indices),
             source_pts=np.array([frame["sourcePts"] for frame in provenance["frames"]]),
             source_time_base=np.array(provenance["sourceTimeBase"]),
             source_sha256=np.array(provenance["sourceSha256"]),

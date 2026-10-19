@@ -98,6 +98,9 @@ def multiperson_graph(limit: int, marble: str, objects: bool = True, finetune: b
     stages, deps, world = world_half(marble)
     stages += ["pi3x", "frame_align", "tracks"]
     deps.update({"pi3x": [], "frame_align": ["pi3x"], "tracks": ["pi3x"]})
+    if "clean" in deps:
+        # Video cleaning uses the complete tracked instance masks on their exact source grid.
+        deps["clean"].append("tracks")
     motions = []
     for i in range(limit):
         prep, frozen, motion = f"person_prep_{i:02d}", f"lhm_frozen_{i:02d}", f"lhm_motion_{i:02d}"

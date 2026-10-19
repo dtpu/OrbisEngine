@@ -13,6 +13,8 @@ from urllib.parse import quote
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from scripts.package_source_audio import validate_source_media
+
 WORLD_SUFFIXES = {"video": "clean", "both": "clean", "image": "image", "multi": "multi"}
 ASSET_SUFFIXES = {
     ".json",
@@ -115,6 +117,7 @@ def asset_path(root: Path, relative: str, *, require_file: bool = True) -> Path:
     }
     allowed = (
         relative == source_relative
+        or relative == f"worlds/{name}-4d/media/source.mp4"
         or relative in world_files
         or (relative.startswith(f"worlds/{name}-4d/") and path.suffix.lower() in ASSET_SUFFIXES)
     )
@@ -186,6 +189,14 @@ def scene_manifest(root: Path) -> dict | None:
         source = Path(described["source"])
         video = f"clips/{name}/source{source.suffix.lower()}"
         asset_path(root, video)
+        audio_path = asset_path(root, base + "audio.json")
+        audio = read_json(audio_path)
+        delivered_video = validate_source_media(
+            audio_path.parent, audio, described.get("sourceSha256")
+        )
+        if delivered_video:
+            video = base + delivered_video
+            asset_path(root, video)
         options = described.get("options") or {}
         mode = options.get("marble", "video")
         world = "none"

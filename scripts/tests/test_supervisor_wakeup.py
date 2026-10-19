@@ -83,3 +83,132 @@ def test_once_and_watch_are_mutually_exclusive():
     with pytest.raises(SystemExit) as error:
         supervisor.main(["--once", "--watch"])
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize("turns", [1, 3])
+def test_fast_detached_finish_on_last_turn_resumes_on_next_pass(tmp_path, monkeypatch, turns):
+    from orchestrator.agent.contracts import AgentResult
+    from orchestrator.agent.harness import HarnessAgent, HarnessOutcome
+
+    run = supervisor.open_run(tmp_path, run_id="fast-run", name="clip", source=None)
+    journal = Journal(run)
+    calls = []
+
+    def agent_turn(*args, **kwargs):
+        calls.append(len(journal.entries()))
+        if len(calls) <= turns:
+            attempt = f"attempt-{len(calls)}"
+            journal.append("step.started", step="review", attempt=attempt, number=len(calls))
+            # The detached child finishes while the harness still prepares its final
+            # message, so RunSession.turn observes BOTH events before returning.
+            journal.append("step.finished", step="review", attempt=attempt, status="succeeded")
+        else:
+            assert journal.active_attempts() == {}
+            assert journal.last_status("review") == "succeeded"
+            journal.append("question", question="Review the next bounded action")
+        return HarnessOutcome(AgentResult(status="completed", transcript_path="inert"))
+
+    passes = 0
+
+    class EndCheck(Exception):
+        pass
+
+    def tick(_):
+        nonlocal passes
+        passes += 1
+        if passes == 1:
+            # The fix must not exceed this pass's budget to evade the race.
+            assert len(calls) == turns
+        if passes == 3:
+            raise EndCheck
+
+    monkeypatch.setattr(supervisor, "repository_from_environment", lambda: None)
+    monkeypatch.setattr(
+        HarnessPolicy,
+        "from_environment",
+        lambda: HarnessPolicy(kind="command", command=("unused",)),
+    )
+    monkeypatch.setattr(HarnessAgent, "run", agent_turn)
+    monkeypatch.setattr(supervisor.time, "sleep", tick)
+    with pytest.raises(EndCheck):
+        supervisor.main(
+            [
+                "--runs",
+                str(tmp_path),
+                "--run-id",
+                "fast-run",
+                "--watch",
+                "--turns",
+                str(turns),
+                "--push-after",
+                "3600",
+            ]
+        )
+    assert len(calls) == turns + 1
+    assert journal.unanswered() == "Review the next bounded action"
+    assert len([e for e in journal.entries() if e.kind == "step.started"]) == turns
+
+
+@pytest.mark.parametrize("mode", ["active", "idle", "question", "finished", "paused", "error"])
+def test_fast_work_followup_does_not_bypass_waiting_or_backoff(tmp_path, monkeypatch, mode):
+    from orchestrator.agent.contracts import AgentResult
+    from orchestrator.agent.harness import HarnessAgent, HarnessOutcome
+
+    run = supervisor.open_run(tmp_path, run_id="held-run", name="clip", source=None)
+    journal = Journal(run)
+    calls = []
+
+    def agent_turn(*args, **kwargs):
+        calls.append(1)
+        if mode != "idle":
+            journal.append("step.started", step="review", attempt="one", number=1)
+            if mode != "active":
+                journal.append("step.finished", step="review", attempt="one", status="succeeded")
+        if mode == "question":
+            journal.append("question", question="Operator decision required")
+        elif mode == "finished":
+            journal.append("run.finished", status="succeeded")
+        elif mode == "paused":
+            (run / "paused").touch()
+        result = AgentResult(
+            status="stalled" if mode == "error" else "completed",
+            transcript_path="inert",
+            error="silent" if mode == "error" else None,
+        )
+        return HarnessOutcome(result)
+
+    passes = 0
+
+    class EndCheck(Exception):
+        pass
+
+    def tick(_):
+        nonlocal passes
+        passes += 1
+        if passes == 3:
+            raise EndCheck
+
+    monkeypatch.setattr(supervisor, "repository_from_environment", lambda: None)
+    monkeypatch.setattr(
+        HarnessPolicy,
+        "from_environment",
+        lambda: HarnessPolicy(kind="command", command=("unused",)),
+    )
+    monkeypatch.setattr(HarnessAgent, "run", agent_turn)
+    monkeypatch.setattr(supervisor.time, "sleep", tick)
+    with pytest.raises(EndCheck):
+        supervisor.main(
+            [
+                "--runs",
+                str(tmp_path),
+                "--run-id",
+                "held-run",
+                "--watch",
+                "--turns",
+                "1",
+                "--push-after",
+                "3600",
+            ]
+        )
+    assert len(calls) == 1
+    assert len(journal.active_attempts()) == (1 if mode == "active" else 0)

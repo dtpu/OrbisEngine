@@ -846,7 +846,7 @@ export default function RunConsole({ runId }: { runId: string }) {
                     ? selected.freshInference === false
                       ? 'Saved inputs were reused without creating a new attempt.'
                       : 'This stage has not run yet, so there is nothing to look at.'
-                    : 'This attempt produced no files.'
+                    : 'No artifact links recorded for this attempt.'
                 }
               />
 

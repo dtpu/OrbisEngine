@@ -77,6 +77,8 @@ class HarnessPolicy:
     idle_nudges: int = 2
     # Explicit operator grants for shared state outside the review workspace; never inferred.
     writable_roots: tuple[str, ...] = ()
+    # Explicit network grant for commands inside Codex's workspace-write sandbox.
+    network_access: bool = False
     command: tuple[str, ...] = ()
     # Only these host variables reach the harness. API credentials must be listed explicitly.
     passthrough: tuple[str, ...] = ("PATH", "HOME", "OPENAI_API_KEY")
@@ -89,6 +91,10 @@ class HarnessPolicy:
             raise ValueError("a command harness needs an explicit command")
         if self.sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
             raise ValueError(f"unknown sandbox mode {self.sandbox!r}")
+        if not isinstance(self.network_access, bool):
+            raise ValueError("network access must be a boolean")
+        if self.network_access and (self.kind != "codex" or self.sandbox != "workspace-write"):
+            raise ValueError("network access requires the Codex workspace-write sandbox")
         if self.timeout_seconds < 1:
             raise ValueError("harness timeout must be positive")
         if self.idle_seconds < 0:
@@ -115,6 +121,9 @@ class HarnessPolicy:
             ) from None
         if not isinstance(writable_roots, list):
             raise ValueError("WANDER_REVIEW_WRITE_ROOTS must be a JSON list of directories")
+        network = environ.get("WANDER_REVIEW_NETWORK", "false").strip().lower()
+        if network not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            raise ValueError("WANDER_REVIEW_NETWORK must be true/false, 1/0, yes/no, or on/off")
         return cls(
             kind=kind,
             model=environ.get("WANDER_REVIEW_MODEL") or None,
@@ -123,6 +132,7 @@ class HarnessPolicy:
             idle_seconds=int(environ.get("WANDER_REVIEW_IDLE", "300")),
             idle_nudges=int(environ.get("WANDER_REVIEW_NUDGES", "2")),
             writable_roots=tuple(writable_roots),
+            network_access=network in {"true", "1", "yes", "on"},
             command=command,
         )
 
@@ -152,6 +162,11 @@ class HarnessPolicy:
                     "sandbox_workspace_write.writable_roots="
                     + json.dumps(self.writable_roots, ensure_ascii=False),
                 ]
+            if self.sandbox == "workspace-write":
+                command += [
+                    "-c",
+                    "sandbox_workspace_write.network_access=" + json.dumps(self.network_access),
+                ]
             return (*command, "-")
         if self.kind == "codex":
             # Prompt on stdin ("-"); edits are confined to the workspace by Codex's own sandbox.
@@ -169,6 +184,11 @@ class HarnessPolicy:
                 command += ["--model", self.model]
             for root in self.writable_roots:
                 command += ["--add-dir", root]
+            if self.sandbox == "workspace-write":
+                command += [
+                    "-c",
+                    "sandbox_workspace_write.network_access=" + json.dumps(self.network_access),
+                ]
             return (*command, "-")
         if self.kind == "claude":
             command = [

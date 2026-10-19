@@ -1,7 +1,8 @@
 """Persistent allowance for runner-controlled paid Modal executions.
 
-The three-execution ceiling is per original source SHA and logical stage, across candidates.
+The default three-execution ceiling is per original source SHA and logical stage, across candidates.
 Inpainting operations share one allowance; individual LHM track suffixes have separate allowances.
+An explicit, bounded operator authorization may grant a single next execution of each named operation.
 This does not count direct experiment scripts, SSH fine-tuning, OpenAI, or Marble generation.
 The orchestrator must account for those separately. Costs here are evidence, not dollar budgets.
 
@@ -29,6 +30,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = "wander.pipeline-attempts/1"
+AUTHORIZATION_SCHEMA = "wander.paid-stage-authorization/1"
+AUTHORIZATION_FIELDS = {
+    "schema",
+    "id",
+    "sourceSha256",
+    "candidate",
+    "reason",
+    "operatorApproval",
+    "expiresAtEpoch",
+    "operations",
+}
 MAX_EXECUTIONS = 3
 INITIAL_HYPOTHESIS = "Initial paid execution using the recorded source, parameters, and code."
 STATUSES = {"pending", "unknown", "completed", "failed"}
@@ -47,6 +59,65 @@ def sha256_file(path):
 
 def logical_stage(operation):
     return "inpainting" if operation in {"clean", "clean_first", "clean_multi"} else operation
+
+
+def _validate_authorization(permit):
+    """Validate scope without checking time, so expired claims remain reconcilable."""
+    if not isinstance(permit, dict) or set(permit) != AUTHORIZATION_FIELDS:
+        raise ValueError("Malformed paid-stage authorization fields")
+    if (
+        permit["schema"] != AUTHORIZATION_SCHEMA
+        or not isinstance(permit["id"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", permit["id"])
+        or not isinstance(permit["sourceSha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", permit["sourceSha256"])
+        or any(
+            not isinstance(permit[key], str) or not permit[key].strip()
+            for key in ("candidate", "reason", "operatorApproval")
+        )
+    ):
+        raise ValueError("Malformed paid-stage authorization identity or approval")
+    expiry = permit["expiresAtEpoch"]
+    try:
+        valid_expiry = type(expiry) in (int, float) and math.isfinite(expiry) and expiry > 0
+    except OverflowError:
+        valid_expiry = False
+    if not valid_expiry:
+        raise ValueError("Paid-stage authorization expiry must be finite and positive")
+    operations = permit["operations"]
+    if (
+        not isinstance(operations, dict)
+        or not operations
+        or any(
+            not isinstance(operation, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+", operation)
+            or operation == "inpainting"
+            or type(count) is not int
+            or count < 0
+            for operation, count in operations.items()
+        )
+    ):
+        raise ValueError("Paid-stage authorization requires concrete operations and integer counts")
+
+
+def _unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate paid-stage authorization JSON key")
+        result[key] = value
+    return result
+
+
+def _read_authorization(path):
+    path = Path(path).resolve()
+    try:
+        raw = path.read_bytes()
+        permit = json.loads(raw, object_pairs_hook=_unique_json_keys)
+    except (OSError, ValueError):
+        raise ValueError("Paid-stage authorization is unreadable or malformed") from None
+    _validate_authorization(permit)
+    return {**permit, "path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
 CODE_FILES = {
@@ -272,6 +343,7 @@ class StageAttempts:
         ):
             raise ValueError("Invalid paid-stage source aliases")
         identifiers, counts, direct_claim_sources = set(), {}, set()
+        authorization_hashes, authorized_operations = {}, set()
         for attempt in data["attempts"]:
             if not isinstance(attempt, dict):
                 raise ValueError("Malformed saved paid-stage attempt")  # noqa: TRY004 - malformed persisted data
@@ -315,6 +387,29 @@ class StageAttempts:
             # capped in begin(), but an existing fourth execution must never disappear.
             if claim.get("number") != counts[key]:
                 raise ValueError("Invalid saved paid-stage execution count")
+            if "authorization" in claim:
+                permit = claim["authorization"]
+                if (
+                    not isinstance(permit, dict)
+                    or set(permit) != AUTHORIZATION_FIELDS | {"path", "sha256"}
+                    or not isinstance(permit["path"], str)
+                    or not Path(permit["path"]).is_absolute()
+                    or not isinstance(permit["sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", permit["sha256"])
+                ):
+                    raise ValueError("Malformed saved paid-stage authorization")
+                _validate_authorization({key: permit[key] for key in AUTHORIZATION_FIELDS})
+                permit_operation = permit["id"], claim.get("operation")
+                if (
+                    permit["sourceSha256"] != claim["sourceSha256"]
+                    or permit["candidate"] != claim.get("candidate")
+                    or permit["operations"].get(claim.get("operation")) != counts[key] - 1
+                    or authorization_hashes.get(permit["id"], permit["sha256"]) != permit["sha256"]
+                    or permit_operation in authorized_operations
+                ):
+                    raise ValueError("Invalid saved paid-stage authorization scope or reuse")
+                authorization_hashes[permit["id"]] = permit["sha256"]
+                authorized_operations.add(permit_operation)
         if direct_claim_sources.intersection(aliases):
             raise ValueError("Cannot alias a source hash that already owns paid-stage claims")
 
@@ -329,6 +424,7 @@ class StageAttempts:
         candidate,
         log,
         results,
+        authorization=None,
     ):
         if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
             raise ValueError("Original source SHA-256 is required for paid execution")
@@ -359,14 +455,44 @@ class StageAttempts:
                 raise ValueError(
                     "Paid execution requires evidence reconciliation of pending/unknown claims"
                 )
-            if len(prior) >= MAX_EXECUTIONS:
+            permit = None
+            if authorization is not None:
+                # Read and validate under the ledger lock: a concurrent claim must consume
+                # the approved count before another caller can inspect it.
+                permit = _read_authorization(authorization)
+                if permit["expiresAtEpoch"] <= time.time():
+                    raise ValueError("Paid-stage authorization has expired")
+                if permit["sourceSha256"] != source_sha256:
+                    raise ValueError(
+                        "Paid-stage authorization source must match the canonical source"
+                    )
+                if permit["candidate"] != str(candidate):
+                    raise ValueError("Paid-stage authorization candidate does not match")
+                if operation not in permit["operations"]:
+                    raise ValueError("Paid-stage authorization does not include this operation")
+                for item in data["attempts"]:
+                    used = item["claim"].get("authorization")
+                    if used and used["id"] == permit["id"]:
+                        if used["sha256"] != permit["sha256"]:
+                            raise ValueError(
+                                "Paid-stage authorization ID was already bound to another file hash"
+                            )
+                        if item["claim"]["operation"] == operation:
+                            raise ValueError(
+                                "Paid-stage authorization operation is already consumed"
+                            )
+                if permit["operations"][operation] != len(prior):
+                    raise ValueError(
+                        "Paid-stage authorization prior execution count does not match"
+                    )
+            if permit is None and len(prior) >= MAX_EXECUTIONS:
                 raise ValueError(
                     "Paid-stage allowance exhausted: three total executions per source/stage"
                 )
             # Different requested workflows (such as --marble both) can each make their
             # initial execution, but consume the same logical-stage allowance.
             retries = [item for item in prior if item["claim"]["operation"] == operation]
-            if retries:
+            if retries and permit is None:
                 if not explicit:
                     raise ValueError("Paid retry requires an explicit new --stage-hypothesis")
                 normalized = " ".join(hypothesis.casefold().split())
@@ -404,6 +530,8 @@ class StageAttempts:
                     }
                 ],
             }
+            if permit is not None:
+                attempt["claim"]["authorization"] = permit
             data["attempts"].append(attempt)
         return attempt
 
