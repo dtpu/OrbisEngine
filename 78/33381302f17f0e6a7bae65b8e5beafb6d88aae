@@ -1,0 +1,21 @@
+scripts/tests/test_stage_object_weights.py
+  s_df96d4a0b5840a::t_c7c67ea6543ce0 1-255
+worker/modal_stage_object_weights.py
+  s_df96d4a0b5840a::t_79aad9d121b647 1-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7833381302f17f0e6a7bae65b8e5beafb6d88aae",
+  "prompts": {},
+  "sessions": {
+    "s_df96d4a0b5840a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
