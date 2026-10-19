@@ -2503,11 +2503,10 @@ class Pipeline:
         )
         if wide and not self.a.allow_scale_spread:
             raise RuntimeError(
-                f"the depth ratio is not ONE mode at 1.0: per-frame p10/p90 {wide} at scale0 {s:.4f} "
+                f"depth ratios exceed the required spread: per-frame p10/p90 {wide} at scale0 {s:.4f} "
                 f"(want both inside {SCALE_SPREAD_BAND[0]}-{SCALE_SPREAD_BAND[1]}; medians "
-                f"{[round(r, 3) for r in ratios]}). A median near 1 over a spread this wide is two "
-                f"populations averaged, not a scale -- hpwide read p10 0.71 / p90 1.37 with medians "
-                f"0.98-1.02 while its frame was 15 deg off gravity. Read {fig}, check "
+                f"{[round(r, 3) for r in ratios]}). A fitted median near 1 does not establish "
+                f"consistent depth across the visible surfaces. Read {fig}, check "
                 f"{self.ctx / 'frame_align.log'} and the world's geometry before passing "
                 f"--allow-scale-spread."
             )
