@@ -31,7 +31,7 @@ import argparse, fcntl, hashlib, json, math, os, re, shutil, subprocess, sys, te
 from urllib.parse import quote
 from pathlib import Path
 from marble_world import submission_history
-from package_source_audio import source_audio_manifest
+from package_source_audio import source_audio_manifest, validate_source_media
 from stage_attempts import StageAttempts, command_identity
 from clean_candidates import (
     candidate_directory,
@@ -2959,10 +2959,19 @@ class Pipeline:
             )
             if doc["peopleCount"] > 1:
                 people_arg = f"&people=/worlds/{self.name}-4d/people.json"
+        audio_path = manifest.parent / "audio.json"
+        video_url = self.video_url
+        if audio_path.is_file():
+            audio = json.loads(audio_path.read_text())
+            delivered_video = validate_source_media(manifest.parent, audio, file_sha256(self.clip))
+            if delivered_video:
+                video_url = "/" + quote(
+                    (manifest.parent / delivered_video).relative_to(public_dir()).as_posix()
+                )
         base = (
             f"\n  http://127.0.0.1:5399/fourd.html?world=/{quote(world.relative_to(public_dir()).as_posix())}"
             f"&person=/worlds/{self.name}-4d/person/sequence.json{people_arg}"
-            f"&video={self.video_url}"
+            f"&video={video_url}"
         )
         if getattr(self.a, "retained_scene", None) and (manifest.parent / "scene.json").is_file():
             scene = f"/worlds/{self.name}-4d/scene.json"

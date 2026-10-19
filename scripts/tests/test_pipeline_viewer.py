@@ -329,3 +329,113 @@ def test_runner_prints_scoped_scene_link(packaged, monkeypatch, capsys):
     assert "fourd.html?scene=%2Fapi%2Fpipeline%2Fruns%2Fviewer-run%2Fviewer%2Fscene.json" in output
     assert "WANDER_API_TOKEN" in output
     assert "?world=/" not in output
+
+
+def declare_source_delivery(root, world):
+    import hashlib
+
+    source_sha = json.loads((root / "run.json").read_text())["sourceSha256"]
+    media = world / "media"
+    media.mkdir()
+    receipt = {"schema": "wander.source-media/1", "sourceSha256": source_sha}
+    for kind, name in (("video", "source.mp4"), ("audio", "original.wav")):
+        data = f"fixture {kind}".encode()
+        (media / name).write_bytes(data)
+        receipt[kind] = {
+            "url": name,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "mode": "stream-copy",
+        }
+    (media / "provenance.json").write_text(json.dumps(receipt))
+    manifest = {
+        "schema": "wander.audio/1",
+        "source": {"hasAudio": False, "sha256": source_sha, "videoUrl": "media/source.mp4"},
+        "original": {"url": "media/original.wav", "offsetSeconds": 0},
+        "provenance": {"delivery": "media/provenance.json"},
+        "timeline": {"durationSeconds": 1},
+    }
+    (world / "audio.json").write_text(json.dumps(manifest))
+    return manifest
+
+
+def test_verified_lossless_video_selected_and_range_served(packaged):
+    case, root, world, source = packaged
+    declare_source_delivery(root, world)
+    params = scene_manifest(root)["params"]
+    assert params["video"].endswith("/media/source.mp4")
+    response = case.client.get(params["video"], headers={**AUTH, "Range": "bytes=0-6"})
+    assert response.status_code == 206 and response.content == b"fixture"
+    assert response.headers["content-type"] == "video/mp4"
+    base = params["video"].rsplit("/", 1)[0]
+    assert case.client.get(base + "/original.wav", headers=AUTH).content == b"fixture audio"
+    # The immutable submitted/exported source is still required even with a derivative.
+    source.unlink()
+    assert scene_manifest(root) is None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "video",
+        "audio",
+        "receipt",
+        "source-sha",
+        "output-sha",
+        "traversal",
+        "cross-run",
+        "symlink",
+        "directory-symlink",
+        "source-shape",
+        "provenance-shape",
+    ],
+)
+def test_invalid_lossless_delivery_hides_preview(packaged, failure):
+    case, root, world, source = packaged
+    manifest = declare_source_delivery(root, world)
+    media = world / "media"
+    if failure in {"video", "audio", "receipt"}:
+        (
+            media
+            / {"video": "source.mp4", "audio": "original.wav", "receipt": "provenance.json"}[
+                failure
+            ]
+        ).unlink()
+    elif failure == "source-sha":
+        manifest["source"]["sha256"] = "0" * 64
+    elif failure == "output-sha":
+        (media / "source.mp4").write_bytes(b"corrupt")
+    elif failure in {"traversal", "cross-run"}:
+        manifest["source"]["videoUrl"] = (
+            "../source.mp4" if failure == "traversal" else "/worlds/other-4d/media/source.mp4"
+        )
+    elif failure == "symlink":
+        video = media / "source.mp4"
+        video.unlink()
+        video.symlink_to(source)
+    elif failure == "directory-symlink":
+        moved = world / "other-media"
+        media.rename(moved)
+        media.symlink_to(moved, target_is_directory=True)
+    elif failure == "source-shape":
+        manifest["source"] = []
+    else:
+        manifest["provenance"] = []
+    (world / "audio.json").write_text(json.dumps(manifest))
+    assert scene_manifest(root) is None
+    assert (
+        case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH).status_code
+        == 404
+    )
+
+
+def test_only_designated_package_video_is_allowlisted(packaged):
+    case, root, world, source = packaged
+    declare_source_delivery(root, world)
+    (world / "other.mp4").write_bytes(b"unrelated")
+    prefix = "/api/pipeline/runs/viewer-run/viewer/assets/"
+    assert (
+        case.client.get(
+            prefix + (world / "other.mp4").relative_to(root / "public").as_posix(), headers=AUTH
+        ).status_code
+        == 404
+    )
