@@ -14,6 +14,7 @@ from orchestrator.cli import RunContext, completed, graph_shape, in_flight, plan
 from orchestrator.journal import Journal
 from orchestrator.steps import STEPS, base_step, needs_of
 from orchestrator.api.viewer import register_viewer_routes, scene_manifest
+from orchestrator.worker_presence import worker_status
 
 
 def read_json(path: Path) -> dict:
@@ -235,6 +236,7 @@ def describe_progress(root: Path) -> dict:
                 }
     return {
         "runId": snapshot.run_id,
+        "worker": worker_status(root.parent, snapshot.run_id),
         "finished": journal.finished(),
         "paused": (root / "paused").exists(),
         "question": journal.unanswered(),

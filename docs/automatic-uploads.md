@@ -13,6 +13,24 @@ its configured runs root. Do not carry a source-specific paid-stage permit into 
 unrelated uploads. This change does not provision a hosted worker or turn a local API into a
 public multi-user service.
 
+The upload setup check verifies that a recent supervisor heartbeat exists for the API's runs
+root and accepts new uploads. A worker scoped with `--run-id`, a one-pass worker, or a worker
+watching another directory does not satisfy that check. When no matching worker is connected,
+the form offers **Queue for later** and retains the upload for a worker to pick up. API clients
+may still submit while workers are offline; submission stores a run, not a promise of immediate
+execution.
+
+The run page updates worker availability while processing. Heartbeats refresh every five seconds,
+including during long agent turns, and expire after 45 seconds without an update. A disconnect
+does not fail the run or repeat a provider call; detached stages may still finish. Restarting a
+matching supervisor resumes the existing directory under the ordinary admission checks. Paused,
+canceled and finished runs retain their existing state.
+
+Worker status is a liveness signal, not proof of provider access, spending authorization,
+available GPU capacity, or successful reconstruction. It requires the API and worker to share
+the same runs directory. Older workers without these heartbeat records appear unavailable until
+updated. The legacy `WANDER_HEARTBEAT` timestamp remains supported for process monitoring.
+
 Automatic processing skips the human cleaned-frame pause with the existing `--no-gate`
 option. The agent still inspects outputs and runs the existing reconstruction checks. It cannot
 change the submitted run through extra stage flags or automatically retry a paid stage.

@@ -23,6 +23,7 @@ from orchestrator.journal import Journal
 from orchestrator.run_policy import hands_off
 from orchestrator.session import RunSession
 from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
+from orchestrator.worker_presence import WorkerPresence
 from orchestrator.steps import (
     STEPS,
     base_step,
@@ -178,36 +179,45 @@ def main(argv: list[str] | None = None) -> int:
     # because its agent stopped.
     pushed: dict[str, tuple[float, int]] = {}
 
-    while True:
-        if heartbeat:
-            Path(heartbeat).write_text(f"{time.time()}\n")
-        pending = runs_needing_work(root)
-        if args.run_id:
-            import json
-
-            pending = [
-                d for d in pending if json.loads((d / RUN_FILE).read_text())["runId"] == args.run_id
-            ]
-        for run_dir in pending:
-            # One pass per run at a time. A step runs detached and outlives the turn that
-            # started it, so a run whose journal has not moved is a run whose agent is
-            # waiting on something -- handing it a second agent is how a 1600-credit world
-            # gets submitted twice.
-            if not single_pass and not due(run_dir, pushed, args.push_after):
-                continue
-            outcome = work_on(run_dir, repository, policy, args.turns)
-            print(outcome.message, flush=True)
-            if outcome.resume_next_pass:
-                # Continue useful work on the next pass, still bounded by --turns
-                # and the ordinary admission checks. Do not fabricate an unseen event.
-                pushed.pop(str(run_dir), None)
-            else:
-                # Keep the cursor the session actually observed. A reply can arrive between
-                # its final read and this assignment; reading again here would swallow it.
-                pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
-        if single_pass:
-            return 0
-        time.sleep(args.interval)
+    with WorkerPresence(
+        root,
+        run_id=args.run_id,
+        watcher=not single_pass,
+        heartbeat=Path(heartbeat) if heartbeat else None,
+    ) as presence:
+        while True:
+            pending = runs_needing_work(root)
+            if args.run_id:
+                pending = [
+                    d
+                    for d in pending
+                    if json.loads((d / RUN_FILE).read_text())["runId"] == args.run_id
+                ]
+            for run_dir in pending:
+                # One pass per run at a time. A step runs detached and outlives the turn that
+                # started it, so a run whose journal has not moved is a run whose agent is
+                # waiting on something -- handing it a second agent is how a 1600-credit world
+                # gets submitted twice.
+                if not single_pass and not due(run_dir, pushed, args.push_after):
+                    continue
+                run_id = json.loads((run_dir / RUN_FILE).read_text())["runId"]
+                presence.set_active(run_id)
+                try:
+                    outcome = work_on(run_dir, repository, policy, args.turns)
+                finally:
+                    presence.set_active(None)
+                print(outcome.message, flush=True)
+                if outcome.resume_next_pass:
+                    # Continue useful work on the next pass, still bounded by --turns
+                    # and the ordinary admission checks. Do not fabricate an unseen event.
+                    pushed.pop(str(run_dir), None)
+                else:
+                    # Keep the cursor the session actually observed. A reply can arrive between
+                    # its final read and this assignment; reading again here would swallow it.
+                    pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
+            if single_pass:
+                return 0
+            time.sleep(args.interval)
 
 
 def owner_of(run_dir: Path) -> str | None:

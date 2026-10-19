@@ -40,6 +40,7 @@ from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES, live_run_status
 from orchestrator.steps import STEPS, RunOptions, base_step
+from orchestrator.worker_presence import worker_status
 
 GRAPH_VERSION = "wander.agent-run/1"
 
@@ -239,7 +240,24 @@ def create_app(
         del user
         from orchestrator.doctor import inspect_setup
 
-        return inspect_setup(options.model_dump(mode="json"))
+        report = inspect_setup(options.model_dump(mode="json"))
+        worker = worker_status(review_workspace_root)
+        available = worker["status"] == "available"
+        report["worker"] = worker
+        report["checks"].append(
+            {
+                "name": "worker.watch",
+                "status": "okay" if available else "blocked",
+                "detail": worker["detail"],
+                "action": ""
+                if available
+                else "Connect a worker for new uploads, or queue for later.",
+            }
+        )
+        if not available:
+            report["ready"] = False
+            report["status"] = "blocked"
+        return report
 
     def require_supported_budget(budget: BudgetPolicy) -> None:
         if budget.maximum_attempts_by_stage or budget.maximum_provider_operations:
