@@ -216,11 +216,14 @@ def test_scale_and_finetune_use_original_world_even_when_refinement_is_retained(
     p.state.record("finetune", status="ok")
     p.a.force = "finetune"
     commands = []
+    monkeypatch.setattr(run_clip, "SHARE", p.ctx)
 
     def invoke(command, log, **kwargs):
         commands.append(command)
         if "--diag" in command:
             log.write_text("(ratio 1.000), p10 0.98 p90 1.02")
+            tag = command[command.index("--tag") + 1]
+            (p.ctx / f"{tag}-depth-ratio.png").write_bytes(b"diagnostic fixture")
 
     monkeypatch.setattr(run_clip, "run", invoke)
     p.diag(1, 0)

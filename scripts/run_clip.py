@@ -2418,6 +2418,8 @@ class Pipeline:
                 f"{scale0:.6f}",
                 "--tag",
                 tag,
+                "--share",
+                str(SHARE),
             ],
             log,
             attempts=1,
@@ -2430,7 +2432,10 @@ class Pipeline:
         ]
         if not rows:
             raise RuntimeError(f"the depth-ratio diagnostic printed no ratios; see {log}")
-        return rows, SHARE / f"{tag}-depth-ratio.png"
+        figure = SHARE / f"{tag}-depth-ratio.png"
+        if not figure.is_file() or figure.stat().st_size == 0:
+            raise RuntimeError(f"the depth-ratio diagnostic produced no figure; see {log}")
+        return rows, figure
 
     def person_ply(self) -> Path:
         p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
@@ -2477,8 +2482,7 @@ class Pipeline:
             for _, lo, hi in rows
             if not (SCALE_SPREAD_BAND[0] <= lo and hi <= SCALE_SPREAD_BAND[1])
         ]
-        self.state.record(
-            "_scale",
+        report = dict(
             scale0=s,
             geomean=gm,
             ratios=ratios,
@@ -2490,6 +2494,9 @@ class Pipeline:
             spreadOk=not wide,
             figure=str(fig),
         )
+        # Keep the measurements available to the orchestrator even when a quality gate fails.
+        (self.ctx / "scale-fit.json").write_text(json.dumps(report, indent=2) + "\n")
+        self.state.record("_scale", **report)
         say(
             f"   fitted scale0 {s:.4f}, ratios {[round(r, 3) for r in ratios]}, geomean {gm:.4f}, "
             f"p10 {min(p10):.3f}-{max(p10):.3f} p90 {min(p90):.3f}-{max(p90):.3f}"
@@ -2510,7 +2517,7 @@ class Pipeline:
                 f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]} at any single scale (geomean fit {s:.4f} "
                 f"gives {gm:.4f}). That is Marble geometry error or SfM drift, not a scale error -- it "
                 f"means the avatar reads ~{abs(1 - min(ratios)) * 100:.0f}% wrong at one end of the "
-                f"clip. Read share/{self.name}-diag-*-depth-ratio.png, then either re-trim the clip to "
+                f"clip. Read {fig}, then either re-trim the clip to "
                 f"the window that fits or pass --allow-scale-spread to ship the geometric-mean fit "
                 f"with that caveat (gym, atrium and selfie did)."
             )
