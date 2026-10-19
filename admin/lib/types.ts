@@ -231,6 +231,7 @@ export interface SetupReport {
 
 export interface WorkerStatus {
   status: 'available' | 'unavailable';
+  reason?: 'admission_busy' | 'admission_exhausted';
   matchingWorkers: number;
   busyWorkers: number;
   detail: string;

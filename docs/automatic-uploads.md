@@ -34,11 +34,44 @@ that setting grants a source-specific exception, which cannot authorize unrelate
 Do not reuse an exhausted allowance or reset the shared ledger to enable a service. Provider
 spending authorization is still required before enabling paid processing.
 
+### Limit the number of uploads admitted
+
+For a finite trial, add `--max-uploads 1`:
+
+```sh
+uv run --locked --group inference python -m orchestrator.supervisor \
+  --runs /absolute/path/to/shared/runs --uploads-only --watch --max-uploads 1
+```
+
+This persistently limits how many distinct uploads this runs root can admit. An admission is
+recorded before starting its agent. Restarting the supervisor uses the same history; failures
+and cancellation do not refund a slot. A different limit is refused. Keep the runs root and its
+admission history together; deleting or replacing that history is not a supported reset.
+
+The bounded worker processes one admitted upload at a time. A paused upload retains its place.
+A finished upload retains its place while detached stages remain unresolved. The next upload
+can start only after that work settles and if unused admission slots remain. Missing or changed
+run identity and malformed history stop admission instead of freeing a slot. Existing automatic
+work that already started cannot silently be adopted into a new allowance.
+
+While occupied, the worker reports availability only for its admitted run. Once its allowance
+is exhausted, it no longer advertises availability for new uploads. The API can still store new
+uploads with **Queue for later**; storing a video does not consume an admission or start inference.
+Updated supervisors sharing this root respect its persisted policy even if they omit the limit;
+they cannot process automatic uploads outside the bounded worker. Update all supervisors before
+using this control. Manual work remains separate.
+
+This is an upload admission count, not a dollar ceiling, provider-operation allowance, or total
+runtime limit. It covers these supervisors; direct runner, `wander`, and provider invocations
+remain outside it. Provider spending controls, the shared stage ledger, and the intended VLM
+request allowance remain required. A one-upload allowance does not authorize a new paid run.
+
 Worker presence records include their processing mode. An uploads-only worker is available for
-`hands_off: true` submissions and runs, and unavailable for manual ones. Update the API with
-the worker so it understands that scope; older APIs ignore the new record version instead of
-reporting a worker that cannot process their request. Existing version-one worker records remain
-readable as unrestricted workers by the updated API.
+`hands_off: true` submissions and runs, and unavailable for manual ones. On a bounded root, a
+generic worker continues serving manual runs and reports that restricted capability. Update the
+API with the worker so it understands that scope; older APIs ignore version-three records instead
+of reporting a worker that cannot process their request. The updated reader still accepts
+version-one unrestricted workers and version-two workers with automatic-upload scope.
 
 The upload setup check verifies that a recent supervisor heartbeat exists for the API's runs
 root and accepts new uploads. A worker scoped with `--run-id`, a one-pass worker, or a worker

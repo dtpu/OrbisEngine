@@ -69,3 +69,26 @@ test('worker reconnect updates the message without masking terminal or manual ho
   assert.equal(workerNotice({ ...connected, handsOff: false }), null);
   assert.equal(workerNotice(progress), 'This server has not reported worker availability.');
 });
+
+test('admission limits keep queued uploads distinct from disconnected workers', () => {
+  const exhausted: RunProgress = {
+    ...offline,
+    worker: { ...offline.worker!, reason: 'admission_exhausted' },
+  };
+  const busy: RunProgress = {
+    ...offline,
+    worker: { ...offline.worker!, reason: 'admission_busy' },
+  };
+  assert.equal(progressTitle(exhausted), 'Upload saved — processing limit reached');
+  assert.match(workerNotice(exhausted)!, /upload is saved.*limit has been reached.*operator/);
+  assert.doesNotMatch(workerNotice(exhausted)!, /connect|Processing automatically/);
+  assert.equal(progressTitle(busy), 'Upload queued');
+  assert.match(workerNotice(busy)!, /worker is handling another upload.*remains queued/);
+  for (const limited of [exhausted, busy]) {
+    assert.equal(progressTitle({ ...limited, currentStages: ['clean'] }), 'Running clean');
+    assert.equal(progressTitle({ ...limited, paused: true }), 'Run paused');
+    assert.equal(progressTitle({ ...limited, finished: 'canceled' }), 'Run canceled');
+    assert.equal(workerNotice({ ...limited, finished: 'failed' }), null);
+    assert.equal(workerNotice({ ...limited, paused: true }), null);
+  }
+});

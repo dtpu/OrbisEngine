@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 SCHEMA = "wander.worker-presence"
-VERSION = 2
+VERSION = 3
 FRESHNESS_SECONDS = 45.0
 REFRESH_SECONDS = 5.0
 MAX_RECORD_BYTES = 16_384
@@ -31,6 +31,7 @@ def _open_directory(root: Path) -> int:
 def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bool = False) -> dict:
     """Count fresh matching supervisors without disclosing local process information."""
     matching = busy = 0
+    admission_reason = None
     if root is not None:
         directory = None
         try:
@@ -57,10 +58,14 @@ def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bo
                     if (
                         record.get("schema") != SCHEMA
                         or type(record.get("version")) is not int
-                        or record["version"] not in (1, VERSION)
+                        or record["version"] not in (1, 2, VERSION)
+                        or (record["version"] >= 2 and type(record.get("uploads_only")) is not bool)
                         or (
                             record["version"] == VERSION
-                            and type(record.get("uploads_only")) is not bool
+                            and (
+                                type(record.get("manual_only")) is not bool
+                                or (record["manual_only"] and record["uploads_only"])
+                            )
                         )
                         or record.get("runs_root") != str(resolved)
                         or type(record.get("watcher")) is not bool
@@ -68,18 +73,17 @@ def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bo
                         or not _run_id(record["run_id"])
                         or "active_run_id" not in record
                         or not _run_id(record["active_run_id"])
+                        or record.get("admission") not in (None, "occupied", "exhausted")
                         or type(seen) not in (int, float)
                         or not math.isfinite(seen)
                         or not 0 <= time.time() - seen <= FRESHNESS_SECONDS
                     ):
                         continue
-                    # Version 1 predates restricted workers. Version 2 is deliberately
-                    # incompatible with old readers, which only accepted version 1.
-                    if (
-                        record["version"] == VERSION
-                        and record["uploads_only"]
-                        and hands_off is not True
-                    ):
+                    # Old readers ignore versions whose capabilities they cannot represent.
+                    # Version 1 is unrestricted; version 2 adds uploads-only scope.
+                    if record["version"] >= 2 and record["uploads_only"] and hands_off is not True:
+                        continue
+                    if record["version"] == VERSION and record["manual_only"] and hands_off is True:
                         continue
                     selected, active = record["run_id"], record["active_run_id"]
                     if selected is not None and active not in (None, selected):
@@ -90,6 +94,11 @@ def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bo
                         matches = selected in (None, run_id)
                     else:
                         matches = active == run_id
+                    if hands_off is True and record.get("uploads_only") is True:
+                        if record.get("admission") == "exhausted":
+                            admission_reason = "admission_exhausted"
+                        elif record.get("admission") == "occupied" and admission_reason is None:
+                            admission_reason = "admission_busy"
                     if matches:
                         matching += 1
                         busy += active is not None
@@ -100,14 +109,22 @@ def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bo
         finally:
             if directory is not None:
                 os.close(directory)
+    reason = admission_reason if not matching else None
     return {
+        **({"reason": reason} if reason else {}),
         "status": "available" if matching else "unavailable",
         "matchingWorkers": matching,
         "busyWorkers": busy,
         "detail": (
             "A matching supervisor has a recent heartbeat."
             if matching
-            else "No matching supervisor has a recent heartbeat."
+            else (
+                "The upload admission allowance is exhausted; this upload remains queued."
+                if reason == "admission_exhausted"
+                else "The upload supervisor is occupied with an admitted run; this upload remains queued."
+                if reason == "admission_busy"
+                else "No matching supervisor has a recent heartbeat."
+            )
         ),
     }
 
@@ -122,10 +139,17 @@ class WorkerPresence:
         run_id: str | None = None,
         watcher: bool = True,
         uploads_only: bool = False,
+        manual_only: bool = False,
         heartbeat: Path | None = None,
         refresh_interval: float = REFRESH_SECONDS,
     ):
-        if not _run_id(run_id) or type(watcher) is not bool or type(uploads_only) is not bool:
+        if (
+            not _run_id(run_id)
+            or type(watcher) is not bool
+            or type(uploads_only) is not bool
+            or type(manual_only) is not bool
+            or (uploads_only and manual_only)
+        ):
             raise ValueError("Invalid supervisor scope")
         if not math.isfinite(refresh_interval) or not 0 < refresh_interval < FRESHNESS_SECONDS:
             raise ValueError("Heartbeat interval must be positive and below the freshness limit")
@@ -133,10 +157,12 @@ class WorkerPresence:
         self.run_id = run_id
         self.watcher = watcher
         self.uploads_only = uploads_only
+        self.manual_only = manual_only
         self.heartbeat = heartbeat
         self.refresh_interval = refresh_interval
         self.name = f"{uuid.uuid4()}.json"
         self._active: str | None = None
+        self._admission: str | None = None
         self._directory: int | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -167,6 +193,42 @@ class WorkerPresence:
         if self._error is not None and exc_type is None:
             raise RuntimeError("Supervisor heartbeat stopped refreshing") from self._error
 
+    def set_scope(
+        self,
+        *,
+        run_id: str | None,
+        watcher: bool,
+        active_run_id: str | None = None,
+        admission: str | None = None,
+        manual_only: bool = False,
+    ) -> None:
+        """Publish admission scope and activity together under the heartbeat lock."""
+        if (
+            not _run_id(run_id)
+            or type(watcher) is not bool
+            or not _run_id(active_run_id)
+            or admission not in (None, "occupied", "exhausted")
+            or type(manual_only) is not bool
+            or (manual_only and self.uploads_only)
+            or (run_id is not None and active_run_id not in (None, run_id))
+        ):
+            raise ValueError("Invalid supervisor scope")
+        with self._lock:
+            if self._error is not None:
+                raise RuntimeError("Supervisor heartbeat stopped refreshing")
+            self.run_id = run_id
+            self.watcher = watcher
+            self._active = active_run_id
+            self._admission = admission
+            self.manual_only = manual_only
+            try:
+                self._write()
+            except OSError as error:
+                self._error = error
+                self._stop.set()
+                self._remove()
+                raise RuntimeError("Supervisor heartbeat stopped refreshing") from error
+
     def set_active(self, run_id: str | None) -> None:
         if not _run_id(run_id) or (self.run_id is not None and run_id not in (None, self.run_id)):
             raise ValueError("Active run does not match supervisor scope")
@@ -192,9 +254,11 @@ class WorkerPresence:
             "runs_root": str(self.root),
             "watcher": self.watcher,
             "uploads_only": self.uploads_only,
+            "manual_only": self.manual_only,
             "run_id": self.run_id,
             "active_run_id": self._active,
             "last_seen": now,
+            **({"admission": self._admission} if self._admission else {}),
         }
         # Preserve the legacy timestamp format and refresh it on the same background timer.
         if self.heartbeat is not None:

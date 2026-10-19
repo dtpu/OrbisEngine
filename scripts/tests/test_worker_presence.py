@@ -68,7 +68,7 @@ def test_selected_watcher_never_advertises_new_uploads(tmp_path):
         {"last_seen": float("inf")},
         {"last_seen": True},
         {"last_seen": "now"},
-        {"version": 3},
+        {"version": 4},
         {"uploads_only": "true"},
         {"uploads_only": None},
         {"version": True},
@@ -285,7 +285,7 @@ def test_uploads_only_capability_matches_automatic_requests_only(tmp_path, selec
         )
         record = json.loads((tmp_path / ".workers" / presence.name).read_text())
         assert record["run_id"] == selected
-        assert record["version"] == 2  # Version-1 readers reject instead of overstating capability.
+        assert record["version"] == 3  # Older readers reject rather than overstate capability.
         assert record["uploads_only"] is True
 
 
@@ -318,3 +318,29 @@ def test_version_two_requires_explicit_capability(tmp_path):
 def test_presence_rejects_non_boolean_capability(tmp_path, value):
     with pytest.raises(ValueError, match="scope"):
         WorkerPresence(tmp_path, uploads_only=value)
+
+
+@pytest.mark.parametrize("uploads_only", [False, True])
+def test_historical_version_two_worker_preserves_upload_capability(tmp_path, uploads_only):
+    with WorkerPresence(tmp_path, uploads_only=uploads_only) as presence:
+        path = tmp_path / ".workers" / presence.name
+        record = json.loads(path.read_text())
+        record["version"] = 2
+        del record["manual_only"]
+        path.write_text(json.dumps(record))
+        assert worker_status(tmp_path, hands_off=True)["status"] == "available"
+        assert (worker_status(tmp_path)["status"] == "available") == (not uploads_only)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [{"manual_only": None}, {"manual_only": "true"}, {"manual_only": True, "uploads_only": True}],
+)
+def test_version_three_requires_consistent_manual_capability(tmp_path, mutation):
+    with WorkerPresence(tmp_path) as presence:
+        path = tmp_path / ".workers" / presence.name
+        record = json.loads(path.read_text())
+        record.update(mutation)
+        path.write_text(json.dumps(record))
+        assert worker_status(tmp_path)["status"] == "unavailable"
+        assert worker_status(tmp_path, hands_off=True)["status"] == "unavailable"

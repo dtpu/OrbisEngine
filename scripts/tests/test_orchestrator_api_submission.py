@@ -239,6 +239,87 @@ class ProductionSubmissionTests(unittest.TestCase):
         self.assertIsNone(manual["finished"])
         self.assertFalse(manual["currentStages"])
 
+    def test_upload_admission_survives_restart_and_leaves_next_upload_queued(self):
+        from orchestrator import supervisor
+        from orchestrator.agent.contracts import AgentResult
+        from orchestrator.agent.harness import HarnessAgent, HarnessOutcome, HarnessPolicy
+        from orchestrator.journal import Journal
+
+        processed = []
+        passes = 0
+
+        class StopRehearsal(Exception):
+            pass
+
+        def availability():
+            with patch(
+                "orchestrator.doctor.inspect_setup",
+                return_value={"ready": True, "status": "okay", "checks": []},
+            ):
+                response = self.client.post(
+                    "/api/pipeline/doctor", headers=AUTH, json={"hands_off": True}
+                )
+            self.assertEqual(response.status_code, 200, response.text)
+            report = response.json()
+            if report["worker"].get("reason") == "admission_exhausted":
+                check = next(item for item in report["checks"] if item["name"] == "worker.watch")
+                self.assertIn("operator", check["action"])
+                self.assertNotIn("Connect", check["action"])
+            return report["worker"]
+
+        def next_pass(_):
+            nonlocal passes
+            passes += 1
+            if passes == 1:
+                self.assertEqual(availability()["status"], "available")
+                response = self.upload("first", options='{"hands_off":true}')
+                self.assertEqual(response.status_code, 201, response.text)
+            else:
+                self.assertEqual(processed, ["first"])
+                self.assertEqual(availability()["status"], "unavailable")
+                self.assertEqual(availability()["reason"], "admission_exhausted")
+                response = self.upload("second", options='{"hands_off":true}')
+                self.assertEqual(response.status_code, 201, response.text)
+                raise StopRehearsal
+
+        def finish_without_model(_task, workspace, _prompt, **_kwargs):
+            manifest = json.loads((workspace / "run.json").read_text())
+            processed.append(manifest["runId"])
+            self.assertEqual(availability()["status"], "unavailable")
+            progress = self.client.get("/api/pipeline/runs/first/progress", headers=AUTH).json()
+            self.assertEqual(progress["worker"]["status"], "available")
+            Journal(workspace).append(
+                "run.finished", status="failed", summary="Fixture ended without inference."
+            )
+            return HarnessOutcome(AgentResult(status="completed", transcript_path="inert"))
+
+        arguments = ["--runs", str(self.root / "runs"), "--uploads-only", "--max-uploads", "1"]
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(supervisor, "repository_from_environment", return_value=self.repository),
+            patch.object(
+                HarnessPolicy,
+                "from_environment",
+                return_value=HarnessPolicy(kind="command", command=("unused",)),
+            ),
+            patch.object(HarnessAgent, "run", side_effect=finish_without_model),
+        ):
+            with (
+                patch.object(supervisor.time, "sleep", side_effect=next_pass),
+                self.assertRaises(StopRehearsal),
+            ):
+                supervisor.main([*arguments, "--watch"])
+            self.assertEqual(supervisor.main([*arguments, "--once"]), 0)
+
+        self.assertEqual(processed, ["first"])
+        self.assertEqual(self.repository.run_summary("first")["attempts"], [])
+        second = self.client.get("/api/pipeline/runs/second/progress", headers=AUTH).json()
+        self.assertIsNone(second["finished"])
+        self.assertFalse(second["currentStages"])
+        self.assertIsNone(second["question"])
+        self.assertEqual(second["worker"]["status"], "unavailable")
+        self.assertEqual(self.repository.run_summary("second")["attempts"], [])
+
     def test_clean_candidates_are_previewable_without_exposing_other_candidate_files(self):
         response = self.upload("clean-recovery")
         self.assertEqual(response.status_code, 201, response.text)
