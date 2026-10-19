@@ -68,7 +68,9 @@ def test_selected_watcher_never_advertises_new_uploads(tmp_path):
         {"last_seen": float("inf")},
         {"last_seen": True},
         {"last_seen": "now"},
-        {"version": 2},
+        {"version": 3},
+        {"uploads_only": "true"},
+        {"uploads_only": None},
         {"version": True},
         {"schema": "other"},
         {"watcher": "true"},
@@ -177,10 +179,16 @@ def test_background_failure_removes_presence_and_surfaces_error(tmp_path, monkey
         (["--run-id", "selected", "--watch"], False, True),
     ],
 )
+@pytest.mark.parametrize("uploads_only", [False, True])
 def test_supervisor_refreshes_during_blocking_work_and_cleans_up(
-    tmp_path, monkeypatch, flags, generic_available, run_available
+    tmp_path, monkeypatch, flags, generic_available, run_available, uploads_only
 ):
-    supervisor.open_run(tmp_path, run_id="selected", name="clip", source=None)
+    supervisor.open_run(
+        tmp_path, run_id="selected", name="clip", source=None, options={"hands_off": uploads_only}
+    )
+    monkeypatch.delenv("WANDER_STAGE_AUTHORIZATION", raising=False)
+    if uploads_only:
+        flags = [*flags, "--uploads-only"]
     heartbeat = tmp_path / "legacy-heartbeat"
     monkeypatch.setenv("WANDER_HEARTBEAT", str(heartbeat))
     monkeypatch.setattr(supervisor, "repository_from_environment", lambda: None)
@@ -207,9 +215,16 @@ def test_supervisor_refreshes_during_blocking_work_and_cleans_up(
 
     def work(*_):
         nonlocal baseline
-        assert (worker_status(tmp_path)["status"] == "available") == generic_available
-        assert (worker_status(tmp_path, "selected")["status"] == "available") == run_available
-        assert worker_status(tmp_path, "selected")["busyWorkers"] == 1
+        assert (
+            worker_status(tmp_path, hands_off=True)["status"] == "available"
+        ) == generic_available
+        if uploads_only:
+            assert worker_status(tmp_path)["status"] == "unavailable"
+            assert worker_status(tmp_path, "selected")["status"] == "unavailable"
+        assert (
+            worker_status(tmp_path, "selected", hands_off=True)["status"] == "available"
+        ) == run_available
+        assert worker_status(tmp_path, "selected", hands_off=True)["busyWorkers"] == 1
         path = next((tmp_path / ".workers").glob("*.json"))
         baseline = json.loads(path.read_text())["last_seen"]
         # The main supervisor is blocked here; only its background heartbeat can advance.
@@ -256,3 +271,50 @@ def test_supervisor_work_failure_cleans_up(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="work failed"):
         supervisor.main(["--runs", str(tmp_path), "--once"])
     assert list((tmp_path / ".workers").iterdir()) == []
+
+
+@pytest.mark.parametrize("selected", [None, "selected"])
+def test_uploads_only_capability_matches_automatic_requests_only(tmp_path, selected):
+    with WorkerPresence(tmp_path, run_id=selected, uploads_only=True) as presence:
+        assert worker_status(tmp_path)["status"] == "unavailable"
+        assert worker_status(tmp_path, "selected")["status"] == "unavailable"
+        assert worker_status(tmp_path, hands_off=True)["matchingWorkers"] == (selected is None)
+        assert worker_status(tmp_path, "selected", hands_off=True)["matchingWorkers"] == 1
+        assert worker_status(tmp_path, "other", hands_off=True)["matchingWorkers"] == (
+            selected is None
+        )
+        record = json.loads((tmp_path / ".workers" / presence.name).read_text())
+        assert record["run_id"] == selected
+        assert record["version"] == 2  # Version-1 readers reject instead of overstating capability.
+        assert record["uploads_only"] is True
+
+
+@pytest.mark.parametrize("hands_off", [False, True])
+def test_historical_version_one_worker_is_unrestricted(tmp_path, hands_off):
+    with WorkerPresence(tmp_path) as presence:
+        path = tmp_path / ".workers" / presence.name
+        record = json.loads(path.read_text())
+        record["version"] = 1
+        del record["uploads_only"]
+        path.write_text(json.dumps(record))
+        assert worker_status(tmp_path, hands_off=hands_off)["matchingWorkers"] == 1
+        assert (
+            worker_status(tmp_path, "manual-or-automatic", hands_off=hands_off)["matchingWorkers"]
+            == 1
+        )
+
+
+def test_version_two_requires_explicit_capability(tmp_path):
+    with WorkerPresence(tmp_path) as presence:
+        path = tmp_path / ".workers" / presence.name
+        record = json.loads(path.read_text())
+        del record["uploads_only"]
+        path.write_text(json.dumps(record))
+        assert worker_status(tmp_path)["status"] == "unavailable"
+        assert worker_status(tmp_path, hands_off=True)["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
+def test_presence_rejects_non_boolean_capability(tmp_path, value):
+    with pytest.raises(ValueError, match="scope"):
+        WorkerPresence(tmp_path, uploads_only=value)

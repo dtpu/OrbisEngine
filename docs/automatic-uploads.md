@@ -13,6 +13,33 @@ its configured runs root. Do not carry a source-specific paid-stage permit into 
 unrelated uploads. This change does not provision a hosted worker or turn a local API into a
 public multi-user service.
 
+## Worker for automatic uploads
+
+Use a dedicated supervisor for the upload form:
+
+```sh
+uv run --locked --group inference python -m orchestrator.supervisor \
+  --runs /absolute/path/to/shared/runs --uploads-only --watch
+```
+
+Keep that process running alongside the API. It discovers new automatic uploads on each pass,
+including uploads submitted after startup. Manual and legacy runs remain with their existing
+workers; paused and finished runs remain untouched. `--uploads-only --once` makes a single pass
+over eligible uploads and exits. Adding `--run-id` further restricts the worker to that run.
+
+Start the upload worker from its own configuration with the intended provider credentials,
+spending controls, shared `WANDER_STAGE_LEDGER`, and any separately prepared VLM allowance.
+The worker refuses `--uploads-only` when `WANDER_STAGE_AUTHORIZATION` is present, even if empty:
+that setting grants a source-specific exception, which cannot authorize unrelated uploads.
+Do not reuse an exhausted allowance or reset the shared ledger to enable a service. Provider
+spending authorization is still required before enabling paid processing.
+
+Worker presence records include their processing mode. An uploads-only worker is available for
+`hands_off: true` submissions and runs, and unavailable for manual ones. Update the API with
+the worker so it understands that scope; older APIs ignore the new record version instead of
+reporting a worker that cannot process their request. Existing version-one worker records remain
+readable as unrestricted workers by the updated API.
+
 The upload setup check verifies that a recent supervisor heartbeat exists for the API's runs
 root and accepts new uploads. A worker scoped with `--run-id`, a one-pass worker, or a worker
 watching another directory does not satisfy that check. When no matching worker is connected,

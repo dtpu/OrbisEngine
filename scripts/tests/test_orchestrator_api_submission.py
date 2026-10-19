@@ -164,6 +164,81 @@ class ProductionSubmissionTests(unittest.TestCase):
             self.assertEqual(response.json()["status"], "blocked")
         self.assertEqual(check()["worker"]["status"], "unavailable")
 
+    def test_upload_only_worker_matches_automatic_options_and_progress(self):
+        self.assertEqual(self.upload("manual").status_code, 201)
+        self.assertEqual(self.upload("automatic", options='{"hands_off":true}').status_code, 201)
+        with WorkerPresence(self.root / "runs", uploads_only=True):
+            for automatic in (False, True):
+                run_id = "automatic" if automatic else "manual"
+                expected = "available" if automatic else "unavailable"
+                response = self.client.get(f"/api/pipeline/runs/{run_id}/progress", headers=AUTH)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["worker"]["status"], expected)
+                with patch(
+                    "orchestrator.doctor.inspect_setup",
+                    return_value={"ready": True, "status": "okay", "checks": []},
+                ):
+                    response = self.client.post(
+                        "/api/pipeline/doctor", headers=AUTH, json={"hands_off": automatic}
+                    )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["worker"]["status"], expected)
+                self.assertEqual(response.json()["ready"], automatic)
+
+    def test_upload_only_supervisor_picks_up_a_later_api_submission(self):
+        from orchestrator import supervisor
+        from orchestrator.agent.contracts import AgentResult
+        from orchestrator.agent.harness import HarnessAgent, HarnessOutcome, HarnessPolicy
+        from orchestrator.journal import Journal
+
+        self.assertEqual(self.upload("manual").status_code, 201)
+        processed = []
+        passes = 0
+
+        class StopRehearsal(Exception):
+            pass
+
+        def next_pass(_):
+            nonlocal passes
+            passes += 1
+            if passes == 1:
+                self.assertEqual(processed, [])
+                response = self.upload("automatic", options='{"hands_off":true}')
+                self.assertEqual(response.status_code, 201, response.text)
+            else:
+                raise StopRehearsal
+
+        def finish_without_model(_task, workspace, _prompt, **_kwargs):
+            manifest = json.loads((workspace / "run.json").read_text())
+            processed.append(manifest["runId"])
+            Journal(workspace).append(
+                "run.finished", status="failed", summary="Fixture ended without inference."
+            )
+            return HarnessOutcome(AgentResult(status="completed", transcript_path="inert"))
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(supervisor, "repository_from_environment", return_value=self.repository),
+            patch.object(
+                HarnessPolicy,
+                "from_environment",
+                return_value=HarnessPolicy(kind="command", command=("unused",)),
+            ),
+            patch.object(supervisor.time, "sleep", side_effect=next_pass),
+            patch.object(HarnessAgent, "run", side_effect=finish_without_model),
+            self.assertRaises(StopRehearsal),
+        ):
+            supervisor.main(["--runs", str(self.root / "runs"), "--uploads-only", "--watch"])
+        self.assertEqual(processed, ["automatic"])
+        progress = self.client.get("/api/pipeline/runs/automatic/progress", headers=AUTH).json()
+        self.assertEqual(progress["finished"], "failed")
+        self.assertIsNone(progress["question"])
+        self.assertEqual(progress["worker"]["status"], "unavailable")
+        self.assertEqual(self.repository.run_summary("automatic")["attempts"], [])
+        manual = self.client.get("/api/pipeline/runs/manual/progress", headers=AUTH).json()
+        self.assertIsNone(manual["finished"])
+        self.assertFalse(manual["currentStages"])
+
     def test_clean_candidates_are_previewable_without_exposing_other_candidate_files(self):
         response = self.upload("clean-recovery")
         self.assertEqual(response.status_code, 201, response.text)

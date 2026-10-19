@@ -179,10 +179,17 @@ The API exposes `GET /api/pipeline/runs/{id}/saved-inputs` for availability and
 ### Submit new work
 
 The admin reads its option defaults and supported world modes from `GET /api/pipeline/options`.
-`POST /api/pipeline/doctor` inspects the API server locally; it does not establish that a separate
-worker is ready. Uploads can be queued while worker setup is repaired. The API and supervisor
+`POST /api/pipeline/doctor` inspects the API server locally and checks for a live worker matching
+the requested automatic/manual mode. Its local dependency and credential checks describe the API
+process, not a separate worker's environment. A heartbeat does not establish provider access or
+spending authorization. Uploads can be queued while worker setup is repaired. The API and supervisor
 must share `WANDER_RUNS_ROOT`. `create_service()` accepts local artifact storage through
 `WANDER_ARTIFACT_ROOT`; importing it no longer requires cloud configuration.
+
+For a dedicated automatic-upload worker, use `orchestrator.supervisor --uploads-only --watch`.
+This leaves manual/legacy runs with their current workers and rejects source-specific exception
+permits. See [automatic uploads](automatic-uploads.md#worker-for-automatic-uploads) for configuration
+and worker-version compatibility.
 
 New runs retain a source SHA-256 in `run.json`. Stages refuse missing or changed source digests
 before launching; existing outputs stay on disk. Legacy manifests without a digest need a new

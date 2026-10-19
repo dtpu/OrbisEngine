@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 SCHEMA = "wander.worker-presence"
-VERSION = 1
+VERSION = 2
 FRESHNESS_SECONDS = 45.0
 REFRESH_SECONDS = 5.0
 MAX_RECORD_BYTES = 16_384
@@ -28,7 +28,7 @@ def _open_directory(root: Path) -> int:
     return os.open(root / ".workers", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
-def worker_status(root: Path | None, run_id: str | None = None) -> dict:
+def worker_status(root: Path | None, run_id: str | None = None, *, hands_off: bool = False) -> dict:
     """Count fresh matching supervisors without disclosing local process information."""
     matching = busy = 0
     if root is not None:
@@ -57,7 +57,11 @@ def worker_status(root: Path | None, run_id: str | None = None) -> dict:
                     if (
                         record.get("schema") != SCHEMA
                         or type(record.get("version")) is not int
-                        or record["version"] != VERSION
+                        or record["version"] not in (1, VERSION)
+                        or (
+                            record["version"] == VERSION
+                            and type(record.get("uploads_only")) is not bool
+                        )
                         or record.get("runs_root") != str(resolved)
                         or type(record.get("watcher")) is not bool
                         or "run_id" not in record
@@ -67,6 +71,14 @@ def worker_status(root: Path | None, run_id: str | None = None) -> dict:
                         or type(seen) not in (int, float)
                         or not math.isfinite(seen)
                         or not 0 <= time.time() - seen <= FRESHNESS_SECONDS
+                    ):
+                        continue
+                    # Version 1 predates restricted workers. Version 2 is deliberately
+                    # incompatible with old readers, which only accepted version 1.
+                    if (
+                        record["version"] == VERSION
+                        and record["uploads_only"]
+                        and hands_off is not True
                     ):
                         continue
                     selected, active = record["run_id"], record["active_run_id"]
@@ -109,16 +121,18 @@ class WorkerPresence:
         *,
         run_id: str | None = None,
         watcher: bool = True,
+        uploads_only: bool = False,
         heartbeat: Path | None = None,
         refresh_interval: float = REFRESH_SECONDS,
     ):
-        if not _run_id(run_id) or type(watcher) is not bool:
+        if not _run_id(run_id) or type(watcher) is not bool or type(uploads_only) is not bool:
             raise ValueError("Invalid supervisor scope")
         if not math.isfinite(refresh_interval) or not 0 < refresh_interval < FRESHNESS_SECONDS:
             raise ValueError("Heartbeat interval must be positive and below the freshness limit")
         self.root = root.resolve()
         self.run_id = run_id
         self.watcher = watcher
+        self.uploads_only = uploads_only
         self.heartbeat = heartbeat
         self.refresh_interval = refresh_interval
         self.name = f"{uuid.uuid4()}.json"
@@ -177,6 +191,7 @@ class WorkerPresence:
             "version": VERSION,
             "runs_root": str(self.root),
             "watcher": self.watcher,
+            "uploads_only": self.uploads_only,
             "run_id": self.run_id,
             "active_run_id": self._active,
             "last_seen": now,
