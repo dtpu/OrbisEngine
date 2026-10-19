@@ -1,0 +1,27 @@
+docs/known-limits.md
+  s_988a422339b8f1::t_cb7afa376d740d 14-15
+scripts/tests/test_depth_diagnostic_visibility.py
+  s_988a422339b8f1::t_82ed499a98173b 1-115
+  s_988a422339b8f1::t_64d1c4b0f0f863 116-117
+scripts/run_clip.py
+  s_988a422339b8f1::t_472755fccd0c22 2506,2508-2509
+scripts/bake_video_colours.py
+  s_988a422339b8f1::t_bdab47dd151347 802-804,811,815,820,822-828
+  s_988a422339b8f1::t_9e38913fddaa83 318-368,679-686,715-716,740-747,749-760,762-765,814,816-819,821,829
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d121510904a40abbf363e273f6443250b946664",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
