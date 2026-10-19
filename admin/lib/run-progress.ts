@@ -14,3 +14,16 @@ export function progressTitle(progress: RunProgress): string {
   if (progress.stopped.length) return 'Processing stopped';
   return 'Waiting for the worker';
 }
+
+export function workerNotice(progress: RunProgress): string | null {
+  if (progress.finished || progress.paused || progress.question) return null;
+  if (!progress.worker) return 'This server has not reported worker availability.';
+  if (progress.worker.status === 'unavailable') {
+    return progress.currentStages.length
+      ? 'No worker is connected for this run. Started steps may still finish; processing will continue when a worker reconnects.'
+      : 'Waiting for a worker. Your upload is saved and will be picked up when a worker connects.';
+  }
+  return progress.handsOff
+    ? 'Worker connected. Processing automatically; you can leave this page.'
+    : null;
+}

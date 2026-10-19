@@ -23,6 +23,7 @@ from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.database import ArtifactRecord, Base, EventRecord, NodeRecord, RunRecord
 from orchestrator.repository import PipelineRepository
 from orchestrator.supervisor import runs_needing_work
+from orchestrator.worker_presence import WorkerPresence
 
 TOKEN = "test-token-with-at-least-24-characters"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -98,6 +99,70 @@ class ProductionSubmissionTests(unittest.TestCase):
         summary = self.repository.run_summary("run-upload")
         self.assertIs(summary["configuration"]["options"]["hands_off"], True)
         self.assertFalse((manifest.parent / "paused").exists())
+
+    def test_worker_presence_tracks_upload_scope_and_disconnect_without_starting_work(self):
+        self.assertEqual(self.upload(options='{"marble":"none","hands_off":true}').status_code, 201)
+
+        def progress():
+            response = self.client.get("/api/pipeline/runs/run-upload/progress", headers=AUTH)
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+
+        self.assertEqual(progress()["worker"]["status"], "unavailable")
+        runs_root = self.root / "runs"
+        with WorkerPresence(runs_root, watcher=True, run_id="another-run"):
+            self.assertEqual(progress()["worker"]["status"], "unavailable")
+            with WorkerPresence(runs_root, watcher=True, run_id="run-upload") as worker:
+                worker.set_active("run-upload")
+                self.assertEqual(progress()["worker"]["matchingWorkers"], 1)
+                self.assertEqual(progress()["worker"]["busyWorkers"], 1)
+        disconnected = progress()
+        self.assertEqual(disconnected["worker"]["status"], "unavailable")
+        self.assertTrue(disconnected["handsOff"])
+        self.assertIsNone(disconnected["finished"])
+        self.assertFalse(disconnected["currentStages"])
+        # Presence reporting itself does not execute, mutate, fail, or retry the queued run.
+        self.assertIn(self.manifests()[0].parent, runs_needing_work(runs_root))
+        self.assertEqual(self.repository.run_summary("run-upload")["attempts"], [])
+
+    def test_upload_setup_requires_a_watcher_for_this_root_and_new_uploads(self):
+        def check():
+            with patch(
+                "orchestrator.doctor.inspect_setup",
+                return_value={"ready": True, "status": "okay", "checks": []},
+            ):
+                response = self.client.post("/api/pipeline/doctor", headers=AUTH, json={})
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+
+        self.assertEqual(check()["status"], "blocked")
+        runs_root = self.root / "runs"
+        runs_root.mkdir()
+        (self.root / "other-runs").mkdir()
+        with WorkerPresence(runs_root, watcher=True, run_id="existing-run"):
+            self.assertFalse(check()["ready"])
+        with WorkerPresence(self.root / "other-runs", watcher=True):
+            self.assertFalse(check()["ready"])
+        with WorkerPresence(runs_root, watcher=False):
+            self.assertFalse(check()["ready"])
+        with WorkerPresence(runs_root, watcher=True):
+            report = check()
+            self.assertTrue(report["ready"])
+            self.assertEqual(report["checks"][-1]["name"], "worker.watch")
+            self.assertEqual(report["worker"]["status"], "available")
+            # A worker cannot turn failed dependency checks into a ready setup.
+            with patch(
+                "orchestrator.doctor.inspect_setup",
+                return_value={
+                    "ready": False,
+                    "status": "blocked",
+                    "checks": [{"name": "ffmpeg", "status": "blocked", "detail": "Missing."}],
+                },
+            ):
+                response = self.client.post("/api/pipeline/doctor", headers=AUTH, json={})
+            self.assertFalse(response.json()["ready"])
+            self.assertEqual(response.json()["status"], "blocked")
+        self.assertEqual(check()["worker"]["status"], "unavailable")
 
     def test_clean_candidates_are_previewable_without_exposing_other_candidate_files(self):
         response = self.upload("clean-recovery")

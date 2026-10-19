@@ -226,6 +226,14 @@ export interface SetupReport {
   ready: boolean;
   status: 'okay' | 'blocked' | 'unverified';
   checks: SetupCheck[];
+  worker?: WorkerStatus;
+}
+
+export interface WorkerStatus {
+  status: 'available' | 'unavailable';
+  matchingWorkers: number;
+  busyWorkers: number;
+  detail: string;
 }
 
 export interface StageProgress {
@@ -249,6 +257,7 @@ export interface RunPreview {
 }
 
 export interface RunProgress {
+  worker?: WorkerStatus;
   viewerPath?: string | null;
   runId: string;
   finished: string | null;

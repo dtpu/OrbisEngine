@@ -24,8 +24,8 @@ export function SetupChecks({ report }: { report: SetupReport }) {
     <section className="setup-checks" aria-label="Pipeline setup checks" aria-live="polite">
       <h3>{report.ready ? 'Local setup checks passed' : 'Setup needs attention'}</h3>
       <p className="field__hint">
-        Checks describe this server. Provider access and worker readiness may still need
-        verification.
+        Checks include whether a worker is connected for new uploads. Provider access and processing
+        quality still need verification.
       </p>
       <ul>
         {checks.map((check) => (
@@ -310,8 +310,8 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
         </p>
       ) : null}
       <p className="field__hint">
-        Generated worlds, tracking and fine-tuning can use paid providers. Inspect the cleaned
-        frames when the run requests review. Original recorded audio is preserved.
+        Generated worlds, tracking and fine-tuning can use paid providers. Original recorded audio
+        is preserved.
       </p>
     </form>
   );

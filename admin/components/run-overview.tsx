@@ -5,7 +5,7 @@ import { Progress } from '@/components/progress';
 import { Status } from '@/components/status';
 import { loadRunProgress } from '@/lib/client';
 import { formatBytes } from '@/lib/format';
-import { progressTitle } from '@/lib/run-progress';
+import { progressTitle, workerNotice } from '@/lib/run-progress';
 import type { RunProgress } from '@/lib/types';
 
 export function RunOverview({
@@ -63,6 +63,7 @@ export function RunOverview({
     (stage) => stage.status === 'pending' && !stage.dependencies.length,
   );
   const title = progressTitle(progress);
+  const workerMessage = workerNotice(progress);
 
   return (
     <section className="run-overview" aria-labelledby="run-progress-title">
@@ -94,8 +95,15 @@ export function RunOverview({
           {progress.result.summary}
         </p>
       ) : null}
-      {progress.handsOff && !progress.finished && !progress.paused ? (
-        <p className="field__hint">Processing automatically. You can leave this page.</p>
+      {workerMessage ? (
+        <p
+          className={
+            progress.worker?.status === 'unavailable' ? 'notice notice--warn' : 'field__hint'
+          }
+          role="status"
+        >
+          {workerMessage}
+        </p>
       ) : null}
       {reused.length ? (
         <p className="field__hint">
