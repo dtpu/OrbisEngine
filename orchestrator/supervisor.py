@@ -25,6 +25,7 @@ from orchestrator.run_policy import hands_off
 from orchestrator.session import RunSession
 from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.worker_presence import WorkerPresence
+from orchestrator.upload_admission import AdmissionError, UploadAdmission
 from orchestrator.steps import (
     STEPS,
     RunOptions,
@@ -205,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="process only runs explicitly submitted with options.hands_off true",
     )
+    parser.add_argument(
+        "--max-uploads",
+        type=int,
+        help="persist a cumulative positive upload admission limit for this runs root",
+    )
     parser.add_argument("--turns", type=int, default=12, help="turns per run before moving on")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -228,58 +234,100 @@ def main(argv: list[str] | None = None) -> int:
             "--uploads-only cannot inherit WANDER_STAGE_AUTHORIZATION: "
             "a source-specific paid-stage permit must not be reused across uploads"
         )
+    if args.max_uploads is not None and (args.max_uploads <= 0 or not args.uploads_only):
+        parser.error("--max-uploads must be positive and requires --uploads-only")
     single_pass = args.once or (args.run_id and not args.watch)
 
     root = resolve_runs_root(args.runs)
     root.mkdir(parents=True, exist_ok=True)
+    try:
+        with UploadAdmission(root, args.max_uploads, uploads_only=args.uploads_only) as admission:
+            return supervise(args, root, bool(single_pass), admission)
+    except (AdmissionError, OSError) as error:
+        parser.error(f"Upload admission stopped: {error}")
+
+
+def supervise(args, root: Path, single_pass: bool, admission: UploadAdmission) -> int:
     repository = repository_from_environment()
     policy = HarnessPolicy.from_environment()
     print(f"supervising {root} with {policy.kind}:{policy.model or 'default'}", flush=True)
-
     heartbeat = os.environ.get("WANDER_HEARTBEAT")
-    # When a run was last given an agent, and how long its journal was then. `due` reads this
-    # to tell a run that is quiet because its work is still running from one that is quiet
-    # because its agent stopped.
     pushed: dict[str, tuple[float, int]] = {}
 
+    def scope():
+        if args.max_uploads is not None:
+            active = next(
+                (
+                    item["runId"]
+                    for item in admission.state["admissions"]
+                    if item["directory"] == admission.active
+                ),
+                None,
+            )
+            if active is not None and args.run_id is not None and active != args.run_id:
+                raise AdmissionError("--run-id conflicts with the active upload admission")
+            return {
+                "run_id": active or args.run_id,
+                "watcher": not single_pass and (active is not None or bool(admission.remaining)),
+                "active_run_id": active,
+                "admission": "occupied"
+                if active is not None
+                else ("exhausted" if not admission.remaining else None),
+            }
+        return {
+            "run_id": args.run_id,
+            "watcher": not single_pass,
+            "manual_only": admission.state is not None,
+            "active_run_id": None,
+        }
+
+    initial = scope()
     with WorkerPresence(
         root,
-        run_id=args.run_id,
-        watcher=not single_pass,
+        run_id=initial["run_id"],
+        watcher=initial["watcher"],
         uploads_only=args.uploads_only,
+        manual_only=initial.get("manual_only", False),
         heartbeat=Path(heartbeat) if heartbeat else None,
     ) as presence:
+        presence.set_scope(**initial)
         while True:
+            with admission.dispatch():
+                admission.refresh()
+                presence.set_scope(**scope())
             pending = runs_needing_work(root, uploads_only=args.uploads_only)
+            if admission.active is not None:
+                pending.sort(key=lambda path: path.name != admission.active)
             for run_dir in pending:
-                # One pass per run at a time. A step runs detached and outlives the turn that
-                # started it, so a run whose journal has not moved is a run whose agent is
-                # waiting on something -- handing it a second agent is how a 1600-credit world
-                # gets submitted twice.
                 if not single_pass and not due(run_dir, pushed, args.push_after):
                     continue
-                manifest = run_manifest(run_dir, uploads_only=args.uploads_only)
-                if manifest is None or (args.run_id and manifest["runId"] != args.run_id):
-                    continue
-                run_id = manifest["runId"]
-                presence.set_active(run_id)
-                try:
-                    # Discovery may precede another run's long turn. Recheck the scope
-                    # immediately before handing this directory to an agent.
-                    current = run_manifest(run_dir, uploads_only=args.uploads_only)
-                    if current is None or current["runId"] != run_id:
+                # Policy installation, claims, and automatic harness dispatch share this
+                # root lock even for unrestricted workers. Detached stages never need it.
+                with admission.dispatch():
+                    manifest = run_manifest(run_dir, uploads_only=args.uploads_only)
+                    if manifest is None or (args.run_id and manifest["runId"] != args.run_id):
                         continue
-                    outcome = work_on(run_dir, repository, policy, args.turns)
-                finally:
-                    presence.set_active(None)
+                    if not admission.claim(run_dir, manifest):
+                        presence.set_scope(**scope())
+                        continue
+                    presence.set_scope(**scope())
+                    run_id = manifest["runId"]
+                    presence.set_active(run_id)
+                    try:
+                        current = run_manifest(run_dir, uploads_only=args.uploads_only)
+                        if current != manifest:
+                            if args.max_uploads is not None:
+                                raise AdmissionError("Run manifest changed before dispatch")
+                            continue
+                        # A bounded claim is durable before the harness can start any work.
+                        outcome = work_on(run_dir, repository, policy, args.turns)
+                    finally:
+                        admission.refresh()
+                        presence.set_scope(**scope())
                 print(outcome.message, flush=True)
                 if outcome.resume_next_pass:
-                    # Continue useful work on the next pass, still bounded by --turns
-                    # and the ordinary admission checks. Do not fabricate an unseen event.
                     pushed.pop(str(run_dir), None)
                 else:
-                    # Keep the cursor the session actually observed. A reply can arrive between
-                    # its final read and this assignment; reading again here would swallow it.
                     pushed[str(run_dir)] = (time.monotonic(), outcome.observed_entries)
             if single_pass:
                 return 0

@@ -243,15 +243,18 @@ def create_app(
         report = inspect_setup(options.model_dump(mode="json"))
         worker = worker_status(review_workspace_root, hands_off=options.hands_off)
         available = worker["status"] == "available"
+        action = "Connect a worker for new uploads, or queue for later."
+        if worker.get("reason") == "admission_exhausted":
+            action = "Queue for later; an operator must arrange more processing capacity."
+        elif worker.get("reason") == "admission_busy":
+            action = "Queue for later while the worker handles its admitted upload."
         report["worker"] = worker
         report["checks"].append(
             {
                 "name": "worker.watch",
                 "status": "okay" if available else "blocked",
                 "detail": worker["detail"],
-                "action": ""
-                if available
-                else "Connect a worker for new uploads, or queue for later.",
+                "action": "" if available else action,
             }
         )
         if not available:

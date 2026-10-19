@@ -143,7 +143,11 @@ export function RunOverview({
             </article>
           ))}
         </div>
-      ) : ready && !progress.finished && !progress.paused && !progress.question ? (
+      ) : ready &&
+        !progress.finished &&
+        !progress.paused &&
+        !progress.question &&
+        !progress.worker?.reason ? (
         <p className="field__hint">
           Next: {ready.name}. {ready.nextAction}
         </p>
