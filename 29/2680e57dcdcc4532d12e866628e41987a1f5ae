@@ -1,0 +1,19 @@
+admin/app/runs/[runId]/console.tsx
+  s_988a422339b8f1::t_5362a1f915f321 849
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "292680e57dcdcc4532d12e866628e41987a1f5ae",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
