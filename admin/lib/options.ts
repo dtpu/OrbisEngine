@@ -39,6 +39,15 @@ export function optionsFromSchema(schema: OptionsSchema): GraphOptions {
   return defaults as unknown as GraphOptions;
 }
 
+/** New uploads must explicitly select automatic processing on a compatible server. */
+export function automaticUploadOptions(schema: OptionsSchema): GraphOptions {
+  const field = schema.properties.hands_off;
+  if (field?.type !== 'boolean' || field.deprecated) {
+    throw new Error('Update the pipeline server to support automatic uploads.');
+  }
+  return { ...optionsFromSchema(schema), hands_off: true };
+}
+
 export function setupBlocked(report: SetupReport): boolean {
   return report.status === 'blocked' || report.checks.some((check) => check.status === 'blocked');
 }

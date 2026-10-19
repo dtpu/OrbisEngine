@@ -3,6 +3,7 @@
 import hashlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -228,7 +229,19 @@ def test_existing_finished_run_can_still_explicitly_retry_a_stage(run, monkeypat
     assert cli.command_step(run.context, step_args(True)) == 1  # retained cache still says failed
     popen.assert_called_once()
     assert len([e for e in run.journal.entries() if e.kind == "step.started"]) == 1
+    assert len([e for e in run.journal.entries() if e.kind == "run.resumed"]) == 1
     assert run.journal.finished() is None
+
+
+def test_rejected_saved_input_stage_does_not_reopen_finished_run(run, monkeypatch):
+    run.journal.append("run.finished", status="succeeded", summary="Saved inputs delivered")
+    context = replace(run.context, retained_delivery={"schema": "wander.saved-inputs/1"})
+    popen = Mock(side_effect=AssertionError("a rejected saved-input stage launched"))
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+    assert cli.command_step(context, step_args(True)) == 2
+    assert run.journal.finished() == "succeeded"
+    assert not any(entry.kind == "run.resumed" for entry in run.journal.entries())
+    popen.assert_not_called()
 
 
 @pytest.mark.parametrize("status", ["failed", "blocked", "succeeded"])

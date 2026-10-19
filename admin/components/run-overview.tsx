@@ -5,16 +5,8 @@ import { Progress } from '@/components/progress';
 import { Status } from '@/components/status';
 import { loadRunProgress } from '@/lib/client';
 import { formatBytes } from '@/lib/format';
+import { progressTitle } from '@/lib/run-progress';
 import type { RunProgress } from '@/lib/types';
-
-function progressTitle(progress: RunProgress): string {
-  if (progress.finished) return `Run finished: ${progress.finished}`;
-  if (progress.paused) return 'Run paused';
-  if (progress.question) return 'Waiting for your answer';
-  if (progress.currentStages.length) return `Running ${progress.currentStages.join(', ')}`;
-  if (progress.stopped.length) return 'Processing stopped';
-  return 'Waiting for the supervisor';
-}
 
 export function RunOverview({
   runId,
@@ -97,6 +89,14 @@ export function RunOverview({
         <p className="field__hint">Progress refresh failed: {error}. Showing the last update.</p>
       ) : null}
       {progress.question ? <p className="notice notice--warn">{progress.question}</p> : null}
+      {progress.result?.summary ? (
+        <p className="notice" role="status">
+          {progress.result.summary}
+        </p>
+      ) : null}
+      {progress.handsOff && !progress.finished && !progress.paused ? (
+        <p className="field__hint">Processing automatically. You can leave this page.</p>
+      ) : null}
       {reused.length ? (
         <p className="field__hint">
           {reused.length} completed stages use saved inputs:{' '}

@@ -204,7 +204,7 @@ class Journal:
         if self.control_status() == "canceled":
             return "canceled"
         for entry in reversed(self.entries()):
-            if entry.kind in {"run.resumed", "step.started"}:
+            if entry.kind == "run.resumed":
                 return None
             if entry.kind == "run.finished":
                 return entry.data.get("status")

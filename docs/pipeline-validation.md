@@ -4,6 +4,11 @@ The pipeline can submit a clip, retain its source, run stages, recover from a fa
 package a viewer scene. Passing these checks does **not** establish fresh provider access or
 acceptable reconstruction quality. The doctor reports those separately.
 
+New dashboard uploads use [automatic processing](automatic-uploads.md). Tests exercise a single
+upload through the real runner and packager with simulated providers, without a human answer or
+paid retry. Rejected previews retain a failed run status and their quality reason; they are not
+counted as accepted reconstructions.
+
 ## What is tested
 
 `uv run --locked --group dev --group inference pytest` includes:

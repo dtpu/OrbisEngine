@@ -89,6 +89,16 @@ class ProductionSubmissionTests(unittest.TestCase):
         self.assert_no_submission()
         self.assertFalse(list((self.root / "artifacts").rglob("*")))
 
+    def test_hands_off_upload_is_persisted_and_immediately_discoverable(self):
+        response = self.upload(options=json.dumps({"marble": "none", "hands_off": True}))
+        self.assertEqual(response.status_code, 201, response.text)
+        manifest = self.manifests()[0]
+        self.assertIs(json.loads(manifest.read_text())["options"]["hands_off"], True)
+        self.assertIn(manifest.parent, runs_needing_work(self.root / "runs"))
+        summary = self.repository.run_summary("run-upload")
+        self.assertIs(summary["configuration"]["options"]["hands_off"], True)
+        self.assertFalse((manifest.parent / "paused").exists())
+
     def test_clean_candidates_are_previewable_without_exposing_other_candidate_files(self):
         response = self.upload("clean-recovery")
         self.assertEqual(response.status_code, 201, response.text)

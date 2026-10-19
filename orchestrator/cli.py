@@ -26,6 +26,12 @@ from typing import Any
 
 from orchestrator.config import resolve_stage_ledger
 from orchestrator.journal import Journal, RunProjection
+from orchestrator.run_policy import (
+    admission_problem,
+    delivery_metadata,
+    finish_hands_off,
+    hands_off,
+)
 from orchestrator.steps import (
     SAME_AS,
     STEPS,
@@ -130,6 +136,8 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
         command.append("--no-objects")
     if not options.finetune:
         command.append("--skip-finetune")
+    if options.hands_off:
+        command.append("--no-gate")
     if getattr(context, "retained_delivery", None) is not None:
         command += ["--retained-scene", str(context.run_dir / "retained/scene.json")]
     return command + extra
@@ -190,6 +198,8 @@ def source_problem(context: RunContext) -> str | None:
 def stage_hold_reason(journal: Journal) -> str | None:
     if status := journal.control_status():
         return f"Run is {status}; an operator must resume it before more work can start."
+    if status := journal.finished():
+        return f"Run is finished ({status}); an operator must resume it before more work can start."
     if journal.unanswered():
         return "Run is waiting for an operator answer; answer the pending question before more work can start."
     return None
@@ -252,16 +262,38 @@ def admit_step(
             )
             return 2
     elif active:
-        print(
+        problem = (
             f"{args.step} already has an unresolved attempt ({', '.join(active)}). "
-            "Inspect its log and provider receipt before reconciling or starting more work.",
+            "Inspect its log and provider receipt before reconciling or starting more work."
+        )
+        if hands_off(context.options) and STEPS[base_step(args.step)].paid:
+            finish_hands_off(context, journal, problem)
+        print(
+            problem,
             file=sys.stderr,
         )
         return 2
     elif args.number is not None:
         print("--number is reserved for an admitted detached attempt.", file=sys.stderr)
         return 2
+    if (
+        not args.attempt
+        and not hands_off(context.options)
+        and context.retained_delivery is None
+        and not journal.control_status()
+        and journal.finished()
+    ):
+        # Preserve the manual CLI's explicit stage-retry contract. Record its reopening
+        # rather than allowing an arbitrary late step.started event to erase a finish.
+        journal.append("run.resumed", reason="Manual stage retry requested", step=args.step)
     if refuse_controlled_step(context, journal, args.step, args.attempt):
+        return 2
+    problem = admission_problem(context, args.step, args.rest, journal, args.attempt)
+    if hands_off(context.options) and args.step not in plan_for(context):
+        problem = f"Step {args.step} is outside this hands-off run's submitted plan."
+    if problem:
+        finish_hands_off(context, journal, problem)
+        print(problem, file=sys.stderr)
         return 2
     if context.retained_delivery is not None:
         problem = retained_delivery_problem(context, args, journal)
@@ -301,6 +333,8 @@ def admit_step(
             error=problem,
             preflight=True,
         )
+        if hands_off(context.options):
+            finish_hands_off(context, journal, problem)
         print(problem, file=sys.stderr)
         return 2
     absent = missing_credentials(args.step)
@@ -320,6 +354,8 @@ def admit_step(
                 error=problem,
                 preflight=True,
             )
+        if hands_off(context.options):
+            finish_hands_off(context, journal, problem)
         print(problem, file=sys.stderr)
         return 2
     if refuse_controlled_step(context, journal, args.step, args.attempt):
@@ -755,6 +791,14 @@ def command_ask(context: RunContext, args: argparse.Namespace) -> int:
         return 2
     journal = context.journal()
     with journal.admission_lock():
+        if problem := stage_hold_reason(journal):
+            print(problem, file=sys.stderr)
+            return 2
+        if hands_off(context.options):
+            reason = f"Hands-off run stopped because operator input is required: {args.question}"
+            finish_hands_off(context, journal, reason)
+            print(reason, file=sys.stderr)
+            return 0
         journal.append("question", question=args.question, step=args.step)
     print(
         "asked, and the run is waiting. An operator answers with `wander answer`; "
@@ -771,10 +815,41 @@ def command_answer(context: RunContext, args: argparse.Namespace) -> int:
 
 def command_finish(context: RunContext, args: argparse.Namespace) -> int:
     journal = context.journal()
-    if journal.control_status() == "canceled":
-        print("cannot finish: run was canceled; an operator must resume it first", file=sys.stderr)
+    with journal.admission_lock():
+        return finish_locked(context, args, journal)
+
+
+def finish_locked(context: RunContext, args: argparse.Namespace, journal: Journal) -> int:
+    """Validate and finish under the same lock as pause, cancel and step admission."""
+    if journal.control_status() or journal.finished():
+        print(
+            "cannot finish: run is controlled or already finished; resume it first", file=sys.stderr
+        )
         return 2
+    if not args.summary.strip():
+        print("A finish summary must contain non-whitespace text.", file=sys.stderr)
+        return 2
+    if args.status == "preview_ready":
+        if not hands_off(context.options):
+            print("preview_ready requires an explicit hands-off run", file=sys.stderr)
+            return 2
+        if delivery_metadata(context, journal, args.summary)["status"] != "preview_ready":
+            print(
+                "cannot finish preview_ready: no source-matched packaged preview", file=sys.stderr
+            )
+            return 1
+    if hands_off(context.options) and args.status != "succeeded":
+        finish_hands_off(
+            context,
+            journal,
+            args.summary,
+            quality_status="failed" if args.status == "failed" else "blocked",
+        )
+        return 0
     if args.status == "succeeded":
+        if journal.active_attempts():
+            print("cannot finish succeeded: unresolved stage attempts remain", file=sys.stderr)
+            return 1
         if problem := source_problem(context):
             print(problem, file=sys.stderr)
             return 1
@@ -959,7 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
     answer.set_defaults(handler=command_answer)
 
     finish = commands.add_parser("finish", help="declare the run over")
-    finish.add_argument("status", choices=("succeeded", "failed", "blocked"))
+    finish.add_argument("status", choices=("succeeded", "failed", "blocked", "preview_ready"))
     finish.add_argument("summary")
     finish.set_defaults(handler=command_finish)
 

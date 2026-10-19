@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from orchestrator.api.viewer import scene_manifest
+from orchestrator.journal import Journal
 from scripts.tests import test_orchestrator_api_submission as submissions
 
 AUTH = submissions.AUTH
@@ -91,6 +92,62 @@ def test_missing_package_hides_link_and_stale_height_is_recomputed(packaged):
         case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH).status_code
         == 404
     )
+
+
+def test_terminal_preview_keeps_failed_quality_and_rechecks_missing_assets(packaged):
+    case, root, world, source = packaged
+    manifest = root / "run.json"
+    described = json.loads(manifest.read_text())
+    described["options"]["hands_off"] = True
+    manifest.write_text(json.dumps(described))
+    # No database projection: the directory alone must preserve the final outcome.
+    journal = Journal(root)
+    journal.append("step.started", step="clean", attempt="earlier", number=1)
+    journal.append(
+        "run.finished",
+        status="failed",
+        summary="Room layout failed; retained preview is available.",
+        delivery={
+            "status": "preview_ready",
+            "qualityStatus": "failed",
+            "reason": "Room layout failed",
+        },
+    )
+    journal.append("step.finished", step="clean", attempt="earlier", status="succeeded")
+    url = "/api/pipeline/runs/viewer-run"
+    progress = case.client.get(url + "/progress", headers=AUTH).json()
+    assert progress["finished"] == "failed"
+    assert progress["handsOff"] is True
+    assert progress["question"] is None
+    assert progress["viewerPath"]
+    assert progress["result"]["delivery"]["qualityStatus"] == "failed"
+    assert progress["result"]["delivery"]["status"] == "preview_ready"
+    assert case.client.get(url, headers=AUTH).json()["status"] == "failed"
+    assert case.client.get("/api/pipeline", headers=AUTH).json()["runs"][0]["status"] == "failed"
+    (world / "person/frame_000.ply").unlink()
+    unavailable = case.client.get(url + "/progress", headers=AUTH).json()
+    assert unavailable["viewerPath"] is None
+    assert unavailable["result"]["delivery"]["status"] == "unavailable"
+    assert unavailable["result"]["delivery"]["qualityStatus"] == "failed"
+    journal.append("run.resumed", author="operator")
+    assert case.client.get(url + "/progress", headers=AUTH).json()["result"] is None
+
+
+def test_readable_assets_do_not_promote_rejected_delivery_receipt(packaged):
+    case, root, world, source = packaged
+    Journal(root).append(
+        "run.finished",
+        status="failed",
+        summary="Source identity mismatch",
+        delivery={
+            "status": "unavailable",
+            "qualityStatus": "blocked",
+            "reason": "Source identity mismatch",
+        },
+    )
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    assert progress["result"]["delivery"]["status"] == "unavailable"
+    assert progress["viewerPath"] is None
 
 
 def test_root_references_people_objects_audio_and_sidecars(packaged):

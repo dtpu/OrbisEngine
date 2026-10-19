@@ -74,7 +74,8 @@ def synthetic_motion(folder):
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg required for real upload probe")
-def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypatch):
+@pytest.mark.parametrize("hands_off", [False, True])
+def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypatch, hands_off):
     clip = tmp_path / "source.mp4"
     subprocess.run(
         [
@@ -114,7 +115,7 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
         artifact_root=tmp_path / "artifacts",
     )
     client = TestClient(app, headers={"Authorization": f"Bearer {settings.bearer_token}"})
-    options = {"marble": "none", "objects": False}
+    options = {"marble": "none", "objects": False, "hands_off": hands_off}
     response = client.post(
         "/api/pipeline/runs/upload",
         files={"source": ("source.mp4", clip.read_bytes(), "video/mp4")},
@@ -132,7 +133,7 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
         == hashlib.sha256(clip.read_bytes()).digest()
     )
     calls = []
-    fail_motion = [True]
+    fail_motion = [not hands_off]
 
     def provider(self, name):
         calls.append(name)
@@ -197,18 +198,24 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
     assert cli.main(["finish", "succeeded", "not done yet"]) == 1
     for stage in stages:
         result = cli.main(["step", "--wait", stage])
-        assert result == (1 if stage in {"lhm_motion", "package"} else 0), stage
+        assert result == (1 if not hands_off and stage in {"lhm_motion", "package"} else 0), stage
     progress = client.get(f"/api/pipeline/runs/{run_id}/progress").json()
-    assert any("simulated provider failure" in (row["reason"] or "") for row in progress["stopped"])
-    assert cli.main(["finish", "succeeded", "still incomplete"]) == 1
-    fail_motion[0] = False
-    # Revisit everything as the supervisor does. Successful provider stages are cached.
-    for stage in stages:
-        assert cli.main(["step", "--wait", stage]) == 0, stage
+    if not hands_off:
+        assert any(
+            "simulated provider failure" in (row["reason"] or "") for row in progress["stopped"]
+        )
+        assert cli.main(["finish", "succeeded", "still incomplete"]) == 1
+        fail_motion[0] = False
+        # Manual recovery revisits stages; successful provider outputs remain cached.
+        for stage in stages:
+            assert cli.main(["step", "--wait", stage]) == 0, stage
+    else:
+        assert progress["handsOff"] is True
+        assert progress["question"] is None and not progress["stopped"]
     assert calls.count("clean") == 1
     assert calls.count("pi3x") == 1
     assert calls.count("lhm_frozen") == 1
-    assert calls.count("lhm_motion") == 2
+    assert calls.count("lhm_motion") == (1 if hands_off else 2)
     world = root / "public/worlds" / f"{context.name}-4d"
     # A completed stage list is not deliverable if a required viewer file was lost.
     audio = world / "audio.json"
@@ -241,11 +248,17 @@ def test_upload_models_failure_resume_package_and_completion(tmp_path, monkeypat
     assert progress["finished"] == "succeeded" and not progress["stopped"]
     source = next(item for item in progress["previews"] if item["label"] == "Source clip")
     assert client.get(source["url"]).content == clip.read_bytes()
+    # An explicit resume is required before examining new stage admission after completion.
+    Journal(root).append("run.resumed", author="operator")
     context.source.write_bytes(b"replaced clip")
     before = list(calls)
     assert cli.main(["step", "--wait", "package"]) == 2
     assert calls == before
-    assert cli.main(["finish", "succeeded", "cannot accept changed input"]) == 1
+    if hands_off:
+        assert Journal(root).finished() == "failed"
+    assert cli.main(["finish", "succeeded", "cannot accept changed input"]) == (
+        2 if hands_off else 1
+    )
     refused = client.get(f"/api/pipeline/runs/{run_id}/progress").json()
     assert any("Source bytes changed" in (row["reason"] or "") for row in refused["stopped"])
     assert any(

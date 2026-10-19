@@ -437,6 +437,11 @@ def create_app(
         if snapshot is not None and snapshot.run_id == summary["id"]:
             with_stage_snapshot(summary, snapshot)
         summary["live"] = {"source": "journal", "paused": paused}
+        # The terminal journal decision survives a failed database projection and late
+        # detached-stage completions. Do not turn it back into a request for UI input.
+        finished = journal.finished()
+        if finished in TERMINAL_RUN_STATUSES:
+            summary["status"] = finished
         if summary["status"] not in TERMINAL_RUN_STATUSES:
             apply_question_hold(summary, journal)
             summary["status"] = live_run_status(
