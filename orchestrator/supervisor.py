@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,7 @@ from orchestrator.config import REPOSITORY_ROOT, resolve_runs_root
 from orchestrator.worker_presence import WorkerPresence
 from orchestrator.steps import (
     STEPS,
+    RunOptions,
     base_step,
     dependencies_within,
     people_steps,
@@ -48,21 +50,72 @@ def repository_from_environment():
     return PipelineRepository(sessionmaker(create_engine(url), expire_on_commit=False))
 
 
-def runs_needing_work(root: Path) -> list[Path]:
-    """Run directories that are neither finished nor waiting on an answer."""
+def run_manifest(run_dir: Path, *, uploads_only: bool = False) -> dict | None:
+    """Read a well-formed run without following a run or manifest symlink."""
+    directory = None
+    try:
+        directory = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(
+            RUN_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
+        with os.fdopen(descriptor) as manifest_file:
+            if not stat.S_ISREG(os.fstat(manifest_file.fileno()).st_mode):
+                return None
+            manifest = json.load(manifest_file)
+        if not isinstance(manifest, dict):
+            return None
+        run_id = manifest.get("runId")
+        options = manifest.get("options", {})
+        if (
+            not isinstance(run_id, str)
+            or not 0 < len(run_id) <= 512
+            or not isinstance(manifest.get("name"), str)
+            or not manifest["name"]
+            or not isinstance(manifest.get("source"), str)
+            or (manifest.get("goal") is not None and not isinstance(manifest["goal"], str))
+            or (
+                manifest.get("retainedDelivery") is not None
+                and not isinstance(manifest["retainedDelivery"], dict)
+            )
+            or not isinstance(options, dict)
+            or (uploads_only and not hands_off(options))
+        ):
+            return None
+        automatic = hands_off(options)
+        repository = manifest.get("repository")
+        if automatic or manifest.get("retainedDelivery") is not None:
+            if not isinstance(repository, str) or not repository:
+                return None
+        elif repository is not None and not isinstance(repository, str):
+            return None
+        # Ordinary legacy sessions fall back to the current repository and accept
+        # integer strings for people. Automatic manifests require exact typed options.
+        # Check the raw conversion used by RunSession too: Pydantic accepts "2.0",
+        # but int("2.0") cannot be consumed by session planning.
+        RunOptions.model_validate(options, strict=automatic)
+        int(options.get("people") or 1)
+        # Missing source files (including open_run's empty source) remain stage preflight.
+        return manifest
+    except (OSError, ValueError, RecursionError):
+        return None
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
+def runs_needing_work(root: Path, *, uploads_only: bool = False) -> list[Path]:
+    """Eligible run directories that are neither finished nor waiting on an answer."""
     pending = []
     for described in sorted(root.glob(f"*/{RUN_FILE}")):
         run_dir = described.parent
+        manifest = run_manifest(run_dir, uploads_only=uploads_only)
+        if manifest is None:
+            continue
         journal = Journal(run_dir)
         if journal.finished():
             continue
-        if journal.unanswered():
-            try:
-                unattended = hands_off(json.loads(described.read_text()).get("options") or {})
-            except (OSError, ValueError, AttributeError):
-                unattended = False
-            if not unattended:
-                continue
+        if journal.unanswered() and not hands_off(manifest.get("options", {})):
+            continue
         if journal.control_status():
             continue
         pending.append(run_dir)
@@ -147,6 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--run-id", help="select one run; stop after one pass unless --watch is set"
     )
+    parser.add_argument(
+        "--uploads-only",
+        action="store_true",
+        help="process only runs explicitly submitted with options.hands_off true",
+    )
     parser.add_argument("--turns", type=int, default=12, help="turns per run before moving on")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -165,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds before a run that went nowhere is given a fresh agent",
     )
     args = parser.parse_args(argv)
+    if args.uploads_only and "WANDER_STAGE_AUTHORIZATION" in os.environ:
+        parser.error(
+            "--uploads-only cannot inherit WANDER_STAGE_AUTHORIZATION: "
+            "a source-specific paid-stage permit must not be reused across uploads"
+        )
     single_pass = args.once or (args.run_id and not args.watch)
 
     root = resolve_runs_root(args.runs)
@@ -183,16 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         root,
         run_id=args.run_id,
         watcher=not single_pass,
+        uploads_only=args.uploads_only,
         heartbeat=Path(heartbeat) if heartbeat else None,
     ) as presence:
         while True:
-            pending = runs_needing_work(root)
-            if args.run_id:
-                pending = [
-                    d
-                    for d in pending
-                    if json.loads((d / RUN_FILE).read_text())["runId"] == args.run_id
-                ]
+            pending = runs_needing_work(root, uploads_only=args.uploads_only)
             for run_dir in pending:
                 # One pass per run at a time. A step runs detached and outlives the turn that
                 # started it, so a run whose journal has not moved is a run whose agent is
@@ -200,9 +258,17 @@ def main(argv: list[str] | None = None) -> int:
                 # gets submitted twice.
                 if not single_pass and not due(run_dir, pushed, args.push_after):
                     continue
-                run_id = json.loads((run_dir / RUN_FILE).read_text())["runId"]
+                manifest = run_manifest(run_dir, uploads_only=args.uploads_only)
+                if manifest is None or (args.run_id and manifest["runId"] != args.run_id):
+                    continue
+                run_id = manifest["runId"]
                 presence.set_active(run_id)
                 try:
+                    # Discovery may precede another run's long turn. Recheck the scope
+                    # immediately before handing this directory to an agent.
+                    current = run_manifest(run_dir, uploads_only=args.uploads_only)
+                    if current is None or current["runId"] != run_id:
+                        continue
                     outcome = work_on(run_dir, repository, policy, args.turns)
                 finally:
                     presence.set_active(None)

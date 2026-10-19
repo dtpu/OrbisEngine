@@ -241,7 +241,7 @@ def create_app(
         from orchestrator.doctor import inspect_setup
 
         report = inspect_setup(options.model_dump(mode="json"))
-        worker = worker_status(review_workspace_root)
+        worker = worker_status(review_workspace_root, hands_off=options.hands_off)
         available = worker["status"] == "available"
         report["worker"] = worker
         report["checks"].append(

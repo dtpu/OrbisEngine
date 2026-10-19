@@ -213,6 +213,7 @@ def describe_progress(root: Path) -> dict:
         item["url"] = prefix + quote(item["path"], safe="/")
     stopped = [row for row in rows if row["status"] in {"failed", "blocked"}]
     current = [row["name"] for row in rows if row["status"] == "running"]
+    hands_off = (read_json(root / "run.json").get("options") or {}).get("hands_off") is True
     viewer_available = scene_manifest(root) is not None
     result = None
     if journal.finished():
@@ -236,7 +237,7 @@ def describe_progress(root: Path) -> dict:
                 }
     return {
         "runId": snapshot.run_id,
-        "worker": worker_status(root.parent, snapshot.run_id),
+        "worker": worker_status(root.parent, snapshot.run_id, hands_off=hands_off),
         "finished": journal.finished(),
         "paused": (root / "paused").exists(),
         "question": journal.unanswered(),
@@ -244,7 +245,7 @@ def describe_progress(root: Path) -> dict:
         "stopped": stopped,
         "stages": rows,
         "previews": inputs,
-        "handsOff": (read_json(root / "run.json").get("options") or {}).get("hands_off") is True,
+        "handsOff": hands_off,
         "result": result,
         "viewerPath": (
             f"/fourd.html?scene={quote(f'/api/pipeline/runs/{snapshot.run_id}/viewer/scene.json', safe='')}"
