@@ -150,15 +150,11 @@ class RunThroughTests(unittest.TestCase):
         session = RunSession(
             "run-1",
             run_dir,
-            HarnessAgent(
-                self.agent(
-                    'subprocess.run(["wander", "step", "clean"])\n'
-                    'subprocess.run(["wander", "finish", "blocked", "source is not a video"])'
-                )
-            ),
+            HarnessAgent(self.agent('subprocess.run(["wander", "step", "clean"], check=True)')),
         )
-        outcome = session.work(turns=2)
-        self.assertEqual(outcome.finished, "blocked")
+        outcome = session.turn()
+        self.assertIsNone(outcome.finished)
+        self.assertEqual(outcome.steps_run, 1)
         journal = Journal(run_dir)
         # The step runs on its own, so its outcome lands after the agent's turn is over.
         for _ in range(200):
@@ -169,6 +165,15 @@ class RunThroughTests(unittest.TestCase):
         self.assertEqual(journal.last_status("clean"), "failed")
         finished = [e for e in journal.entries() if e.kind == "step.finished"][0]
         self.assertTrue((run_dir / finished.data["log"]).is_file(), "the step's log is kept")
+        # Finish only after the detached stage settles. Finishing in the launch turn
+        # races the child's admission and correctly blocks it on a slower runner.
+        # Rewrite the stand-in script while retaining the session's configured environment.
+        self.agent(
+            'subprocess.run(["wander", "finish", "blocked", "source is not a video"], check=True)'
+        )
+        outcome = session.work(turns=1)
+        self.assertEqual(outcome.finished, "blocked")
+        self.assertEqual(journal.last_status("clean"), "failed")
 
     def test_a_question_ends_the_turn_and_holds_the_run(self):
         run_dir = self.open()
