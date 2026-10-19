@@ -1,0 +1,44 @@
+scripts/tests/test_orchestrator_api_submission.py
+  s_988a422339b8f1::t_5b6d42a8e0876f 242-262,269-273,275-278,281-287,290-322
+  s_988a422339b8f1::t_3748089b4a24a8 263-268,274,279-280,288-289
+admin/lib/run-progress.ts
+  s_988a422339b8f1::t_2b3816c61b9c36 15-19,27-31
+  s_988a422339b8f1::t_72cf80f3d977da 32
+admin/components/run-overview.tsx
+  s_988a422339b8f1::t_f4cd90e63dbb8b 146-150
+orchestrator/api/app.py
+  s_988a422339b8f1::t_3748089b4a24a8 246-250,257
+admin/lib/types.ts
+  s_988a422339b8f1::t_2b3816c61b9c36 234
+docs/automatic-uploads.md
+  s_988a422339b8f1::t_cbf05fe09d2cda 37-68
+  s_988a422339b8f1::t_2443e096daa90e 70-74
+admin/tests/run-progress.test.ts
+  s_988a422339b8f1::t_2b3816c61b9c36 72-94
+orchestrator/supervisor.py
+  s_988a422339b8f1::t_311bca61c284cc 28,209-213,237-238,243-250,257-284,287-288,290,293,295-297,299-300,304-311,313-326
+orchestrator/upload_admission.py
+  s_988a422339b8f1::t_1cde9fdf045e4b 1-397
+orchestrator/worker_presence.py
+  s_988a422339b8f1::t_0b526bc7ebd6ef 16,34,61-62,65-68,76,82-86,97-101,112,114,121-127,142,146-152,160,165,196-231,257,261
+scripts/tests/test_upload_admission.py
+  s_988a422339b8f1::t_7d411b92b9fd4b 1-477
+scripts/tests/test_worker_presence.py
+  s_988a422339b8f1::t_370376a5a03341 71,288,321-346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3333ea4731eaff91dd2243a8c7efbc276af146b",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
