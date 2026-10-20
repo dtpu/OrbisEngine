@@ -97,6 +97,17 @@ change the submitted run through extra stage flags or automatically retry a paid
 Existing provider ledgers and unresolved-operation guards continue to apply. A known provider
 operation must be recovered separately rather than submitted again.
 
+Once a paid stage that the package depends on fails or is blocked, the run cannot produce a
+preview, because hands-off mode never repeats a paid stage. The next paid launch is then
+refused and the run finishes `failed`, so it does not spend on a world generation or avatars
+that can no longer be packaged. Stages already running finish and keep their outputs.
+
+The shared stage ledger counts executions per source SHA-256 across all runs, including
+historical imports. A second execution needs an explicit new hypothesis, which a hands-off run
+cannot supply. Uploading a video that was already processed therefore blocks at its first
+previously executed paid stage. Use a source that has not been processed before. An upload
+does not reuse earlier outputs or worlds.
+
 When the agent needs a decision, exhausts its useful work, or stalls, the run records a final
 failure with its reason instead of waiting for a question in the UI. Existing outputs and
 evidence remain available. A readable packaged scene may be delivered as an **unaccepted

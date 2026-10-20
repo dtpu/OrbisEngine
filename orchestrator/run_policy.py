@@ -11,7 +11,7 @@ import json
 from typing import Any
 
 from orchestrator.journal import Journal
-from orchestrator.steps import STEPS, base_step
+from orchestrator.steps import STEPS, base_step, stage_graph
 
 
 def hands_off(options: dict[str, Any]) -> bool:
@@ -53,6 +53,43 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
                 f"Hands-off paid step {step} already has an attempt or retained result. "
                 "Automatic paid retries are disabled; retain its outputs and provider receipt."
             )
+        if lost := lost_package_prerequisite(context, journal):
+            return (
+                f"Hands-off paid step {step} was not started: required paid step {lost} cannot "
+                "run again, so no packaged preview can follow and further paid work is wasted."
+            )
+    return None
+
+
+def lost_package_prerequisite(context, journal: Journal) -> str | None:
+    """A paid prerequisite of the package that failed or was blocked, if there is one.
+
+    Hands-off runs never repeat a paid step, so such a failure is final: the package, and with
+    it any preview, can no longer be produced. Unpaid steps can still be rerun and do not count.
+    """
+    stages, deps = stage_graph(context.options)
+    package = "package_people" if "package_people" in stages else "package"
+    required, pending = set(), [package]
+    while pending:
+        name = pending.pop()
+        if name not in required:
+            required.add(name)
+            pending.extend(deps.get(name, []))
+    outcomes = {
+        entry.data.get("step"): entry.data.get("status")
+        for entry in journal.entries()
+        if entry.kind == "step.finished"
+    }
+    for name, record in stage_records(context.run_dir).items():
+        if isinstance(record, dict) and record.get("status") == "failed":
+            outcomes.setdefault(name, "failed")
+    for name in stages:
+        if (
+            name in required
+            and STEPS[base_step(name)].paid
+            and outcomes.get(name) in {"failed", "blocked"}
+        ):
+            return f"{name} ({outcomes[name]})"
     return None
 
 

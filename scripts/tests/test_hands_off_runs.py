@@ -14,7 +14,7 @@ from orchestrator import cli
 from orchestrator.agent.contracts import AgentResult
 from orchestrator.agent.harness import HarnessAgent, HarnessOutcome, HarnessPolicy
 from orchestrator.journal import Journal
-from orchestrator.run_policy import delivery_metadata
+from orchestrator.run_policy import admission_problem, delivery_metadata
 from orchestrator.session import RunSession
 from orchestrator.steps import RunOptions
 from orchestrator.supervisor import runs_needing_work, work_on
@@ -156,6 +156,32 @@ def test_paid_retry_is_refused_after_restart_and_resume(run, monkeypatch, record
     assert cli.main(["step", "--wait", "clean"]) == 2
     assert Journal(run.run_dir).finished() == "failed"
     popen.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+def test_lost_package_prerequisite_stops_further_paid_work(run, monkeypatch, status):
+    journal = run.journal()
+    journal.append("step.started", step="pi3x", attempt="one", number=1)
+    journal.append("step.finished", step="pi3x", attempt="one", status=status)
+    popen = Mock(
+        side_effect=AssertionError("paid work launched after the package became impossible")
+    )
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+    assert cli.main(["step", "--wait", "lhm_frozen"]) == 2
+    finished = Journal(run.run_dir).entries()[-1]
+    assert finished.kind == "run.finished" and finished.data["status"] == "failed"
+    assert "pi3x" in finished.data["summary"]
+    popen.assert_not_called()
+
+
+def test_lost_prerequisite_check_ignores_unpaid_and_unrelated_failures(run):
+    journal = run.journal()
+    # Unpaid steps can be rerun; clean does not feed the package of a run without a world.
+    journal.append("step.finished", step="frame_align", attempt="one", status="failed")
+    journal.append("step.finished", step="clean", attempt="one", status="failed")
+    assert admission_problem(run, "lhm_frozen", [], journal) is None
+    (run.run_dir / "state.json").write_text('{"stages":{"lhm_frozen":{"status":"failed"}}}')
+    assert "lhm_frozen" in admission_problem(run, "pi3x", [], journal)
 
 
 def test_existing_detached_attempt_can_claim_execution_once(run):
