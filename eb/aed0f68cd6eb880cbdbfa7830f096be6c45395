@@ -1,0 +1,29 @@
+orchestrator/cli.py
+  s_056d7ba23540b1::t_efc46888ac2029 299-301
+  s_056d7ba23540b1::t_7df4a073b82470 34
+  s_056d7ba23540b1::t_e4f0cea78feeb8 302
+scripts/tests/test_hands_off_runs.py
+  s_056d7ba23540b1::t_a1e39ee8613ca5 191-204
+  s_056d7ba23540b1::t_74e0924865a4e2 17-21
+orchestrator/run_policy.py
+  s_056d7ba23540b1::t_11993b4336e8d4 105
+  s_056d7ba23540b1::t_631233cbbbc4b6 56,64-65,67-84
+docs/automatic-uploads.md
+  s_056d7ba23540b1::t_995dbef728f2df 103-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebaed0f68cd6eb880cbdbfa7830f096be6c45395",
+  "prompts": {},
+  "sessions": {
+    "s_056d7ba23540b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffab7eb2-647c-4cdf-b37f-f1ff4671817b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
