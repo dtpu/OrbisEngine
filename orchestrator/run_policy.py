@@ -53,7 +53,7 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
                 f"Hands-off paid step {step} already has an attempt or retained result. "
                 "Automatic paid retries are disabled; retain its outputs and provider receipt."
             )
-        if lost := lost_package_prerequisite(context, journal):
+        if lost := failed_package_prerequisite(context, journal, paid=True):
             return (
                 f"Hands-off paid step {step} was not started: required paid step {lost} cannot "
                 "run again, so no packaged preview can follow and further paid work is wasted."
@@ -61,11 +61,27 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
     return None
 
 
-def lost_package_prerequisite(context, journal: Journal) -> str | None:
-    """A paid prerequisite of the package that failed or was blocked, if there is one.
+def unpaid_prerequisite_problem(context, step: str, journal: Journal) -> str | None:
+    """Hold paid work while an unpaid prerequisite of the package is failed.
 
-    Hands-off runs never repeat a paid step, so such a failure is final: the package, and with
-    it any preview, can no longer be produced. Unpaid steps can still be rerun and do not count.
+    Unlike a paid failure this is not final: rerunning the unpaid step is admitted, and paid
+    work resumes once it succeeds. A failure that repeats leaves the run without runnable work.
+    """
+    if not hands_off(context.options) or not STEPS[base_step(step)].paid:
+        return None
+    if failed := failed_package_prerequisite(context, journal, paid=False):
+        return (
+            f"Hands-off paid step {step} was not started: required step {failed} has not "
+            "succeeded, so no packaged preview can follow yet. Rerun it first."
+        )
+    return None
+
+
+def failed_package_prerequisite(context, journal: Journal, *, paid: bool) -> str | None:
+    """A paid (or unpaid) prerequisite of the package whose latest outcome is a failure.
+
+    Hands-off runs never repeat a paid step, so a paid failure is final: the package, and with
+    it any preview, can no longer be produced. An unpaid step can still be rerun.
     """
     stages, deps = stage_graph(context.options)
     package = "package_people" if "package_people" in stages else "package"
@@ -86,7 +102,7 @@ def lost_package_prerequisite(context, journal: Journal) -> str | None:
     for name in stages:
         if (
             name in required
-            and STEPS[base_step(name)].paid
+            and STEPS[base_step(name)].paid == paid
             and outcomes.get(name) in {"failed", "blocked"}
         ):
             return f"{name} ({outcomes[name]})"

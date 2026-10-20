@@ -100,7 +100,11 @@ operation must be recovered separately rather than submitted again.
 Once a paid stage that the package depends on fails or is blocked, the run cannot produce a
 preview, because hands-off mode never repeats a paid stage. The next paid launch is then
 refused and the run finishes `failed`, so it does not spend on a world generation or avatars
-that can no longer be packaged. Stages already running finish and keep their outputs.
+that can no longer be packaged. Stages already running finish and keep their outputs. While an
+unpaid package prerequisite (such as `person_prep`) is failed, paid launches are held instead:
+rerunning that step is still admitted, and paid work resumes only once it succeeds. Unpaid steps
+use the same fixed defaults on a rerun, so a failure caused by the footage itself, such as no
+fully visible person, repeats and the run ends without spending on generation.
 
 The shared stage ledger counts executions per source SHA-256 across all runs, including
 historical imports. A second execution needs an explicit new hypothesis, which a hands-off run

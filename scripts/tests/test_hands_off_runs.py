@@ -14,7 +14,11 @@ from orchestrator import cli
 from orchestrator.agent.contracts import AgentResult
 from orchestrator.agent.harness import HarnessAgent, HarnessOutcome, HarnessPolicy
 from orchestrator.journal import Journal
-from orchestrator.run_policy import admission_problem, delivery_metadata
+from orchestrator.run_policy import (
+    admission_problem,
+    delivery_metadata,
+    unpaid_prerequisite_problem,
+)
 from orchestrator.session import RunSession
 from orchestrator.steps import RunOptions
 from orchestrator.supervisor import runs_needing_work, work_on
@@ -182,6 +186,20 @@ def test_lost_prerequisite_check_ignores_unpaid_and_unrelated_failures(run):
     assert admission_problem(run, "lhm_frozen", [], journal) is None
     (run.run_dir / "state.json").write_text('{"stages":{"lhm_frozen":{"status":"failed"}}}')
     assert "lhm_frozen" in admission_problem(run, "pi3x", [], journal)
+
+
+def test_failed_unpaid_prerequisite_holds_paid_work_until_it_succeeds(run, monkeypatch):
+    journal = run.journal()
+    journal.append("step.finished", step="person_prep", attempt="one", status="failed")
+    popen = Mock(side_effect=AssertionError("paid work launched without its prerequisite"))
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+    assert cli.main(["step", "--wait", "lhm_frozen"]) == 2
+    # Held, not finished: the unpaid step may still be rerun.
+    assert Journal(run.run_dir).finished() is None
+    popen.assert_not_called()
+    assert unpaid_prerequisite_problem(run, "person_prep", journal) is None
+    journal.append("step.finished", step="person_prep", attempt="two", status="succeeded")
+    assert unpaid_prerequisite_problem(run, "lhm_frozen", journal) is None
 
 
 def test_existing_detached_attempt_can_claim_execution_once(run):
