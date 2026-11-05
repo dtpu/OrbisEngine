@@ -24,6 +24,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx --bun tsc --noEmit
       - run: bun run format:check
+      - run: bun run build
       - name: Install Python packager dependencies before timed viewer tests
         run: uv sync --locked
       - run: bun run test
@@ -66,3 +67,26 @@ jobs:
       - run: uv lock --check
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: uv run --locked --group dev --group inference pytest
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: bun run setup
+      - run: bunx playwright@1.63.0 install --with-deps chromium
+      - run: bun run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-browser-evidence
+          path: .context/evidence/app-browser
+          retention-days: 7

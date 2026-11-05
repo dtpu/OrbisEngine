@@ -1,4 +1,4 @@
-# Orbis admin
+# Orbis Engine admin
 
 Operator console for pipeline runs: start a run from a clip, watch stages in dependency order,
 look at what each attempt produced, and approve, retry, pause or cancel with a recorded reason.
@@ -9,10 +9,17 @@ until an operator explicitly resumes or retries the run.
 
 ## Run it
 
+For the unified local app, run `bun run app` from the repository root. Admin opens at `/`, the
+viewer at `/demo.html` and `/fourd.html`, and the landing page at `/about/` on the same origin.
+
+To run only the admin against an existing API:
+
 ```sh
 cd admin
 bun install --frozen-lockfile
-WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bun run dev -- --port 5401 --hostname 127.0.0.1
+WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… \
+  WANDER_VIEWER_ORIGIN=http://127.0.0.1:5399 \
+  bun run dev -- --port 5401 --hostname 127.0.0.1
 ```
 
 The browser only ever talks to this server. `app/api/pipeline/[[...path]]/route.ts` proxies to the
@@ -20,6 +27,15 @@ orchestrator API and attaches the bearer token server-side, so the token never r
 
 - `WANDER_PIPELINE_API` — orchestrator base URL (default `http://127.0.0.1:8000`).
 - `WANDER_API_TOKEN` — the API's bearer token; without it every request answers 503.
+- `WANDER_APP_ORIGIN` — optional trusted HTTP(S) app origin when a gateway forwards browser
+  mutations to this admin (the unified launcher sets `http://127.0.0.1:5399`). Requests from
+  the admin request origin are also allowed. Cross-site browser mutations and other origins
+  are rejected before attaching API credentials; originless local CLI requests are allowed.
+  Only an exact origin is accepted, without credentials, paths, queries or wildcards.
+- `WANDER_VIEWER_ORIGIN` — optional HTTP(S) origin for a separately hosted viewer, such as
+  `http://127.0.0.1:5399`. Omit it for same-origin viewer links. It is read by the server at
+  request time, including production `next start`; only this public origin reaches the client.
+  Credentials, paths, queries and fragments are rejected. Never put API tokens in this value.
 
 ## What the pages show
 
@@ -45,7 +61,8 @@ and the production bundle. Setup checks do not contact paid providers or approve
 
 Once a run has its packaged people, cameras, soundtrack metadata, copied source and selected
 world (or explicitly no world), **Preview packaged scene** opens its isolated assets in the
-local viewer. Start that viewer from the repository root with the same API credentials:
+viewer at the same origin. With a standalone admin, set `WANDER_VIEWER_ORIGIN` on the admin
+server and start the viewer from the repository root with the same API credentials:
 
 ```sh
 WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bunx --bun vite --port 5399 --host 127.0.0.1
@@ -64,7 +81,7 @@ orchestrator.api.service:create_service --factory --host 127.0.0.1 --port 8000`)
 against an isolated database, `WANDER_RUNS_ROOT` and local `WANDER_ARTIFACT_ROOT`. Keep the
 supervisor stopped: the test uploads a clip, queues it, previews it, then pauses, resumes and
 cancels its own run. It also checks the missing-run error page. From the repository root, with
-Chrome installed:
+Chrome installed (or a Playwright Chromium installation):
 
 ```sh
 bun install --frozen-lockfile
@@ -76,7 +93,9 @@ The browser smoke script lives with the root browser tests and uses the root pac
 its production build does not require browser-test dependencies.
 
 `ADMIN_SMOKE_URL` overrides the admin URL (default `http://127.0.0.1:5401`), and
-`ADMIN_SMOKE_OUTPUT` overrides the ignored evidence directory (default
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium binary. Otherwise the
+smoke tries installed Chrome, then Playwright's bundled Chromium (`bunx playwright-core install
+chromium` to install it). `ADMIN_SMOKE_OUTPUT` overrides the ignored evidence directory (default
 `.context/evidence/admin-live-smoke`). The script checks schema defaults, the real setup doctor,
 source video decoding and persisted operator state; it never starts a worker. The Python
 regressions also rebuild the service to verify queued sources and operator state survive restart:

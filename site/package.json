@@ -1,10 +1,10 @@
 {
-  "name": "wander-site",
+  "name": "orbis-engine-site",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5400 --host 127.0.0.1",
+    "dev": "vite --port 5399 --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"scripts/**/*.ts\" index.html package.json tsconfig.json vite.config.ts",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\" \"scripts/**/*.ts\" index.html package.json tsconfig.json vite.config.ts",

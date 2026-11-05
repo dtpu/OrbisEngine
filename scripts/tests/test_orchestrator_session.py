@@ -10,6 +10,7 @@ holding it in memory.
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -91,6 +92,34 @@ class BriefTests(unittest.TestCase):
         shim = binaries / "wander"
         self.assertTrue(shim.is_file() and shim.stat().st_mode & 0o111)
         self.assertIn(str(ROOT), shim.read_text(), "the shim must name the code absolutely")
+
+    def test_wander_quotes_interpreter_repository_and_arguments(self):
+        executable = self.root / "python with spaces and ' quotes"
+        executable.write_text('#!/bin/sh\nprintf \'%s\\n\' "$PYTHONPATH" "$@"\n')
+        executable.chmod(0o755)
+        repository = str(self.root / "repo with $VARIABLE and ' quotes")
+        with (
+            patch("orchestrator.session.sys.executable", str(executable)),
+            patch.dict(os.environ, {"WANDER_REPOSITORY": repository}),
+        ):
+            shim = install_wander(self.root) / "wander"
+        result = subprocess.run(
+            [str(shim), "ask", "keep spaces and $VARIABLE literal"],
+            env={**os.environ, "PYTHONPATH": "retained:path", "VARIABLE": "must-not-expand"},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                repository + ":retained:path",
+                "-m",
+                "orchestrator.cli",
+                "ask",
+                "keep spaces and $VARIABLE literal",
+            ],
+        )
 
 
 class RunThroughTests(unittest.TestCase):

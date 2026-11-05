@@ -30,3 +30,40 @@ img {
   display: block;
   max-width: 100%;
 }
+
+.missing-media {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 140px;
+  padding: 20px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  text-align: center;
+  font-size: 14px;
+}
+.missing-media small {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.poster-fallback {
+  position: relative;
+  height: 100%;
+}
+.poster-fallback img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.poster-fallback p {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  padding: 6px;
+  background: #111c;
+  color: #fff;
+  font-size: 12px;
+}

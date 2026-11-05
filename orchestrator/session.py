@@ -19,6 +19,7 @@ from pathlib import Path
 
 import dataclasses
 import os
+import shlex
 import sys
 
 from orchestrator.agent.harness import HarnessAgent, TRANSCRIPT_FILE, read_session
@@ -85,8 +86,8 @@ def install_wander(run_dir: Path) -> Path:
     repository = os.environ.get("WANDER_REPOSITORY") or str(Path(__file__).resolve().parents[1])
     shim.write_text(
         "#!/bin/sh\n"
-        f'PYTHONPATH="{repository}${{PYTHONPATH:+:$PYTHONPATH}}" '
-        f'exec {sys.executable} -m orchestrator.cli "$@"\n'
+        f'PYTHONPATH={shlex.quote(repository)}"${{PYTHONPATH:+:$PYTHONPATH}}" '
+        f'exec {shlex.quote(sys.executable)} -m orchestrator.cli "$@"\n'
     )
     shim.chmod(0o755)
     return binaries

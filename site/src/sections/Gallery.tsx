@@ -13,8 +13,9 @@ export default function Gallery() {
         <Eyebrow>Examples</Eyebrow>
         <H2>Walk through these</H2>
         <p className={styles.intro}>
-          Nine clips from the demo picker, each rebuilt as a room you can move through. Cards with
-          known flaws keep an honest label instead of being hidden.
+          Nine examples from the demo picker. Scene data and preview media are installed separately;
+          a fresh checkout includes descriptions, not playable reconstructions. Known flaws stay
+          labeled.
         </p>
       </header>
       <ul className={styles.grid}>
@@ -31,7 +32,7 @@ export default function Gallery() {
                   <VideoLoop
                     src={scene.wander}
                     poster={scene.poster}
-                    label={`${scene.title} — Wander loop`}
+                    label={`${scene.title} — Orbis Engine loop`}
                     className={styles.video}
                   />
                 }

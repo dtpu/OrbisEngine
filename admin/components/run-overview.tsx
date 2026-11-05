@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useViewerOrigin } from '@/components/viewer-origin';
+import { viewerUrl } from '@/lib/viewer-url';
 import { Progress } from '@/components/progress';
 import { Status } from '@/components/status';
 import { loadRunProgress } from '@/lib/client';
@@ -15,6 +17,7 @@ export function RunOverview({
   runId: string;
   onSelectStage: (name: string) => void;
 }) {
+  const viewerOrigin = useViewerOrigin();
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,7 +117,7 @@ export function RunOverview({
       ) : null}
       {progress.viewerPath ? (
         <p className="field__hint">
-          <a href={`http://127.0.0.1:5399${progress.viewerPath}`} target="_blank" rel="noreferrer">
+          <a href={viewerUrl(progress.viewerPath, viewerOrigin)} target="_blank" rel="noreferrer">
             Preview packaged scene
           </a>{' '}
           — reconstruction quality is unverified.

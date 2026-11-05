@@ -58,7 +58,41 @@ never filmed. What worked was generating the whole room, then correcting it with
 
 Full list in the [research log](docs/research-log.md). Dead ends in [known limits](docs/known-limits.md).
 
-## Run the viewer
+## Run the complete local app
+
+Install Bun, Node.js 24+, uv, and FFmpeg, then run:
+
+```sh
+bun run setup
+bun run app
+```
+
+Open **http://127.0.0.1:5399**. The dashboard, source uploads, run previews, viewer, and
+About page now share one address. Setup installs locked dependencies and builds all three
+frontends. The launcher initializes or migrates a local SQLite database, keeps uploaded files
+and a private API token under `.context/app/`, and stops its child services when you press Ctrl+C.
+Restarting retains your uploads and run state. Private settings in `.env.local` and `.env.author`
+are loaded server-side; never put provider keys in `VITE_` variables.
+
+The default command saves uploads in the queue. To also enable an already configured provider
+worker with a finite, persistent admission allowance, use:
+
+```sh
+bun run app --worker --max-uploads 1
+```
+
+Configure provider access and spending controls first using [pipeline setup](docs/pipeline-setup.md)
+and [automatic uploads](docs/automatic-uploads.md). This admits one upload across restarts; it
+is not a dollar cap or a promise of accepted reconstruction quality. Keep the existing shared
+`WANDER_STAGE_LEDGER` when using another checkout. The app binds only to localhost and is an
+operator tool; public hosting requires its own access control and worker deployment.
+
+Run `bun run test:e2e` with the app stopped to exercise the real API, dashboard, source-video
+playback, pause/resume/cancel controls, and About page in Chrome/Chromium. It creates an isolated
+database, starts no worker, and makes no paid model calls. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+selects a browser executable; otherwise installed Chrome or Playwright Chromium is used.
+
+## Run only the viewer
 
 You need [Bun](https://bun.sh/docs/installation) 1.2.21+ and Chrome.
 
