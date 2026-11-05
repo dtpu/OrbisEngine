@@ -513,6 +513,70 @@ class CommandIdentityTests(unittest.TestCase):
         path.write_text(content)
         return path
 
+    def test_resource_environment_records_distinct_normalized_effective_policies(self):
+        for worker, maximum, memory, containers in (
+            ("worker/modal_clean_video.py", 3600, 32768, 2),
+            ("worker/modal_motion.py", 1500, 32768, 1),
+            ("worker/modal_lhm.py", 1800, 65536, 1),
+        ):
+            with self.subTest(worker=worker):
+                command = ["modal", "run", worker]
+                default, code, _ = command_identity(command, self.root, environment={})
+                low, low_code, _ = command_identity(
+                    command, self.root, environment={"WANDER_WORKER_TIMEOUT_SECONDS": "600"}
+                )
+                high, high_code, _ = command_identity(
+                    command, self.root, environment={"WANDER_WORKER_TIMEOUT_SECONDS": "900"}
+                )
+                normalized, _, _ = command_identity(
+                    command,
+                    self.root,
+                    environment={"WANDER_WORKER_TIMEOUT_SECONDS": "0600", "PRIVATE_KEY": "secret"},
+                )
+                self.assertEqual(code, low_code)
+                self.assertEqual(code, high_code)
+                self.assertEqual(
+                    default["resources"],
+                    {
+                        "cpu": 4,
+                        "memory": memory,
+                        "timeout": maximum,
+                        "max_containers": containers,
+                        "retries": 0,
+                        "scaledown_window": 2,
+                    },
+                )
+                self.assertEqual(low["resources"]["timeout"], 600)
+                self.assertEqual(low["resources"]["startup_timeout"], 600)
+                self.assertEqual(low["resources"]["cpu"], [4, 4])
+                self.assertEqual(high["resources"]["timeout"], 900)
+                self.assertNotEqual(default, low)
+                self.assertNotEqual(low, high)
+                self.assertEqual(low, normalized)
+                self.assertNotIn("secret", json.dumps(normalized))
+
+    def test_irrelevant_workers_ignore_resource_environment(self):
+        command = ["modal", "run", "worker/modal_image_to_3d.py"]
+        before = command_identity(command, self.root, environment={})
+        after = command_identity(
+            command,
+            self.root,
+            environment={"WANDER_WORKER_TIMEOUT_SECONDS": "invalid", "PRIVATE_KEY": "secret"},
+        )
+        self.assertEqual(before, after)
+        self.assertNotIn("resources", before[0])
+
+    def test_default_environment_uses_current_process_without_mutation(self):
+        command = ["modal", "run", "worker/modal_motion.py"]
+        with patch.dict(os.environ, {"WANDER_WORKER_TIMEOUT_SECONDS": "900"}):
+            current = command_identity(command, self.root)
+            explicit = command_identity(
+                command, self.root, environment={"WANDER_WORKER_TIMEOUT_SECONDS": "600"}
+            )
+            self.assertEqual(current[0]["resources"]["timeout"], 900)
+            self.assertEqual(explicit[0]["resources"]["timeout"], 600)
+            self.assertEqual(os.environ["WANDER_WORKER_TIMEOUT_SECONDS"], "900")
+
     def test_resource_helper_changes_are_part_of_each_affected_worker_identity(self):
         helper = "worker/stages/worker_resources.py"
         for worker in (
@@ -813,6 +877,18 @@ class PaidRunIntegrationTests(unittest.TestCase):
             "--out",
             str(output),
         ]
+
+    def test_invalid_resource_limit_blocks_before_ledger_claim_or_provider_call(self):
+        with (
+            patch.dict(os.environ, {"WANDER_WORKER_TIMEOUT_SECONDS": "1501"}),
+            patch.object(StageAttempts, "begin") as claim,
+            patch.object(run_clip, "run") as provider,
+            self.assertRaisesRegex(run_clip.QualityStop, "WANDER_WORKER_TIMEOUT_SECONDS"),
+        ):
+            self.pipeline.paid_run("pi3x", self.command(self.root / "output"), self.root / "log")
+        claim.assert_not_called()
+        provider.assert_not_called()
+        self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
 
     def test_pending_claim_blocks_before_provider_call(self):
         command = self.command(self.root / "fresh-output")

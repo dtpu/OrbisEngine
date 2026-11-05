@@ -45,6 +45,15 @@ def test_limit_caps_resources_and_startup_with_same_registered_deadline(value):
     }
 
 
+def test_explicit_environment_is_isolated_from_process_environment():
+    with patch.dict(os.environ, {TIMEOUT_ENV: "900"}):
+        options = inference_resources(timeout=1500, memory=32768, environment={TIMEOUT_ENV: "600"})
+        assert options["timeout"] == 600
+        assert inference_resources(timeout=1500, memory=32768, environment={})["timeout"] == 1500
+        assert inference_resources(timeout=1500, memory=32768)["timeout"] == 900
+        assert os.environ[TIMEOUT_ENV] == "900"
+
+
 @pytest.mark.parametrize("value", ["", "0", "-1", "1.5", "True", " 600", "600 ", "1e3", "1501"])
 def test_invalid_limits_fail_closed(value):
     with patch.dict(os.environ, {TIMEOUT_ENV: value}, clear=True):

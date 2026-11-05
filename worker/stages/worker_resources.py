@@ -6,7 +6,9 @@ import re
 TIMEOUT_ENV = "WANDER_WORKER_TIMEOUT_SECONDS"
 
 
-def inference_resources(*, timeout: int, memory: int, max_containers: int = 1) -> dict:
+def inference_resources(
+    *, timeout: int, memory: int, max_containers: int = 1, environment=None
+) -> dict:
     """Return existing defaults unless a strict, bounded integer deadline is configured.
 
     Used at registration, before any provider calls. The environment is forwarded to
@@ -20,7 +22,7 @@ def inference_resources(*, timeout: int, memory: int, max_containers: int = 1) -
         "retries": 0,
         "scaledown_window": 2,
     }
-    value = os.environ.get(TIMEOUT_ENV)
+    value = (os.environ if environment is None else environment).get(TIMEOUT_ENV)
     if value is None:
         return options
     if not re.fullmatch(r"[0-9]+", value) or not 1 <= int(value) <= timeout:

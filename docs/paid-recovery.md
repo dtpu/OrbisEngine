@@ -69,6 +69,9 @@ existing maximum: 3600 seconds for cleaning, 1500 for camera/motion reconstructi
 LHM frozen or animated inference. A shared value for all three must therefore be at most 1500.
 Empty, malformed, zero, negative, or excessive values fail before image or volume setup.
 Omitting the variable preserves the existing resource requests, concurrency and timeouts.
+The direct runner records the effective resource policy in each new paid claim, including
+defaults when no limit is set. Changing a deadline changes the attempt identity; unrelated
+environment values and credentials are excluded. Earlier claims remain unchanged.
 
 When configured, the function decorator sets both execution and startup timeouts to that value,
 CPU request/limit to `(4, 4)`, memory request/limit to `(32768, 32768)` MiB for cleaning and motion
