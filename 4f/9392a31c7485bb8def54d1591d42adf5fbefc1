@@ -1,0 +1,25 @@
+scripts/test-app-browser.ts
+  s_20f6c0bf8c5b2c::t_f12d89df7e1fcf 84-93
+scripts/test-local-app.ts
+  s_20f6c0bf8c5b2c::t_34bdefd5e33b68 69-74,78-82,84-86
+  s_20f6c0bf8c5b2c::t_cd4a4a533a8c81 4,14-21,67-68,75-77,83,87-89
+server/local-app.ts
+  s_20f6c0bf8c5b2c::t_34bdefd5e33b68 23-25,29-38
+  s_20f6c0bf8c5b2c::t_8baed0c3ab87dd 5,21-22,26-28,39-41,121,124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f9392a31c7485bb8def54d1591d42adf5fbefc1",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
