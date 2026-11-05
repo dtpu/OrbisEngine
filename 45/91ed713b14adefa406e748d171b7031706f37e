@@ -1,0 +1,155 @@
+site/src/DevGallery.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 66
+site/src/components/VideoLoop.tsx
+  s_11465a870157de::t_1bb6ceabf1d7da 41
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 2-3,10,16,39-40,42-43,49-50,52,54,59-60
+  s_11465a870157de::t_a8cfb4a84c69c1 44-48
+  s_20f6c0bf8c5b2c::t_7431d48798b9e7 51,53
+admin/app/layout.tsx
+  s_11465a870157de::t_f777848caa608f 4-5,24-25,28-30,32,45,49,52,55
+site/src/sections/Hero.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 5,8-9,16,20,23-26,33-36,43,55-56,60
+site/src/sections/Compare.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 4,24-25,32-33,35
+admin/components/viewer-origin.tsx
+  s_20f6c0bf8c5b2c::t_365f02e515b879 1-19
+scripts/start-app.ts
+  s_20f6c0bf8c5b2c::t_3a02bfa438bc7d 2,86-88,94-96
+  s_11465a870157de::t_004770a6f71aa6 12-14,20-29,48-49,52-53,61-64,72-76,107-110,112-115,123-127,129-138,140-141,143-146,159-172
+  s_20f6c0bf8c5b2c::t_8d06b771277bfd 7,104,120-121,128,139,142,147,157
+  s_20f6c0bf8c5b2c::t_ef4461074b13db 32-35
+  s_20f6c0bf8c5b2c::t_5cdb0824b6060d 68,80,85,92-93,99,106
+  s_11465a870157de::t_14ec93c3a8cf79 148-156
+  s_20f6c0bf8c5b2c::t_851dc30578e07d 1,3-6,8-11,15-19,30-31,36-47,50-51,54-60,65-67,69-71,77-79,81-84,89-91,97-98,100-103,105,111,116-119,122,158,173-176
+admin/components/run-overview.tsx
+  s_11465a870157de::t_f777848caa608f 4-5,20,120
+site/src/sections/Gallery.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 16-18,35
+.github/workflows/ci.yml
+  s_20f6c0bf8c5b2c::t_985fb515626a36 27,70-92
+site/package.json
+  s_20f6c0bf8c5b2c::t_9f6dadcbc3b9b5 2,7
+admin/app/api/pipeline/[[...path]]/route.ts
+  s_20f6c0bf8c5b2c::t_fe7c3a0c8cc50b 2,11-13
+scripts/test-app-browser.ts
+  s_11465a870157de::t_94f2cf542d31ca 39-61,73-79
+  s_11465a870157de::t_98480ca8d0bfc8 63-67
+  s_20f6c0bf8c5b2c::t_7383a43eff6ab5 1-38,62,68-72,80-89,91-101
+  s_20f6c0bf8c5b2c::t_3d3c614284f519 90
+vite.config.ts
+  s_20f6c0bf8c5b2c::t_851dc30578e07d 7,21,31
+site/src/sections/HowItWorks.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 4,21,29-30
+package.json
+  s_20f6c0bf8c5b2c::t_e72a9fa2aa306e 15
+  s_20f6c0bf8c5b2c::t_d451f401eee105 49
+  s_11465a870157de::t_004770a6f71aa6 46-48
+  s_11465a870157de::t_94f2cf542d31ca 50
+  s_20f6c0bf8c5b2c::t_755c4d354eea68 78-80
+server/app-startup.ts
+  s_20f6c0bf8c5b2c::t_bb631e913c7568 1-25,29-68
+  s_11465a870157de::t_14ec93c3a8cf79 26-28
+site/vite.config.ts
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 1-3,6-19,21-22,25-26
+  s_11465a870157de::t_dfd7370032608b 23-24
+site/src/sections/Limits.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 11
+admin/lib/viewer-url.ts
+  s_20f6c0bf8c5b2c::t_365f02e515b879 1-29
+admin/README.md
+  s_20f6c0bf8c5b2c::t_085b92e125336e 30-34
+  s_20f6c0bf8c5b2c::t_0321f15e349c48 20-22
+  s_11465a870157de::t_f5a5a4a7fb3ac9 1,12-16,35-38,64-65,84,96-98
+server/local-app.ts
+  s_11465a870157de::t_004770a6f71aa6 22-25,69
+  s_11465a870157de::t_fe7b6f7bcbea99 78-80,82-84,86-88
+  s_20f6c0bf8c5b2c::t_851dc30578e07d 1-21,26-68,70-71,93-124
+  s_20f6c0bf8c5b2c::t_5cdb0824b6060d 72-77,81,85,89-92
+scripts/test-local-app.ts
+  s_20f6c0bf8c5b2c::t_3a02bfa438bc7d 10,12,27-31,33-42
+  s_20f6c0bf8c5b2c::t_ef4461074b13db 1-9,11,13-20,24-26,55-59,66-74,78-82,89,96-98,104
+  s_11465a870157de::t_004770a6f71aa6 21-23,43-54,60-65,75-77,83-88,90-95,99-103
+  s_20f6c0bf8c5b2c::t_60cb250ca4b231 32
+site/index.html
+  s_20f6c0bf8c5b2c::t_9f6dadcbc3b9b5 8,13
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 10,20
+scripts/test-admin-live-browser.ts
+  s_11465a870157de::t_f5a5a4a7fb3ac9 14-19,43-54,56,67,117
+site/src/components/MediaImage.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 1-2,4-14,16-20
+  s_11465a870157de::t_67a7aaa26dce1c 3,15
+site/src/content/media.ts
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 1-5
+site/src/content/links.ts
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 1-2,4-9
+scripts/setup-app.ts
+  s_20f6c0bf8c5b2c::t_ef4461074b13db 1-4,16-31
+  s_20f6c0bf8c5b2c::t_89aaf02c758bc0 5-7,9-11,13-15
+  s_11465a870157de::t_1e40464a4886d2 8,12
+README.md
+  s_20f6c0bf8c5b2c::t_985fb515626a36 61-95
+site/tests/smoke.ts
+  s_11465a870157de::t_aa6d650c9b9f28 35
+  s_20f6c0bf8c5b2c::t_3aac6598c00744 4,76-92
+  s_11465a870157de::t_1bb6ceabf1d7da 9-11,21,62,93-96,101-102,109,123-127,180,201,207,211,216,237,243,252,267,271,301,348,350-351,368
+  s_11465a870157de::t_6c1c584b933e1f 63-65,97-100,103-108,110-122,184-186,277-284,333-337
+  s_11465a870157de::t_71d3cf65d2e048 2
+admin/app/globals.css
+  s_11465a870157de::t_f777848caa608f 2
+site/README.md
+  s_20f6c0bf8c5b2c::t_3aac6598c00744 1,3-5,9-10,13-16,18-21,23-27,29-35
+.env.example
+  s_20f6c0bf8c5b2c::t_89aaf02c758bc0 36-42
+admin/lib/request-origin.ts
+  s_20f6c0bf8c5b2c::t_db0937f959f6d3 13-14,34-35
+  s_11465a870157de::t_b876bd24ca354b 2,7
+  s_20f6c0bf8c5b2c::t_cdeafee1408516 21-26,45,48
+  s_20f6c0bf8c5b2c::t_fe7c3a0c8cc50b 1,3-6,8-12,15-20,27-33,36-40,50
+  s_20f6c0bf8c5b2c::t_5222c87697c817 41-44,46-47,49
+admin/tests/request-origin.test.ts
+  s_11465a870157de::t_14ec93c3a8cf79 41-46
+  s_11465a870157de::t_32096f40f5194d 95
+  s_20f6c0bf8c5b2c::t_085b92e125336e 15-18,67-70
+  s_20f6c0bf8c5b2c::t_6701bf801b72db 21-36
+  s_20f6c0bf8c5b2c::t_7a76985c45d21f 1-14,19-20,53-66,71-94,96-114
+  s_20f6c0bf8c5b2c::t_941843bd61ce27 37-40,47-52
+scripts/tests/test_orchestrator_session.py
+  s_20f6c0bf8c5b2c::t_085b92e125336e 115-121
+  s_11465a870157de::t_f0efd261d9ddc0 13,96-114,122-123
+scripts/test-app-startup.ts
+  s_20f6c0bf8c5b2c::t_9bcb5cce3f57c8 1-47,52-55,59-79
+  s_11465a870157de::t_d3623b0106191d 48-51
+  s_20f6c0bf8c5b2c::t_b4b48ac14b9c03 56-58
+admin/tests/viewer-url.test.ts
+  s_20f6c0bf8c5b2c::t_365f02e515b879 1-41
+site/src/styles/base.css
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 33-69
+site/src/sections/FinalCta.tsx
+  s_20f6c0bf8c5b2c::t_4f3e8caaf8c557 4,13-16
+orchestrator/session.py
+  s_11465a870157de::t_e52f55a562f5be 22,89-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4591ed713b14adefa406e748d171b7031706f37e",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
