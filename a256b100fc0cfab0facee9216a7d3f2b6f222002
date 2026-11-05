@@ -1,0 +1,25 @@
+docs/pipeline-setup.md
+  s_52d9aafecb7e4b::t_9061a0268e8b4e 1-136
+orchestrator/api/app.py
+  s_52d9aafecb7e4b::t_71d2a3bc25614b 153-159
+orchestrator/doctor.py
+  s_52d9aafecb7e4b::t_9f11e7d5d4f9bc 1-572
+scripts/tests/test_pipeline_doctor.py
+  s_52d9aafecb7e4b::t_e555a9eef97caf 1-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a256b100fc0cfab0facee9216a7d3f2b6f222002",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

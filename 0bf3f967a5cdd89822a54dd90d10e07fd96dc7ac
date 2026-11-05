@@ -1,0 +1,21 @@
+scripts/tests/test_metric_depth_cache.py
+  s_988a422339b8f1::t_a37f148ddaad62 1-202
+scripts/world_ruler.py
+  s_988a422339b8f1::t_748ee601e15284 53,274-276,290-295,301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bf3f967a5cdd89822a54dd90d10e07fd96dc7ac",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

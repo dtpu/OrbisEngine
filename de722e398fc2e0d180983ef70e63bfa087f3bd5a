@@ -1,0 +1,30 @@
+src/scene-catalog.ts
+  s_988a422339b8f1::t_b75251c54e0303 25,33
+docs/DEVELOPING.md
+  s_988a422339b8f1::t_b75251c54e0303 95,140-146
+scripts/test-xr-navigation-browser.ts
+  s_988a422339b8f1::t_efa80676aa8f2c 114
+scripts/test-xr-locomotion-browser.ts
+  s_988a422339b8f1::t_efa80676aa8f2c 32,36
+src/fourd-runtime.js
+  s_988a422339b8f1::t_b75251c54e0303 3176-3178,3183,3189-3190,4052-4053,4287,4289-4290,4292,4304-4305
+  s_988a422339b8f1::t_01590e5229f5cb 65-66
+scripts/test-scene-boundary-browser.ts
+  s_988a422339b8f1::t_e3050a60b52f0d 7,12-13,18,20,22,24-31,33-93,95-96,98-132,135,138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de722e398fc2e0d180983ef70e63bfa087f3bd5a",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

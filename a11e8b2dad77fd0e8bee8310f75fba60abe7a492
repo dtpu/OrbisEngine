@@ -1,0 +1,30 @@
+scripts/silhouette_rows.py
+  s_988a422339b8f1::t_417e8c388cbe8d 62-64,97-99,110,120-123,161-172,273,283,290-291
+  s_988a422339b8f1::t_9b19525e86921d 54-61,65-96,100-108,119,188-189,280-282,284-289,292,306
+scripts/anchor_checks.py
+  s_988a422339b8f1::t_9b19525e86921d 179,184-185,187-190,212
+  s_988a422339b8f1::t_e09eed94583497 213-215
+scripts/place_solve.py
+  s_988a422339b8f1::t_9b19525e86921d 510-516,527-528,532-534
+  s_988a422339b8f1::t_1eaacd014241f9 538-541,662-672
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_febe0569c988d9 54-63
+scripts/tests/test_silhouette_cropping.py
+  s_988a422339b8f1::t_14a5bbea736fbb 1-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a11e8b2dad77fd0e8bee8310f75fba60abe7a492",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

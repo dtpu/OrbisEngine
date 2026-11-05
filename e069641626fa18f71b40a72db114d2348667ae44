@@ -1,0 +1,30 @@
+scripts/object_coordinate_basis.py
+  s_988a422339b8f1::t_988f51bcc15146 27,87-89,100,110,121-123,129-131,145-153
+  s_988a422339b8f1::t_9f38cf4b60478b 1-26,28-86,90-99,101-109,111-120,124-128,132-144,154-161
+docs/objects.md
+  s_988a422339b8f1::t_13d2688e473c65 163-165
+  s_988a422339b8f1::t_b222bcf69986cd 35-39,130,153,157-162,166-173
+  s_988a422339b8f1::t_5fc8e1679e8f65 174
+scripts/lift_object_3d.py
+  s_988a422339b8f1::t_b8e691f1e291af 30,280-284,286,387
+scripts/package_objects.py
+  s_988a422339b8f1::t_1b49a68aea6470 34,346-351,355,631,633,697,701
+scripts/tests/test_object_coordinate_basis.py
+  s_988a422339b8f1::t_179a84751fd1a1 1-277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e069641626fa18f71b40a72db114d2348667ae44",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

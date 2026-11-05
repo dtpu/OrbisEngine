@@ -1,0 +1,22 @@
+orchestrator/supervisor.py
+  s_988a422339b8f1::t_3d8a07c59509cd 87,121-123,125,189-196
+  s_988a422339b8f1::t_72e77707b696a9 124
+scripts/tests/test_supervisor_wakeup.py
+  s_988a422339b8f1::t_ee42a2d2a4ca26 86-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d09928e249958b86b7fc8943a7930f5c569bd75c",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+orchestrator/session.py
+  s_988a422339b8f1::t_690407fd615d6e 245,247-258
+  s_988a422339b8f1::t_e6f10dbac2c171 244,246
+admin/components/saved-inputs.tsx
+  s_988a422339b8f1::t_5195a52a2a63f2 1-33,35-47,53-68,71-89,95-98,100-101,111-117,125-127,134-140,143-147
+  s_988a422339b8f1::t_48863bd59ea2ed 90-94,102-110,118-124,128-133,141-142
+  s_988a422339b8f1::t_9e68d3c9f68e13 34,48-52
+  s_988a422339b8f1::t_52f7c7025a842b 69-70,99
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_ff575e2eb4884a 121-131
+docs/pipeline-setup.md
+  s_988a422339b8f1::t_0647f906be60b1 130-154
+orchestrator/retained_inputs.py
+  s_988a422339b8f1::t_76e85ab2fa18bd 1-311
+orchestrator/api/progress.py
+  s_988a422339b8f1::t_e6f10dbac2c171 105,138-139
+orchestrator/cli.py
+  s_988a422339b8f1::t_e6f10dbac2c171 54,75,134,266-279,360-374,611-612,616-623
+  s_988a422339b8f1::t_1e7c8a21260899 133
+  s_988a422339b8f1::t_662a238a615247 624-625
+orchestrator/repository.py
+  s_988a422339b8f1::t_b33e0694fd0185 232
+admin/app/runs/[runId]/console.tsx
+  s_988a422339b8f1::t_a552ea7d061486 440,531-532,535-538
+  s_988a422339b8f1::t_f1ad06689a3234 533-534,877-888
+  s_988a422339b8f1::t_5cddcc6d01f3b3 11
+  s_988a422339b8f1::t_23dffff98caad1 890,893,895,897-909
+scripts/tests/test_saved_input_admission.py
+  s_988a422339b8f1::t_b33e0694fd0185 1-122
+admin/lib/types.ts
+  s_988a422339b8f1::t_a552ea7d061486 165-168
+  s_988a422339b8f1::t_a6698193ef120e 182-194
+scripts/tests/test_run_clip_retained_scene.py
+  s_988a422339b8f1::t_4bdc2f82698033 18,68
+  s_988a422339b8f1::t_55c7137b990a24 41-42,67,69-82
+  s_988a422339b8f1::t_8b697d16f08bb7 83-84
+admin/app/globals.css
+  s_988a422339b8f1::t_48863bd59ea2ed 556,562
+  s_988a422339b8f1::t_5cddcc6d01f3b3 546-555,557-561,563-568
+admin/tests/saved-inputs-client.test.ts
+  s_988a422339b8f1::t_4f4c0aeb3228d2 35
+  s_988a422339b8f1::t_50338591159c16 1-34,36-41
+  s_988a422339b8f1::t_b653320f5e95b5 42-49
+orchestrator/api/app.py
+  s_988a422339b8f1::t_a552ea7d061486 171-175,461-493,565-567
+scripts/run_clip.py
+  s_988a422339b8f1::t_63b5bd0d88fc5b 1557-1560
+admin/lib/client.ts
+  s_988a422339b8f1::t_a6698193ef120e 13-14,54-65
+  s_988a422339b8f1::t_f73bb25a16c0bb 66-68
+orchestrator/api/service.py
+  s_988a422339b8f1::t_6957a43052db0d 14,88-198
+scripts/tests/test_saved_inputs.py
+  s_988a422339b8f1::t_6a4711db11ba7e 1-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "55f806cce11b08a427e779b79389399ec5a76448",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

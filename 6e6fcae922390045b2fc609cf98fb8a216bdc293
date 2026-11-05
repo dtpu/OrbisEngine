@@ -1,0 +1,25 @@
+docs/pipeline-setup.md
+  s_988a422339b8f1::t_47b854c52bc89e 140-141
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_fc0a3604eccc89 107-120
+scripts/run_clip.py
+  s_988a422339b8f1::t_13ba9fa164f2fd 3080-3081
+scripts/tests/test_run_clip_cut_cache.py
+  s_988a422339b8f1::t_ef482a467252de 64,71,137-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e6fcae922390045b2fc609cf98fb8a216bdc293",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

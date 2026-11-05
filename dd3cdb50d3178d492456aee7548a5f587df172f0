@@ -1,0 +1,29 @@
+docs/paid-recovery.md
+  s_52d9aafecb7e4b::t_046818052dd96d 16-27
+docs/quality-rubric.md
+  s_52d9aafecb7e4b::t_0f755a5b7e4874 49-55
+orchestrator/paid.py
+  s_52d9aafecb7e4b::t_9be91fe27d31c3 7,17,41,64-86,96,101,109-113,116-146,169,192-193
+scripts/stage_attempts.py
+  s_52d9aafecb7e4b::t_43199e53e1aa6e 314-315,358-379
+scripts/tests/test_orchestrator_paid.py
+  s_52d9aafecb7e4b::t_6c1ec783941185 4-5,100-120,123,126-132,134-152,160-187,213-254,257,260-263,287-320,324,344,347-351,353,355-403
+scripts/tests/test_stage_attempts.py
+  s_52d9aafecb7e4b::t_a9c31f1a3ede7f 3,71-76,245-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd3cdb50d3178d492456aee7548a5f587df172f0",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

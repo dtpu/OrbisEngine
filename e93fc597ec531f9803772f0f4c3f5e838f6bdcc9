@@ -1,0 +1,23 @@
+scripts/tests/test_scale_fit_evidence.py
+  s_988a422339b8f1::t_72a838d7ffe329 1-121
+scripts/run_clip.py
+  s_988a422339b8f1::t_10a70925fcd937 2421-2422,2435-2438,2485,2497-2499,2520
+scripts/tests/test_final_world_selection.py
+  s_988a422339b8f1::t_72a838d7ffe329 219,225-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e93fc597ec531f9803772f0f4c3f5e838f6bdcc9",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

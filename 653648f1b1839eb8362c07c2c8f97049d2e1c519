@@ -1,0 +1,26 @@
+.github/workflows/ci.yml
+  s_988a422339b8f1::t_01e6ddc729b311 65
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_01e6ddc729b311 9,25-27
+  s_988a422339b8f1::t_a81b4788d80ad4 28
+admin/README.md
+  s_988a422339b8f1::t_e21d87b3765175 51,54-55,58-61
+scripts/test-admin-live-browser.ts
+  s_988a422339b8f1::t_396b26b7da929f 8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "653648f1b1839eb8362c07c2c8f97049d2e1c519",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

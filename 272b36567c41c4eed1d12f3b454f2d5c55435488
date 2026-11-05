@@ -1,0 +1,54 @@
+orchestrator/session.py
+  s_988a422339b8f1::t_af996f4fc11dc1 167-168,255,259-261,268,271-272,328-329,338,341,366-367,371-373
+  s_988a422339b8f1::t_82aa970cb17b66 270,321,325-326
+  s_988a422339b8f1::t_6a150c2cbd2b42 16,175-179,269,298-320,351-356
+  s_988a422339b8f1::t_1c89bdae495187 24,295-297
+scripts/tests/test_supervisor_wakeup.py
+  s_988a422339b8f1::t_a414c3611db6c5 14,44-46,51-53,55
+  s_988a422339b8f1::t_3027f1132d5abc 1-13,15-43,47-50,54,56-64
+  s_988a422339b8f1::t_988e7ca33fc9dc 65-85
+orchestrator/agent/harness.py
+  s_988a422339b8f1::t_6a150c2cbd2b42 18,248,288,363,371-372,374-386
+  s_988a422339b8f1::t_3f8b3afd7e50d7 373,387-406
+scripts/tests/test_run_controls.py
+  s_988a422339b8f1::t_42fcbf78d34148 300-338,345,359
+  s_988a422339b8f1::t_5c641c174e2a6c 69-70,88,108,276-299,353
+  s_988a422339b8f1::t_510ac1e0709a27 339-344,346-352,354-358,360-362
+scripts/tests/test_step_admission.py
+  s_988a422339b8f1::t_5c641c174e2a6c 216,236-239,255-259,279-282
+scripts/tests/test_admin_live_commands.py
+  s_988a422339b8f1::t_1baa272e6c0404 128
+scripts/tests/test_orchestrator_session.py
+  s_988a422339b8f1::t_e3d96300054d1e 214-232
+  s_988a422339b8f1::t_e766fbc3cd026c 23-24,187-213,233-258
+  s_988a422339b8f1::t_21b80373c4e44f 28,260-287,291-321,439
+  s_988a422339b8f1::t_43006a2bbf619e 288-290
+  s_988a422339b8f1::t_7d078b3670161a 259
+orchestrator/cli.py
+  s_988a422339b8f1::t_5c641c174e2a6c 186-193,198-199,359-360,711-713
+  s_988a422339b8f1::t_6a150c2cbd2b42 708-710
+orchestrator/supervisor.py
+  s_988a422339b8f1::t_897165328276e5 17,83-89,94-97,113-120,180,182-183
+  s_988a422339b8f1::t_a414c3611db6c5 131-135,140,184
+  s_988a422339b8f1::t_6bbfdd9cabfb22 138-139,141-142,151,185-187
+docs/pipeline-setup.md
+  s_988a422339b8f1::t_90805194adf79c 151-165
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_598f8e9fa2cb72 95-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "272b36567c41c4eed1d12f3b454f2d5c55435488",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

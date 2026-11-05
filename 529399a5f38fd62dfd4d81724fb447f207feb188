@@ -1,0 +1,43 @@
+orchestrator/pipeline.py
+  s_52d9aafecb7e4b::t_8f5932e2d70a4a 53-71,88,95-96,114
+orchestrator/api/app.py
+  s_52d9aafecb7e4b::t_aca34672ed78fa 157
+admin/README.md
+  s_52d9aafecb7e4b::t_a40f55e49c7b86 23,27
+admin/app/page.tsx
+  s_52d9aafecb7e4b::t_be5075a7962e62 4,8-15,17-146
+admin/lib/format.ts
+  s_52d9aafecb7e4b::t_98608d2a3dd991 160
+admin/lib/types.ts
+  s_52d9aafecb7e4b::t_1a4919a714120e 150
+admin/package.json
+  s_52d9aafecb7e4b::t_f0da481884d0a4 8
+docs/paid-recovery.md
+  s_52d9aafecb7e4b::t_a5c20b51c5d9a3 16
+docs/quality-rubric.md
+  s_52d9aafecb7e4b::t_6df2aad2558403 49-54
+orchestrator/paid.py
+  s_52d9aafecb7e4b::t_9be542ef78a21d 16,40-44,67-70,79-82,84,87,97,100,123,146-147
+scripts/stage_attempts.py
+  s_52d9aafecb7e4b::t_9b4b41c32f01bc 32,315-317,360-364
+scripts/tests/test_orchestrator_paid.py
+  s_52d9aafecb7e4b::t_554aa9c0706e09 100-106,109-110,113-116,123-125,153,156,202,205-208,210,212-213
+scripts/tests/test_stage_attempts.py
+  s_52d9aafecb7e4b::t_fb077c384052b4 18-19,26-33,58,72,87,100,127,171,568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "529399a5f38fd62dfd4d81724fb447f207feb188",
+  "prompts": {},
+  "sessions": {
+    "s_52d9aafecb7e4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12e8f-fa37-7842-a259-1968d8dd1dc7",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+docs/known-limits.md
+  s_988a422339b8f1::t_6b36dd28f99559 9
+scripts/tests/test_object_cache_offline.py
+  s_988a422339b8f1::t_90df6fe5cc2c9f 1-357
+worker/modal_image_to_3d.py
+  s_988a422339b8f1::t_c84206e553548a 159-332,381,391-395,413-417,424-428,462,470,522,524-528,541,546,632,636-637,770-773,787,815
+worker/modal_stage_object_aux.py
+  s_988a422339b8f1::t_fa0607970ea772 1-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "849b3fb1f01198aededca38f7477726d3558b07b",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

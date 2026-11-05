@@ -1,0 +1,43 @@
+docs/audio.md
+  s_988a422339b8f1::t_d758da5fa88ffd 28-45
+docs/known-limits.md
+  s_988a422339b8f1::t_764d6427f029c1 18-19
+orchestrator/api/viewer.py
+  s_df96d4a0b5840a::t_44da22c21225b0 16-17,120,192-199
+scripts/package_multiperson.py
+  s_df96d4a0b5840a::t_af7e65a87de9a4 40,157
+scripts/package_person_sequence.py
+  s_df96d4a0b5840a::t_1f8026e23d13c9 23,112
+scripts/package_source_audio.py
+  s_df96d4a0b5840a::t_9a5d25860a65d4 1,6,27,47-49,69-86,100-108,110-342
+scripts/run_clip.py
+  s_df96d4a0b5840a::t_cb3ad0f0e65e43 34,2962-2970,2974
+scripts/tests/test_package_source_audio.py
+  s_df96d4a0b5840a::t_d1930a81876b18 40-64,304-502
+scripts/tests/test_pipeline_viewer.py
+  s_988a422339b8f1::t_8a3af852ef0f9b 332-441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "251aa7b7b21d42f1a1dc5f0a24066df3e80448d0",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_df96d4a0b5840a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

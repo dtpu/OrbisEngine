@@ -1,0 +1,36 @@
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_866ba43101dbed 68-72
+  s_988a422339b8f1::t_9c16c308c1cd11 96-97,111-126
+  s_988a422339b8f1::t_317aab0a618c21 43-52
+  s_988a422339b8f1::t_394fae5a682ee1 127
+scripts/tests/test_placement_run_inputs.py
+  s_988a422339b8f1::t_18c3425b7ad83e 19-32,56,201-202,204-208,217,289
+  s_988a422339b8f1::t_d863e54f665653 290-291,297,308
+scripts/run_clip.py
+  s_988a422339b8f1::t_02ad1d076016da 1904,1906,1909-1939,1943-1972,1987-1996,2005-2018,2024-2034,2250,2276-2277,2287,2324,2389-2390,2396
+  s_988a422339b8f1::t_00946154f4c4b4 1940-1942,1973-1986,1997-2004
+  s_988a422339b8f1::t_a7a89e00ef2f0c 2397-2398
+scripts/tests/test_placement_provenance.py
+  s_988a422339b8f1::t_3f94e5c905bfa2 1-221
+docs/known-limits.md
+  s_988a422339b8f1::t_9c16c308c1cd11 12
+scripts/tests/test_final_world_selection.py
+  s_988a422339b8f1::t_2fa06346650a0b 70-71,103,112-116,123-125,172-176
+  s_988a422339b8f1::t_18c3425b7ad83e 72-75,171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97b636a920f05ddbb2ef8342b525d9a6bc39a902",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

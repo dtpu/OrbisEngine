@@ -1,0 +1,45 @@
+scripts/tests/test_orchestrator_session.py
+  s_988a422339b8f1::t_7a660a35728879 232-243
+docs/pipeline-setup.md
+  s_988a422339b8f1::t_c56f4409ff82e5 135-139
+scripts/tests/test_pipeline_integration.py
+  s_988a422339b8f1::t_7a660a35728879 212-220
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_c56f4409ff82e5 54-67
+scripts/run_clip.py
+  s_988a422339b8f1::t_0721fe4f131423 2746-2754,2773-2783,2785,2844-2845
+  s_988a422339b8f1::t_7c092f11c7e8ae 2784,2846-2849,2852,2855
+  s_988a422339b8f1::t_fc19dd9a9eaf33 2856-2858
+scripts/tests/test_pipeline_completion.py
+  s_988a422339b8f1::t_97edcec13695c8 40-55,63-70,113-145
+  s_988a422339b8f1::t_43227697a0be93 149-172
+  s_988a422339b8f1::t_4479b76d1e9b69 146-148
+scripts/tests/test_run_clip_resume.py
+  s_988a422339b8f1::t_fc19dd9a9eaf33 177-178,181-184,187,190-199,205-206,210-234
+  s_988a422339b8f1::t_7c092f11c7e8ae 175-176,179-180,185-186,188-189,200-204,207-209
+  s_988a422339b8f1::t_e39a126b11dc0d 1-174
+docs/unattended-runs.md
+  s_988a422339b8f1::t_c56f4409ff82e5 165-169
+orchestrator/cli.py
+  s_988a422339b8f1::t_7ac77accba70d4 721-730,745-750
+  s_988a422339b8f1::t_43227697a0be93 18,731-744
+  s_988a422339b8f1::t_da6788f8021aef 751-752
+scripts/tests/test_final_world_selection.py
+  s_988a422339b8f1::t_7c092f11c7e8ae 307-312
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8304f4f4167b9f8d1b80f2f01ea7d7a9926ca9d9",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

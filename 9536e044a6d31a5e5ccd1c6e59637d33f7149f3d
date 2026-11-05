@@ -1,0 +1,23 @@
+scripts/motion_audit.py
+  s_988a422339b8f1::t_b6d74860253928 26,30
+scripts/motion_silhouette.py
+  s_988a422339b8f1::t_41ad262f9ac1ee 72-83,98,105-119,129,132
+scripts/tests/test_motion_silhouette.py
+  s_988a422339b8f1::t_c315dfd2df0ab4 1-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9536e044a6d31a5e5ccd1c6e59637d33f7149f3d",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

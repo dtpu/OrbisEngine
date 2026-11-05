@@ -1,0 +1,21 @@
+scripts/finetune_import.py
+  s_988a422339b8f1::t_3b08c74bc22e20 100-101,125-133
+scripts/tests/test_finetune_import.py
+  s_988a422339b8f1::t_794091b45c5c9b 1-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab06ac6df14a5f2911c893984b4834513f048e41",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

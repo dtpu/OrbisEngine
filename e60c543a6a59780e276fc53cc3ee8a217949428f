@@ -1,0 +1,21 @@
+scripts/tests/test_prepare_track_person.py
+  s_988a422339b8f1::t_d6084f4e87b13c 104-129
+scripts/prepare_track_person.py
+  s_988a422339b8f1::t_c4dcea8b045878 15-18,49-51,66,84-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e60c543a6a59780e276fc53cc3ee8a217949428f",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

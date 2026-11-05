@@ -1,0 +1,20 @@
+scripts/tests/test_orchestrator_session.py
+  s_988a422339b8f1::t_bae27d86ab6b00 153,170-172
+  s_988a422339b8f1::t_a7f61d00d51700 155-157,168-169,173-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3e23158bf9e6a6b4c163c02b45da36ba553a5df",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+scripts/package_source_audio.py
+  s_988a422339b8f1::t_944073b5c0563c 1-2,4-50,54,59-61,75
+  s_988a422339b8f1::t_68081631055cbd 3,51-53,55-58,62-74
+  s_988a422339b8f1::t_96fdc3da7e4328 76-79
+scripts/package_multiperson.py
+  s_988a422339b8f1::t_944073b5c0563c 40,157-158,481
+scripts/run_clip.py
+  s_988a422339b8f1::t_cf93ab84e1e5f4 34,1453-1455,1481-1483
+scripts/package_person_sequence.py
+  s_988a422339b8f1::t_68081631055cbd 111
+  s_988a422339b8f1::t_944073b5c0563c 23,112-113,181
+scripts/tests/test_package_source_audio.py
+  s_988a422339b8f1::t_cf93ab84e1e5f4 10,20,207-275
+  s_988a422339b8f1::t_65e2676fc57ada 108-110,133-135,147-149,169,178-186,190-192
+  s_988a422339b8f1::t_2c67b29165ecd0 1-9,11-19,21-107,111-132,136-146,150-164,166-168,170-177,187-189,193-206
+  s_988a422339b8f1::t_cfbb122fffc300 165
+  s_988a422339b8f1::t_6479067e3e7fbd 276-277
+docs/audio.md
+  s_988a422339b8f1::t_6e66fec98364de 27-37
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_0b6cf7495ea5f2 44-47,162-207,210-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fe10c3ec1a6eae0d76f2abd8d2f902b81360824",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}

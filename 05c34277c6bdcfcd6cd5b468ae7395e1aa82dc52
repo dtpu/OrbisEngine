@@ -1,0 +1,63 @@
+docs/pipeline-validation.md
+  s_988a422339b8f1::t_145f339b6d10de 33-48
+scripts/tests/test_pipeline_viewer.py
+  s_988a422339b8f1::t_dd27d9c6da1ae7 51-52
+  s_988a422339b8f1::t_49d2bb6afeef17 141-155
+  s_988a422339b8f1::t_41546b36597076 13,15,17,20,33,72-85,90-93,99-101,105-110,127-131,133-134,136-138,165-171,182-191,195,210-237
+  s_988a422339b8f1::t_956b44ba796f29 1-4,7-8,11-12,14,16,18-19,21-32,34-50,53-71,86-89,94-98,102-104,111-126,135,139-140,156-164
+  s_988a422339b8f1::t_40b02462595e72 5-6,9-10
+  s_988a422339b8f1::t_d3fb426afcf093 132,172-181,192-194,196-209
+  s_988a422339b8f1::t_b355e6084c3463 238-239
+admin/README.md
+  s_988a422339b8f1::t_c88e66a0aadda3 46-61
+scripts/tests/test_pipeline_integration.py
+  s_988a422339b8f1::t_d3fb426afcf093 221-231
+orchestrator/api/progress.py
+  s_988a422339b8f1::t_b16742b6ed526e 16,139-143,159
+  s_988a422339b8f1::t_7d53408f58f762 160
+admin/components/run-overview.tsx
+  s_988a422339b8f1::t_b16742b6ed526e 97-104
+scripts/test-pipeline-preview-server.ts
+  s_988a422339b8f1::t_c88e66a0aadda3 1-7,9,16-29,51-52,57-63,68,93-94,105,107-118,134-136
+  s_988a422339b8f1::t_2dc9c651d6cf75 8,10-15,30-50,53-56,64-67,69-92,95-103,106,119-133
+  s_988a422339b8f1::t_d3a271fcde138c 104
+vite.config.ts
+  s_988a422339b8f1::t_b16742b6ed526e 6,19
+orchestrator/api/viewer.py
+  s_988a422339b8f1::t_38ad33e951eb73 10,165,175,181-188,200-205
+  s_988a422339b8f1::t_b7460b63c8ec1d 7,17-35,48-52,61-67,72-78,81-84,86,96-102,104-108,155-159,164,168-170,174,176-180,189-199,242-245,249-256
+  s_988a422339b8f1::t_dd27d9c6da1ae7 160-163
+  s_988a422339b8f1::t_480d97ca33f952 1-6,8-9,11-16,36-47,53-56,58-59,68-71,79-80,87-94,124-130,132-135,144-154,171-173,206-218,222-241,246-248
+  s_988a422339b8f1::t_40b02462595e72 95,103,109-119,122-123,131,136-143
+  s_988a422339b8f1::t_1b5f562cf753df 166-167
+  s_988a422339b8f1::t_49d2bb6afeef17 57,85,120-121,219-221
+  s_988a422339b8f1::t_76e3f58642fb8a 60
+.github/workflows/ci.yml
+  s_988a422339b8f1::t_dd27d9c6da1ae7 30
+admin/lib/types.ts
+  s_988a422339b8f1::t_b16742b6ed526e 229
+src/fourd-runtime.js
+  s_988a422339b8f1::t_c9cd69ee2e3c8a 2512
+server/pipeline-preview.ts
+  s_988a422339b8f1::t_39006cd7157d50 74-76
+  s_988a422339b8f1::t_b16742b6ed526e 1-16,31-34,40-49,68-73,77-83,91-92
+  s_988a422339b8f1::t_2dc9c651d6cf75 17-30,35-39,50-67,84-90
+scripts/run_clip.py
+  s_988a422339b8f1::t_377e205ebefb2a 2621-2636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05c34277c6bdcfcd6cd5b468ae7395e1aa82dc52",
+  "prompts": {},
+  "sessions": {
+    "s_988a422339b8f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a138d1-f63f-7800-b841-02c470dc460b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
