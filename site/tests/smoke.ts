@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Page } from 'playwright-core';
+import { chromium, type Browser, type Page } from 'playwright-core';
 import { demoSceneUrl } from '../src/content/links';
 
 function chromePath(): string {
@@ -48,12 +48,14 @@ async function waitForServer(timeoutMs = 30000): Promise<void> {
   throw new Error(`vite dev server did not start at ${BASE}`);
 }
 
+let browser: Browser | null = null;
+
 async function collectErrors(run: (page: Page) => Promise<void>): Promise<string[]> {
-  const browser = await chromium.launch({
-    executablePath: chromePath(),
-  });
+  if (!browser) throw new Error('smoke browser has not been initialized');
+  // Keep cookies, storage, pages and listeners isolated while avoiding a process per check.
+  const context = await browser.newContext();
   try {
-    const page = await browser.newPage();
+    const page = await context.newPage();
     const errors: string[] = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') errors.push(msg.text());
@@ -66,7 +68,7 @@ async function collectErrors(run: (page: Page) => Promise<void>): Promise<string
     await run(page);
     return errors;
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
@@ -380,6 +382,8 @@ try {
     await waitForServer();
   }
 
+  browser = await chromium.launch({ executablePath: chromePath() });
+
   let failures = 0;
   for (const check of checks) {
     try {
@@ -392,5 +396,9 @@ try {
   }
   process.exitCode = failures > 0 ? 1 : 0;
 } finally {
-  server?.kill();
+  try {
+    await browser?.close();
+  } finally {
+    server?.kill();
+  }
 }
