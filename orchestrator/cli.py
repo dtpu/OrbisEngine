@@ -31,6 +31,7 @@ from orchestrator.run_policy import (
     delivery_metadata,
     finish_hands_off,
     hands_off,
+    unpaid_prerequisite_problem,
 )
 from orchestrator.steps import (
     SAME_AS,
@@ -294,6 +295,10 @@ def admit_step(
     if problem:
         finish_hands_off(context, journal, problem)
         print(problem, file=sys.stderr)
+        return 2
+    if not args.attempt and (held := unpaid_prerequisite_problem(context, args.step, journal)):
+        # Not terminal: the unpaid prerequisite may still succeed when rerun.
+        print(held, file=sys.stderr)
         return 2
     if context.retained_delivery is not None:
         problem = retained_delivery_problem(context, args, journal)
