@@ -2,7 +2,7 @@ import { request } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect, Plugin } from 'vite';
 
 const MIME: Record<string, string> = {
@@ -17,6 +17,27 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.mp4': 'video/mp4',
 };
+
+function forwardedHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+  const forwarded = { ...headers };
+  const connectionHeaders = (headers.connection || '')
+    .split(',')
+    .map((name) => name.trim().toLowerCase());
+  // Each HTTP connection owns its framing. The client has already decoded upstream chunks.
+  for (const name of [
+    ...connectionHeaders,
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ])
+    delete forwarded[name];
+  return forwarded;
+}
 
 /** Join the local operator UI and viewer without exposing the repository or a bearer token. */
 export function localApp(
@@ -97,10 +118,10 @@ export function localApp(
         port: admin.port,
         method: req.method,
         path: req.url,
-        headers: { ...req.headers, host: admin.host },
+        headers: { ...forwardedHeaders(req.headers), host: admin.host },
       },
       (response) => {
-        res.writeHead(response.statusCode || 502, response.headers);
+        res.writeHead(response.statusCode || 502, forwardedHeaders(response.headers));
         response.on('error', () => res.destroy());
         response.pipe(res);
       },

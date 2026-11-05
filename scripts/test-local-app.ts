@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,14 @@ test('app routes streaming uploads and byte ranges to the dashboard, while leavi
   let forwarded = 0;
   const upstream = createServer(async (req, res) => {
     forwarded++;
+    if (req.url === '/api/pipeline/chunks') {
+      res.setHeader('Connection', 'X-Upstream-Hop');
+      res.setHeader('X-Upstream-Hop', 'private');
+      res.write('first');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      res.end('second');
+      return;
+    }
     let data = '';
     for await (const chunk of req) data += chunk;
     if (req.headers.range) res.writeHead(206, { 'Content-Range': 'bytes 0-3/10' }).end('clip');
@@ -55,6 +64,29 @@ test('app routes streaming uploads and byte ranges to the dashboard, while leavi
     expect(range.status).toBe(206);
     expect(range.headers.get('content-range')).toBe('bytes 0-3/10');
     expect(await range.text()).toBe('clip');
+    // Bun's fetch tolerates duplicate chunked encoding; Node's HTTP parser detects it.
+    // Use a separate process so this also checks the actual wire response from the gateway.
+    const client = spawn(
+      'node',
+      [
+        '--input-type=module',
+        '-e',
+        `
+      const response = await fetch(process.argv[1]);
+      if (await response.text() !== 'firstsecond') throw new Error('Corrupt stream');
+      if (response.headers.has('x-upstream-hop')) throw new Error('Leaked hop header');
+    `,
+        `${base}/api/pipeline/chunks`,
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let clientError = '';
+    client.stderr.on('data', (chunk) => {
+      clientError += chunk;
+    });
+    const [code] = await once(client, 'exit');
+    expect(clientError).toBe('');
+    expect(code).toBe(0);
     for (const url of ['/demo.html', '/fourd.html', '/api/prepared-world/v1/a/b', '/src/fourd.ts'])
       expect(await (await fetch(base + url)).text()).toBe('viewer');
   } finally {

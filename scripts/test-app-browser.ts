@@ -81,6 +81,16 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   assert.ok(ready, `App did not start; inspect ${evidence}/services.log`);
+  // A strict HTTP parser catches duplicate transfer encodings that Bun and Chrome tolerate.
+  run([
+    'node',
+    '--input-type=module',
+    '-e',
+    `const response = await fetch(process.argv[1]);
+     if (!response.ok || !(await response.text()).includes('Orbis Engine'))
+       throw new Error('Dashboard HTTP stream is invalid');`,
+    base,
+  ]);
   const dashboard = await (await fetch(base)).text();
   assert.ok(dashboard.includes('href="/demo.html"'), 'Viewer must use the same origin');
   assert.ok(dashboard.includes('href="/about/"'), 'About must be connected');
