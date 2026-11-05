@@ -102,8 +102,19 @@ const checks: Check[] = [
         if (process.env.SITE_SMOKE_EMPTY_MEDIA !== '0') {
           if (mediaRequests.length)
             throw new Error(`unexpected media requests: ${mediaRequests.join(', ')}`);
-          if ((await page.locator('[data-media-unavailable]').count()) !== 26)
-            throw new Error('missing media placeholders');
+          for (const [section, count] of [
+            ['gallery', 9],
+            ['compare', 6],
+            ['how-it-works', 6],
+            ['viewer', 3],
+          ] as const) {
+            if (
+              (await page.locator(`section#${section} [data-media-unavailable]`).count()) !== count
+            )
+              throw new Error(`missing ${section} unavailable states`);
+          }
+          if ((await page.locator('section#hero [data-hero-still]').count()) !== 1)
+            throw new Error('missing single project still');
           if (await page.locator('video').count())
             throw new Error('empty checkout must not render video requests');
         }
@@ -198,7 +209,7 @@ const checks: Check[] = [
     },
   },
   {
-    name: 'hero: copy, CTAs and two labeled previews',
+    name: 'hero: copy, CTAs and honest still or installed preview pair',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -208,12 +219,26 @@ const checks: Check[] = [
           if (!(await page.$(`section#hero a[href="${href}"]`)))
             throw new Error(`hero missing CTA ${href}`);
         }
-        const videos = await page.$$('section#hero video, section#hero [data-media-unavailable]');
-        if (videos.length !== 2) throw new Error(`hero has ${videos.length} videos, want 2`);
-        const labels = await page.$$eval('section#hero figcaption', (els) =>
-          els.map((e) => e.textContent?.trim()),
-        );
-        if (labels.join(',') !== 'Recorded,Orbis Engine') throw new Error(`hero labels: ${labels}`);
+        const still = page.locator('section#hero [data-hero-still]');
+        if (await still.count()) {
+          if (
+            (await page.locator('section#hero figure').count()) !== 1 ||
+            (await page.locator('section#hero video').count())
+          )
+            throw new Error('fallback must be one still, not a comparison');
+          if ((await still.locator('img[alt="Orbis Engine project still"]').count()) !== 1)
+            throw new Error('missing project still image');
+          if (!(await still.textContent())?.includes('previews not installed'))
+            throw new Error('missing unavailable label');
+        } else {
+          if ((await page.locator('section#hero video').count()) !== 2)
+            throw new Error('installed comparison requires two videos');
+          const labels = await page.$$eval('section#hero figcaption', (els) =>
+            els.map((e) => e.textContent?.trim()),
+          );
+          if (labels.join(',') !== 'Recorded,Orbis Engine')
+            throw new Error(`hero labels: ${labels}`);
+        }
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },

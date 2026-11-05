@@ -31,6 +31,11 @@
   margin-top: var(--space-6);
 }
 
+.still {
+  margin: var(--space-6) 0 0;
+  width: 100%;
+}
+
 .pane {
   margin: 0;
   min-width: 0;

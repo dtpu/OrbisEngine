@@ -7,13 +7,11 @@ export default function VideoLoop({
   poster,
   label,
   className,
-  fallbackPoster,
 }: {
   src: string;
   poster: string;
   label: string;
   className?: string;
-  fallbackPoster?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -37,20 +35,9 @@ export default function VideoLoop({
   }, []);
 
   const videoUrl = mediaUrl(src);
-  const posterUrl = mediaUrl(poster) || fallbackPoster;
+  const posterUrl = mediaUrl(poster);
   if (!videoUrl || !posterUrl) {
-    return posterUrl ? (
-      <div className="poster-fallback" data-media-unavailable>
-        <img
-          src={posterUrl}
-          alt="Orbis Engine project still; video preview not installed"
-          className={className}
-        />
-        <p>Project still · video preview not installed</p>
-      </div>
-    ) : (
-      <MissingMedia label={label} className={className} />
-    );
+    return <MissingMedia label={label} className={className} />;
   }
   return (
     <video
