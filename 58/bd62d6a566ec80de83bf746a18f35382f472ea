@@ -1,0 +1,33 @@
+site/src/sections/Hero.module.css
+  s_11465a870157de::t_c78416de1524a2 34-38
+site/src/sections/Hero.tsx
+  s_11465a870157de::t_c78416de1524a2 6,12-16,43-69,71,73-75,77
+site/tests/smoke.ts
+  s_11465a870157de::t_c78416de1524a2 105-117,212,222-241
+site/src/components/VideoLoop.tsx
+  s_20f6c0bf8c5b2c::t_0deb1aee58c84f 38,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "58bd62d6a566ec80de83bf746a18f35382f472ea",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
