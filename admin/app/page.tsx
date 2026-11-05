@@ -167,7 +167,7 @@ export default function Page() {
                 {(runs ?? [])
                   .filter((run) => run.parentRunId === parent.id)
                   .map((child) => (
-                    <RunRow key={child.id} run={child} shot now={now} />
+                    <RunRow key={child.id} run={child} shot={Boolean(child.branchKey)} now={now} />
                   ))}
               </div>
             ))}
