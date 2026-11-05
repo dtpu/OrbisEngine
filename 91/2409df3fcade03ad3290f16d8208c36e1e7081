@@ -1,0 +1,31 @@
+worker/stages/worker_resources.py
+  s_20f6c0bf8c5b2c::t_74aaa54ca92d38 9-11,25
+scripts/stage_attempts.py
+  s_20f6c0bf8c5b2c::t_74aaa54ca92d38 241-243
+  s_20f6c0bf8c5b2c::t_ce9509ecd3c530 23,227-240,244-249,257-261
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_e01edcbb853a25 72-74
+scripts/tests/test_worker_resources.py
+  s_20f6c0bf8c5b2c::t_89739ae9d90c15 48-49,51-56
+  s_20f6c0bf8c5b2c::t_170c7f5c5e2041 50
+scripts/tests/test_stage_attempts.py
+  s_20f6c0bf8c5b2c::t_89739ae9d90c15 516-537,549-572,576-579,881-891
+  s_20f6c0bf8c5b2c::t_170c7f5c5e2041 538-548,573-575
+  s_20f6c0bf8c5b2c::t_0dddc43698de1c 892
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "912409df3fcade03ad3290f16d8208c36e1e7081",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
