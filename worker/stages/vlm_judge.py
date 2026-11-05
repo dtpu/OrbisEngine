@@ -110,6 +110,25 @@ def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
                 time.sleep(2**i)
 
 
+def _bounded_http_error_details(error):
+    details = {"httpStatus": error.code}
+    try:
+        # Read once, with a hard size bound. The body is used only for finite identifiers.
+        payload = json.loads(error.read(16 * 1024))
+        provider = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(provider, dict):
+            details["providerCode"] = provider.get("code")
+            details["providerParam"] = provider.get("param")
+    except Exception:
+        pass  # Status remains useful even when the error body is missing or malformed.
+    finally:
+        try:
+            error.close()
+        except Exception:
+            pass
+    return vlm_budget.safe_error_details(details)
+
+
 def _ask_bounded(body, timeout):
     receipt = None
     usage = None
@@ -133,13 +152,16 @@ def _ask_bounded(body, timeout):
         vlm_budget.finish(receipt, "completed", usage=usage)
         return parsed
     except Exception as error:
+        details = (
+            _bounded_http_error_details(error) if isinstance(error, urllib.error.HTTPError) else {}
+        )
         if receipt is not None:
             try:
-                vlm_budget.finish(receipt, "error", usage=usage, error=error)
+                vlm_budget.finish(receipt, "error", usage=usage, error=error, error_details=details)
             except Exception:
                 pass  # The durable claim still consumes its allowance.
         message = str(error) if isinstance(error, vlm_budget.BudgetError) else type(error).__name__
-        return {"error": f"bounded VLM request stopped: {message}"}
+        return {"error": f"bounded VLM request stopped: {message}", **details}
 
 
 def ask(model, img, prompt, retries=3):

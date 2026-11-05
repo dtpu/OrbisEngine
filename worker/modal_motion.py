@@ -12,7 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 import modal
 
+if modal.is_local():
+    from worker.stages.worker_resources import inference_resources
+else:
+    from worker_resources import inference_resources
+
 HERE = Path(__file__).resolve().parent
+INFERENCE_RESOURCES = inference_resources(timeout=1500, memory=32768, max_containers=1)
 VDPM_REV = "5e2a57cf6007dfb0511a8b396a0805089b9edcc4"
 PI3_REV = "9fa3ddb3f8d53041f8b2738df404f62223bbaa7b"
 VGGT_REV = "44b3afb"
@@ -52,6 +58,7 @@ image = (
     .add_local_dir(HERE / "wander_worker", "/root/worker/wander_worker", ignore=["__pycache__"])
     .add_local_dir(HERE / "stages", "/root/worker/stages", ignore=["__pycache__"])
 )
+image = image.add_local_file(HERE / "stages/worker_resources.py", "/root/worker_resources.py")
 app = modal.App("wander-overnight-motion")
 cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missing=True)
 
@@ -59,13 +66,8 @@ cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missin
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=32768,
-    timeout=1500,
-    scaledown_window=2,
-    max_containers=1,
-    retries=0,
     volumes={"/cache": cache},
+    **INFERENCE_RESOURCES,
 )
 def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
     import io
@@ -149,7 +151,7 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
         gpu="L4",
         cpu=4,
         memoryGiB=32,
-        timeoutSeconds=1500,
+        timeoutSeconds=INFERENCE_RESOURCES["timeout"],
         codeRevisions=dict(vdpm=VDPM_REV, pi3=PI3_REV, vggt=VGGT_REV),
     )
     buf = io.BytesIO()

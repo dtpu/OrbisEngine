@@ -19,7 +19,13 @@ from pathlib import Path
 
 import modal
 
+if modal.is_local():
+    from worker.stages.worker_resources import inference_resources
+else:
+    from worker_resources import inference_resources
+
 HERE = Path(__file__).resolve().parent
+INFERENCE_RESOURCES = inference_resources(timeout=3600, memory=32768, max_containers=2)
 LAMA_PT = "/cache/lama/big-lama.pt"
 
 image = (
@@ -45,6 +51,7 @@ image = (
     )
     .add_local_dir(HERE / "wander_worker", "/root/worker/wander_worker", ignore=["__pycache__"])
 )
+image = image.add_local_file(HERE / "stages/worker_resources.py", "/root/worker_resources.py")
 app = modal.App("wander-clean-video")
 cache = modal.Volume.from_name("wander-clean-video-cache", create_if_missing=True)
 
@@ -52,13 +59,8 @@ cache = modal.Volume.from_name("wander-clean-video-cache", create_if_missing=Tru
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=32768,
-    timeout=3600,
-    retries=0,
-    max_containers=2,
     volumes={"/cache": cache},
-    scaledown_window=2,
+    **INFERENCE_RESOURCES,
 )
 def clean(
     video_bytes: bytes,
@@ -330,6 +332,7 @@ def clean(
         error=error,
         gpu="L4",
         cpu=4,
+        timeoutSeconds=INFERENCE_RESOURCES["timeout"],
         timings=timings,
         estimatedComputeUSD=elapsed * (0.000222 + 4 * 0.0000131 + 32 * 0.00000222),
         **result,

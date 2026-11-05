@@ -10,7 +10,13 @@ from pathlib import Path
 
 import modal
 
+if modal.is_local():
+    from worker.stages.worker_resources import inference_resources
+else:
+    from worker_resources import inference_resources
+
 HERE = Path(__file__).resolve().parent
+INFERENCE_RESOURCES = inference_resources(timeout=1800, memory=65536, max_containers=1)
 LHM_REV = "4f88aaeb3629249fbbddb4d0784a06962d9e1338"
 MODEL_REV = "dd6392905187a91fd67b3f6962aa74481e943764"
 LARGER_MODEL_REV = "92372582f660066b9f1b9513860744357265b3d5"
@@ -120,6 +126,7 @@ image = (
     )
     .add_local_dir(HERE / "stages", "/root/stages", ignore=["__pycache__"])
 )
+image = image.add_local_file(HERE / "stages/worker_resources.py", "/root/worker_resources.py")
 app = modal.App("wander-overnight-lhm")
 cache = modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=True)
 
@@ -192,13 +199,8 @@ def stage():
 @app.function(
     image=image,
     gpu="L4",
-    cpu=4,
-    memory=65536,
-    timeout=1800,
-    retries=0,
-    max_containers=1,
     volumes={"/cache": cache},
-    scaledown_window=2,
+    **INFERENCE_RESOURCES,
 )
 def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, recovery_id: str = ""):
     import hashlib
@@ -218,6 +220,7 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
     )
 
     start = time.time()
+    inference_started = time.monotonic()
     mode = "motion" if animate else "frozen"
     checkpoint, out = start_checkpoint("/cache", recovery_id, mode)
     cache.commit()
@@ -310,16 +313,26 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
                 "--model",
                 model,
             ]
-        with (out / "inference.log").open("w") as log:
-            proc = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        if "startup_timeout" in INFERENCE_RESOURCES:
+            from stages.lhm_execution import run_logged_inference
+
+            run_logged_inference(
+                command,
+                out / "inference.log",
+                started=inference_started,
+                execution_timeout=INFERENCE_RESOURCES["timeout"],
             )
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                log.write(line)
-                log.flush()
-            if proc.wait() != 0:
-                raise RuntimeError(f"LHM inference exited {proc.returncode}")
+        else:
+            with (out / "inference.log").open("w") as log:
+                proc = subprocess.Popen(
+                    command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                    log.write(line)
+                    log.flush()
+                if proc.wait() != 0:
+                    raise RuntimeError(f"LHM inference exited {proc.returncode}")
     except Exception:  # noqa: BLE001 - preserve artifacts for any model/dependency failure
         error = traceback.format_exc()
         if proc is not None and proc.poll() is None:
@@ -364,7 +377,7 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
         "gpu": "L4",
         "cpu": 4,
         "memoryGiB": 64,
-        "timeoutSeconds": 1800,
+        "timeoutSeconds": INFERENCE_RESOURCES["timeout"],
         "estimatedComputeUSD": elapsed * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
         "timingScope": "worker setup and inference; excludes final output hashing and volume commit",
         "codeRevision": LHM_REV,

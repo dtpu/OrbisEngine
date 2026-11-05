@@ -121,13 +121,19 @@ def _read_authorization(path):
 
 
 CODE_FILES = {
-    "worker/modal_clean_video.py": ("worker/wander_worker/masks.py",),
+    "worker/modal_clean_video.py": (
+        "worker/wander_worker/masks.py",
+        "worker/stages/worker_resources.py",
+    ),
     "worker/modal_motion.py": (
+        "worker/stages/worker_resources.py",
         "worker/stages/dense_pi3x.py",
         "worker/wander_worker/masks.py",
         "worker/wander_worker/ply.py",
     ),
     "worker/modal_lhm.py": (
+        "worker/stages/worker_resources.py",
+        "worker/stages/lhm_execution.py",
         "worker/stages/lhm_person.py",
         "worker/stages/lhm_animate.py",
         "worker/stages/lhm_capacity.py",

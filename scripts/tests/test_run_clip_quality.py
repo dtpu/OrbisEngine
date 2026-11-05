@@ -21,6 +21,36 @@ import world_quality_review
 
 
 class RunnerQualityTests(unittest.TestCase):
+    def test_source_prompt_failure_is_actionable_without_echoing_provider_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            pipeline = object.__new__(run_clip.Pipeline)
+            pipeline.ctx = Path(temporary)
+            pipeline.clip = pipeline.ctx / "clip.mp4"
+            pipeline.prompt_json.write_text(
+                json.dumps(
+                    {
+                        "error": "private request content",
+                        "httpStatus": 429,
+                        "providerCode": "insufficient_quota",
+                    }
+                )
+            )
+            with patch.object(run_clip, "run"), self.assertRaises(run_clip.QualityStop) as caught:
+                pipeline.world_prompt()
+            self.assertIn("HTTP 429, insufficient_quota", str(caught.exception))
+            self.assertNotIn("private request content", str(caught.exception))
+
+    def test_empty_source_prompt_cannot_pass_the_generation_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            pipeline = object.__new__(run_clip.Pipeline)
+            pipeline.ctx = Path(temporary)
+            pipeline.clip = pipeline.ctx / "clip.mp4"
+            for response in (None, [], {"text_prompt": " "}, {"text_prompt": 123}):
+                with self.subTest(response=response):
+                    pipeline.prompt_json.write_text(json.dumps(response))
+                    with patch.object(run_clip, "run"), self.assertRaises(run_clip.QualityStop):
+                        pipeline.world_prompt()
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

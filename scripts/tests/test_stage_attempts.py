@@ -513,6 +513,37 @@ class CommandIdentityTests(unittest.TestCase):
         path.write_text(content)
         return path
 
+    def test_resource_helper_changes_are_part_of_each_affected_worker_identity(self):
+        helper = "worker/stages/worker_resources.py"
+        for worker in (
+            "worker/modal_clean_video.py",
+            "worker/modal_motion.py",
+            "worker/modal_lhm.py",
+        ):
+            with self.subTest(worker=worker):
+                command = ["modal", "run", worker]
+                parameters, before, _ = command_identity(command, self.root)
+                self.assertIn(helper, before)
+                path = self.root / helper
+                path.write_bytes(path.read_bytes() + b"\n# changed resource policy\n")
+                unchanged_parameters, after, _ = command_identity(command, self.root)
+                self.assertEqual(parameters, unchanged_parameters)
+                self.assertNotEqual(before[helper], after[helper])
+                self.assertEqual(
+                    {key: value for key, value in before.items() if key != helper},
+                    {key: value for key, value in after.items() if key != helper},
+                )
+
+    def test_single_person_lhm_deadline_guard_changes_are_fingerprinted(self):
+        helper = "worker/stages/lhm_execution.py"
+        command = ["modal", "run", "worker/modal_lhm.py"]
+        _, before, _ = command_identity(command, self.root)
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed inference deadline guard\n")
+        _, after, _ = command_identity(command, self.root)
+        self.assertNotEqual(before[helper], after[helper])
+
     def test_every_runner_paid_worker_command_shape_has_an_identity_policy(self):
         modal = "/modal"
         out = self.root / "out"

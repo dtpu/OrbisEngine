@@ -14,6 +14,55 @@ class BudgetError(ValueError):
     pass
 
 
+PROVIDER_ERROR_CODES = frozenset(
+    (
+        "insufficient_quota",
+        "model_not_found",
+        "invalid_api_key",
+        "rate_limit_exceeded",
+        "unsupported_parameter",
+        "invalid_request_error",
+        "invalid_value",
+        "context_length_exceeded",
+    )
+)
+PROVIDER_ERROR_PARAMS = frozenset(
+    (
+        "model",
+        "messages",
+        "max_completion_tokens",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "response_format",
+        "reasoning_effort",
+        "stop",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+        "n",
+        "stream",
+    )
+)
+
+
+def safe_error_details(details):
+    """Keep only finite diagnostic identifiers, never provider messages or arbitrary strings."""
+    if not isinstance(details, dict):
+        return {}
+    safe = {}
+    status = details.get("httpStatus")
+    if type(status) is int and 100 <= status <= 599:
+        safe["httpStatus"] = status
+    code = details.get("providerCode")
+    if isinstance(code, str) and code in PROVIDER_ERROR_CODES:
+        safe["providerCode"] = code
+    param = details.get("providerParam")
+    if isinstance(param, str) and param in PROVIDER_ERROR_PARAMS:
+        safe["providerParam"] = param
+    return safe
+
+
 def _validate(data):
     if (
         not isinstance(data, dict)
@@ -96,7 +145,7 @@ def claim(path, body):
     return path, digest
 
 
-def finish(receipt, status, usage=None, error=None):
+def finish(receipt, status, usage=None, error=None, error_details=None):
     path, digest = receipt
     with _locked(path) as data:
         call = next(c for c in data["calls"] if c["bodyHash"] == digest)
@@ -113,4 +162,5 @@ def finish(receipt, status, usage=None, error=None):
             }
         if error is not None:
             call["errorType"] = type(error).__name__
+            call.update(safe_error_details(error_details))
         _save(path, data)
