@@ -1,0 +1,58 @@
+scripts/tests/test_run_clip_quality.py
+  s_20f6c0bf8c5b2c::t_332c6750220679 24-53
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_9bb38998ef19ab 50,1104-1108
+  s_20f6c0bf8c5b2c::t_2c5ab1229bafd4 1099-1100,1102-1103,1109-1112
+  s_20f6c0bf8c5b2c::t_472b8956dae721 1098
+  s_20f6c0bf8c5b2c::t_8eda1b3fbb9632 1101
+worker/stages/vlm_budget.py
+  s_20f6c0bf8c5b2c::t_9b29b7a63939c5 17-65,148,165
+scripts/tests/test_vlm_budget.py
+  s_20f6c0bf8c5b2c::t_a194901fc3ad17 170-297
+worker/modal_clean_video.py
+  s_11465a870157de::t_8ed46061582e6e 22-26,28,54,63,335
+worker/modal_lhm.py
+  s_11465a870157de::t_8ed46061582e6e 13-17,19,129,203,223,316-323,325-335,380
+scripts/tests/test_worker_resources.py
+  s_11465a870157de::t_4647ca03b3a264 1-127,161,171
+  s_11465a870157de::t_c33b7fe6695cc0 128-160,162-170,172-181
+worker/stages/worker_resources.py
+  s_11465a870157de::t_8ed46061582e6e 1-37
+worker/modal_motion.py
+  s_11465a870157de::t_8ed46061582e6e 15-19,21,61,70,154
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_6ac1656280809c 22-26
+  s_20f6c0bf8c5b2c::t_c4a8fec9ebd46c 62-95
+worker/stages/vlm_judge.py
+  s_11465a870157de::t_7fce2999712648 156,160
+  s_20f6c0bf8c5b2c::t_a194901fc3ad17 125-128
+  s_20f6c0bf8c5b2c::t_9b29b7a63939c5 113-124,129-131,155,157,164
+scripts/stage_attempts.py
+  s_11465a870157de::t_851d2b566a59aa 124-127,129,135-136
+scripts/tests/test_stage_attempts.py
+  s_11465a870157de::t_949d9ce7ef49f1 516-546
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28d1cdfe38fbed118086b7642dc8d2a1408fd78c",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
