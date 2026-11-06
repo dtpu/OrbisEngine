@@ -337,6 +337,11 @@ Review all samples, including hands, motion blur, reflections, occlusions and ne
 Padding can still erase a fixture beside a person, and the model does not guarantee carried-object,
 shadow, identity or temporal coverage. Mask completion is not accepted inpainting quality.
 
+The bounded lobby trial with default two-pixel padding preserved the checked fixtures but left
+prominent person-shaped remnants after LaMa. It failed the full-video review. This helper is an
+optional mask preparation and inspection tool, not a validated replacement cleaning algorithm;
+see [known limits](known-limits.md) before spending on another candidate.
+
 The resulting archive uses the existing direct runner's `--clean-masks` contract, which forwards
 it to the worker's `--masks-in` path and bypasses the worker's semantic masks and legacy growth.
 Keep the original FPS and source clip. This option changes no current pipeline default and does
