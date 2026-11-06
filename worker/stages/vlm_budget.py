@@ -17,6 +17,11 @@ class BudgetError(ValueError):
 PROVIDER_ERROR_CODES = frozenset(
     (
         "insufficient_quota",
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+        "slow_down",
         "model_not_found",
         "invalid_api_key",
         "rate_limit_exceeded",
@@ -24,6 +29,17 @@ PROVIDER_ERROR_CODES = frozenset(
         "invalid_request_error",
         "invalid_value",
         "context_length_exceeded",
+    )
+)
+PROVIDER_ERROR_TYPES = frozenset(
+    (
+        "insufficient_quota",
+        "invalid_request_error",
+        "authentication_error",
+        "rate_limit_error",
+        "server_error",
+        "requests",
+        "tokens",
     )
 )
 PROVIDER_ERROR_PARAMS = frozenset(
@@ -57,10 +73,41 @@ def safe_error_details(details):
     code = details.get("providerCode")
     if isinstance(code, str) and code in PROVIDER_ERROR_CODES:
         safe["providerCode"] = code
+    kind = details.get("providerType")
+    if isinstance(kind, str) and kind in PROVIDER_ERROR_TYPES:
+        safe["providerType"] = kind
     param = details.get("providerParam")
     if isinstance(param, str) and param in PROVIDER_ERROR_PARAMS:
         safe["providerParam"] = param
     return safe
+
+
+def error_guidance(details):
+    """Static operator guidance derived only from sanitized identifiers, never raw error text."""
+    safe = safe_error_details(details)
+    code = safe.get("providerCode")
+    if code is None and safe.get("providerType") == "insufficient_quota":
+        code = "insufficient_quota"
+    guidance = {
+        "credit_balance_exhausted": "Check the OpenAI credit balance for this key's organization/project before another request.",
+        "organization_spend_limit_exceeded": "Check the OpenAI organization spending limit before another request.",
+        "project_spend_limit_exceeded": "Check the OpenAI project spending limit before another request.",
+        "organization_usage_limit_exceeded": "Check the OpenAI organization usage limit before another request.",
+        "insufficient_quota": "Check OpenAI billing and usage limits; do not assume a transient request-rate limit.",
+        "rate_limit_exceeded": "Reduce request rate and wait before a separately authorized request.",
+        "slow_down": "Reduce request rate and wait before a separately authorized request.",
+        "model_not_found": "Check the selected model and this project's model access before another request.",
+        "invalid_api_key": "Check key validity and the intended organization/project privately before another request.",
+        "unsupported_parameter": "Check request parameters supported by the selected model before another request.",
+        "invalid_request_error": "Check request parameters supported by the selected model before another request.",
+        "invalid_value": "Check request parameter values before another request.",
+        "context_length_exceeded": "Check the request context length and model limits before another request.",
+    }
+    if code in guidance:
+        return guidance[code]
+    if safe.get("httpStatus") == 429:
+        return "HTTP 429 cause is unknown. Inspect OpenAI billing and rate limits; do not assume a transient rate limit."
+    return "Inspect the HTTP status and recognized provider identifiers before another request."
 
 
 def _validate(data):

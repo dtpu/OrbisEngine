@@ -16,13 +16,30 @@ completion-token limit, and do not retry. Duplicate request bodies are refused a
 and resumes, including after a failed or ambiguous response. Keep the same file for the whole
 run; recreating it would lose its accounting. Recorded usage excludes prompts, images, keys,
 and provider error text. This bounds requests and completion tokens for that helper, not input
-tokens, monetary charges, or other OpenAI clients. Without the environment variable its existing
-behavior is unchanged.
+tokens, monetary charges, or other OpenAI clients. Without the environment variable, calls remain
+unbudgeted; the HTTP 429 handling below still applies.
 
-Bounded failures retain the numeric HTTP status and recognized provider error-code or parameter
-identifiers when available. Raw response bodies, messages, headers and arbitrary strings are never
-retained. An HTTP 429 alone does not establish whether quota or a transient rate limit caused the
-failure. Inspect account limits before another request; a failed claim still consumes its allowance.
+Bounded failures retain the numeric HTTP status and finite recognized provider error-code, type,
+and parameter identifiers when available. HTTP error bodies are read once, up to 16 KiB; raw bodies,
+messages, headers and arbitrary strings are never retained. The returned `errorGuidance` is static
+operator guidance derived only from these sanitized identifiers, and is preserved in source-prompt
+error output. A failed claim still consumes its allowance; neither fixing credentials nor learning
+the error cause refunds or resets it.
+
+The [OpenAI API error guide](https://developers.openai.com/api/docs/guides/error-codes) distinguishes
+`credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`,
+`organization_usage_limit_exceeded`, and `insufficient_quota` from request-rate errors. Inspect the
+identified organization's/project's credit balance or corresponding limit before another request.
+`rate_limit_exceeded` and `slow_down` instead direct the operator to reduce request rate and wait.
+Known `error.type` values are retained separately as `providerType`, without relabelling them as
+error codes. Unknown codes/types are omitted. An HTTP 429 with no recognized cause remains unknown;
+it is not classified as billing exhaustion or a transient rate limit from its status alone.
+
+Bounded calls never retry, including recognized request-rate errors. Unbudgeted calls stop immediately
+on billing-related or unknown HTTP 429 errors; only explicitly recognized `rate_limit_exceeded` or
+`slow_down` codes retain the caller's finite retry allowance and numeric `Retry-After` backoff. Other
+unbudgeted retry behavior is unchanged. These diagnostics do not authorize another request or repair
+historical receipts whose provider response was already discarded.
 
 The allowance is three executions per original source SHA-256 and logical stage. The clean,
 first-frame clean, and multi-image clean operations share the inpainting allowance; individual
@@ -288,3 +305,40 @@ or unknown.
 `test_stage_attempts.py` use local fixtures and mocked provider interfaces. They cover receipt
 ownership, interrupted transfers, source-alias claims, unknown outcomes, retained outputs,
 and no automatic resubmission. They do not build cloud images or stage models.
+
+## Prepare optional local person-instance clean masks
+
+`scripts/instance_clean_masks.py` creates masks on CPU using only an already cached torchvision
+Mask R-CNN checkpoint. It never downloads weights or submits inference to a provider. The model
+and backbone constructors disable pretrained downloads; model loading and prediction run with
+socket connections blocked, four Torch CPU threads, and a checked checkpoint hash. If packages
+are already installed, use offline dependency resolution too:
+
+```sh
+uv run --locked --offline --group inference python scripts/instance_clean_masks.py \
+  --clip /absolute/source.mp4 --fps 12 --dilate 2 \
+  --out .context/evidence/instance-masks/new-candidate --contact-sheets
+```
+
+The output directory must be new. The default checkpoint is
+`maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth` in the Torch hub checkpoint cache; `--weights` can name
+an existing copy. A missing or mismatched checkpoint stops without fetching a replacement.
+All COCO person instances above score 0.5 are unioned at mask probability 0.5, followed only by
+small symmetric padding (`--dilate`, default two pixels). There is no semantic-class union,
+whole-column extension, or moved-content/shadow union. Zero supported people, an empty supported
+instance, or malformed model output fails closed—even on a genuinely empty frame. This helper
+does not silently fill missing detections or offer an empty-frame override.
+
+A successful directory contains `masks.npz`, `report.json`, raw per-frame instance archives and
+optional contact sheets covering every sampled frame. The report records parameters, model and
+generator hashes, scores/boxes, and exact FFmpeg source indices, PTS, timebase and source hash.
+A failed run retains partial evidence and a failed report; it does not publish `masks.npz`.
+Review all samples, including hands, motion blur, reflections, occlusions and nearby fixtures.
+Padding can still erase a fixture beside a person, and the model does not guarantee carried-object,
+shadow, identity or temporal coverage. Mask completion is not accepted inpainting quality.
+
+The resulting archive uses the existing direct runner's `--clean-masks` contract, which forwards
+it to the worker's `--masks-in` path and bypasses the worker's semantic masks and legacy growth.
+Keep the original FPS and source clip. This option changes no current pipeline default and does
+not authorize another paid clean, reset the shared inpainting allowance, or replace a failed
+quality verdict. Inpainting remains subject to the same ledger, approvals and visual review.

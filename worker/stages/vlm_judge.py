@@ -15,7 +15,7 @@ Prints one JSON object per image, one per line. Exit 0 always; read the JSON.
 Requires OPENAI_API_KEY (see ~/.openai-env).
 """
 
-import argparse, base64, json, os, ssl, time, urllib.error, urllib.request
+import argparse, base64, json, math, os, ssl, time, urllib.error, urllib.request
 
 try:
     from . import vlm_budget
@@ -96,21 +96,34 @@ def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
             txt = txt.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             return json.loads(txt)
         except Exception as e:
+            details = None
+            retry_after = None
+            if isinstance(e, urllib.error.HTTPError):
+                retry_after = (e.headers or {}).get("Retry-After")
+                details = _http_error_details(e)
+                # A 429 can be a billing failure. Retry only an explicitly recognized rate limit.
+                if e.code == 429 and details.get("providerCode") not in {
+                    "rate_limit_exceeded",
+                    "slow_down",
+                }:
+                    return _http_error_result(details, bounded=False)
             if i == retries - 1:
+                if details is not None:
+                    return _http_error_result(details, bounded=False)
                 return {"error": str(e)[:200]}
-            # a 429 is the account's rate limit, not a transient: back off for tens of seconds and
-            # honour Retry-After when it is given, so a burst of parallel runs does not get the key blocked
             if isinstance(e, urllib.error.HTTPError) and e.code == 429:
                 try:
-                    wait = float(e.headers.get("Retry-After") or 0)
-                except ValueError:
+                    wait = float(retry_after or 0)
+                    if not math.isfinite(wait) or wait < 0:
+                        wait = 0
+                except (TypeError, ValueError):
                     wait = 0
                 time.sleep(max(wait, 15 * 2**i))
             else:
                 time.sleep(2**i)
 
 
-def _bounded_http_error_details(error):
+def _http_error_details(error):
     details = {"httpStatus": error.code}
     try:
         # Read once, with a hard size bound. The body is used only for finite identifiers.
@@ -118,6 +131,7 @@ def _bounded_http_error_details(error):
         provider = payload.get("error") if isinstance(payload, dict) else None
         if isinstance(provider, dict):
             details["providerCode"] = provider.get("code")
+            details["providerType"] = provider.get("type")
             details["providerParam"] = provider.get("param")
     except Exception:
         pass  # Status remains useful even when the error body is missing or malformed.
@@ -127,6 +141,15 @@ def _bounded_http_error_details(error):
         except Exception:
             pass
     return vlm_budget.safe_error_details(details)
+
+
+def _http_error_result(details, *, bounded):
+    prefix = "bounded VLM request stopped" if bounded else "VLM request stopped"
+    return {
+        "error": f"{prefix}: HTTPError",
+        **details,
+        "errorGuidance": vlm_budget.error_guidance(details),
+    }
 
 
 def _ask_bounded(body, timeout):
@@ -152,15 +175,15 @@ def _ask_bounded(body, timeout):
         vlm_budget.finish(receipt, "completed", usage=usage)
         return parsed
     except Exception as error:
-        details = (
-            _bounded_http_error_details(error) if isinstance(error, urllib.error.HTTPError) else {}
-        )
+        details = _http_error_details(error) if isinstance(error, urllib.error.HTTPError) else {}
         if receipt is not None:
             try:
                 vlm_budget.finish(receipt, "error", usage=usage, error=error, error_details=details)
             except Exception:
                 pass  # The durable claim still consumes its allowance.
         message = str(error) if isinstance(error, vlm_budget.BudgetError) else type(error).__name__
+        if isinstance(error, urllib.error.HTTPError):
+            return _http_error_result(details, bounded=True)
         return {"error": f"bounded VLM request stopped: {message}", **details}
 
 
