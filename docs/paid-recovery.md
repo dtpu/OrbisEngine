@@ -1,7 +1,8 @@
 # Paid stage accounting and recovery
 
 The runner records a durable claim before each supported paid Modal subprocess. The default
-ledger is `.context/pipeline-attempts.json`. Use the same absolute `--stage-ledger` path for
+ledger is `WANDER_STAGE_LEDGER` when configured, otherwise `.context/pipeline-attempts.json`.
+An explicit `--stage-ledger` overrides that setting. Use the same absolute ledger path for
 all candidates, aliases, and worktrees that must share an allowance. File locks coordinate
 callers on that filesystem; separate machines or copied ledgers do not share ownership.
 This is not a universal spending cap: direct worker invocations, model-cache staging, SSH

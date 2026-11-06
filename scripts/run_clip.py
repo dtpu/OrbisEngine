@@ -3457,8 +3457,9 @@ def main():
     )
     ap.add_argument(
         "--stage-ledger",
-        default=str(ROOT / ".context/pipeline-attempts.json"),
-        help="Paid Modal ledger on this filesystem; keep the same path across aliases and candidates",
+        default=str(resolve_stage_ledger()),
+        help="Paid Modal ledger; defaults to WANDER_STAGE_LEDGER or .context/pipeline-attempts.json. "
+        "Keep the same path across aliases and candidates",
     )
     ap.add_argument(
         "--stage-hypothesis",

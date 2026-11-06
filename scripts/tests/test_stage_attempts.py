@@ -864,6 +864,45 @@ class CommandIdentityTests(unittest.TestCase):
 
 
 class PaidRunIntegrationTests(unittest.TestCase):
+    def test_cli_uses_configured_shared_ledger_unless_explicitly_overridden(self):
+        import run_clip
+
+        with tempfile.TemporaryDirectory() as directory:
+            shared = str(Path(directory) / "shared.json")
+            explicit = str(Path(directory) / "explicit.json")
+            for configured, extra, expected in (
+                (shared, [], shared),
+                (shared, ["--stage-ledger", explicit], explicit),
+                (
+                    ".context/shared-ledger.json",
+                    [],
+                    str(run_clip.ROOT / ".context/shared-ledger.json"),
+                ),
+                ("", [], str(run_clip.ROOT / ".context/pipeline-attempts.json")),
+            ):
+                with (
+                    self.subTest(configured=configured, extra=extra),
+                    patch.dict(os.environ, {"WANDER_STAGE_LEDGER": configured}),
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "run_clip.py",
+                            "--clip",
+                            "fixture.mp4",
+                            "--name",
+                            "fixture",
+                            "--no-publish",
+                            *extra,
+                        ],
+                    ),
+                    patch.object(run_clip, "resolve_shots", return_value=[]) as resolve,
+                    self.assertRaises(SystemExit) as exited,
+                ):
+                    run_clip.main()
+                self.assertEqual(exited.exception.code, 0)
+                self.assertEqual(resolve.call_args.args[0].stage_ledger, expected)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
