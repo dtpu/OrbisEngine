@@ -1,0 +1,60 @@
+scripts/stage_attempts.py
+  s_20f6c0bf8c5b2c::t_027065ba714fb5 127
+  s_20f6c0bf8c5b2c::t_b801dc9e185ac8 292-295
+worker/modal_clean_video.py
+  s_20f6c0bf8c5b2c::t_a30e879a0f1b6f 95
+  s_20f6c0bf8c5b2c::t_027065ba714fb5 82,93-94,121-122,231,240-242,312-317,386,392-393,410
+scripts/tests/test_stage_attempts.py
+  s_20f6c0bf8c5b2c::t_a426c923563560 611-621,628
+  s_20f6c0bf8c5b2c::t_b801dc9e185ac8 622-627
+scripts/tests/test_inpaint.py
+  s_20f6c0bf8c5b2c::t_d68dba7492060a 1-135,188-198,205-300
+  s_11465a870157de::t_d6c88e13f713c3 136-187
+  s_20f6c0bf8c5b2c::t_1b481fdfee7e55 199-204
+worker/wander_worker/inpaint.py
+  s_20f6c0bf8c5b2c::t_d68dba7492060a 1-8,10-17,19-58,63-66,74-98
+  s_20f6c0bf8c5b2c::t_d8d2ef52ab0929 18
+  s_20f6c0bf8c5b2c::t_1b481fdfee7e55 59-62
+  s_11465a870157de::t_d6c88e13f713c3 9,67-73
+scripts/tests/test_source_timing.py
+  s_20f6c0bf8c5b2c::t_4b225c614725c7 543,550-556,560-574,578,582-591,601-606,610-619,623
+  s_20f6c0bf8c5b2c::t_2c23350813e291 557-559
+  s_11465a870157de::t_953778b151a561 575-577,579-581,592-600,607-609,620-622,624
+orchestrator/steps.py
+  s_20f6c0bf8c5b2c::t_027065ba714fb5 80-86
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_027065ba714fb5 679-681,698-699,3573-3579
+  s_20f6c0bf8c5b2c::t_652e77666b2183 3718-3719
+scripts/tests/test_run_clip_clean_masks.py
+  s_20f6c0bf8c5b2c::t_a426c923563560 83-100
+  s_20f6c0bf8c5b2c::t_a2fb4c1a722401 101-114
+  s_11465a870157de::t_3a3ed9b11aad9c 115-124
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_652e77666b2183 354-355
+  s_20f6c0bf8c5b2c::t_c1fc06e14ece74 350-353,356-357,360-376
+  s_20f6c0bf8c5b2c::t_a30e879a0f1b6f 358-359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0c07e6921e0b03b03cc57564b80c49b6c09b34b4",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
