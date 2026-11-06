@@ -540,11 +540,87 @@ class SourceTimingTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "emitted frame"),
             ):
                 source_timing.select_source_frames(clip, source_indices=[0, 2])
+
             with (
                 patch.object(source_timing, "_sha256", side_effect=["a", "b"]),
                 self.assertRaisesRegex(ValueError, "Source changed"),
             ):
                 source_timing.select_source_frames(clip, source_indices=[0, 2])
+
+    def test_isolated_worker_preserves_source_pixels_and_mask_provenance(self):
+        import modal_clean_video
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = self.make_clip(root, "30", 6)
+            selection = [0, 2]
+            raw, provenance = source_timing.select_source_frames(
+                clip, source_indices=selection, width=16, height=16
+            )
+            sources = np.frombuffer(raw, np.uint8).reshape(2, 16, 16, 3)
+            masks = np.zeros((2, 16, 16), bool)
+            masks[:, 4:12, 5:11] = True
+            archive = io.BytesIO()
+            np.savez_compressed(
+                archive,
+                masks=np.packbits(masks, axis=-1),
+                shape=np.array(masks.shape),
+                source_indices=np.array(selection),
+                source_pts=np.array([f["sourcePts"] for f in provenance["frames"]]),
+                source_time_base=np.array(provenance["sourceTimeBase"]),
+                source_sha256=np.array(provenance["sourceSha256"]),
+            )
+            worker_root = root / "worker"
+            worker_root.mkdir()
+            model = Mock(
+                side_effect=lambda image, mask: Image.new("RGB", image.size, (200, 50, 90))
+            )
+            modules = {
+                "torch": SimpleNamespace(
+                    cuda=SimpleNamespace(is_available=lambda: True), device=str
+                ),
+                "simple_lama_inpainting": SimpleNamespace(SimpleLama=lambda device: model),
+                "wander_worker.masks": SimpleNamespace(moved_content_masks=None, people_masks=None),
+            }
+            with (
+                patch.dict(sys.modules, modules),
+                patch.object(modal_clean_video.cache, "commit"),
+                patch("tempfile.mkdtemp", return_value=str(worker_root)),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                result = modal_clean_video.clean.local(
+                    clip.read_bytes(),
+                    fps=12,
+                    width=16,
+                    height=16,
+                    masks_npz=archive.getvalue(),
+                    lama_px=16,
+                    inpaint_mode="isolated",
+                    encode=False,
+                    return_frames=True,
+                )
+            report = result["report"]
+            self.assertIsNone(report["error"])
+            self.assertEqual(model.call_count, 2)
+            self.assertEqual(report["inpaintMode"], "isolated")
+            self.assertEqual(report["maskSource"], "supplied")
+            self.assertEqual(
+                report["suppliedMasksSha256"], hashlib.sha256(archive.getvalue()).hexdigest()
+            )
+            self.assertEqual((report["appliedDilate"], report["appliedBottomExtra"]), (0, 0))
+            self.assertFalse(report["extendedToBottom"])
+            self.assertEqual(report["indices"], selection)
+            with tarfile.open(fileobj=io.BytesIO(result["frames"])) as frames:
+                for i in range(2):
+                    with frames.extractfile(f"f_{i:04d}.png") as image:
+                        output = np.array(Image.open(image))
+                    np.testing.assert_array_equal(output[~masks[i]], sources[i][~masks[i]])
+                    np.testing.assert_array_equal(output[masks[i]], np.tile([200, 50, 90], (48, 1)))
+            with np.load(io.BytesIO(result["masks"]), allow_pickle=False) as saved:
+                np.testing.assert_array_equal(
+                    np.unpackbits(saved["masks"], axis=-1).astype(bool), masks
+                )
+                np.testing.assert_array_equal(saved["source_indices"], selection)
 
     def test_failed_decoder_reports_stderr_without_raw_rgb_stdout(self):
         command = [

@@ -1,7 +1,8 @@
 # Paid stage accounting and recovery
 
 The runner records a durable claim before each supported paid Modal subprocess. The default
-ledger is `.context/pipeline-attempts.json`. Use the same absolute `--stage-ledger` path for
+ledger is `WANDER_STAGE_LEDGER` when configured, otherwise `.context/pipeline-attempts.json`.
+An explicit `--stage-ledger` overrides that setting. Use the same absolute ledger path for
 all candidates, aliases, and worktrees that must share an allowance. File locks coordinate
 callers on that filesystem; separate machines or copied ledgers do not share ownership.
 This is not a universal spending cap: direct worker invocations, model-cache staging, SSH
@@ -347,3 +348,31 @@ it to the worker's `--masks-in` path and bypasses the worker's semantic masks an
 Keep the original FPS and source clip. This option changes no current pipeline default and does
 not authorize another paid clean, reset the shared inpainting allowance, or replace a failed
 quality verdict. Inpainting remains subject to the same ledger, approvals and visual review.
+
+## Experimental isolation of inpainting context
+
+The direct runner and clean worker accept `--inpaint-mode isolated`; `legacy` remains the default.
+The orchestrator's `wander step` clean steps expose the same `inpaint_mode` parameter;
+`run_clip.py --orchestrated` rejects a nondefault mode rather than discarding it. This experimental mode
+removes masked RGB before resizing, conservatively resizes mask coverage, and grows only the
+model's context mask to cover the Lanczos filter support. It then writes the generated fill at
+full opacity inside the original removal mask and preserves source pixels outside that mask
+before video encoding (lossy H.264 encoding can still change them).
+The wider model mask does not enlarge the output write region. Upsampling scales the filter
+margin per axis. Repeated passes neutralize the same region again, rather than refine an earlier fill.
+
+Offline mutation checks on eleven retained lobby frames found 40,744 changed low-resolution
+pixels outside the old nearest-neighbor mask after changing only masked RGB. The isolated
+preparation eliminated that dependence. Lossless first-frame evidence also places major ghosts
+inside fully opaque fill regions, so final-alpha changes alone cannot explain or repair them.
+A subsequent explicitly approved first-frame trial removed most large hair, torso and trouser
+remnants, but visible outlines and shoe remnants remained. It failed visual review; the full clip
+was not rerun. The existing mask still misses some fingers and reflected people, and hard mask
+boundaries can introduce visible seams. Keep the mode experimental and do not promote the failed
+clean or generate a world until the actual output meets the unchanged review criteria.
+
+Worker reports identify `inpaintMode`, `maskSource`, the supplied archive hash, and applied mask
+growth separately from requested growth. The helper and mode are included in paid-attempt
+identity; neither this option nor a new candidate name grants another execution. Deterministic
+stub-model tests cover signal isolation, exact outside preservation, thin masks, upsampling,
+legacy pixel parity, source timing and paid-command forwarding without inference or provider calls.

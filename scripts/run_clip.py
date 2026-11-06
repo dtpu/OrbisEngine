@@ -676,6 +676,9 @@ class Pipeline:
 
     def clean_flags(self):
         a = self.a
+        inpaint_mode = getattr(a, "inpaint_mode", "legacy")
+        if inpaint_mode not in {"legacy", "isolated"}:
+            raise ValueError("--inpaint-mode must be legacy or isolated")
         clean_masks = getattr(a, "clean_masks", None)
         if clean_masks and a.moved_mask:
             raise ValueError("--clean-masks cannot be combined with --moved-mask")
@@ -692,6 +695,8 @@ class Pipeline:
             str(a.bottom_extra),
             "--lama-px",
             str(a.lama_px),
+            "--inpaint-mode",
+            inpaint_mode,
         ]
         if clean_masks:
             self.validate_clean_masks(Path(clean_masks))
@@ -3452,8 +3457,9 @@ def main():
     )
     ap.add_argument(
         "--stage-ledger",
-        default=str(ROOT / ".context/pipeline-attempts.json"),
-        help="Paid Modal ledger on this filesystem; keep the same path across aliases and candidates",
+        default=str(resolve_stage_ledger()),
+        help="Paid Modal ledger; defaults to WANDER_STAGE_LEDGER or .context/pipeline-attempts.json. "
+        "Keep the same path across aliases and candidates",
     )
     ap.add_argument(
         "--stage-hypothesis",
@@ -3565,6 +3571,13 @@ def main():
     )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)
+    ap.add_argument(
+        "--inpaint-mode",
+        choices=["legacy", "isolated"],
+        default="legacy",
+        help="experimental isolated mode hides masked RGB before resizing and writes only "
+        "inside the reviewed mask; requires visual review, legacy remains the default",
+    )
     ap.add_argument(
         "--person-frame", type=int, help="source frame for the LHM avatar (default: middle)"
     )
@@ -3703,6 +3716,8 @@ def main():
         ap.error("--clean-masks cannot be combined with --moved-mask")
     if a.clean_masks and a.orchestrated:
         ap.error("--clean-masks is currently supported by the direct runner only")
+    if a.inpaint_mode != "legacy" and a.orchestrated:
+        ap.error("--inpaint-mode is a stage parameter; use wander step for an orchestrated run")
     if a.stage_authorization is not None and a.orchestrated:
         ap.error("--stage-authorization is currently supported by the direct runner only")
     if a.orchestrated:

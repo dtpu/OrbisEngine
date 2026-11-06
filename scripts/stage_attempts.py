@@ -124,6 +124,7 @@ def _read_authorization(path):
 CODE_FILES = {
     "worker/modal_clean_video.py": (
         "worker/wander_worker/masks.py",
+        "worker/wander_worker/inpaint.py",
         "worker/stages/worker_resources.py",
     ),
     "worker/modal_motion.py": (
@@ -287,6 +288,10 @@ def command_identity(command, root, source_selection=None, *, environment=None):
                 raise ValueError("Execution timeout must be an integer from 0 to 3600")
             parameters["options"][flag] = number
         elif flag in TEXT_FLAGS:
+            parameters["options"][flag] = value
+        elif flag == "--inpaint-mode":
+            if entry != "worker/modal_clean_video.py" or value not in {"legacy", "isolated"}:
+                raise ValueError("Inpainting mode requires the clean worker and legacy or isolated")
             parameters["options"][flag] = value
         elif flag == "--only":
             parameters["options"][flag] = [int(part.strip()) for part in value.split(",")]

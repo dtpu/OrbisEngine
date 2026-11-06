@@ -77,6 +77,13 @@ CLEAN_PARAMETERS = tunables(
         "clean everything that moved rather than only people: cast shadow, carried object, "
         "passer-by. Off by default, so an ordinary clip is unchanged",
     ),
+    inpaint_mode=knob(
+        "string",
+        "legacy",
+        "experimental isolated mode prevents masked source pixels from leaking through "
+        "resizing and composites only inside the removal mask; needs independent visual review",
+        enum=["legacy", "isolated"],
+    ),
 )
 WORLD_PROMPT_PARAMETERS = tunables(
     samples=knob(

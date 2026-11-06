@@ -608,6 +608,24 @@ class CommandIdentityTests(unittest.TestCase):
         _, after, _ = command_identity(command, self.root)
         self.assertNotEqual(before[helper], after[helper])
 
+    def test_clean_compositing_code_and_mode_change_attempt_identity(self):
+        helper = "worker/wander_worker/inpaint.py"
+        command = ["modal", "run", "worker/modal_clean_video.py", "--inpaint-mode", "legacy"]
+        parameters, before, _ = command_identity(command, self.root)
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed context isolation\n")
+        _, after, _ = command_identity(command, self.root)
+        self.assertNotEqual(before[helper], after[helper])
+        changed, _, _ = command_identity([*command[:-1], "isolated"], self.root)
+        self.assertNotEqual(parameters, changed)
+        with self.assertRaisesRegex(ValueError, "Inpainting mode"):
+            command_identity([*command[:-1], "unknown"], self.root)
+        with self.assertRaisesRegex(ValueError, "Inpainting mode"):
+            command_identity(
+                ["modal", "run", "worker/modal_motion.py", "--inpaint-mode", "isolated"], self.root
+            )
+
     def test_every_runner_paid_worker_command_shape_has_an_identity_policy(self):
         modal = "/modal"
         out = self.root / "out"
@@ -846,6 +864,45 @@ class CommandIdentityTests(unittest.TestCase):
 
 
 class PaidRunIntegrationTests(unittest.TestCase):
+    def test_cli_uses_configured_shared_ledger_unless_explicitly_overridden(self):
+        import run_clip
+
+        with tempfile.TemporaryDirectory() as directory:
+            shared = str((Path(directory) / "shared.json").resolve())
+            explicit = str((Path(directory) / "explicit.json").resolve())
+            for configured, extra, expected in (
+                (shared, [], shared),
+                (shared, ["--stage-ledger", explicit], explicit),
+                (
+                    ".context/shared-ledger.json",
+                    [],
+                    str(run_clip.ROOT / ".context/shared-ledger.json"),
+                ),
+                ("", [], str(run_clip.ROOT / ".context/pipeline-attempts.json")),
+            ):
+                with (
+                    self.subTest(configured=configured, extra=extra),
+                    patch.dict(os.environ, {"WANDER_STAGE_LEDGER": configured}),
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "run_clip.py",
+                            "--clip",
+                            "fixture.mp4",
+                            "--name",
+                            "fixture",
+                            "--no-publish",
+                            *extra,
+                        ],
+                    ),
+                    patch.object(run_clip, "resolve_shots", return_value=[]) as resolve,
+                    self.assertRaises(SystemExit) as exited,
+                ):
+                    run_clip.main()
+                self.assertEqual(exited.exception.code, 0)
+                self.assertEqual(resolve.call_args.args[0].stage_ledger, expected)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
