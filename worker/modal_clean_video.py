@@ -113,10 +113,24 @@ def clean(
     work.mkdir()
     src.write_bytes(video_bytes)
     W, H = width, height
-    error, timings, result = None, {}, {}
+    error, timings = None, {}
+    result = dict(
+        sourceSha256=hashlib.sha256(video_bytes).hexdigest(),
+        suppliedMasksSha256=hashlib.sha256(masks_npz).hexdigest() if masks_npz else None,
+        inpaintMode=inpaint_mode,
+        fps=fps,
+        width=W,
+        height=H,
+        dilate=dilate,
+        bottomExtra=bottom_extra,
+        passes=passes,
+        lamaPx=lama_px,
+        crf=crf,
+    )
     moved_stats = None
     out_mp4 = out_png = masks_out = b""
     frames_tar = b""
+    composite_checks = []
     try:
         if inpaint_mode not in {"legacy", "isolated"}:
             raise ValueError("inpaint_mode must be legacy or isolated")
@@ -173,6 +187,12 @@ def clean(
         indices = [frame["sourceIndex"] for frame in provenance["frames"]]
         num, den = provenance["sourceAverageFrameRate"].split("/")
         src_fps = float(num) / float(den) if float(den) else 0.0
+        result.update(
+            frames=n,
+            indices=indices,
+            sourceFps=src_fps,
+            sourceProvenance=provenance,
+        )
         print(
             f"{n} frames decoded from {src_fps:.3f} fps source ({timings['decode']:.0f}s)",
             flush=True,
@@ -219,6 +239,16 @@ def clean(
             )
         timings["masks"] = time.time() - t
         covered = int(masks[need].reshape(len(need), -1).any(1).sum())
+        result.update(
+            moved=moved,
+            movedStats=moved_stats,
+            maskSource="supplied" if masks_npz else "moved" if moved else "segformer",
+            appliedDilate=0 if masks_npz else dilate,
+            appliedBottomExtra=0 if masks_npz else bottom_extra,
+            extendedToBottom=not bool(masks_npz),
+            maskFraction=float(masks[need].mean()),
+            framesWithPeople=covered,
+        )
         print(
             f"masks: people {masks[need].mean() * 100:.2f}% of pixels, {covered}/{len(need)} frames "
             f"({timings['masks']:.0f}s)",
@@ -237,10 +267,44 @@ def clean(
         t = time.time()
         kept = []
         for i in sel:
+            decoded_rgb_sha256 = hashlib.sha256(imgs[i].tobytes()).hexdigest()
+            # Capture the approved write boundary before calling the inpainter. Comparing
+            # against a separately decoded local video cannot prove byte preservation:
+            # different FFmpeg versions can produce slightly different RGB values.
+            outside = ~masks[i] if inpaint_mode == "isolated" else None
+            original_outside = imgs[i][outside] if outside is not None else None
+            mask_sha256 = hashlib.sha256(masks[i].tobytes()).hexdigest()
             im = inpaint_frame(
                 imgs[i], masks[i], lama, lama_px=lama_px, passes=passes, mode=inpaint_mode
             )
+            if outside is not None:
+                if im.shape != imgs[i].shape or im.dtype != np.uint8:
+                    raise ValueError("Isolated inpainting returned invalid RGB pixels")
+                cleaned_outside = im[outside]
+                changed = int(np.count_nonzero(np.any(cleaned_outside != original_outside, axis=1)))
+                composite_checks.append(
+                    {
+                        "frameIndex": i,
+                        "sourceIndex": indices[i],
+                        "sourcePts": provenance["frames"][i]["sourcePts"],
+                        "decodedRgbSha256": decoded_rgb_sha256,
+                        "removalMaskSha256": mask_sha256,
+                        "outsideMaskPixels": len(original_outside),
+                        "outsideMaskChangedPixels": changed,
+                        "sourceOutsideRgbSha256": hashlib.sha256(
+                            original_outside.tobytes()
+                        ).hexdigest(),
+                        "cleanOutsideRgbSha256": hashlib.sha256(
+                            cleaned_outside.tobytes()
+                        ).hexdigest(),
+                    }
+                )
+                if changed:
+                    raise ValueError(
+                        f"Isolated inpainting changed {changed} pixels outside the mask at frame {i}"
+                    )
             Image.fromarray(im).save(work / f"f_{i:04d}.png")
+            kept_provenance[len(kept)]["decodedRgbSha256"] = decoded_rgb_sha256
             kept_provenance[len(kept)]["cleanedImageSha256"] = hashlib.sha256(
                 (work / f"f_{i:04d}.png").read_bytes()
             ).hexdigest()
@@ -297,34 +361,11 @@ def clean(
                 for i in kept:
                     tar.add(work / f"f_{i:04d}.png", arcname=f"f_{i:04d}.png")
             frames_tar = fb.getvalue()
-        result = dict(
-            frames=n,
+        result.update(
             inpainted=len(kept),
-            indices=indices,
-            sourceFps=src_fps,
-            sourceSha256=provenance["sourceSha256"],
-            sourceProvenance=provenance,
             keptIndices=kept,
             keptFrameProvenance=kept_provenance,
             outputVideoSha256=hashlib.sha256(out_mp4).hexdigest() if out_mp4 else None,
-            moved=moved,
-            movedStats=moved_stats,
-            maskSource="supplied" if masks_npz else "moved" if moved else "segformer",
-            suppliedMasksSha256=hashlib.sha256(masks_npz).hexdigest() if masks_npz else None,
-            appliedDilate=0 if masks_npz else dilate,
-            appliedBottomExtra=0 if masks_npz else bottom_extra,
-            extendedToBottom=not bool(masks_npz),
-            inpaintMode=inpaint_mode,
-            fps=fps,
-            width=W,
-            height=H,
-            dilate=dilate,
-            bottomExtra=bottom_extra,
-            passes=passes,
-            lamaPx=lama_px,
-            crf=crf,
-            maskFraction=float(masks[need].mean()),
-            framesWithPeople=covered,
         )
     except Exception:
         error = traceback.format_exc()
@@ -339,6 +380,7 @@ def clean(
         cpu=4,
         timeoutSeconds=INFERENCE_RESOURCES["timeout"],
         timings=timings,
+        compositeChecks=composite_checks,
         estimatedComputeUSD=elapsed * (0.000222 + 4 * 0.0000131 + 32 * 0.00000222),
         **result,
     )

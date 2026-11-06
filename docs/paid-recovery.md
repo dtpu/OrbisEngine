@@ -376,3 +376,19 @@ growth separately from requested growth. The helper and mode are included in pai
 identity; neither this option nor a new candidate name grants another execution. Deterministic
 stub-model tests cover signal isolation, exact outside preservation, thin masks, upsampling,
 legacy pixel parity, source timing and paid-command forwarding without inference or provider calls.
+
+Isolated-mode workers now compare every selected frame against the same worker's decoded RGB
+outside the removal mask, before writing the output PNG or encoding video. Any changed pixel
+fails the run. `compositeChecks` records source index/PTS, decoded RGB and removal-mask hashes,
+the number of outside-mask pixels, changed-pixel count, and before/after outside-RGB hashes.
+Hashes use row-major bytes: interleaved uint8 RGB for images, one byte (0/1) per mask pixel, and
+only the selected outside RGB triples for the outside hashes. Input bindings and completed
+checks survive a later failure; a failing frame is not written or returned. A fully masked
+frame has zero outside pixels and proves nothing about preservation of surroundings.
+
+`keptFrameProvenance` also records each saved frame's decoded RGB hash. Legacy mode retains its
+existing compositing behavior and has no outside-mask checks; an empty or missing check list is
+not a preservation pass. These receipts describe pixels before lossy encoding, do not establish
+mask coverage or visual quality, and do not retroactively verify older outputs. Comparing with
+a separate local decode can produce differences caused by the decoder itself; use the worker
+receipt for this exact-byte check and retain independent visual review.

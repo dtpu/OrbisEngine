@@ -610,6 +610,25 @@ class SourceTimingTests(unittest.TestCase):
             self.assertEqual((report["appliedDilate"], report["appliedBottomExtra"]), (0, 0))
             self.assertFalse(report["extendedToBottom"])
             self.assertEqual(report["indices"], selection)
+            self.assertEqual(len(report["compositeChecks"]), 2)
+            for i, check in enumerate(report["compositeChecks"]):
+                self.assertEqual(check["frameIndex"], i)
+                self.assertEqual(check["sourceIndex"], selection[i])
+                self.assertEqual(check["sourcePts"], provenance["frames"][i]["sourcePts"])
+                self.assertEqual(check["outsideMaskPixels"], 16 * 16 - 48)
+                self.assertEqual(check["outsideMaskChangedPixels"], 0)
+                self.assertEqual(
+                    check["decodedRgbSha256"], hashlib.sha256(sources[i].tobytes()).hexdigest()
+                )
+                self.assertEqual(
+                    check["removalMaskSha256"], hashlib.sha256(masks[i].tobytes()).hexdigest()
+                )
+                outside_hash = hashlib.sha256(sources[i][~masks[i]].tobytes()).hexdigest()
+                self.assertEqual(check["sourceOutsideRgbSha256"], outside_hash)
+                self.assertEqual(check["cleanOutsideRgbSha256"], outside_hash)
+                self.assertEqual(
+                    report["keptFrameProvenance"][i]["decodedRgbSha256"], check["decodedRgbSha256"]
+                )
             with tarfile.open(fileobj=io.BytesIO(result["frames"])) as frames:
                 for i in range(2):
                     with frames.extractfile(f"f_{i:04d}.png") as image:
@@ -621,6 +640,65 @@ class SourceTimingTests(unittest.TestCase):
                     np.unpackbits(saved["masks"], axis=-1).astype(bool), masks
                 )
                 np.testing.assert_array_equal(saved["source_indices"], selection)
+
+            # An inpainter regression that writes beyond the reviewed region must fail
+            # before even a lossless output frame or encoded video can be returned.
+            failed_root = root / "corrupt-worker"
+            failed_root.mkdir()
+
+            def corrupt_outside(image, mask, model, **options):
+                output = image.copy()
+                output[0, 0, 0] ^= 1
+                return output
+
+            with (
+                patch.dict(sys.modules, modules),
+                patch.object(modal_clean_video.cache, "commit"),
+                patch("tempfile.mkdtemp", return_value=str(failed_root)),
+                patch("wander_worker.inpaint.inpaint_frame", side_effect=corrupt_outside),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                failed = modal_clean_video.clean.local(
+                    clip.read_bytes(),
+                    fps=12,
+                    width=16,
+                    height=16,
+                    masks_npz=archive.getvalue(),
+                    lama_px=16,
+                    inpaint_mode="isolated",
+                    encode=True,
+                    return_frames=True,
+                )
+            self.assertIn("changed 1 pixels outside the mask", failed["report"]["error"])
+            for key in (
+                "sourceSha256",
+                "suppliedMasksSha256",
+                "sourceProvenance",
+                "indices",
+                "width",
+                "height",
+                "fps",
+                "inpaintMode",
+                "maskSource",
+                "appliedDilate",
+                "appliedBottomExtra",
+                "extendedToBottom",
+            ):
+                self.assertEqual(failed["report"][key], report[key])
+            check = failed["report"]["compositeChecks"][0]
+            for key in (
+                "frameIndex",
+                "sourceIndex",
+                "sourcePts",
+                "decodedRgbSha256",
+                "removalMaskSha256",
+                "sourceOutsideRgbSha256",
+            ):
+                self.assertEqual(check[key], report["compositeChecks"][0][key])
+            self.assertEqual(check["outsideMaskChangedPixels"], 1)
+            self.assertNotEqual(check["sourceOutsideRgbSha256"], check["cleanOutsideRgbSha256"])
+            self.assertFalse(list((failed_root / "frames").glob("*.png")))
+            self.assertEqual((failed["mp4"], failed["frame0"], failed["frames"]), (b"", b"", b""))
 
     def test_failed_decoder_reports_stderr_without_raw_rgb_stdout(self):
         command = [
