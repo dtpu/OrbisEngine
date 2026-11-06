@@ -1,0 +1,21 @@
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_4d2b8ed31066b2 13
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_4d2b8ed31066b2 368-372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "688625053c1b40d72087264953150ea4dd348c40",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
