@@ -167,3 +167,131 @@ def test_claim_write_failure_prevents_network(budget, monkeypatch):
     monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
     assert "error" in ask()
     network.assert_not_called()
+
+
+class ErrorBody(io.BytesIO):
+    def __init__(self, content):
+        super().__init__(content)
+        self.read_sizes = []
+
+    def read(self, size=-1):
+        self.read_sizes.append(size)
+        return super().read(size)
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "param"),
+    [
+        (401, "invalid_api_key", None),
+        (429, "insufficient_quota", None),
+        (400, "unsupported_parameter", "max_completion_tokens"),
+    ],
+)
+def test_http_error_keeps_only_safe_diagnostics_without_retry(
+    budget, monkeypatch, status, code, param
+):
+    raw = json.dumps(
+        {
+            "error": {
+                "code": code,
+                "param": param,
+                "message": "secret-test-key private prompt private image",
+                "extra": "private provider body",
+            }
+        }
+    ).encode()
+    body = ErrorBody(raw)
+    error = vlm_judge.urllib.error.HTTPError(
+        "https://api.openai.com/v1/chat/completions",
+        status,
+        "private error reason",
+        {"private-header": "secret-test-key"},
+        body,
+    )
+    network = Mock(side_effect=error)
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    result = ask(retries=20)
+    expected = {"httpStatus": status, "providerCode": code}
+    if param:
+        expected["providerParam"] = param
+    assert result == {"error": "bounded VLM request stopped: HTTPError", **expected}
+    call = json.loads(budget.read_text())["calls"][0]
+    assert call["status"] == "error"
+    assert call["errorType"] == "HTTPError"
+    assert {key: call[key] for key in expected} == expected
+    assert body.read_sizes == [16 * 1024]
+    assert body.closed
+    assert "duplicate" in ask()["error"]
+    assert network.call_count == 1
+    combined = budget.read_text() + json.dumps(result)
+    for secret in [
+        "secret-test-key",
+        "private prompt",
+        "private image",
+        "private provider body",
+        "private error reason",
+        "private-header",
+    ]:
+        assert secret not in combined
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": {"code": "untrusted-secret-code", "param": "private-prompt-param"}},
+        {"error": {"code": {"secret": "value"}, "param": ["private"]}},
+        {"error": "private provider message"},
+        ["private provider message"],
+    ],
+)
+def test_unknown_provider_fields_are_omitted(budget, monkeypatch, payload):
+    error = vlm_judge.urllib.error.HTTPError(
+        "https://api.openai.com/v1/chat/completions",
+        400,
+        "private reason",
+        {},
+        io.BytesIO(json.dumps(payload).encode()),
+    )
+    network = Mock(side_effect=error)
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    result = ask()
+    assert result == {"error": "bounded VLM request stopped: HTTPError", "httpStatus": 400}
+    call = json.loads(budget.read_text())["calls"][0]
+    assert call["httpStatus"] == 400
+    assert "providerCode" not in call
+    assert "providerParam" not in call
+    assert network.call_count == 1
+
+
+def test_http_error_body_is_read_once_with_a_finite_limit(budget, monkeypatch):
+    body = ErrorBody(b" " * (16 * 1024) + b'{"error":{"code":"insufficient_quota"}}')
+    error = vlm_judge.urllib.error.HTTPError("https://api.openai.com", 429, "private", {}, body)
+    network = Mock(side_effect=error)
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    assert ask(retries=20) == {
+        "error": "bounded VLM request stopped: HTTPError",
+        "httpStatus": 429,
+    }
+    assert body.read_sizes == [16 * 1024]
+    assert network.call_count == 1
+
+
+def test_receipt_revalidates_diagnostics_instead_of_storing_arbitrary_fields(budget):
+    receipt = vlm_judge.vlm_budget.claim(budget, {"model": "gpt-6-astra"})
+    vlm_judge.vlm_budget.finish(
+        receipt,
+        "error",
+        error=ValueError("private prompt"),
+        error_details={
+            "httpStatus": True,
+            "providerCode": "private-code",
+            "providerParam": "private-param",
+            "body": "secret-test-key",
+            "headers": {"Authorization": "secret-test-key"},
+        },
+    )
+    call = json.loads(budget.read_text())["calls"][0]
+    assert call["errorType"] == "ValueError"
+    assert not {"httpStatus", "providerCode", "providerParam", "body", "headers"} & call.keys()
+    assert "private" not in budget.read_text()
+    assert "secret-test-key" not in budget.read_text()

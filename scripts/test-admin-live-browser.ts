@@ -11,7 +11,12 @@ const base = process.env.ADMIN_SMOKE_URL ?? 'http://127.0.0.1:5401';
 const output = resolve(process.env.ADMIN_SMOKE_OUTPUT ?? '.context/evidence/admin-live-smoke');
 const runId = `admin-smoke-${Date.now()}`;
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+const browser = executablePath
+  ? await chromium.launch({ executablePath, headless: true })
+  : await chromium
+      .launch({ channel: 'chrome', headless: true })
+      .catch(() => chromium.launch({ headless: true }));
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.setDefaultTimeout(30_000);
 const pageErrors: string[] = [];
@@ -35,16 +40,20 @@ try {
   await page.locator('#option-objects').uncheck();
   await page.screenshot({ path: `${output}/create.png`, fullPage: true });
 
-  const doctorResponse = page.waitForResponse(
-    (response) => response.url().endsWith('/api/pipeline/doctor'),
-    { timeout: 60_000 },
-  );
-  const submission = page.waitForResponse(
-    (response) => response.url().endsWith('/api/pipeline/runs/upload'),
-    { timeout: 90_000 },
-  );
-  await page.getByRole('button', { name: 'Check setup and create run', exact: true }).click();
+  // Attach rejection handlers immediately: upload may still be pending if a setup assertion fails.
+  const doctorResponse = page
+    .waitForResponse((response) => response.url().endsWith('/api/pipeline/doctor'), {
+      timeout: 60_000,
+    })
+    .catch((error: Error) => error);
+  const submission = page
+    .waitForResponse((response) => response.url().endsWith('/api/pipeline/runs/upload'), {
+      timeout: 90_000,
+    })
+    .catch((error: Error) => error);
+  await page.getByRole('button', { name: 'Upload and process', exact: true }).click();
   const doctor = await doctorResponse;
+  if (doctor instanceof Error) throw doctor;
   assert.equal(doctor.status(), 200);
   const setup = await doctor.json();
   await page
@@ -55,6 +64,7 @@ try {
     await page.getByRole('button', { name: 'Queue for later', exact: true }).click();
   }
   const uploaded = await submission;
+  if (uploaded instanceof Error) throw uploaded;
   assert.equal(uploaded.status(), 201, await uploaded.text());
   assert.equal((await uploaded.json()).id, runId);
 
@@ -104,7 +114,7 @@ try {
   await page.getByRole('button', { name: 'Resume run', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Cancel run', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm cancel', exact: true }).click();
-  await page.getByRole('heading', { name: 'Run finished: canceled', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Run canceled', exact: true }).waitFor();
   const canceled = await summary();
   assert.equal(canceled.status, 'canceled');
   assert.equal(canceled.recordedStatus, 'canceled');

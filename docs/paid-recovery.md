@@ -19,6 +19,11 @@ and provider error text. This bounds requests and completion tokens for that hel
 tokens, monetary charges, or other OpenAI clients. Without the environment variable its existing
 behavior is unchanged.
 
+Bounded failures retain the numeric HTTP status and recognized provider error-code or parameter
+identifiers when available. Raw response bodies, messages, headers and arbitrary strings are never
+retained. An HTTP 429 alone does not establish whether quota or a transient rate limit caused the
+failure. Inspect account limits before another request; a failed claim still consumes its allowance.
+
 The allowance is three executions per original source SHA-256 and logical stage. The clean,
 first-frame clean, and multi-image clean operations share the inpainting allowance; individual
 LHM track suffixes have separate allowances. `--marble both` sequences its two clean operations
@@ -53,6 +58,43 @@ A successful subprocess is recorded as a completed execution, not a visual quali
 Additional selected shots share their original source's allowance and are treated as retries of
 the same stage. Automatic `--all-shots` processing can therefore stop after the first shot;
 review subsequent shots separately with distinct hypotheses instead of changing the source hash.
+
+## Optional single-person worker resource ceilings
+
+Set `WANDER_WORKER_TIMEOUT_SECONDS=600` in the launching process to limit the GPU functions
+`modal_clean_video.py::clean`, `modal_motion.py::reconstruct`, and `modal_lhm.py::frozen`
+(including its canonical animation mode). This is a registration-time setting: use a fresh Modal
+invocation after changing it. It must be a positive integer no greater than that function's
+existing maximum: 3600 seconds for cleaning, 1500 for camera/motion reconstruction, and 1800 for
+LHM frozen or animated inference. A shared value for all three must therefore be at most 1500.
+Empty, malformed, zero, negative, or excessive values fail before image or volume setup.
+Omitting the variable preserves the existing resource requests, concurrency and timeouts.
+The direct runner records the effective resource policy in each new paid claim, including
+defaults when no limit is set. Changing a deadline changes the attempt identity; unrelated
+environment values and credentials are excluded. Earlier claims remain unchanged.
+
+When configured, the function decorator sets both execution and startup timeouts to that value,
+CPU request/limit to `(4, 4)`, memory request/limit to `(32768, 32768)` MiB for cleaning and motion
+or `(65536, 65536)` MiB for LHM, one maximum container, no automatic retries, and a two-second
+scaledown window. The small nonsecret timeout setting is forwarded to containers so their module
+reimport uses the same policy. Startup and execution are separate deadlines; the setting does
+not bound their combined wall time, image builds, finalization, or unrelated workers. It is not
+a universal dollar cap and does not replace the paid ledger or provider spending controls.
+The model, precision, input sampling, inference arguments and output-quality requirements stay
+unchanged. CPU staging functions and tracked multiperson workers retain their existing policy.
+
+Bounded single-person LHM uses the existing logged-subprocess deadline guard to stop its own
+inference child before the provider deadline, reserving up to 60 seconds (10% for short limits)
+for output hashing and volume commit. Partial outputs are finalized as failed, never retried
+or accepted as complete. Hard provider termination or failed finalization can still leave an
+unresolved checkpoint; recover existing outputs instead of resubmitting. Cleaning and motion
+use the provider deadline without a durable-output checkpoint, so a timeout can lose their
+return artifacts. Inspect provider status and the existing attempt before authorizing any retry.
+
+Offline checks in `scripts/tests/test_worker_resources.py` cover default preservation, invalid
+settings before worker setup, actual registration against the locked Modal SDK, packaged helper
+imports, and failed-checkpoint preservation for both bounded LHM modes. They do not build cloud
+images or establish runtime cost or inference quality.
 
 ## Explicit one-run operator authorization
 

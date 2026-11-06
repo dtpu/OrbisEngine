@@ -1,13 +1,8 @@
 import Section from '../components/Section';
 import { Eyebrow, H2 } from '../components/Heading';
 import { steps } from '../content/steps';
-import type { SyntheticEvent } from 'react';
+import MediaImage from '../components/MediaImage';
 import styles from './HowItWorks.module.css';
-
-// Step images are exported with the media bundle; until they exist, hide the broken-image glyph.
-const hideBroken = (e: SyntheticEvent<HTMLImageElement>) => {
-  e.currentTarget.style.visibility = 'hidden';
-};
 
 export default function HowItWorks() {
   return (
@@ -23,7 +18,7 @@ export default function HowItWorks() {
               <span className={styles.number}>{String(step.n).padStart(2, '0')}</span>
             </div>
             <div className={styles.media}>
-              <img src={step.image} alt={step.title} loading="lazy" onError={hideBroken} />
+              <MediaImage src={step.image} alt={step.title} />
             </div>
             <h3 className={styles.title}>{step.title}</h3>
             <p className={styles.body}>{step.body}</p>
@@ -31,8 +26,8 @@ export default function HowItWorks() {
         ))}
       </ol>
       <p className={styles.footer}>
-        Completed processing is not accepted quality. Every scene above passed a manual visual
-        review against its source.
+        Completed processing is not accepted quality. Review each scene against its source before
+        accepting it; missing previews are not evidence of reconstruction quality.
       </p>
     </Section>
   );

@@ -63,7 +63,7 @@ export default function DevGallery() {
             before={<div style={{ width: '100%', height: '100%', background: '#000' }} />}
             after={<div style={{ width: '100%', height: '100%', background: '#fff' }} />}
             beforeLabel="Source"
-            afterLabel="Wander"
+            afterLabel="Orbis Engine"
           />
         </Group>
       </Section>

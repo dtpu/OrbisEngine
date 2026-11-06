@@ -20,6 +20,7 @@ Reconcile an interrupted claim without submitting any work:
 import argparse
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -121,13 +122,19 @@ def _read_authorization(path):
 
 
 CODE_FILES = {
-    "worker/modal_clean_video.py": ("worker/wander_worker/masks.py",),
+    "worker/modal_clean_video.py": (
+        "worker/wander_worker/masks.py",
+        "worker/stages/worker_resources.py",
+    ),
     "worker/modal_motion.py": (
+        "worker/stages/worker_resources.py",
         "worker/stages/dense_pi3x.py",
         "worker/wander_worker/masks.py",
         "worker/wander_worker/ply.py",
     ),
     "worker/modal_lhm.py": (
+        "worker/stages/worker_resources.py",
+        "worker/stages/lhm_execution.py",
         "worker/stages/lhm_person.py",
         "worker/stages/lhm_animate.py",
         "worker/stages/lhm_capacity.py",
@@ -217,7 +224,29 @@ def input_identity(path):
     return {"sha256": sha256_file(path)}
 
 
-def command_identity(command, root, source_selection=None):
+def _resource_identity(entry, root, environment):
+    defaults = {
+        "worker/modal_clean_video.py": (3600, 32768, 2),
+        "worker/modal_motion.py": (1500, 32768, 1),
+        "worker/modal_lhm.py": (1800, 65536, 1),
+    }
+    if entry not in defaults:
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "_wander_identity_resources", root / "worker/stages/worker_resources.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    timeout, memory, containers = defaults[entry]
+    policy = module.inference_resources(
+        timeout=timeout, memory=memory, max_containers=containers, environment=environment
+    )
+    # The environment's textual spelling (e.g. 0600) is not a different resource policy.
+    policy.pop("env", None)
+    return json.loads(json.dumps(policy))
+
+
+def command_identity(command, root, source_selection=None, *, environment=None):
     """Allowlisted direct worker commands: paths never establish a changed hypothesis."""
     root = Path(root)
     if len(command) < 3 or command[1] != "run" or command[2] not in CODE_FILES:
@@ -225,6 +254,11 @@ def command_identity(command, root, source_selection=None):
     entry = command[2]
     code = {name: sha256_file(root / name) for name in (entry.split("::")[0], *CODE_FILES[entry])}
     parameters = {"worker": entry, "options": {}, "inputs": {}, "sourceSelection": source_selection}
+    resources = _resource_identity(
+        entry, root, dict(os.environ if environment is None else environment)
+    )
+    if resources is not None:
+        parameters["resources"] = resources
     outputs = []
     index = 3
     while index < len(command):

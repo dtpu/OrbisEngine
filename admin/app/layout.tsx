@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import Link from 'next/link';
+import { ViewerOriginProvider } from '@/components/viewer-origin';
+import { parseViewerOrigin, viewerUrl } from '@/lib/viewer-url';
 import './globals.css';
 
 // One family in two cuts: identifiers, hashes and sizes sit in the mono, everything an operator
@@ -19,11 +21,15 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Wander Admin',
-  description: 'Operate Wander generation pipeline runs: create, steer, approve.',
+  title: 'Orbis Engine Admin',
+  description: 'Operate Orbis Engine generation pipeline runs: create, steer, approve.',
 };
 
+// Read the public viewer origin at request time, including with `next start`.
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const viewerOrigin = parseViewerOrigin(process.env.WANDER_VIEWER_ORIGIN);
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>
@@ -36,16 +42,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <rect x="1.5" y="3.5" width="17" height="13" rx="1.5" />
               <circle cx="10" cy="10" r="3" />
             </svg>
-            <span>Wander</span>
+            <span>Orbis Engine</span>
             <span className="brand__area">admin</span>
           </Link>
           <nav className="top__links" aria-label="Related tools">
-            <a href="http://127.0.0.1:5399/demo.html" target="_blank" rel="noreferrer">
+            <a href={viewerUrl('/demo.html', viewerOrigin)} target="_blank" rel="noreferrer">
               Viewer
             </a>
+            <a href="/about/">About</a>
           </nav>
         </header>
-        {children}
+        <ViewerOriginProvider origin={viewerOrigin}>{children}</ViewerOriginProvider>
       </body>
     </html>
   );

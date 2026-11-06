@@ -1,4 +1,5 @@
 import { forwardHeaders, responseHeaders, tokenConfigured, upstreamUrl } from '@/lib/upstream';
+import { mutationOriginAllowed } from '@/lib/request-origin';
 
 // The panel talks only to this proxy. It adds the bearer token server-side and streams the
 // response through untouched, so SSE (/events) and multipart uploads both pass unbuffered.
@@ -7,6 +8,9 @@ export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path?: string[] }> };
 
 async function proxy(request: Request, context: Context): Promise<Response> {
+  if (!mutationOriginAllowed(request, process.env.WANDER_APP_ORIGIN)) {
+    return Response.json({ detail: 'Untrusted request origin' }, { status: 403 });
+  }
   if (!tokenConfigured()) {
     return Response.json(
       { detail: 'WANDER_API_TOKEN is not set for the admin server' },

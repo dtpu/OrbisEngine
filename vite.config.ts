@@ -4,6 +4,7 @@ import { bottleAgent } from './server/bottle-agent.ts';
 import { questView } from './server/quest-view.ts';
 import { preparedWorlds, SPARK_BUILD_ID } from './server/prepared-worlds.ts';
 import { pipelinePreview } from './server/pipeline-preview.ts';
+import { localApp } from './server/local-app.ts';
 import path from 'node:path';
 
 export default defineConfig(({ mode }) => {
@@ -17,6 +18,7 @@ export default defineConfig(({ mode }) => {
     define: { __WANDER_SPARK_BUILD_ID__: JSON.stringify(SPARK_BUILD_ID) },
     plugins: [
       pipelinePreview(environment),
+      localApp(environment.WANDER_ADMIN_URL, path.resolve('site/dist')),
       bottleAgent(loaded),
       questView(),
       preparedWorlds(),
@@ -26,6 +28,7 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       host: '127.0.0.1',
+      strictPort: true,
       proxy: environment.WANDER_PIPELINE_API
         ? { '/api/pipeline': { target: environment.WANDER_PIPELINE_API } }
         : undefined,
@@ -57,7 +60,14 @@ export default defineConfig(({ mode }) => {
       target: 'es2022',
       copyPublicDir: false,
       chunkSizeWarningLimit: 4000,
-      rolldownOptions: { input: { index: 'index.html', demo: 'demo.html', fourd: 'fourd.html' } },
+      rolldownOptions: {
+        input: {
+          index: 'index.html',
+          demo: 'demo.html',
+          fourd: 'fourd.html',
+          worldPreview: 'world-preview.html',
+        },
+      },
     },
   };
 });

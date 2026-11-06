@@ -1,9 +1,14 @@
 import { existsSync } from 'node:fs';
-import { chromium, type Page } from 'playwright-core';
+import { fileURLToPath } from 'node:url';
+import { chromium, type Browser, type Page } from 'playwright-core';
+import { demoSceneUrl } from '../src/content/links';
 
 function chromePath(): string {
   const candidates = [
     process.env.CHROME_PATH,
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/home/ubuntu/.local/bin/google-chrome',
     '/usr/bin/google-chrome',
   ].filter((p): p is string => Boolean(p));
@@ -13,7 +18,7 @@ function chromePath(): string {
   return chromium.executablePath();
 }
 
-const BASE = 'http://127.0.0.1:5400';
+const BASE = (process.env.SITE_SMOKE_URL || 'http://127.0.0.1:5399/about/').replace(/\/$/, '');
 const SECTION_IDS = [
   'hero',
   'gallery',
@@ -27,7 +32,7 @@ const SECTION_IDS = [
 
 async function serverRunning(): Promise<boolean> {
   try {
-    const res = await fetch(BASE, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${BASE}/`, { signal: AbortSignal.timeout(2000) });
     return res.ok;
   } catch {
     return false;
@@ -43,27 +48,96 @@ async function waitForServer(timeoutMs = 30000): Promise<void> {
   throw new Error(`vite dev server did not start at ${BASE}`);
 }
 
+let browser: Browser | null = null;
+
 async function collectErrors(run: (page: Page) => Promise<void>): Promise<string[]> {
-  const browser = await chromium.launch({
-    executablePath: chromePath(),
-  });
+  if (!browser) throw new Error('smoke browser has not been initialized');
+  // Keep cookies, storage, pages and listeners isolated while avoiding a process per check.
+  const context = await browser.newContext();
   try {
-    const page = await browser.newPage();
+    const page = await context.newPage();
     const errors: string[] = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
     page.on('pageerror', (err) => errors.push(String(err)));
+    page.on('requestfailed', (request) => errors.push(`failed request: ${request.url()}`));
+    page.on('response', (response) => {
+      if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`);
+    });
     await run(page);
     return errors;
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
 type Check = { name: string; run: () => Promise<void> };
 
 const checks: Check[] = [
+  {
+    name: 'scene URL preserves viewer options and hash',
+    run: async () => {
+      const url = new URL(
+        demoSceneUrl('a b', 'https://viewer.example/demo.html?xr=1&clip=old#view'),
+      );
+      if (
+        url.searchParams.get('clip') !== 'a b' ||
+        url.searchParams.get('xr') !== '1' ||
+        url.hash !== '#view'
+      )
+        throw new Error(`lost viewer options: ${url.href}`);
+      if (demoSceneUrl('lobby', '/demo.html?xr=1#view') !== '/demo.html?xr=1&clip=lobby#view')
+        throw new Error('relative viewer options lost');
+    },
+  },
+  {
+    name: 'empty media state makes no absent preview requests and retains upload action',
+    run: async () => {
+      const errors = await collectErrors(async (page) => {
+        const mediaRequests: string[] = [];
+        page.on('request', (request) => {
+          if (new URL(request.url()).pathname.includes('/media/'))
+            mediaRequests.push(request.url());
+        });
+        await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+        if (process.env.SITE_SMOKE_EMPTY_MEDIA !== '0') {
+          if (mediaRequests.length)
+            throw new Error(`unexpected media requests: ${mediaRequests.join(', ')}`);
+          for (const [section, count] of [
+            ['gallery', 9],
+            ['compare', 6],
+            ['how-it-works', 6],
+            ['viewer', 3],
+          ] as const) {
+            if (
+              (await page.locator(`section#${section} [data-media-unavailable]`).count()) !== count
+            )
+              throw new Error(`missing ${section} unavailable states`);
+          }
+          if ((await page.locator('section#hero [data-hero-still]').count()) !== 1)
+            throw new Error('missing single project still');
+          if (await page.locator('video').count())
+            throw new Error('empty checkout must not render video requests');
+        }
+        if (!(await page.getByRole('link', { name: 'Upload a video', exact: true }).count()))
+          throw new Error('missing upload action');
+        if (!(await page.textContent('body'))?.includes('unobserved geometry is invented'))
+          throw new Error('missing geometry disclosure');
+        const links = await page
+          .locator('section#gallery a')
+          .evaluateAll((nodes) =>
+            nodes
+              .map((node) => new URL((node as HTMLAnchorElement).href))
+              .map((url) => ({ path: url.pathname, clip: url.searchParams.get('clip') })),
+          );
+        if (links.some((url) => url.path !== '/demo.html' || !url.clip))
+          throw new Error('invalid gallery viewer links');
+      });
+      if (errors.length) throw new Error(errors.join(' | '));
+    },
+  },
+
   {
     name: 'page loads with no console errors',
     run: async () => {
@@ -116,11 +190,13 @@ const checks: Check[] = [
   },
   // --- sections append below ---
   {
-    name: 'viewer: 3 loops, kbd caps, headset line',
+    name: 'viewer: 3 previews or unavailable states, kbd caps, headset line',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
-        const videos = await page.$$('section#viewer video');
+        const videos = await page.$$(
+          'section#viewer video, section#viewer [data-media-unavailable]',
+        );
         if (videos.length !== 3) throw new Error(`expected 3 videos, got ${videos.length}`);
         const kbds = await page.$$eval('section#viewer kbd', (els) =>
           els.map((el) => el.textContent?.trim()),
@@ -135,22 +211,36 @@ const checks: Check[] = [
     },
   },
   {
-    name: 'hero: copy, CTAs and two labeled loops',
+    name: 'hero: copy, CTAs and honest still or installed preview pair',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const h1 = await page.textContent('section#hero h1');
         if (h1?.trim() !== 'Step inside a video.') throw new Error(`hero h1: ${h1}`);
-        for (const href of ['/demo.html', '#how-it-works']) {
+        for (const href of ['/', '/demo.html', '#how-it-works']) {
           if (!(await page.$(`section#hero a[href="${href}"]`)))
             throw new Error(`hero missing CTA ${href}`);
         }
-        const videos = await page.$$('section#hero video');
-        if (videos.length !== 2) throw new Error(`hero has ${videos.length} videos, want 2`);
-        const labels = await page.$$eval('section#hero figcaption', (els) =>
-          els.map((e) => e.textContent?.trim()),
-        );
-        if (labels.join(',') !== 'Recorded,Wander') throw new Error(`hero labels: ${labels}`);
+        const still = page.locator('section#hero [data-hero-still]');
+        if (await still.count()) {
+          if (
+            (await page.locator('section#hero figure').count()) !== 1 ||
+            (await page.locator('section#hero video').count())
+          )
+            throw new Error('fallback must be one still, not a comparison');
+          if ((await still.locator('img[alt="Orbis Engine project still"]').count()) !== 1)
+            throw new Error('missing project still image');
+          if (!(await still.textContent())?.includes('previews not installed'))
+            throw new Error('missing unavailable label');
+        } else {
+          if ((await page.locator('section#hero video').count()) !== 2)
+            throw new Error('installed comparison requires two videos');
+          const labels = await page.$$eval('section#hero figcaption', (els) =>
+            els.map((e) => e.textContent?.trim()),
+          );
+          if (labels.join(',') !== 'Recorded,Orbis Engine')
+            throw new Error(`hero labels: ${labels}`);
+        }
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
@@ -171,13 +261,13 @@ const checks: Check[] = [
     },
   },
   {
-    name: 'compare: 3 sliders with Recorded/Wander labels and body-height captions',
+    name: 'compare: 3 sliders with Recorded/Orbis Engine labels and body-height captions',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const result = await page.$eval('section#compare', (section) => {
           const sliders = section.querySelectorAll('input[type="range"][aria-label="Compare"]');
-          const imgs = section.querySelectorAll('img');
+          const imgs = section.querySelectorAll('img, [data-media-unavailable]');
           const captions = Array.from(section.querySelectorAll('li > p')).map(
             (p) => p.textContent ?? '',
           );
@@ -186,7 +276,7 @@ const checks: Check[] = [
             sliders: sliders.length,
             imgs: imgs.length,
             recorded: section.textContent?.includes('Recorded') ?? false,
-            wander: section.textContent?.includes('Wander') ?? false,
+            wander: section.textContent?.includes('Orbis Engine') ?? false,
             captions,
           };
         });
@@ -201,19 +291,24 @@ const checks: Check[] = [
           throw new Error('captions must not use metres');
         }
       });
-      const relevant = errors.filter((e) => !/media\//.test(e));
-      if (relevant.length > 0) throw new Error(`console errors: ${relevant.join(' | ')}`);
+      if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
     },
   },
   {
-    name: 'how-it-works renders six steps with images and footer',
+    name: 'how-it-works renders six steps with image states and footer',
     run: async () => {
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const count = await page.$$eval('section#how-it-works ol li', (items) => items.length);
         if (count !== 6) throw new Error(`expected 6 steps, got ${count}`);
-        const imgs = await page.$$eval('section#how-it-works ol li img', (els) =>
-          els.map((img) => [img.getAttribute('src') ?? '', img.getAttribute('alt') ?? '']),
+        const imgs = await page.$$eval(
+          'section#how-it-works ol li img, section#how-it-works ol li [data-media-unavailable]',
+          (els) =>
+            els.map((img) => [
+              img.getAttribute('src') ||
+                (img.hasAttribute('data-media-unavailable') ? 'unavailable' : ''),
+              img.getAttribute('alt') || img.getAttribute('aria-label') || '',
+            ]),
         );
         if (imgs.length !== 6 || imgs.some(([src, alt]) => !src || !alt))
           throw new Error(`step images missing src/alt: ${JSON.stringify(imgs)}`);
@@ -230,7 +325,7 @@ const checks: Check[] = [
       const errors = await collectErrors(async (page) => {
         await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
         const h2 = await page.textContent('section#limits h2');
-        if (!h2?.includes('What Wander can\u2019t do yet.'))
+        if (!h2?.includes('What Orbis Engine can\u2019t do yet.'))
           throw new Error(`bad limits h2: ${h2}`);
         const n = await page.$$eval('section#limits li', (els) => els.length);
         if (n !== 4) throw new Error(`expected 4 limits, got ${n}`);
@@ -262,7 +357,11 @@ const checks: Check[] = [
         const hrefs = await page.$$eval('section#cta a', (els) =>
           els.map((a) => a.getAttribute('href')),
         );
-        if (!hrefs.includes('/demo.html') || !hrefs.includes('https://github.com/dtpu/htn2026'))
+        if (
+          !hrefs.includes('/') ||
+          !hrefs.includes('/demo.html') ||
+          !hrefs.includes('https://github.com/dtpu/OrbisEngine')
+        )
           throw new Error(`cta links: ${hrefs.join(', ')}`);
       });
       if (errors.length > 0) throw new Error(`console errors: ${errors.join(' | ')}`);
@@ -273,14 +372,17 @@ const checks: Check[] = [
 let server: Bun.Subprocess | null = null;
 try {
   if (!(await serverRunning())) {
+    if (process.env.SITE_SMOKE_URL) throw new Error(`External site unavailable: ${BASE}`);
     server = Bun.spawn({
-      cmd: ['bunx', '--bun', 'vite', '--port', '5400', '--host', '127.0.0.1'],
-      cwd: new URL('..', import.meta.url).pathname,
+      cmd: [process.execPath, 'x', '--bun', 'vite', '--port', '5399', '--host', '127.0.0.1'],
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'inherit',
       stderr: 'inherit',
     });
     await waitForServer();
   }
+
+  browser = await chromium.launch({ executablePath: chromePath() });
 
   let failures = 0;
   for (const check of checks) {
@@ -292,7 +394,11 @@ try {
       console.error(`FAIL ${check.name}: ${err}`);
     }
   }
-  process.exit(failures > 0 ? 1 : 0);
+  process.exitCode = failures > 0 ? 1 : 0;
 } finally {
-  server?.kill();
+  try {
+    await browser?.close();
+  } finally {
+    server?.kill();
+  }
 }

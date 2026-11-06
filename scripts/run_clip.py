@@ -47,6 +47,7 @@ if str(ROOT) not in sys.path:
 from orchestrator.config import resolve_runs_root, resolve_stage_ledger  # noqa: E402
 from orchestrator.pipeline import MARBLE_MODES, multiperson_graph, single_graph, world_half  # noqa: E402,F401
 from worker.stages.lhm_execution import animation_options  # noqa: E402
+from worker.stages.vlm_budget import safe_error_details  # noqa: E402
 
 # A clean clone uses its own toolchain and ignored output directories.
 PY = os.environ.get("WANDER_PYTHON", sys.executable)
@@ -1094,6 +1095,21 @@ class Pipeline:
             attempts=2,
         )
         rec = json.loads(self.prompt_json.read_text())
+        if (
+            not isinstance(rec, dict)
+            or not isinstance(rec.get("text_prompt"), str)
+            or not rec["text_prompt"].strip()
+        ):
+            details = []
+            safe = safe_error_details(rec)
+            if "httpStatus" in safe:
+                details.append(f"HTTP {safe['httpStatus']}")
+            if "providerCode" in safe:
+                details.append(safe["providerCode"])
+            suffix = f" ({', '.join(details)})" if details else ""
+            raise QualityStop(
+                "blocked", f"Source description unavailable{suffix}; inspect {self.prompt_json}"
+            )
         say(f"   prompt: {rec['text_prompt']}")
 
     def world_mode(self, decide_only=False):

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { mediaUrl } from '../content/media';
+import { MissingMedia } from './MediaImage';
 
 export default function VideoLoop({
   src,
@@ -32,12 +34,17 @@ export default function VideoLoop({
     return () => observer.disconnect();
   }, []);
 
+  const videoUrl = mediaUrl(src);
+  const posterUrl = mediaUrl(poster);
+  if (!videoUrl || !posterUrl) {
+    return <MissingMedia label={label} className={className} />;
+  }
   return (
     <video
       ref={ref}
       className={className}
-      src={src}
-      poster={poster}
+      src={videoUrl}
+      poster={posterUrl}
       muted
       loop
       playsInline
