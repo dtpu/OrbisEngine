@@ -13,7 +13,14 @@ from fastapi.responses import FileResponse
 from orchestrator.cli import RunContext, completed, graph_shape, in_flight, plan_for
 from orchestrator.journal import Journal
 from orchestrator.steps import STEPS, base_step, needs_of
-from orchestrator.api.viewer import register_viewer_routes, scene_manifest
+from orchestrator.api.viewer import (
+    WORLD_SUFFIXES,
+    asset_path,
+    asset_url,
+    register_viewer_routes,
+    run_name,
+    scene_manifest,
+)
 from orchestrator.worker_presence import worker_status
 
 
@@ -62,6 +69,7 @@ def previews(root: Path) -> list[dict]:
         "public/worlds/*/placement.json",
         "verify/report.json",
         "verify/diagnostic-*/report.json",
+        "clean-review.json",
         "anchors.json",
         "scale-fit.json",
     ):
@@ -168,6 +176,8 @@ def _stage_snapshot(root: Path) -> StageSnapshot | None:
             status = "waiting_human"
             reason = pending.data.get("question")
             action = "Answer the pending question to release this hold."
+        if name == "review" and record.get("accepted") is False:
+            action = "Cleanup failed review. Keep world generation on hold and inspect clean-review.json."
         row = {
             "name": name,
             "summary": STEPS[base_step(name)].summary,
@@ -198,6 +208,24 @@ def stage_snapshot(root: Path) -> StageSnapshot | None:
     try:
         return _stage_snapshot(root)
     except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return None
+
+
+def world_preview_path(root: Path, run_id: str) -> str | None:
+    """Expose only the selected exported world; people and scene readiness are independent."""
+    try:
+        described = read_json(root / "run.json")
+        options = described.get("options") or {}
+        mode = options.get("marble", "video")
+        if mode not in WORLD_SUFFIXES:
+            return None
+        suffix = "finetuned" if options.get("finetune") else WORLD_SUFFIXES[mode]
+        relative = f"marble-{run_name(root)}-{suffix}.spz"
+        world = asset_path(root, relative)
+        if world.stat().st_size == 0:
+            return None
+        return f"/world-preview.html?world={quote(asset_url(run_id, relative), safe='')}"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
 
@@ -247,6 +275,7 @@ def describe_progress(root: Path) -> dict:
         "previews": inputs,
         "handsOff": hands_off,
         "result": result,
+        "worldPreviewPath": world_preview_path(root, snapshot.run_id),
         "viewerPath": (
             f"/fourd.html?scene={quote(f'/api/pipeline/runs/{snapshot.run_id}/viewer/scene.json', safe='')}"
             if viewer_available

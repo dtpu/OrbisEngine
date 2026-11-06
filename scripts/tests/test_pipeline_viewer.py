@@ -4,6 +4,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -92,6 +93,131 @@ def test_missing_package_hides_link_and_stale_height_is_recomputed(packaged):
         case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH).status_code
         == 404
     )
+
+
+def test_clean_review_is_a_readable_report_without_exposing_arbitrary_files(packaged):
+    case, root, world, source = packaged
+    report = {"stage": "clean", "passed": False, "reason": "Person remnants remain."}
+    report_path = root / "clean-review.json"
+    report_path.write_text(json.dumps(report))
+    (root / "private-notes.json").write_text('{"private":true}')
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    review = next(item for item in progress["previews"] if item["path"] == "clean-review.json")
+    assert review["kind"] == "report"
+    assert review["label"] == "Output report"
+    assert progress["finished"] is None
+    assert not any(item["path"] == "private-notes.json" for item in progress["previews"])
+    response = case.client.get(review["url"], headers=AUTH)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.json() == report
+    assert case.client.get(review["url"]).status_code == 401
+    assert (
+        case.client.get(
+            "/api/pipeline/runs/viewer-run/files/private-notes.json", headers=AUTH
+        ).status_code
+        == 404
+    )
+    outside = root.parent / "other-run-review.json"
+    outside.write_text('{"private":true}')
+    report_path.unlink()
+    report_path.symlink_to(outside)
+    updated = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    assert not any(item["path"] == "clean-review.json" for item in updated["previews"])
+    assert case.client.get(review["url"], headers=AUTH).status_code == 404
+
+
+@pytest.mark.parametrize("accepted", [False, None])
+def test_rejected_cleanup_review_does_not_encourage_approval_or_release_world_generation(
+    packaged, accepted
+):
+    case, root, world, source = packaged
+    described = json.loads((root / "run.json").read_text())
+    described["options"].update(marble="video", finetune=False)
+    (root / "run.json").write_text(json.dumps(described))
+    record = {"status": "blocked"}
+    if accepted is False:
+        record.update(accepted=False, error="Critical cleanup failure: person remnants remain.")
+    (root / "state.json").write_text(json.dumps({"stages": {"review": record}}))
+    # An earlier successful journal entry must not override the current failed review record.
+    Journal(root).append("step.finished", step="review", attempt="earlier", status="succeeded")
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    rows = {row["name"]: row for row in progress["stages"]}
+    assert rows["review"]["status"] == "blocked"
+    assert "review" in rows["marble_video"]["dependencies"]
+    assert rows["marble_video"]["status"] == "pending"
+    assert progress["finished"] is None
+    if accepted is False:
+        assert "Cleanup failed" in rows["review"]["nextAction"]
+        assert "world generation on hold" in rows["review"]["nextAction"]
+        assert "clean-review.json" in rows["review"]["nextAction"]
+        assert "approve" not in rows["review"]["nextAction"].lower()
+    else:
+        assert (
+            rows["review"]["nextAction"]
+            == "Inspect the cleaned frames, then approve them before world generation."
+        )
+
+
+@pytest.mark.parametrize(
+    "mode,finetune,suffix",
+    [
+        ("video", False, "clean"),
+        ("both", False, "clean"),
+        ("image", False, "image"),
+        ("multi", False, "multi"),
+        ("video", True, "finetuned"),
+    ],
+)
+def test_world_preview_is_available_before_people_without_promoting_scene(
+    packaged, mode, finetune, suffix
+):
+    case, root, world, source = packaged
+    described = json.loads((root / "run.json").read_text())
+    described["options"].update(marble=mode, finetune=finetune)
+    (root / "run.json").write_text(json.dumps(described))
+    shutil.rmtree(world)
+    exported = root / "public" / f"marble-{described['name']}-{suffix}.spz"
+    exported.write_bytes(b"generated-world")
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    assert progress["viewerPath"] is None
+    assert progress["finished"] is None
+    assert progress["result"] is None
+    preview = urlsplit(progress["worldPreviewPath"])
+    assert preview.path == "/world-preview.html"
+    asset = parse_qs(preview.query)["world"][0]
+    assert asset == f"/api/pipeline/runs/viewer-run/viewer/assets/{exported.name}"
+    assert case.client.get(asset).status_code == 401
+    response = case.client.get(asset, headers=AUTH)
+    assert response.status_code == 200
+    assert response.content == b"generated-world"
+    assert (
+        case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH).status_code
+        == 404
+    )
+
+
+@pytest.mark.parametrize(
+    "condition", ["missing", "empty", "escaping-symlink", "unselected", "disabled"]
+)
+def test_missing_or_unsafe_world_does_not_offer_preview(packaged, condition):
+    case, root, world, source = packaged
+    described = json.loads((root / "run.json").read_text())
+    described["options"].update(
+        marble="none" if condition == "disabled" else "video", finetune=False
+    )
+    (root / "run.json").write_text(json.dumps(described))
+    exported = root / "public" / f"marble-{described['name']}-clean.spz"
+    if condition in {"empty", "disabled"}:
+        exported.write_bytes(b"" if condition == "empty" else b"generated-world")
+    elif condition == "escaping-symlink":
+        private = root / "private-world.spz"
+        private.write_bytes(b"private-world")
+        exported.symlink_to(private)
+    elif condition == "unselected":
+        (root / "public" / f"marble-{described['name']}-image.spz").write_bytes(b"other-world")
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    assert progress["worldPreviewPath"] is None
 
 
 def test_terminal_preview_keeps_failed_quality_and_rechecks_missing_assets(packaged):

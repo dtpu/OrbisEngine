@@ -115,6 +115,18 @@ export function RunOverview({
           stages.
         </p>
       ) : null}
+      {progress.worldPreviewPath ? (
+        <p className="field__hint">
+          <a
+            href={viewerUrl(progress.worldPreviewPath, viewerOrigin)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            World preview
+          </a>{' '}
+          — generated environment only; scale, alignment and reconstruction quality are unverified.
+        </p>
+      ) : null}
       {progress.viewerPath ? (
         <p className="field__hint">
           <a href={viewerUrl(progress.viewerPath, viewerOrigin)} target="_blank" rel="noreferrer">

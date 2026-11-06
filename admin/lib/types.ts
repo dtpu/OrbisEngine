@@ -260,6 +260,7 @@ export interface RunPreview {
 export interface RunProgress {
   worker?: WorkerStatus;
   viewerPath?: string | null;
+  worldPreviewPath?: string | null;
   runId: string;
   finished: string | null;
   paused: boolean;

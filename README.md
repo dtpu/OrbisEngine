@@ -87,6 +87,12 @@ is not a dollar cap or a promise of accepted reconstruction quality. Keep the ex
 `WANDER_STAGE_LEDGER` when using another checkout. The app binds only to localhost and is an
 operator tool; public hosting requires its own access control and worker deployment.
 
+A run dashboard offers **World preview** once its generated room is available, even while people
+are unfinished. It opens a separate orbit/pan/zoom inspector at `/world-preview.html` using the
+same private run asset proxy. People and recorded audio are absent; scale, camera alignment, and
+reconstruction quality are unverified. The generation-origin view is a navigation starting point,
+not proof of a source-matched camera or accepted scene.
+
 Run `bun run test:e2e` with the app stopped to exercise the real API, dashboard, source-video
 playback, pause/resume/cancel controls, and About page in Chrome/Chromium. It creates an isolated
 database, starts no worker, and makes no paid model calls. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`

@@ -60,7 +60,14 @@ export default defineConfig(({ mode }) => {
       target: 'es2022',
       copyPublicDir: false,
       chunkSizeWarningLimit: 4000,
-      rolldownOptions: { input: { index: 'index.html', demo: 'demo.html', fourd: 'fourd.html' } },
+      rolldownOptions: {
+        input: {
+          index: 'index.html',
+          demo: 'demo.html',
+          fourd: 'fourd.html',
+          worldPreview: 'world-preview.html',
+        },
+      },
     },
   };
 });

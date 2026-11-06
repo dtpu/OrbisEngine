@@ -22,7 +22,7 @@ export function parseViewerOrigin(value: string | undefined): string {
 
 /** Viewer paths come from run metadata, and must remain on the configured viewer origin. */
 export function viewerUrl(path: string, origin = ''): string {
-  if (!/^\/(?:demo|fourd)\.html(?:[?#]|$)/.test(path) || /[\\\r\n\t]/.test(path)) {
+  if (!/^\/(?:demo|fourd|world-preview)\.html(?:[?#]|$)/.test(path) || /[\\\r\n\t]/.test(path)) {
     throw new Error('Invalid viewer path');
   }
   return `${parseViewerOrigin(origin)}${path}`;

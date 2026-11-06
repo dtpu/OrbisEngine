@@ -9,6 +9,10 @@ test('viewer links default to same origin and preserve packaged-scene query para
   const path = '/fourd.html?runPreview=run%2Fone&scene=scene.json#preview';
   assert.equal(viewerUrl(path), path);
   assert.equal(viewerUrl(path, 'https://viewer.example/'), `https://viewer.example${path}`);
+  const world =
+    '/world-preview.html?world=%2Fapi%2Fpipeline%2Fruns%2Fone%2Fviewer%2Fassets%2Fmarble-one-clean.spz';
+  assert.equal(viewerUrl(world), world);
+  assert.equal(viewerUrl(world, 'https://viewer.example'), `https://viewer.example${world}`);
 });
 
 test('standalone viewer configuration accepts only a public HTTP origin', () => {
@@ -33,6 +37,8 @@ test('run metadata cannot replace the viewer origin or link to another page', ()
     'javascript:alert(1)',
     '/api/pipeline/runs',
     '/demo.html/other',
+    '/world-preview.html/other',
+    '//evil.example/world-preview.html',
     '/fourd.html?run=one\n',
     '/fourd.html?run=one\\two',
   ]) {
