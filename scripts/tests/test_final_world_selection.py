@@ -402,3 +402,57 @@ def test_preview_height_round_trips_to_metres_without_replacing_fitted_scale(
     link = next(line for line in capsys.readouterr().out.splitlines() if "http://127.0.0.1" in line)
     assert "&scale=0.8000" in link
     assert "&height=" not in link and "&place=1" not in link
+
+
+@pytest.mark.parametrize("person_stats", [False, True])
+def test_summary_links_retained_room_without_provider_registration(
+    pipeline, monkeypatch, tmp_path, capsys, person_stats
+):
+    from urllib.parse import parse_qs, urlparse
+
+    p = pipeline
+    p.a.skip_finetune = True
+    p.stages.remove("finetune")
+    p.state.data["stages"].clear()
+    monkeypatch.delenv("WANDER_RUN_DIR", raising=False)
+    monkeypatch.setattr(run_clip, "MARBLE_DIR", tmp_path)
+    p.placement = lambda: run_clip.Pipeline.placement(p)
+    if not person_stats:
+        (run_clip.public_dir() / "worlds/fixture-4d/person/frame_000.ply").unlink()
+    # A retained SPZ is present even though unknown provider lineage supplies no
+    # metric metadata. Observed body stats alone must not suggest regeneration.
+    assert p.world_spz().is_file()
+    assert "height" not in p.placement()
+    assert bool(p.placement().get("bodyHeight")) == person_stats
+    p.summary(1)
+    output = capsys.readouterr().out
+    link = next(line.strip() for line in output.splitlines() if "http://127.0.0.1" in line)
+    query = parse_qs(urlparse(link).query)
+    assert query["world"] == ["/marble-fixture-clean.spz"]
+    assert query["scale"] == ["1"]
+    assert query["place"] == ["0"]
+    assert "height" not in query
+    assert "placement disabled" in output and "unverified" in output
+    assert "no Marble world yet" not in output
+    assert "with a key" not in output
+
+
+@pytest.mark.parametrize("ratios", [[1.4, 1.0, 0.6], [0.6, 1.0, 1.4], [1.8, 1.8, 1.8]])
+def test_failed_scale_summary_is_diagnostic_without_directional_claim(
+    pipeline, monkeypatch, tmp_path, capsys, ratios
+):
+    p = pipeline
+    p.a.skip_finetune = True
+    p.stages.remove("finetune")
+    p.state.data["stages"].clear()
+    p.state.record("_scale", scale0=2, gateOk=False, ratios=ratios)
+    p.placement = lambda: run_clip.Pipeline.placement(p)
+    monkeypatch.setattr(run_clip, "MARBLE_DIR", tmp_path)
+    monkeypatch.delenv("WANDER_RUN_DIR", raising=False)
+    p.summary(1)
+    output = capsys.readouterr().out
+    assert "scale registration gate failed; diagnostic preview only" in output
+    assert f"Depth-ratio medians: {ratios}" in output
+    assert str(p.ctx / "scale-fit.json") in output
+    assert "slightly" not in output and "early" not in output and "late" not in output
+    assert p.state.data["stages"]["_scale"]["gateOk"] is False

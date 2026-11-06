@@ -172,6 +172,133 @@ selection replacement before another clean is paid for. A run lock also serializ
 submissions with candidate cleaning. Existing operation polling and explicit world recovery remain
 read-only and do not require a new clean. This path cannot replace the input of an already-paid world.
 
+## Import an offline CPU clean without another paid claim
+
+`scripts/local_clean_video.py` can use an explicitly cached TorchScript LaMa file on CPU,
+without a downloading wrapper or provider client. Its diagnostics are not an accepted clean.
+A pipeline import requires a completed, **full-selection** helper run made with `--encode`,
+plus the original exact-source packed mask archive. A sparse first-frame or diagnostic subset
+cannot be imported as a full video, even if every selected frame completed.
+
+Import into a new same-run candidate, before any Marble submission:
+
+```sh
+uv run --locked python scripts/run_clip.py \
+  --clip /absolute/path/to/source.mp4 --name existing-run --fps 12 \
+  --marble video --no-objects --skip-finetune --no-publish \
+  --only clean --force clean --clean-candidate local-cpu-v1 \
+  --import-local-clean /absolute/path/to/offline-output/clean.json \
+  --clean-masks /absolute/path/to/original-exact-source-masks.npz \
+  --stage-ledger /absolute/path/to/shared/pipeline-attempts.json
+```
+
+The import does not load a model, launch inference, create a paid claim, or erase previous
+paid history. `--force clean` is required when cleaning is cached. Import is restricted to
+`--only clean`; omit the import/candidate/masks flags on later resumes. The existing selection
+lock and Marble-history guard reject replacement after a known or uncertain world submission.
+Original candidates and failed-import evidence remain retained, and candidate names cannot
+be reused.
+
+The runner checks source SHA, dimensions and FPS, requires every sample in the locally observed
+full FFmpeg FPS mapping, re-decodes those exact source frames, and validates each PNG's encoded
+and RGB hashes, input-mask hash, source/outside RGB hashes, and measured outside-mask preservation.
+It checks the silent video's hash, decoded frame count, dimensions and FPS. Missing, changed,
+symlinked or incomplete inputs fail before selection. This first import path intentionally excludes
+alternate tracker sampling grids and upsampled duplicate-source grids. Decoder-version RGB
+differences also fail closed; a source hash and timestamp match do not prove identical decoded RGB.
+
+The new candidate retains all PNGs, the original mask archive and video. `clean.log` retains the
+original helper JSON byte-for-byte and is pinned by the existing selection receipt; `clean.json`
+adds an explicit `provider: local` compatibility report. Stage state records imported local work,
+with no inference during import. The scheduler invalidates downstream review/verification;
+import grants no visual acceptance, paid retry allowance, or world-generation approval. Inspect
+the full output and perform the ordinary separate `review --gate-pass` stage only when warranted.
+Existing LHM output directories retain their recovery-only behavior; importing cleanup does not
+repair or authorize a failed person-reconstruction attempt.
+
+### Optional measured source patches
+
+The CPU helper accepts `--source-patches /absolute/recipe.json` to run LaMa normally and
+then compose measured source-observed background into the removal mask. It does not estimate
+transforms, load another model, expand the removal mask, or establish quality acceptance.
+Omitting the option preserves the existing isolated LaMa path. Run into a fresh output directory;
+a previous diagnostic postprocess cannot be relabelled as a new helper execution.
+
+A data-only `wander.source-patches/1` recipe contains exactly `schema`, `sourceSha256`,
+`sourceTimeBase`, `sourceIndices`, `sourcePts`, `fps`, `width`, `height`, and `patches`. The source
+fields must match the entire exact-source mask grid. Each patch contains exactly `donorSample`,
+`targetSample`, `homography`, `donorRoiXYXY`, `featherPx`, and `maskMarginPx`. Samples are archive
+sample IDs, not decoded source ordinals. This initial schema permits one patch per target,
+bounded integer XYXY donor rectangles, an eight-pixel inward feather and eight-pixel donor-mask
+margin. Matrices must be finite nonsingular 3×3 donor-to-target homographies normalized to
+`H[2][2] = 1`, without a projective pole through the ROI. Rectangles overlapping the dilated donor
+removal mask are rejected. All recipe checks run before model loading; donor samples needed by
+a selected target are decoded even when omitted from `--only`.
+
+The helper warps the observed donor RGB, rectangle and valid unmasked support with bilinear
+interpolation, requiring full interpolation coverage. It intersects this support with the original
+target removal mask, feathers inward over eight pixels, and leaves all other LaMa pixels intact.
+The receipt identifies **LaMa plus measured source-guided composite**, embeds the complete recipe
+and its canonical JSON SHA-256, and also pins the original recipe bytes as `source-patches.json`.
+Existing helper code hashes cover the runtime algorithm. Each recipe target retains a
+`lama_<sample>.png` pre-patch image with byte/RGB hashes, plus donor provenance, support hashes,
+coverage and preservation counts. Empty support is recorded honestly and retains the LaMa base.
+
+Import revalidates the recipe/source grid and original recipe bytes, verifies the pre-patch PNGs
+and their unchanged outside-mask pixels, then replays the measured composite from those bases
+and decoded source donors. The final pixels and source-patch evidence must match exactly. It
+copies the recipe and bases along with the other evidence. This verifies the composition, not a
+re-execution or independent certification of LaMa inference. Human visual review remains required;
+parallax, incorrect measured transforms, uncovered LaMa artifacts and temporal seams can still fail.
+
+## Reuse a local room when its provider ID is unavailable
+
+The direct runner accepts `--import-local-world /absolute/receipt.json` only with
+`--marble video --only marble_video`, without another import/reuse mode or source-shot selection.
+This is a local recovery route: it skips cut scoring, source prompts and cleaning, creates no paid
+claim or provider request, and disables automatic remote archiving for that invocation.
+
+```sh
+uv run --locked python scripts/run_clip.py \
+  --clip /absolute/path/to/original.mp4 --name existing-run \
+  --marble video --only marble_video --skip-finetune --no-publish \
+  --import-local-world /absolute/path/to/receipt.json \
+  --stage-ledger /absolute/path/to/shared/pipeline-attempts.json
+```
+
+The data-only receipt must contain exactly:
+
+- `schema: "wander.local-world-import/1"` and the original clip's `sourceSha256`.
+- `world: {"path": "/absolute/retained.spz", "bytes": <positive integer>, "sha256": "<digest>"}`.
+- A nonempty `associationEvidence` list of `{"path": "/absolute/evidence.json", "sha256": "<digest>"}`.
+  At least one pinned JSON document must contain both the original-source and world hashes,
+  recording their retained association. Co-packaging does **not** prove which input generated a world.
+- `generationLineage: "unknown"`, `worldId: null`, `operationId: null`,
+  `execution: "imported_local"`, and `freshGeneration: false`.
+
+Before mutation the importer checks source/evidence/SPZ sizes and hashes, rejects symlinks, and
+uses the existing CPU SPZ decoder to validate complete, nonempty finite v2 degree-zero geometry.
+It refuses retained/pending/uncertain Marble submissions and conflicting assets. A successful import
+copies only the SPZ into this run's standard `marble-<name>-clean.spz`, retaining a separate
+`local-world-import.json`; it never fabricates provider generation metadata. Interrupted imports
+can resume from the same pinned receipt. Reimports verify that receipt and asset instead of
+submitting or replacing anything. New generation is blocked while the local import is retained.
+
+Only the explicit import invocation removes the world stage's clean/review/prompt dependencies.
+Normal generation admission is unchanged. Failed clean records and the shared ledger remain
+unchanged, and downstream scale, placement, anchors and verification are invalidated. Later work
+must select its intended unfinished stages explicitly; this import does not approve a failed clean,
+complete packaging, adopt old people/cameras/placement, or transfer a quality verdict. Fresh person
+packaging and registration checks still apply, and manual whole-scene review remains required.
+The room is labelled saved local input with unknown generation lineage, never a fresh generation.
+
+Single-person packaging defaults to unreviewed lower-body visibility and labels hidden/off-frame
+geometry as inferred. For a measured source-specific statement, pass
+`run_clip.py --lower-body-provenance "<observed visibility and inference limits>"` when running
+`package`; it forwards to the packager's existing `--lower-body` option. This flag is limited to
+direct single-person runs and requires `--force package` if packaging is already cached.
+It records provenance text, not a visibility measurement or quality acceptance.
+
 ## Recover LHM outputs without inference
 
 The native LHM worker checkpoints generated files and a hash manifest in its Modal volume before
@@ -392,3 +519,35 @@ not a preservation pass. These receipts describe pixels before lossy encoding, d
 mask coverage or visual quality, and do not retroactively verify older outputs. Comparing with
 a separate local decode can produce differences caused by the decoder itself; use the worker
 receipt for this exact-byte check and retain independent visual review.
+
+### Retained single-person frozen candidates
+
+A direct single-person retry can use `--only lhm_frozen --lhm-frozen-candidate SLUG`
+(and `--force lhm_frozen` when that stage is cached). This retains earlier failed outputs and
+receipts. Each fresh candidate pins the exact clip and three `prepared-person` inputs before
+calling the existing `lhm_frozen` paid-stage guard; it does not reset the shared allowance or
+grant authorization. A retained candidate is recovery-only, including when its first submission
+failed or was interrupted. Use a fresh slug only for a justified, authorized new execution.
+
+Successful recovered artifacts are checked against their complete manifest and input pins before
+an atomic selection receipt is published. Single-person motion uses that validated selection;
+changing it is blocked after retained motion or running/successful motion or packaging. Missing
+selection history, changed inputs/outputs, partial exports and symlinks fail closed. Selection
+certifies artifact identity/completeness, not visual quality or acceptance.
+
+### Explicit LHM GPU scheduling choice
+
+`WANDER_LHM_GPU=L40S` requests one L40S for the single-person LHM worker; absence keeps
+one L4. Only exact `L4` and `L40S` values are accepted, before image/volume setup. Both match
+this image's CUDA SM8.9 build. This is one selected GPU, without a fallback list or an automatic
+retry. The setting is forwarded to the container and included in the shared paid-attempt
+fingerprint, even for default L4. Changing it does not grant another execution or reset counts.
+Model, precision, prepared inputs, CPU/memory requests and configured deadlines stay unchanged.
+
+The worker records `requestedGPU`, its GPU rate, the combined compute rate, and an estimate
+for its measured worker interval. Rates used here are L4 $0.000222/s or L40S $0.000542/s,
+plus four CPU cores at $0.0000131/core/s and 64GiB at $0.00000222/GiB/s: combined
+$0.00041648/s or $0.00073648/s. The estimate excludes container startup, final output hashing
+and volume commit, so it is not an invoice or a universal dollar cap. Execution/startup
+limits do not establish an end-to-end queue-wait deadline. Review scheduling evidence and
+spending authorization separately before any changed-GPU submission.

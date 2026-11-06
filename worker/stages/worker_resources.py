@@ -4,6 +4,22 @@ import os
 import re
 
 TIMEOUT_ENV = "WANDER_WORKER_TIMEOUT_SECONDS"
+LHM_GPU_ENV = "WANDER_LHM_GPU"
+LHM_GPU_RATES = {"L4": 0.000222, "L40S": 0.000542}
+
+
+def lhm_gpu(*, environment=None):
+    """One explicit SM8.9 GPU choice; never a fallback list or implicit retry."""
+    value = (os.environ if environment is None else environment).get(LHM_GPU_ENV, "L4")
+    if not isinstance(value, str) or value not in LHM_GPU_RATES:
+        raise ValueError(f"{LHM_GPU_ENV} must be exactly L4 or L40S")
+    return value
+
+
+def lhm_compute_rate(gpu):
+    """Requested GPU + four physical CPU cores + 64GiB, in USD per worker second."""
+    selected = lhm_gpu(environment={LHM_GPU_ENV: gpu})
+    return LHM_GPU_RATES[selected] + 4 * 0.0000131 + 64 * 0.00000222
 
 
 def inference_resources(

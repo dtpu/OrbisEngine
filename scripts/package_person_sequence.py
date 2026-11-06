@@ -100,7 +100,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument(
         "--lower-body",
-        default="Source-observed: legs and feet are in frame for the whole shot; independent MultiHMR pose per sample, no inferred gait",
+        default="Lower-body visibility has not been reviewed. Geometry hidden or outside the frame is inferred; independent MultiHMR poses per source sample do not establish a measured gait.",
         help="lowerBodyProvenance text written to sequence.json (say so when legs are hidden or cut)",
     )
     a = ap.parse_args()

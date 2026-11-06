@@ -11,12 +11,26 @@ from pathlib import Path
 import modal
 
 if modal.is_local():
-    from worker.stages.worker_resources import inference_resources
+    from worker.stages.worker_resources import (
+        LHM_GPU_ENV,
+        LHM_GPU_RATES,
+        inference_resources,
+        lhm_compute_rate,
+        lhm_gpu,
+    )
 else:
-    from worker_resources import inference_resources
+    from worker_resources import (
+        LHM_GPU_ENV,
+        LHM_GPU_RATES,
+        inference_resources,
+        lhm_compute_rate,
+        lhm_gpu,
+    )
 
+REQUESTED_GPU = lhm_gpu()
 HERE = Path(__file__).resolve().parent
 INFERENCE_RESOURCES = inference_resources(timeout=1800, memory=65536, max_containers=1)
+INFERENCE_RESOURCES["env"] = {**INFERENCE_RESOURCES.get("env", {}), LHM_GPU_ENV: REQUESTED_GPU}
 LHM_REV = "4f88aaeb3629249fbbddb4d0784a06962d9e1338"
 MODEL_REV = "dd6392905187a91fd67b3f6962aa74481e943764"
 LARGER_MODEL_REV = "92372582f660066b9f1b9513860744357265b3d5"
@@ -198,7 +212,7 @@ def stage():
 
 @app.function(
     image=image,
-    gpu="L4",
+    gpu=REQUESTED_GPU,
     volumes={"/cache": cache},
     **INFERENCE_RESOURCES,
 )
@@ -374,11 +388,14 @@ def frozen(inputs: dict, animate: bool = False, larger_model: bool = False, reco
         "seconds": elapsed,
         "error": error,
         "experiment": "canonical-source-motion" if animate else "frozen-source-pose",
-        "gpu": "L4",
+        "gpu": REQUESTED_GPU,
+        "requestedGPU": REQUESTED_GPU,
+        "gpuRateUSDPerSecond": LHM_GPU_RATES[REQUESTED_GPU],
+        "computeRateUSDPerSecond": lhm_compute_rate(REQUESTED_GPU),
         "cpu": 4,
         "memoryGiB": 64,
         "timeoutSeconds": INFERENCE_RESOURCES["timeout"],
-        "estimatedComputeUSD": elapsed * (0.000222 + 4 * 0.0000131 + 64 * 0.00000222),
+        "estimatedComputeUSD": elapsed * lhm_compute_rate(REQUESTED_GPU),
         "timingScope": "worker setup and inference; excludes final output hashing and volume commit",
         "codeRevision": LHM_REV,
         "model": model_id,

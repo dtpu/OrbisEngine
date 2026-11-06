@@ -6,6 +6,8 @@ from pathlib import Path
 # The modules under test are this directory's parent; importing them by name is what
 # running from scripts/ used to give for free.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Worker entrypoints import worker.stages when executing through Modal locally.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import contextlib
 import hashlib
@@ -548,6 +550,10 @@ class SourceTimingTests(unittest.TestCase):
                 source_timing.select_source_frames(clip, source_indices=[0, 2])
 
     def test_isolated_worker_preserves_source_pixels_and_mask_provenance(self):
+        # Import the real native dependency before patch.dict snapshots sys.modules.
+        # Otherwise its first import is discarded on exit and OpenCV cannot safely
+        # bootstrap its native submodules again for the second worker call.
+        import cv2
         import modal_clean_video
 
         with tempfile.TemporaryDirectory() as directory:
@@ -640,6 +646,8 @@ class SourceTimingTests(unittest.TestCase):
                     np.unpackbits(saved["masks"], axis=-1).astype(bool), masks
                 )
                 np.testing.assert_array_equal(saved["source_indices"], selection)
+
+            self.assertIs(sys.modules["cv2"], cv2)
 
             # An inpainter regression that writes beyond the reviewed region must fail
             # before even a lossless output frame or encoded video can be returned.
