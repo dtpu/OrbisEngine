@@ -184,6 +184,11 @@ class ErrorBody(io.BytesIO):
     [
         (401, "invalid_api_key", None),
         (429, "insufficient_quota", None),
+        (429, "credit_balance_exhausted", None),
+        (429, "organization_spend_limit_exceeded", None),
+        (429, "project_spend_limit_exceeded", None),
+        (429, "organization_usage_limit_exceeded", None),
+        (429, "slow_down", None),
         (400, "unsupported_parameter", "max_completion_tokens"),
     ],
 )
@@ -214,7 +219,11 @@ def test_http_error_keeps_only_safe_diagnostics_without_retry(
     expected = {"httpStatus": status, "providerCode": code}
     if param:
         expected["providerParam"] = param
-    assert result == {"error": "bounded VLM request stopped: HTTPError", **expected}
+    assert {key: value for key, value in result.items() if key != "errorGuidance"} == {
+        "error": "bounded VLM request stopped: HTTPError",
+        **expected,
+    }
+    assert isinstance(result["errorGuidance"], str)
     call = json.loads(budget.read_text())["calls"][0]
     assert call["status"] == "error"
     assert call["errorType"] == "HTTPError"
@@ -238,7 +247,13 @@ def test_http_error_keeps_only_safe_diagnostics_without_retry(
 @pytest.mark.parametrize(
     "payload",
     [
-        {"error": {"code": "untrusted-secret-code", "param": "private-prompt-param"}},
+        {
+            "error": {
+                "code": "untrusted-secret-code",
+                "param": "private-prompt-param",
+                "type": "private-secret-type",
+            }
+        },
         {"error": {"code": {"secret": "value"}, "param": ["private"]}},
         {"error": "private provider message"},
         ["private provider message"],
@@ -255,11 +270,15 @@ def test_unknown_provider_fields_are_omitted(budget, monkeypatch, payload):
     network = Mock(side_effect=error)
     monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
     result = ask()
-    assert result == {"error": "bounded VLM request stopped: HTTPError", "httpStatus": 400}
+    assert {key: value for key, value in result.items() if key != "errorGuidance"} == {
+        "error": "bounded VLM request stopped: HTTPError",
+        "httpStatus": 400,
+    }
     call = json.loads(budget.read_text())["calls"][0]
     assert call["httpStatus"] == 400
     assert "providerCode" not in call
     assert "providerParam" not in call
+    assert "providerType" not in call
     assert network.call_count == 1
 
 
@@ -268,10 +287,11 @@ def test_http_error_body_is_read_once_with_a_finite_limit(budget, monkeypatch):
     error = vlm_judge.urllib.error.HTTPError("https://api.openai.com", 429, "private", {}, body)
     network = Mock(side_effect=error)
     monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
-    assert ask(retries=20) == {
-        "error": "bounded VLM request stopped: HTTPError",
-        "httpStatus": 429,
-    }
+    result = ask(retries=20)
+    assert result["error"] == "bounded VLM request stopped: HTTPError"
+    assert result["httpStatus"] == 429
+    assert "providerCode" not in result
+    assert "cause is unknown" in result["errorGuidance"]
     assert body.read_sizes == [16 * 1024]
     assert network.call_count == 1
 
@@ -286,12 +306,149 @@ def test_receipt_revalidates_diagnostics_instead_of_storing_arbitrary_fields(bud
             "httpStatus": True,
             "providerCode": "private-code",
             "providerParam": "private-param",
+            "providerType": "private-type",
             "body": "secret-test-key",
             "headers": {"Authorization": "secret-test-key"},
         },
     )
     call = json.loads(budget.read_text())["calls"][0]
     assert call["errorType"] == "ValueError"
-    assert not {"httpStatus", "providerCode", "providerParam", "body", "headers"} & call.keys()
+    assert (
+        not {"httpStatus", "providerCode", "providerParam", "providerType", "body", "headers"}
+        & call.keys()
+    )
     assert "private" not in budget.read_text()
     assert "secret-test-key" not in budget.read_text()
+
+
+@pytest.mark.parametrize(
+    "code,expected_guidance",
+    [
+        ("credit_balance_exhausted", "credit balance"),
+        ("organization_spend_limit_exceeded", "organization spending limit"),
+        ("project_spend_limit_exceeded", "project spending limit"),
+        ("organization_usage_limit_exceeded", "organization usage limit"),
+        ("slow_down", "Reduce request rate"),
+        ("unrecognized-private-code", "cause is unknown"),
+    ],
+)
+def test_429_guidance_preserves_known_causes_without_guessing_unknowns(
+    budget, monkeypatch, code, expected_guidance
+):
+    body = ErrorBody(json.dumps({"error": {"code": code, "message": "secret-test-key"}}).encode())
+    error = vlm_judge.urllib.error.HTTPError("https://api.openai.com", 429, "private", {}, body)
+    network = Mock(side_effect=error)
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    result = ask(retries=20)
+    assert expected_guidance in result["errorGuidance"]
+    call = json.loads(budget.read_text())["calls"][0]
+    if code == "unrecognized-private-code":
+        assert "providerCode" not in result and "providerCode" not in call
+    else:
+        assert result["providerCode"] == call["providerCode"] == code
+    assert call["status"] == "error"
+    assert len(json.loads(budget.read_text())["calls"]) == 1
+    assert "secret-test-key" not in json.dumps(result) + budget.read_text()
+    assert body.read_sizes == [16 * 1024]
+    assert network.call_count == 1
+
+
+@pytest.mark.parametrize("kind", ["insufficient_quota", "invalid_request_error"])
+def test_known_error_type_is_retained_separately_when_code_is_missing(budget, monkeypatch, kind):
+    error = vlm_judge.urllib.error.HTTPError(
+        "https://api.openai.com",
+        429,
+        "private",
+        {},
+        io.BytesIO(
+            json.dumps(
+                {"error": {"type": kind, "code": None, "message": "secret-test-key"}}
+            ).encode()
+        ),
+    )
+    network = Mock(side_effect=error)
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    result = ask()
+    call = json.loads(budget.read_text())["calls"][0]
+    assert result["providerType"] == call["providerType"] == kind
+    assert "providerCode" not in result and "providerCode" not in call
+    assert network.call_count == 1
+    assert "secret-test-key" not in json.dumps(result) + budget.read_text()
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "insufficient_quota",
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+        "unknown-private-code",
+        None,
+    ],
+)
+def test_unbounded_billing_or_unknown_429_stops_without_retry(budget, monkeypatch, code):
+    monkeypatch.delenv("WANDER_VLM_BUDGET")
+    body = ErrorBody(json.dumps({"error": {"code": code, "message": "secret-test-key"}}).encode())
+    error = vlm_judge.urllib.error.HTTPError("https://api.openai.com", 429, "private", {}, body)
+    network = Mock(side_effect=[error, response()])
+    sleep = Mock()
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    monkeypatch.setattr(vlm_judge.time, "sleep", sleep)
+    result = ask(retries=20)
+    assert result["error"] == "VLM request stopped: HTTPError"
+    assert result["httpStatus"] == 429
+    assert network.call_count == 1
+    sleep.assert_not_called()
+    assert body.read_sizes == [16 * 1024]
+    assert "secret-test-key" not in json.dumps(result)
+    assert json.loads(budget.read_text())["calls"] == []
+
+
+@pytest.mark.parametrize("code", ["rate_limit_exceeded", "slow_down"])
+def test_unbounded_recognized_rate_limit_retains_finite_retry_and_retry_after(
+    budget, monkeypatch, code
+):
+    monkeypatch.delenv("WANDER_VLM_BUDGET")
+    error = vlm_judge.urllib.error.HTTPError(
+        "https://api.openai.com",
+        429,
+        "private",
+        {"Retry-After": "20"},
+        io.BytesIO(json.dumps({"error": {"code": code}}).encode()),
+    )
+    network = Mock(side_effect=[error, response()])
+    sleep = Mock()
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    monkeypatch.setattr(vlm_judge.time, "sleep", sleep)
+    assert ask(retries=2) == {"ok": True}
+    assert network.call_count == 2
+    sleep.assert_called_once_with(20)
+
+
+def test_unbounded_recognized_rate_limit_stops_at_caller_retry_allowance(budget, monkeypatch):
+    monkeypatch.delenv("WANDER_VLM_BUDGET")
+
+    def fail(*args, **kwargs):
+        return_error = vlm_judge.urllib.error.HTTPError(
+            "https://api.openai.com",
+            429,
+            "secret-test-key",
+            {},
+            io.BytesIO(b'{"error":{"code":"slow_down","message":"private prompt"}}'),
+        )
+        raise return_error
+
+    network = Mock(side_effect=fail)
+    sleep = Mock()
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    monkeypatch.setattr(vlm_judge.time, "sleep", sleep)
+    result = ask(retries=2)
+    assert result["error"] == "VLM request stopped: HTTPError"
+    assert result["providerCode"] == "slow_down"
+    assert "Reduce request rate" in result["errorGuidance"]
+    assert network.call_count == 2
+    sleep.assert_called_once_with(15)
+    assert "private prompt" not in json.dumps(result)
+    assert "secret-test-key" not in json.dumps(result)
