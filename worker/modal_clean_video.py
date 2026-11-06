@@ -79,6 +79,7 @@ def clean(
     masks_npz: bytes = b"",
     moved: bool = False,
     max_added_frac: float = 0.05,
+    inpaint_mode: str = "legacy",
 ) -> dict:
     """Returns the clean mp4, frame 0, a masks archive and the source indices of the kept frames.
 
@@ -89,6 +90,9 @@ def clean(
     moved: inpaint everything that MOVED, not just the person - the plate is what the static
     trainer sees, and a cast shadow, a carried object or a passer-by is as wrong in it as the
     person is. Off by default: every existing caller keeps the person mask it has always had.
+
+    inpaint_mode: isolated is an experimental context-isolation and opaque-compositing path.
+    It preserves pixels outside the reviewed mask before encoding; it does not establish quality.
     """
     import hashlib
     import io
@@ -114,6 +118,8 @@ def clean(
     out_mp4 = out_png = masks_out = b""
     frames_tar = b""
     try:
+        if inpaint_mode not in {"legacy", "isolated"}:
+            raise ValueError("inpaint_mode must be legacy or isolated")
         t = time.time()
         supplied = None
         explicit = False
@@ -222,25 +228,18 @@ def clean(
         t = time.time()
         import torch
         from simple_lama_inpainting import SimpleLama
+        from wander_worker.inpaint import inpaint_frame
 
         assert torch.cuda.is_available(), "no CUDA device"
         lama = SimpleLama(torch.device("cuda"))
         timings["lamaLoad"] = time.time() - t
 
         t = time.time()
-        sw, sh = lama_px // 8 * 8, int(lama_px * H / W) // 8 * 8
         kept = []
         for i in sel:
-            im, m = imgs[i].copy(), masks[i]
-            if m.any():
-                for _ in range(passes):
-                    small = Image.fromarray(im).resize((sw, sh), Image.LANCZOS)
-                    sm = Image.fromarray(m.astype(np.uint8) * 255).resize((sw, sh), Image.NEAREST)
-                    fill = np.asarray(lama(small, sm).resize((W, H), Image.BICUBIC))
-                    alpha = np.clip(
-                        cv2.GaussianBlur(m.astype(np.float32), (0, 0), 3)[..., None] * 1.5, 0, 1
-                    )
-                    im = (im * (1 - alpha) + fill * alpha).astype(np.uint8)
+            im = inpaint_frame(
+                imgs[i], masks[i], lama, lama_px=lama_px, passes=passes, mode=inpaint_mode
+            )
             Image.fromarray(im).save(work / f"f_{i:04d}.png")
             kept_provenance[len(kept)]["cleanedImageSha256"] = hashlib.sha256(
                 (work / f"f_{i:04d}.png").read_bytes()
@@ -310,6 +309,12 @@ def clean(
             outputVideoSha256=hashlib.sha256(out_mp4).hexdigest() if out_mp4 else None,
             moved=moved,
             movedStats=moved_stats,
+            maskSource="supplied" if masks_npz else "moved" if moved else "segformer",
+            suppliedMasksSha256=hashlib.sha256(masks_npz).hexdigest() if masks_npz else None,
+            appliedDilate=0 if masks_npz else dilate,
+            appliedBottomExtra=0 if masks_npz else bottom_extra,
+            extendedToBottom=not bool(masks_npz),
+            inpaintMode=inpaint_mode,
             fps=fps,
             width=W,
             height=H,
@@ -378,11 +383,14 @@ def main(
     masks_in: str = "",
     moved_mask: bool = False,
     max_added_frac: float = 0.05,
+    inpaint_mode: str = "legacy",
 ):
     import io
     import json
     import tarfile
 
+    if inpaint_mode not in {"legacy", "isolated"}:
+        raise ValueError("--inpaint-mode must be legacy or isolated")
     r = clean.remote(
         Path(clip).read_bytes(),
         fps=fps,
@@ -399,6 +407,7 @@ def main(
         masks_npz=Path(masks_in).read_bytes() if masks_in else b"",
         moved=moved_mask,
         max_added_frac=max_added_frac,
+        inpaint_mode=inpaint_mode,
     )
     rep = r["report"]
     if out and r["mp4"]:

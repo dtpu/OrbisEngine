@@ -80,6 +80,48 @@ class CleanMaskPreflightTests(unittest.TestCase):
             self.pipeline.clean()
         self.pipeline.paid_run.assert_not_called()
 
+    def test_isolated_inpainting_mode_reaches_paid_worker(self):
+        self.pipeline.a.inpaint_mode = "isolated"
+        self.pipeline.paid_run = Mock()
+        self.pipeline.clean()
+        command = self.pipeline.paid_run.call_args.args[1]
+        self.assertEqual(command[command.index("--inpaint-mode") + 1], "isolated")
+
+    def test_default_inpainting_mode_remains_legacy(self):
+        flags = self.pipeline.clean_flags()
+        self.assertEqual(flags[flags.index("--inpaint-mode") + 1], "legacy")
+
+    def test_invalid_inpainting_mode_blocks_before_paid_launch(self):
+        self.pipeline.a.inpaint_mode = "typo"
+        self.pipeline.paid_run = Mock()
+        with self.assertRaisesRegex(ValueError, "inpaint-mode"):
+            self.pipeline.clean()
+        self.pipeline.paid_run.assert_not_called()
+
+    def test_orchestrated_submission_cannot_silently_discard_isolated_mode(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "run_clip.py",
+                    "--clip",
+                    "fixture.mp4",
+                    "--name",
+                    "fixture",
+                    "--orchestrated",
+                    "--inpaint-mode",
+                    "isolated",
+                ],
+            ),
+            patch.object(run_clip, "resolve_shots") as resolve,
+            patch("sys.stderr"),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            run_clip.main()
+        self.assertEqual(exited.exception.code, 2)
+        resolve.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

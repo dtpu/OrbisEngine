@@ -608,6 +608,24 @@ class CommandIdentityTests(unittest.TestCase):
         _, after, _ = command_identity(command, self.root)
         self.assertNotEqual(before[helper], after[helper])
 
+    def test_clean_compositing_code_and_mode_change_attempt_identity(self):
+        helper = "worker/wander_worker/inpaint.py"
+        command = ["modal", "run", "worker/modal_clean_video.py", "--inpaint-mode", "legacy"]
+        parameters, before, _ = command_identity(command, self.root)
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed context isolation\n")
+        _, after, _ = command_identity(command, self.root)
+        self.assertNotEqual(before[helper], after[helper])
+        changed, _, _ = command_identity([*command[:-1], "isolated"], self.root)
+        self.assertNotEqual(parameters, changed)
+        with self.assertRaisesRegex(ValueError, "Inpainting mode"):
+            command_identity([*command[:-1], "unknown"], self.root)
+        with self.assertRaisesRegex(ValueError, "Inpainting mode"):
+            command_identity(
+                ["modal", "run", "worker/modal_motion.py", "--inpaint-mode", "isolated"], self.root
+            )
+
     def test_every_runner_paid_worker_command_shape_has_an_identity_policy(self):
         modal = "/modal"
         out = self.root / "out"
