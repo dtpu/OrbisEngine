@@ -105,4 +105,6 @@ regressions also rebuild the service to verify queued sources and operator state
 
 Neutral review-suite grey, no tint, so footage is the only saturated thing on the page. Colour is
 reserved for status and always accompanies a word. IBM Plex Sans for prose and controls, IBM Plex
-Mono for identifiers, hashes, sizes and times. Tokens live at the top of `app/globals.css`.
+Mono for identifiers, hashes, sizes and times. Their Latin WOFF2 files come from pinned
+`@fontsource` dependencies through `next/font/local`, so builds do not download Google Fonts.
+Tokens live at the top of `app/globals.css`.
