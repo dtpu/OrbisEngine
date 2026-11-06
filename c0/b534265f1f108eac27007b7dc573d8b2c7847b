@@ -1,0 +1,24 @@
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_78c31142372d09 4-5
+scripts/tests/test_stage_attempts.py
+  s_20f6c0bf8c5b2c::t_962d4f03e2b497 867-892
+  s_20f6c0bf8c5b2c::t_91193ab51fcce7 893-905
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_78c31142372d09 3460-3462
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0b534265f1f108eac27007b7dc573d8b2c7847b",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
