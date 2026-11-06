@@ -365,10 +365,11 @@ Offline mutation checks on eleven retained lobby frames found 40,744 changed low
 pixels outside the old nearest-neighbor mask after changing only masked RGB. The isolated
 preparation eliminated that dependence. Lossless first-frame evidence also places major ghosts
 inside fully opaque fill regions, so final-alpha changes alone cannot explain or repair them.
-These observations justify testing the new context path; they do not prove LaMa will produce an
-acceptable background. The existing mask still misses some fingers and reflected people, and
-hard mask boundaries can introduce visible seams. Do not promote the failed clean or generate
-a world until the actual new output meets the unchanged review criteria.
+A subsequent explicitly approved first-frame trial removed most large hair, torso and trouser
+remnants, but visible outlines and shoe remnants remained. It failed visual review; the full clip
+was not rerun. The existing mask still misses some fingers and reflected people, and hard mask
+boundaries can introduce visible seams. Keep the mode experimental and do not promote the failed
+clean or generate a world until the actual output meets the unchanged review criteria.
 
 Worker reports identify `inpaintMode`, `maskSource`, the supplied archive hash, and applied mask
 growth separately from requested growth. The helper and mode are included in paid-attempt
