@@ -1,0 +1,33 @@
+admin/package.json
+  s_11465a870157de::t_110b5cbc248afb 12-13
+admin/README.md
+  s_20f6c0bf8c5b2c::t_51666d00474dcb 108-110
+admin/app/layout.tsx
+  s_11465a870157de::t_5137d566484dcf 2,10-28,32-44
+admin/bun.lock
+  s_20f6c0bf8c5b2c::t_3bdd508d8cf5f2 8-9,33-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31b0ba28ed187a9eb78dbdf247e1ba9b686e80e7",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
