@@ -76,9 +76,10 @@ def test_invalid_worker_setting_precedes_image_or_volume_setup(name, maximum):
             importlib.import_module(f"worker.modal_{name}")
 
 
+@pytest.mark.parametrize("gpu", [None, "L4", "L40S"])
 @pytest.mark.parametrize("remote", [False, True])
 @pytest.mark.parametrize("value", [None, "600"])
-def test_script_import_registers_with_pinned_sdk_and_packages_helper(remote, value):
+def test_script_import_registers_with_pinned_sdk_and_packages_helper(remote, value, gpu):
     # Separate imports reproduce the CLI file path and container module reimport without
     # launching an app, building an image, fetching volumes or contacting providers.
     code = r"""
@@ -94,7 +95,7 @@ packaged = []
 original_file = modal.Image.add_local_file
 
 def register(self, *args, **kwargs):
-    if kwargs.get("gpu") == "L4":
+    if kwargs.get("gpu") in {"L4", "L40S"}:
         registered.append(kwargs)
     return original(self, *args, **kwargs)
 
@@ -111,21 +112,34 @@ with patch.object(modal.App, "function", register), patch.object(modal.Image, "a
         assert options["memory"] == ((memory,memory) if BOUNDED else memory)
         assert options["max_containers"] == (1 if BOUNDED else containers)
         assert options["retries"] == 0 and options["scaledown_window"] == 2
+        assert options["gpu"] == (GPU if name == "lhm" else "L4")
+        expected_env = {"WANDER_LHM_GPU":GPU} if name == "lhm" else {}
         if BOUNDED:
             assert options["startup_timeout"] == 600
-            assert options["env"] == {"WANDER_WORKER_TIMEOUT_SECONDS":"600"}
+            expected_env["WANDER_WORKER_TIMEOUT_SECONDS"] = "600"
         else:
-            assert "startup_timeout" not in options and "env" not in options
+            assert "startup_timeout" not in options
+        if expected_env:
+            assert options["env"] == expected_env
+        else:
+            assert "env" not in options
         assert packaged[-1] == (root / "worker/stages/worker_resources.py", "/root/worker_resources.py")
 assert len(registered) == 3
 print("registered three workers without provider calls")
 """
     env = os.environ.copy()
     env.pop(TIMEOUT_ENV, None)
+    env.pop("WANDER_LHM_GPU", None)
     if value is not None:
         env[TIMEOUT_ENV] = value
+    if gpu is not None:
+        env["WANDER_LHM_GPU"] = gpu
     result = subprocess.run(
-        [sys.executable, "-c", f"REMOTE={remote!r}\nBOUNDED={value is not None!r}\n" + code],
+        [
+            sys.executable,
+            "-c",
+            f"REMOTE={remote!r}\nBOUNDED={value is not None!r}\nGPU={gpu or 'L4'!r}\n" + code,
+        ],
         cwd=ROOT,
         env=env,
         text=True,
@@ -136,8 +150,9 @@ print("registered three workers without provider calls")
     assert "registered three workers" in result.stdout
 
 
+@pytest.mark.parametrize("gpu", ["L4", "L40S"])
 @pytest.mark.parametrize("animate", [False, True])
-def test_bounded_lhm_timeout_finalizes_failed_checkpoint_without_retry(tmp_path, animate):
+def test_bounded_lhm_timeout_finalizes_failed_checkpoint_without_retry(tmp_path, animate, gpu):
     import json
     import types
     import uuid
@@ -170,6 +185,7 @@ def test_bounded_lhm_timeout_finalizes_failed_checkpoint_without_retry(tmp_path,
     with (
         patch.dict(sys.modules, {"huggingface_hub": hub}),
         patch.object(modal_lhm, "INFERENCE_RESOURCES", {"timeout": 600, "startup_timeout": 600}),
+        patch.object(modal_lhm, "REQUESTED_GPU", gpu),
         patch.object(modal_lhm, "cache", types.SimpleNamespace(commit=commit)),
         patch.object(modal_lhm, "link_model_caches", return_value=[]),
         patch.object(lhm_recovery, "start_checkpoint", side_effect=start),
@@ -182,9 +198,47 @@ def test_bounded_lhm_timeout_finalizes_failed_checkpoint_without_retry(tmp_path,
     assert commits == ["running", "failed"]
     assert result["status"] == "failed"
     assert result["report"]["timeoutSeconds"] == 600
+    report = result["report"]
+    gpu_rate = {"L4": 0.000222, "L40S": 0.000542}[gpu]
+    expected_rate = gpu_rate + 4 * 0.0000131 + 64 * 0.00000222
+    assert report["gpu"] == report["requestedGPU"] == gpu
+    assert report["gpuRateUSDPerSecond"] == gpu_rate
+    assert report["computeRateUSDPerSecond"] == pytest.approx(expected_rate)
+    assert report["estimatedComputeUSD"] == pytest.approx(report["seconds"] * expected_rate)
     assert "TimeoutExpired" in result["report"]["error"]
     assert inference.call_count == 1
     assert hub.snapshot_download.call_args.kwargs["local_files_only"] is True
     output = tmp_path / lhm_recovery.remote_root(recovery_id) / "output"
     assert (output / "partial.ply").read_bytes() == b"partial output"
     assert "partial inference log" in (output / "inference.log").read_text()
+
+
+@pytest.mark.parametrize("value", ["", "A10", "l4", "L40s", " L40S", "L40S ", "L4,L40S", "L40S:2"])
+def test_invalid_lhm_gpu_precedes_modal_setup(value):
+    import modal
+    from worker.stages.worker_resources import LHM_GPU_ENV, lhm_gpu
+
+    with (
+        patch.dict(os.environ, {LHM_GPU_ENV: value}),
+        patch.object(modal.Image, "from_registry", side_effect=AssertionError("image setup")),
+        patch.object(modal.Volume, "from_name", side_effect=AssertionError("volume setup")),
+    ):
+        with pytest.raises(ValueError, match=LHM_GPU_ENV):
+            lhm_gpu()
+        sys.modules.pop("worker.modal_lhm", None)
+        with pytest.raises(ValueError, match=LHM_GPU_ENV):
+            importlib.import_module("worker.modal_lhm")
+
+
+def test_lhm_gpu_explicit_environment_and_rates_ignore_process_secrets():
+    from worker.stages.worker_resources import LHM_GPU_ENV, lhm_compute_rate, lhm_gpu
+
+    with patch.dict(os.environ, {LHM_GPU_ENV: "L40S", "PRIVATE_KEY": "secret"}):
+        assert lhm_gpu() == "L40S"
+        assert lhm_gpu(environment={}) == "L4"
+        assert lhm_gpu(environment={LHM_GPU_ENV: "L4"}) == "L4"
+        assert os.environ[LHM_GPU_ENV] == "L40S"
+    assert lhm_compute_rate("L4") == pytest.approx(0.00041648)
+    assert lhm_compute_rate("L40S") == pytest.approx(0.00073648)
+    with pytest.raises(ValueError, match=LHM_GPU_ENV):
+        lhm_compute_rate("A10")

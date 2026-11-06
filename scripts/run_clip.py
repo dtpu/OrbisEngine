@@ -48,6 +48,7 @@ from orchestrator.config import resolve_runs_root, resolve_stage_ledger  # noqa:
 from orchestrator.pipeline import MARBLE_MODES, multiperson_graph, single_graph, world_half  # noqa: E402,F401
 from worker.stages.lhm_execution import animation_options  # noqa: E402
 from worker.stages.vlm_budget import safe_error_details  # noqa: E402
+import lhm_frozen_candidates  # noqa: E402
 
 # A clean clone uses its own toolchain and ignored output directories.
 PY = os.environ.get("WANDER_PYTHON", sys.executable)
@@ -128,6 +129,37 @@ def validate_clean_candidate(args):
     if args.only and "clean" not in args.only.split(","):
         raise ValueError(
             "--clean-candidate requires clean in --only; omit the flag to use the saved selection"
+        )
+
+
+def validate_local_clean_import(args):
+    if not getattr(args, "import_local_clean", None):
+        return
+    if not getattr(args, "clean_candidate", None) or not getattr(args, "clean_masks", None):
+        raise ValueError("--import-local-clean requires --clean-candidate and --clean-masks")
+    if args.only != "clean":
+        raise ValueError("--import-local-clean requires --only clean; review separately afterwards")
+    if getattr(args, "moved_mask", False):
+        raise ValueError("--import-local-clean cannot change the supplied removal masks")
+
+
+def validate_local_world_import(args):
+    if not getattr(args, "import_local_world", None):
+        return
+    if (
+        args.orchestrated
+        or args.marble != "video"
+        or args.skip_marble
+        or args.only != "marble_video"
+        or args.reuse_world
+        or getattr(args, "retained_scene", None)
+        or getattr(args, "import_local_clean", None)
+        or args.shot is not None
+        or args.all_shots
+        or set((args.force or "").split(",")) - {"", "marble_video"}
+    ):
+        raise ValueError(
+            "--import-local-world requires direct --marble video --only marble_video, without source selection or other reuse/import modes"
         )
 
 
@@ -579,7 +611,10 @@ class Pipeline:
                 raise ValueError(
                     "Clean candidate destination is retained; choose a fresh --clean-candidate"
                 ) from None
-            self.clean_to(directory, directory / "clean.mp4")
+            if getattr(self.a, "import_local_clean", None):
+                self.import_local_clean(directory)
+            else:
+                self.clean_to(directory, directory / "clean.mp4")
             self.assert_clean_selection_replaceable()
             publish_selection(self.ctx, self.clip, self.name, candidate)
             self.load_clean_selection()
@@ -588,6 +623,315 @@ class Pipeline:
                 candidate=candidate,
                 receipt=str(self.ctx / "clean-selection.json"),
             )
+
+    def import_local_clean(self, directory):
+        """Validate and retain offline CPU evidence; never infer or claim a paid execution."""
+        import numpy as np
+        from PIL import Image
+        from local_clean_video import (
+            apply_source_patch,
+            pixel_hash,
+            source_patch_hash,
+            validate_masks,
+            validate_source_patches,
+        )
+        from worker.wander_worker.source_timing import resample_source, select_source_frames
+
+        receipt = Path(self.a.import_local_clean).expanduser()
+        masks_path = Path(self.a.clean_masks).expanduser()
+        if receipt.is_symlink() or masks_path.is_symlink():
+            raise ValueError("Local clean receipt and masks must be regular, non-symlink files")
+        receipt, masks_path = receipt.resolve(), masks_path.resolve()
+        receipt_hash, masks_hash = file_sha256(receipt), file_sha256(masks_path)
+        report = json.loads(receipt.read_text())
+        if not isinstance(report, dict):
+            raise ValueError("Local clean receipt must be a JSON object")
+        source_hash = file_sha256(self.clip)
+        parameters = report.get("parameters", {})
+        if (
+            report.get("schema") != "wander.local-clean/1"
+            or report.get("status") != "complete"
+            or report.get("error")
+            or report.get("qualityStatus") != "unreviewed"
+            or report.get("device") != "cpu"
+            or report.get("inpaintMode") != "isolated"
+            or report.get("sourceSha256") != source_hash
+            or report.get("suppliedMasksSha256") != masks_hash
+            or not isinstance(parameters, dict)
+            or type(parameters.get("fps")) not in (int, float)
+            or not math.isfinite(parameters["fps"])
+            or parameters["fps"] != self.a.fps
+            or parameters.get("encode") is not True
+            or type(parameters.get("threads")) is not int
+            or not 1 <= parameters["threads"] <= 32
+            or type(parameters.get("lamaPx")) is not int
+            or parameters["lamaPx"] < 8
+            or type(parameters.get("passes")) is not int
+            or parameters["passes"] != 1
+        ):
+            raise ValueError(
+                "Local clean receipt must confirm complete encoded CPU work for this source/FPS"
+            )
+        code_hashes = report.get("codeHashes")
+        required_code = {
+            "scripts/local_clean_video.py",
+            "worker/wander_worker/inpaint.py",
+            "worker/wander_worker/source_timing.py",
+        }
+        if not isinstance(code_hashes, dict) or not required_code.issubset(code_hashes):
+            raise ValueError("Local clean receipt is missing code hashes")
+        for value in [report.get("modelSha256"), *code_hashes.values()]:
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError("Local clean receipt is missing model/code hashes")
+        masks = validate_masks(self.clip, masks_path)
+        count, height, width = map(int, masks["shape"])
+        recipe = report.get("sourcePatches")
+        patches = validate_source_patches(recipe, masks, self.a.fps) if recipe is not None else {}
+        if recipe is not None:
+            if (
+                report.get("sourcePatchesSha256") != source_patch_hash(recipe)
+                or report.get("sourcePatchAlgorithm") != "wander.source-patch-composite/1"
+                or report.get("compositionMethod") != "LaMa plus measured source-guided composite"
+                or report.get("sourcePatchesPath") != "source-patches.json"
+            ):
+                raise ValueError("Local clean source patch recipe hash/method mismatch")
+        elif any(
+            key in report
+            for key in ("sourcePatchesSha256", "sourcePatchesPath", "sourcePatchAlgorithm")
+        ):
+            raise ValueError("Local clean source patch recipe is missing")
+        selected = report.get("selectedSampleIndices")
+        _, full_sampling = resample_source(self.clip, self.a.fps)
+        if (
+            type(report.get("frames")) is not int
+            or report["frames"] != count
+            or type(report.get("width")) is not int
+            or report["width"] != width
+            or type(report.get("height")) is not int
+            or report["height"] != height
+            or not isinstance(selected, list)
+            or any(type(i) is not int for i in selected)
+            or selected != list(range(count))
+            or count != len(full_sampling["frames"])
+        ):
+            raise ValueError(
+                "Local clean import requires complete full-clip sample coverage and dimensions"
+            )
+        if masks["source_indices"].tolist() != [
+            f["sourceIndex"] for f in full_sampling["frames"]
+        ] or masks["source_pts"].tolist() != [f["sourcePts"] for f in full_sampling["frames"]]:
+            raise ValueError("Local clean masks do not cover the complete observed FPS sampling")
+        raw, observed = select_source_frames(
+            self.clip,
+            self.a.fps,
+            source_indices=masks["source_indices"].tolist(),
+            width=width,
+            height=height,
+        )
+        provenance = report.get("sourceProvenance", {})
+        if not isinstance(provenance, dict):
+            raise ValueError("Local clean source provenance must be an object")
+        frames, checks = provenance.get("frames"), report.get("compositeChecks")
+        if (
+            provenance.get("schema") != "wander.source-frame-provenance/1"
+            or provenance.get("sourceSha256") != source_hash
+            or provenance.get("sourceTimeBase") != observed["sourceTimeBase"]
+            or type(provenance.get("requestedFps")) not in (int, float)
+            or provenance["requestedFps"] != self.a.fps
+            or not isinstance(frames, list)
+            or len(frames) != count
+            or not isinstance(checks, list)
+            or len(checks) != count
+        ):
+            raise ValueError("Local clean source provenance is incomplete or inconsistent")
+        images = np.frombuffer(raw, np.uint8).reshape(count, height, width, 3)
+        pins = []
+
+        def input_file(name):
+            path = receipt.parent / name
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size == 0
+                or path.resolve().parent != receipt.parent
+            ):
+                raise ValueError("Local clean output must be a nonempty regular sibling file")
+            return path
+
+        extra_pins = []
+        if recipe is not None:
+            recipe_path = input_file("source-patches.json")
+            recipe_pin = file_sha256(recipe_path)
+            if recipe_pin != report.get("sourcePatchesFileSha256") or source_patch_hash(
+                json.loads(recipe_path.read_text())
+            ) != source_patch_hash(recipe):
+                raise ValueError("Local clean original source patch recipe changed")
+            extra_pins.append((recipe_path, recipe_pin))
+        for index, (image, frame, check, actual) in enumerate(
+            zip(images, frames, checks, observed["frames"], strict=True)
+        ):
+            if not isinstance(frame, dict) or not isinstance(check, dict):
+                raise ValueError("Local clean frames/checks must be objects")
+            for key, expected in actual.items():
+                for entry in (frame, check):
+                    value = entry.get(key)
+                    if (
+                        type(value) is not type(expected)
+                        or value != expected
+                        or isinstance(value, float)
+                        and not math.isfinite(value)
+                    ):
+                        raise ValueError("Local clean frame source index/PTS/timing mismatch")
+            mask = np.unpackbits(masks["masks"][index], axis=1, count=width).astype(bool)
+            outside = ~mask
+            name = f"f_{index:04d}.png"
+            path = input_file(name)
+            png_hash = file_sha256(path)
+            with Image.open(path) as png:
+                if png.mode != "RGB" or png.size != (width, height):
+                    raise ValueError("Local clean PNG has invalid dimensions or RGB mode")
+                pixels = np.array(png)
+            if (
+                check.get("status") != "complete"
+                or check.get("path") != name
+                or check.get("pngSha256") != png_hash
+                or check.get("decodedRgbSha256") != pixel_hash(image)
+                or check.get("cleanedRgbSha256") != pixel_hash(pixels)
+                or check.get("removalMaskSha256") != pixel_hash(mask)
+                or check.get("sourceOutsideRgbSha256") != pixel_hash(image[outside])
+                or check.get("cleanOutsideRgbSha256") != pixel_hash(pixels[outside])
+                or not np.array_equal(image[outside], pixels[outside])
+            ):
+                raise ValueError(
+                    "Local clean PNG/source/mask hashes or outside pixels do not match"
+                )
+            for key, expected in (
+                ("maskPixels", int(mask.sum())),
+                ("outsideMaskPixels", int(outside.sum())),
+                ("outsideMaskChangedPixels", 0),
+            ):
+                if type(check.get(key)) is not int or check[key] != expected:
+                    raise ValueError("Local clean preservation counts do not match measured pixels")
+            if index in patches:
+                expected_lama_name = f"lama_{index:04d}.png"
+                if check.get("lamaPath") != expected_lama_name:
+                    raise ValueError("Local clean source patch lacks its pre-patch LaMa PNG")
+                lama_path = input_file(expected_lama_name)
+                lama_pin = file_sha256(lama_path)
+                with Image.open(lama_path) as base:
+                    if base.mode != "RGB" or base.size != (width, height):
+                        raise ValueError("Local clean pre-patch LaMa PNG has invalid dimensions")
+                    lama_pixels = np.array(base)
+                if (
+                    lama_pin != check.get("lamaPngSha256")
+                    or pixel_hash(lama_pixels) != check.get("lamaRgbSha256")
+                    or not np.array_equal(lama_pixels[outside], image[outside])
+                ):
+                    raise ValueError("Local clean pre-patch LaMa hashes/outside pixels mismatch")
+                patch = patches[index]
+                donor = patch["donorSample"]
+                donor_mask = np.unpackbits(masks["masks"][donor], axis=1, count=width).astype(bool)
+                expected, evidence = apply_source_patch(
+                    lama_pixels, mask, images[donor], donor_mask, patch
+                )
+                evidence["donorProvenance"] = observed["frames"][donor]
+                if not np.array_equal(expected, pixels) or json.dumps(
+                    evidence, sort_keys=True, allow_nan=False
+                ) != json.dumps(check.get("sourcePatch"), sort_keys=True, allow_nan=False):
+                    raise ValueError("Local clean source patch replay/provenance mismatch")
+                extra_pins.append((lama_path, lama_pin))
+            elif any(
+                key in check
+                for key in ("sourcePatch", "lamaPath", "lamaPngSha256", "lamaRgbSha256")
+            ):
+                raise ValueError("Local clean has source patch evidence without a recipe target")
+            pins.append((path, png_hash))
+        pins.extend(extra_pins)
+        video = report.get("video", {})
+        if not isinstance(video, dict):
+            raise ValueError("Local clean video receipt must be an object")
+        if video.get("path") != "clean.mp4" or video.get("audio") != "absent":
+            raise ValueError("Local clean import requires the helper's encoded silent video")
+        video_path = input_file("clean.mp4")
+        video_hash = file_sha256(video_path)
+        if video.get("sha256") != video_hash:
+            raise ValueError("Local clean video hash mismatch")
+        streams = json.loads(
+            subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-count_frames",
+                    "-show_entries",
+                    "stream=codec_type,width,height,avg_frame_rate,nb_read_frames",
+                    "-of",
+                    "json",
+                    str(video_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=120,
+            ).stdout
+        )["streams"]
+        if (
+            len(streams) != 1
+            or streams[0].get("codec_type") != "video"
+            or streams[0].get("width") != width
+            or streams[0].get("height") != height
+            or int(streams[0].get("nb_read_frames", 0)) != count
+        ):
+            raise ValueError("Local clean encoded video lacks full source-grid coverage")
+        numerator, denominator = map(int, streams[0]["avg_frame_rate"].split("/"))
+        if denominator <= 0 or not math.isclose(numerator / denominator, self.a.fps, rel_tol=1e-9):
+            raise ValueError("Local clean encoded video FPS mismatch")
+        # Copy all PNG evidence with its original receipt. The pinned clean.log holds that
+        # receipt byte-for-byte; candidate clean.json is an explicit compatibility report.
+        for source, expected in [
+            (receipt, receipt_hash),
+            (masks_path, masks_hash),
+            (video_path, video_hash),
+            *pins,
+        ]:
+            if file_sha256(source) != expected:
+                raise ValueError("Local clean input changed during import validation")
+        copies = [
+            (receipt, "clean.log", receipt_hash),
+            (masks_path, "masks.npz", masks_hash),
+            (video_path, "clean.mp4", video_hash),
+            (pins[0][0], "clean-f0.png", pins[0][1]),
+        ]
+        copies += [(path, path.name, digest) for path, digest in pins]
+        for source, name, expected in copies:
+            destination = directory / name
+            with destination.open("xb") as output, source.open("rb") as original:
+                shutil.copyfileobj(original, output)
+            if file_sha256(destination) != expected:
+                raise ValueError("Local clean input changed while copying")
+        if file_sha256(self.clip) != source_hash:
+            raise ValueError("Source changed while importing local clean")
+        report.update(
+            provider="local",
+            execution="imported_local",
+            freshInference=False,
+            localReceiptSha256=receipt_hash,
+            outputVideoSha256=video_hash,
+            maskSource="supplied",
+            appliedDilate=0,
+            appliedBottomExtra=0,
+            extendedToBottom=False,
+            maskFraction=sum(check["maskPixels"] for check in checks) / (count * height * width),
+            indices=masks["source_indices"].tolist(),
+        )
+        (directory / "clean.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        self.state.record(
+            "_local_clean_import",
+            provider="local",
+            receiptSha256=receipt_hash,
+            sourceSha256=source_hash,
+            qualityStatus="unreviewed",
+            paidClaim=False,
+        )
 
     def load_clean_selection(self):
         selected = read_selection(self.ctx, self.clip, self.name)
@@ -598,6 +942,8 @@ class Pipeline:
             self.clean_masks_path = self.ctx / selected["files"]["masks"]["path"]
 
     def marble_recovery_only(self):
+        if getattr(self.a, "import_local_world", None):
+            return True
         suffix = {"marble_video": "clean", "marble_image": "image", "marble_multi": "multi"}.get(
             getattr(self.a, "only", None)
         )
@@ -898,6 +1244,10 @@ class Pipeline:
             return self.marble_submit_locked(input_type, target, suffix, extra)
 
     def marble_submit_locked(self, input_type, target, suffix, extra=None):
+        if (self.ctx / "local-world-import.json").exists():
+            raise ValueError(
+                "A retained local world import blocks new generation; recover with --import-local-world or use a separate run"
+            )
         if operation := self.marble_saved_operation(suffix):
             say(f"   recovering recorded operation {operation}; no new generation")
             return operation
@@ -1065,6 +1415,20 @@ class Pipeline:
         self.marble_world("image", self.first_png, "image", extra)
 
     def marble_video(self):
+        if getattr(self.a, "import_local_world", None):
+            from local_world_import import import_world
+
+            with selection_lock(self.ctx):
+                receipt = import_world(
+                    self.a.import_local_world,
+                    self.clip,
+                    self.ctx,
+                    public_dir(),
+                    MARBLE_DIR,
+                    self.name,
+                )
+            self.state.record("_local_world_import", **receipt)
+            return
         if self.a.reuse_world or self.marble_saved_operation("clean"):
             return self.marble_world("video", None, "clean")
         self.load_clean_selection()
@@ -1597,6 +1961,8 @@ class Pipeline:
         return True
 
     def lhm_frozen(self, idx=None):
+        if idx is None and lhm_frozen_candidates.run_candidate(self):
+            return
         prepared = self.ctx / ("prepared-person" if idx is None else f"prepared-{idx:02d}")
         dest = self.ctx / ("lhm-frozen" if idx is None else f"lhm-frozen-{idx:02d}")
         if idx is not None:
@@ -1620,34 +1986,35 @@ class Pipeline:
         if recover_missing and (idx is None or fixed_scale is None):
             raise ValueError("Missing-pose recovery needs a saved track and measured fixed scale")
         if idx is None:
-            dest = self.ctx / "lhm-motion"
-            if self.recover_lhm(dest, "motion", self.ctx / "lhm_motion.log"):
-                return
-            reference = self.ctx / "pi3x" / "frame_000.ply"
-            if not reference.is_file() or reference.stat().st_size == 0:
-                raise QualityStop(
-                    "blocked",
-                    f"LHM motion requires supported person depth at {reference}; "
-                    "camera-only success does not establish person registration",
+            with lhm_frozen_candidates.selection_lock(self.ctx):
+                dest = self.ctx / "lhm-motion"
+                if self.recover_lhm(dest, "motion", self.ctx / "lhm_motion.log"):
+                    return
+                reference = self.ctx / "pi3x" / "frame_000.ply"
+                if not reference.is_file() or reference.stat().st_size == 0:
+                    raise QualityStop(
+                        "blocked",
+                        f"LHM motion requires supported person depth at {reference}; "
+                        "camera-only success does not establish person registration",
+                    )
+                self.paid_run(
+                    "lhm_motion",
+                    [
+                        MODAL,
+                        "run",
+                        "worker/modal_lhm.py",
+                        "--canonical",
+                        str(lhm_frozen_candidates.selected_directory(self.ctx, self.clip)),
+                        "--video",
+                        str(self.clip),
+                        "--cameras",
+                        str(self.ctx / "pi3x" / "cameras.json"),
+                        "--out",
+                        str(self.ctx / "lhm-motion"),
+                    ],
+                    self.ctx / "lhm_motion.log",
                 )
-            self.paid_run(
-                "lhm_motion",
-                [
-                    MODAL,
-                    "run",
-                    "worker/modal_lhm.py",
-                    "--canonical",
-                    str(self.ctx / "lhm-frozen"),
-                    "--video",
-                    str(self.clip),
-                    "--cameras",
-                    str(self.ctx / "pi3x" / "cameras.json"),
-                    "--out",
-                    str(self.ctx / "lhm-motion"),
-                ],
-                self.ctx / "lhm_motion.log",
-            )
-            return
+                return
         track = self.track_or_skip(idx)
         dest = self.ctx / f"lhm-motion-{idx:02d}"
         if self.recover_lhm(dest, "motion", self.ctx / f"lhm_motion_{idx:02d}.log"):
@@ -1708,6 +2075,11 @@ class Pipeline:
                 PY,
                 "scripts/package_person_sequence.py",
                 str(self.ctx / "lhm-motion"),
+                *(
+                    ["--lower-body", self.a.lower_body_provenance]
+                    if getattr(getattr(self, "a", None), "lower_body_provenance", None) is not None
+                    else []
+                ),
                 "--cameras",
                 str(self.ctx / "pi3x" / "cameras.json"),
                 "--clip",
@@ -3020,9 +3392,11 @@ class Pipeline:
                     + ("PASS)" if sc["pass_"] else "FAILED - DO NOT SHIP)")
                 )
             if p.get("scaleGateOk") is False:
+                medians = p.get("depthRatios")
+                measured = [round(r, 3) for r in medians] if medians else "unavailable"
                 print(
-                    f"  CAVEAT: depth ratios {[round(r, 3) for r in p['depthRatios']]} -- the "
-                    f"avatar reads slightly large early in the clip and small late."
+                    "  CAVEAT: scale registration gate failed; diagnostic preview only. "
+                    f"Depth-ratio medians: {measured}. See {self.ctx / 'scale-fit.json'}."
                 )
         elif p.get("height") is not None:
             print(f"{base}&floor={p['marbleFloor']:.4f}&height={p['height']:.4f}")
@@ -3032,7 +3406,11 @@ class Pipeline:
                 "scale_fit and the quality checks before shipping this preset."
             )
         else:
-            print("\n  no Marble world yet: run the marble_video stage with a key to get the URL")
+            print(f"{base}&scale=1&place=0")
+            print(
+                "  Unfitted diagnostic preview: scale=1, placement disabled; "
+                "room/person registration and reconstruction quality are unverified."
+            )
         if p.get("worldUrl"):
             print(f"  world: {p['worldUrl']}")
         print("=" * 78)
@@ -3040,6 +3418,20 @@ class Pipeline:
     # ---- scheduler ----------------------------------------------------------
     def go(self):
         a = self.a
+        validate_local_clean_import(a)
+        validate_local_world_import(a)
+        if getattr(a, "import_local_world", None):
+            from local_world_import import prepare
+
+            prepare(a.import_local_world, self.clip, self.ctx, public_dir(), MARBLE_DIR, self.name)
+            self.deps = {**self.deps, "marble_video": []}
+        lhm_frozen_candidates.validate_change(self)
+        if (
+            getattr(a, "import_local_clean", None)
+            and self.state.done("clean")
+            and "clean" not in (a.force or "").split(",")
+        ):
+            raise ValueError("--import-local-clean requires --force clean when clean is cached")
         candidate = getattr(a, "clean_candidate", None)
         if (
             candidate is not None
@@ -3096,6 +3488,8 @@ class Pipeline:
                 or self.state.data["stages"].get(s, {}).get("status") not in {"ok", "skipped"}
             )
         }
+        if getattr(a, "import_local_world", None):
+            todo.add("marble_video")
         if "place_fit" in wanted and "place_fit" not in todo:
             try:
                 current = self.placement_is_current(self.world_spz())
@@ -3135,7 +3529,9 @@ class Pipeline:
         say(
             f"marble mode: {self.marble}"
             + (
-                f" (reusing world {a.reuse_world}, no credits)"
+                " (importing retained local world; no generation)"
+                if getattr(a, "import_local_world", None)
+                else f" (reusing world {a.reuse_world}, no credits)"
                 if a.reuse_world
                 else ", ONE generation = 1600 credits"
                 if self.marble in ("video", "image")
@@ -3153,7 +3549,26 @@ class Pipeline:
                 say(f"-> {stage}")
                 try:
                     self.stage_fn(stage)()
-                    self.state.record(stage, status="ok", seconds=time.time() - start)
+                    provenance = {}
+                    if stage == "clean":
+                        provenance = {
+                            "provider": "local"
+                            if getattr(a, "import_local_clean", None)
+                            else "modal"
+                        }
+                        if getattr(a, "import_local_clean", None):
+                            provenance.update(execution="imported_local", freshInference=False)
+                    if stage == "marble_video" and getattr(a, "import_local_world", None):
+                        provenance.update(
+                            provider="local",
+                            execution="imported_local",
+                            freshGeneration=False,
+                            freshInference=False,
+                            generationLineage="unknown",
+                            worldId=None,
+                            operationId=None,
+                        )
+                    self.state.record(stage, status="ok", seconds=time.time() - start, **provenance)
                     say(f"<- {stage} ok ({time.time() - start:.0f}s)")
                 except SkipStage as e:
                     vacant.add(stage)
@@ -3490,6 +3905,11 @@ def main():
         "metadata and splats, spends no credits",
     )
     ap.add_argument(
+        "--import-local-world",
+        metavar="RECEIPT",
+        help="import a hash-pinned local room without generation; direct --marble video --only marble_video",
+    )
+    ap.add_argument(
         "--gate-pass",
         "--no-gate",
         action="store_true",
@@ -3569,6 +3989,11 @@ def main():
         metavar="SLUG",
         help="write a fresh full-video clean under this run and select it after success; requires --force clean when cached",
     )
+    ap.add_argument(
+        "--import-local-clean",
+        metavar="RECEIPT",
+        help="validate/import a complete offline CPU clean into a fresh --clean-candidate; requires --only clean and --clean-masks",
+    )
     ap.add_argument("--bottom-extra", type=int, default=40)
     ap.add_argument("--lama-px", type=int, default=960)
     ap.add_argument(
@@ -3582,6 +4007,16 @@ def main():
         "--person-frame", type=int, help="source frame for the LHM avatar (default: middle)"
     )
     ap.add_argument("--person-method", default="maskrcnn", choices=["segformer", "maskrcnn"])
+    ap.add_argument(
+        "--lower-body-provenance",
+        metavar="TEXT",
+        help="measured visibility/provenance statement for single-person packaging",
+    )
+    ap.add_argument(
+        "--lhm-frozen-candidate",
+        help="fresh retained single-person frozen candidate; requires --only lhm_frozen "
+        "and --force lhm_frozen when cached; reuses the shared paid-stage ledger",
+    )
     ap.add_argument(
         "--execution-timeout",
         type=int,
@@ -3699,13 +4134,21 @@ def main():
     a = ap.parse_args()
     try:
         validate_retained_scene(a)
+        lhm_frozen_candidates.validate_options(a)
         validate_clean_candidate(a)
+        validate_local_clean_import(a)
+        validate_local_world_import(a)
         validate_shared_scale(
             a.shared_scale, a.people or (4 if a.all_people else 0), orchestrated=a.orchestrated
         )
         animation_options(execution_timeout=a.execution_timeout)
     except ValueError as error:
         ap.error(str(error))
+    if a.lower_body_provenance is not None:
+        if not a.lower_body_provenance.strip():
+            ap.error("--lower-body-provenance must be a nonempty measured statement")
+        if a.orchestrated or a.people or a.all_people:
+            ap.error("--lower-body-provenance is supported by direct single-person packaging only")
     if a.execution_timeout and (a.people or (4 if a.all_people else 0)) <= 0:
         ap.error("--execution-timeout requires --all-people or --people")
     if a.execution_timeout and a.orchestrated:
@@ -3744,13 +4187,33 @@ def main():
         if not a.skip_finetune and a.gpu_box:
             arguments.append("--finetune")
         raise SystemExit(run_orchestrated(arguments))
+    if getattr(a, "import_local_world", None):
+        from local_world_import import prepare
+
+        try:
+            validate_local_world_import(a)
+            prepare(
+                a.import_local_world,
+                Path(a.clip).absolute(),
+                runs_dir() / a.name,
+                public_dir(),
+                MARBLE_DIR,
+                a.name,
+            )
+        except (OSError, ValueError) as error:
+            ap.error(str(error))
+        a.no_publish = True
     if a.marble_key and os.environ.get(a.marble_key, "").startswith("-"):
         sys.exit("--marble-key takes the NAME of an env var, not a key")
     if a.shot is not None and a.all_shots:
         sys.exit("--shot and --all-shots ask for different things; pass one")
     rc = 0
     try:
-        plan = resolve_shots(a)
+        plan = (
+            [(a.name, Path(a.clip).resolve(), None)]
+            if getattr(a, "import_local_world", None)
+            else resolve_shots(a)
+        )
         for name, clip, shot in plan:
             if len(plan) > 1:
                 say(f"===== {name} =====")

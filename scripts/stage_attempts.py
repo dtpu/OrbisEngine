@@ -244,6 +244,8 @@ def _resource_identity(entry, root, environment):
     )
     # The environment's textual spelling (e.g. 0600) is not a different resource policy.
     policy.pop("env", None)
+    if entry == "worker/modal_lhm.py":
+        policy["gpu"] = module.lhm_gpu(environment=environment)
     return json.loads(json.dumps(policy))
 
 
