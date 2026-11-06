@@ -1,0 +1,75 @@
+scripts/test-world-preview.ts
+  s_20f6c0bf8c5b2c::t_f37ad4ed369053 1-29
+world-preview.html
+  s_11465a870157de::t_3709bcf41e02b0 33-35,71
+  s_11465a870157de::t_a0b08177d0f971 87-88
+  s_11465a870157de::t_afae521dd11ce5 1-32,36-70,72-86,89-92
+scripts/tests/test_pipeline_viewer.py
+  s_11465a870157de::t_23edff8d8b179e 164-170,172-174,194-197,200-202,206-208
+  s_11465a870157de::t_3b10f3b8d0b8d5 131-133,156-159
+  s_20f6c0bf8c5b2c::t_72bd7fd47dd95f 7,162-163,171,175-193,198-199,203-205,209-220
+  s_20f6c0bf8c5b2c::t_427bd9f8d56fc1 98-114,121-129
+  s_20f6c0bf8c5b2c::t_b6b9118fa2b4ea 130,134-155,160-161
+  s_11465a870157de::t_57a0c4fe37d151 115-120
+  s_11465a870157de::t_16050975e2ab70 221-222
+admin/lib/viewer-url.ts
+  s_20f6c0bf8c5b2c::t_81846c34b0c957 25
+scripts/test-world-preview-browser.ts
+  s_20f6c0bf8c5b2c::t_f37ad4ed369053 1-63,78-91,118-124
+  s_11465a870157de::t_a9794957c7f70f 92-100,115
+  s_11465a870157de::t_3709bcf41e02b0 64-77,101-114,116-117
+admin/tests/viewer-url.test.ts
+  s_20f6c0bf8c5b2c::t_81846c34b0c957 14-15,40-41
+  s_11465a870157de::t_23edff8d8b179e 12-13
+src/world-preview.ts
+  s_11465a870157de::t_afae521dd11ce5 1-7,9-16,18,21-26,28-65,71-76,79,81-89,96-98,100-104
+  s_11465a870157de::t_a0b08177d0f971 8,66-70,80
+  s_11465a870157de::t_3709bcf41e02b0 17,19-20,27,77-78,90-95,99,105-107
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_a902cb23015850 11
+src/world-preview-path.ts
+  s_20f6c0bf8c5b2c::t_93eba3109e25b2 1,3-6,11-12,14
+  s_20f6c0bf8c5b2c::t_f37ad4ed369053 7-10
+  s_11465a870157de::t_afae521dd11ce5 2,13,15
+package.json
+  s_11465a870157de::t_a9794957c7f70f 15,50
+orchestrator/api/progress.py
+  s_20f6c0bf8c5b2c::t_72bd7fd47dd95f 220
+  s_20f6c0bf8c5b2c::t_b6b9118fa2b4ea 179
+  s_20f6c0bf8c5b2c::t_81846c34b0c957 16-23,214-219,221-231,278
+  s_11465a870157de::t_3b10f3b8d0b8d5 180
+  s_20f6c0bf8c5b2c::t_427bd9f8d56fc1 72
+README.md
+  s_11465a870157de::t_3709bcf41e02b0 90-95
+admin/lib/types.ts
+  s_20f6c0bf8c5b2c::t_81846c34b0c957 263
+admin/components/run-overview.tsx
+  s_11465a870157de::t_23edff8d8b179e 120-124
+  s_20f6c0bf8c5b2c::t_81846c34b0c957 118-119,125-129
+vite.config.ts
+  s_11465a870157de::t_afae521dd11ce5 63-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5308e1f591b1ec91bb42b05342303fd9da866301",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
