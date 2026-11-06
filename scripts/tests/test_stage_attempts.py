@@ -868,8 +868,8 @@ class PaidRunIntegrationTests(unittest.TestCase):
         import run_clip
 
         with tempfile.TemporaryDirectory() as directory:
-            shared = str(Path(directory) / "shared.json")
-            explicit = str(Path(directory) / "explicit.json")
+            shared = str((Path(directory) / "shared.json").resolve())
+            explicit = str((Path(directory) / "explicit.json").resolve())
             for configured, extra, expected in (
                 (shared, [], shared),
                 (shared, ["--stage-ledger", explicit], explicit),
