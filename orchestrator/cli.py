@@ -851,130 +851,129 @@ def finish_locked(context: RunContext, args: argparse.Namespace, journal: Journa
             quality_status="failed" if args.status == "failed" else "blocked",
         )
         return 0
-    if args.status == "succeeded":
-        if journal.active_attempts():
-            print("cannot finish succeeded: unresolved stage attempts remain", file=sys.stderr)
-            return 1
-        if problem := source_problem(context):
-            print(problem, file=sys.stderr)
-            return 1
-        plan = set(plan_for(context))
-        missing = plan - completed(context)
-        if missing:
-            print(
-                f"cannot finish: incomplete stages: {', '.join(sorted(missing))}", file=sys.stderr
-            )
-            return 1
-        world = context.run_dir / "public" / "worlds" / f"{context.name}-4d"
-        try:
-
-            def packaged_path(base: Path, name: Any, kind: str) -> Path:
-                if not isinstance(name, str) or not name or Path(name).is_absolute():
-                    raise ValueError(f"packaged {kind} needs a relative path")
-                path = (base / name).resolve()
-                if not path.is_relative_to(world.resolve()):
-                    raise ValueError(f"packaged {kind} escapes the world directory")
-                return path
-
-            cameras = json.loads((world / "cameras.json").read_text())
-            if not isinstance(cameras, dict) or not cameras.get("cameras"):
-                raise ValueError("packaged cameras are missing")
-            sequences = {packaged_path(world, "person/sequence.json", "sequence")}
-            if "package_people" in plan:
-                manifest = json.loads(packaged_path(world, "people.json", "manifest").read_text())
-                if not isinstance(manifest, dict) or manifest.get("schema") != "wander.people/1":
-                    raise ValueError("packaged people manifest is malformed")
-                if manifest.get("sourceSha256") != context.source_sha256:
-                    raise ValueError("packaged people source identity is missing or changed")
-                people = manifest.get("people")
-                if (
-                    not isinstance(people, list)
-                    or not people
-                    or type(manifest.get("peopleCount")) is not int
-                    or manifest["peopleCount"] != len(people)
-                ):
-                    raise ValueError("packaged people manifest has no valid people list")
-                ids, referenced = set(), set()
-                for person in people:
-                    if not isinstance(person, dict):
-                        raise ValueError("packaged person manifest entry is malformed")
-                    person_id = person.get("id")
-                    if not isinstance(person_id, str) or not person_id or person_id in ids:
-                        raise ValueError("packaged person identity is missing or repeated")
-                    ids.add(person_id)
-                    sequence_path = packaged_path(world, person.get("sequence"), "sequence")
-                    if sequence_path in referenced:
-                        raise ValueError("packaged person sequence is repeated")
-                    referenced.add(sequence_path)
-                if manifest.get("primary") not in ids:
-                    raise ValueError("packaged primary person is missing")
-                sequences.update(referenced)
-            for sequence_path in sorted(sequences):
-                sequence = json.loads(sequence_path.read_text())
-                if (
-                    not isinstance(sequence, dict)
-                    or sequence.get("sourceSha256") != context.source_sha256
-                ):
-                    raise ValueError("packaged source identity is missing or changed")
-                frames, hashes = sequence.get("frames"), sequence.get("frame_sha256")
-                if (
-                    not isinstance(frames, list)
-                    or not frames
-                    or not isinstance(hashes, list)
-                    or len(frames) != len(hashes)
-                ):
-                    raise ValueError("packaged frame identities are missing")
-                for name, expected in zip(frames, hashes, strict=True):
-                    path = packaged_path(sequence_path.parent, name, "frame")
-                    with path.open("rb") as frame:
-                        if hashlib.file_digest(frame, "sha256").hexdigest() != expected:
-                            raise ValueError(
-                                f"packaged frame changed: {path.relative_to(world.resolve())}"
-                            )
-            if context.options.get("marble", "video") != "none":
-                state = json.loads((context.run_dir / "state.json").read_text())
-                if state.get("stages", {}).get("_verify", {}).get("passed") is not True:
-                    raise ValueError("the static world has no passed manual review")
-            # Stage records and person hashes alone do not deliver a replay. Use the
-            # same readiness contract as the dashboard link, including the selected
-            # final world, audio metadata and run-scoped source copy.
-            from orchestrator.api.viewer import asset_path, scene_manifest
-
-            if scene_manifest(context.run_dir) is None:
-                raise ValueError(
-                    "packaged viewer scene is incomplete; restore or repackage its source, "
-                    "audio metadata and selected world before finishing"
-                )
-            audio = json.loads((world / "audio.json").read_text())
-            if not (
-                isinstance(audio, dict)
-                and audio.get("schema") == "wander.audio/1"
-                and isinstance(audio.get("source"), dict)
-                and type(audio["source"].get("hasAudio")) is bool
-                and isinstance(audio.get("timeline"), dict)
-                and type(audio["timeline"].get("durationSeconds")) in (int, float)
-                and math.isfinite(audio["timeline"]["durationSeconds"])
-                and audio["timeline"]["durationSeconds"] > 0
-            ):
-                raise ValueError("packaged audio metadata is malformed")
-            if audio["source"].get("sha256", context.source_sha256) != context.source_sha256:
-                raise ValueError("packaged audio metadata names a different source clip")
-            exported_source = asset_path(
-                context.run_dir, f"clips/{context.name}/source{context.source.suffix.lower()}"
-            )
-            with exported_source.open("rb") as source:
-                if hashlib.file_digest(source, "sha256").hexdigest() != context.source_sha256:
-                    raise ValueError(
-                        "packaged exported source bytes differ from the submitted clip"
-                    )
-        except (OSError, ValueError, TypeError) as error:
-            print(f"cannot finish: {error}", file=sys.stderr)
-            return 1
+    if args.status == "succeeded" and (problem := completion_problem(context, journal)):
+        print(f"cannot finish: {problem}", file=sys.stderr)
+        return 1
     if journal.control_status() == "canceled":
         print("cannot finish: run was canceled; an operator must resume it first", file=sys.stderr)
         return 2
     journal.append("run.finished", status=args.status, summary=args.summary)
     return 0
+
+
+def completion_problem(context: RunContext, journal: Journal) -> str | None:
+    """Check completed stages and retained package bytes without reopening the run."""
+    if journal.active_attempts():
+        return "unresolved stage attempts remain"
+    if problem := source_problem(context):
+        return problem
+    plan = set(plan_for(context))
+    missing = plan - completed(context)
+    if missing:
+        return f"incomplete stages: {', '.join(sorted(missing))}"
+    world = context.run_dir / "public" / "worlds" / f"{context.name}-4d"
+    try:
+
+        def packaged_path(base: Path, name: Any, kind: str) -> Path:
+            if not isinstance(name, str) or not name or Path(name).is_absolute():
+                raise ValueError(f"packaged {kind} needs a relative path")
+            path = (base / name).resolve()
+            if not path.is_relative_to(world.resolve()):
+                raise ValueError(f"packaged {kind} escapes the world directory")
+            return path
+
+        cameras = json.loads((world / "cameras.json").read_text())
+        if not isinstance(cameras, dict) or not cameras.get("cameras"):
+            raise ValueError("packaged cameras are missing")
+        sequences = {packaged_path(world, "person/sequence.json", "sequence")}
+        if "package_people" in plan:
+            manifest = json.loads(packaged_path(world, "people.json", "manifest").read_text())
+            if not isinstance(manifest, dict) or manifest.get("schema") != "wander.people/1":
+                raise ValueError("packaged people manifest is malformed")
+            if manifest.get("sourceSha256") != context.source_sha256:
+                raise ValueError("packaged people source identity is missing or changed")
+            people = manifest.get("people")
+            if (
+                not isinstance(people, list)
+                or not people
+                or type(manifest.get("peopleCount")) is not int
+                or manifest["peopleCount"] != len(people)
+            ):
+                raise ValueError("packaged people manifest has no valid people list")
+            ids, referenced = set(), set()
+            for person in people:
+                if not isinstance(person, dict):
+                    raise ValueError("packaged person manifest entry is malformed")
+                person_id = person.get("id")
+                if not isinstance(person_id, str) or not person_id or person_id in ids:
+                    raise ValueError("packaged person identity is missing or repeated")
+                ids.add(person_id)
+                sequence_path = packaged_path(world, person.get("sequence"), "sequence")
+                if sequence_path in referenced:
+                    raise ValueError("packaged person sequence is repeated")
+                referenced.add(sequence_path)
+            if manifest.get("primary") not in ids:
+                raise ValueError("packaged primary person is missing")
+            sequences.update(referenced)
+        for sequence_path in sorted(sequences):
+            sequence = json.loads(sequence_path.read_text())
+            if (
+                not isinstance(sequence, dict)
+                or sequence.get("sourceSha256") != context.source_sha256
+            ):
+                raise ValueError("packaged source identity is missing or changed")
+            frames, hashes = sequence.get("frames"), sequence.get("frame_sha256")
+            if (
+                not isinstance(frames, list)
+                or not frames
+                or not isinstance(hashes, list)
+                or len(frames) != len(hashes)
+            ):
+                raise ValueError("packaged frame identities are missing")
+            for name, expected in zip(frames, hashes, strict=True):
+                path = packaged_path(sequence_path.parent, name, "frame")
+                with path.open("rb") as frame:
+                    if hashlib.file_digest(frame, "sha256").hexdigest() != expected:
+                        raise ValueError(
+                            f"packaged frame changed: {path.relative_to(world.resolve())}"
+                        )
+        if context.options.get("marble", "video") != "none":
+            state = json.loads((context.run_dir / "state.json").read_text())
+            if state.get("stages", {}).get("_verify", {}).get("passed") is not True:
+                raise ValueError("the static world has no passed manual review")
+        # Stage records and person hashes alone do not deliver a replay. Use the
+        # same readiness contract as the dashboard link, including the selected
+        # final world, audio metadata and run-scoped source copy.
+        from orchestrator.api.viewer import asset_path, scene_manifest
+
+        if scene_manifest(context.run_dir) is None:
+            raise ValueError(
+                "packaged viewer scene is incomplete; restore or repackage its source, "
+                "audio metadata and selected world before finishing"
+            )
+        audio = json.loads((world / "audio.json").read_text())
+        if not (
+            isinstance(audio, dict)
+            and audio.get("schema") == "wander.audio/1"
+            and isinstance(audio.get("source"), dict)
+            and type(audio["source"].get("hasAudio")) is bool
+            and isinstance(audio.get("timeline"), dict)
+            and type(audio["timeline"].get("durationSeconds")) in (int, float)
+            and math.isfinite(audio["timeline"]["durationSeconds"])
+            and audio["timeline"]["durationSeconds"] > 0
+        ):
+            raise ValueError("packaged audio metadata is malformed")
+        if audio["source"].get("sha256", context.source_sha256) != context.source_sha256:
+            raise ValueError("packaged audio metadata names a different source clip")
+        exported_source = asset_path(
+            context.run_dir, f"clips/{context.name}/source{context.source.suffix.lower()}"
+        )
+        with exported_source.open("rb") as source:
+            if hashlib.file_digest(source, "sha256").hexdigest() != context.source_sha256:
+                raise ValueError("packaged exported source bytes differ from the submitted clip")
+    except (OSError, ValueError, TypeError) as error:
+        return str(error)
+    return None
 
 
 def command_status(context: RunContext, args: argparse.Namespace) -> int:

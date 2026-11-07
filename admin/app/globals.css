@@ -2306,3 +2306,46 @@ video.viewer__media {
 .run-previews__images img {
   height: 160px;
 }
+
+.world-review {
+  margin: 24px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+}
+.world-review fieldset {
+  border: 0;
+  padding: 0;
+  margin: 16px 0 0;
+  min-width: 0;
+}
+.world-review__sample {
+  margin: 24px 0;
+}
+.world-review__sample h3 {
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.world-review__pair {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 12px 0;
+}
+.world-review__criteria {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.world-review__criterion {
+  min-width: 0;
+}
+.world-review__acknowledgements {
+  display: grid;
+  gap: 12px;
+  margin: 24px 0;
+}
+@media (max-width: 760px) {
+  .world-review__criteria {
+    grid-template-columns: 1fr;
+  }
+}

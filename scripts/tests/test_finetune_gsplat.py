@@ -142,3 +142,310 @@ def test_heldout_depth_requires_and_counts_intersection():
     assert count == 1
     with pytest.raises(ValueError, match="frame 2 has no supported unmasked"):
         trainer.heldout_depth_error(depth, reference, supported, valid, alpha * 0, 2)
+
+
+def surface_packet(depths, weights):
+    logs = depths.log()
+    moments = torch.stack(((logs * weights).sum(), (logs.square() * weights).sum()))[None]
+    return moments, weights.sum()[None]
+
+
+def surface_loss(moments, alpha, target=2.0, alpha_weight=0.1):
+    return trainer.surface_depth_loss(
+        moments,
+        alpha,
+        torch.full_like(alpha, target),
+        torch.ones_like(alpha, dtype=torch.bool),
+        torch.ones_like(alpha, dtype=torch.bool),
+        alpha_weight,
+    )
+
+
+def test_surface_resolves_equal_mean_depth_ambiguity_and_moves_each_surface():
+    depths = torch.tensor([1.0, 3.0], dtype=torch.float64, requires_grad=True)
+    weights = torch.tensor([0.5, 0.5], dtype=torch.float64)
+    assert (depths * weights).sum().item() == 2  # Existing expected-depth loss is zero.
+    moments, alpha = surface_packet(depths, weights)
+    loss, metrics = surface_loss(moments, alpha)
+    expected = torch.sqrt(((depths.log() - np.log(2)) ** 2 * weights).sum() + 1e-6) - 0.001
+    torch.testing.assert_close(loss, expected)
+    assert metrics["spread"].item() > 0
+    loss.backward()
+    assert depths.grad[0] < 0 < depths.grad[1]  # Gradient descent moves both toward the target.
+    assert torch.isfinite(depths.grad).all()
+
+
+def test_surface_exact_depth_and_common_scale_invariance():
+    depths = torch.tensor([1.0, 3.0], dtype=torch.float64)
+    weights = torch.tensor([0.4, 0.6], dtype=torch.float64)
+    baseline, _ = surface_loss(*surface_packet(depths, weights))
+    scaled, _ = surface_loss(*surface_packet(depths * 17, weights), target=34)
+    torch.testing.assert_close(baseline, scaled)
+    exact, _ = surface_loss(*surface_packet(torch.tensor([2.0]), torch.ones(1)))
+    assert exact.item() == pytest.approx(0, abs=1e-7)
+
+
+def test_surface_fixed_support_and_opacity_gradients_do_not_reward_transparency():
+    depths = torch.tensor([1.0, 3.0], dtype=torch.float64)
+    weights = torch.tensor([0.5, 0.5], dtype=torch.float64)
+    moments, alpha = surface_packet(depths, weights)
+    full, full_metrics = surface_loss(moments, alpha)
+    opacity_scale = torch.tensor(0.2, dtype=torch.float64, requires_grad=True)
+    faint, faint_metrics = surface_loss(moments * opacity_scale, alpha * opacity_scale)
+    assert faint.item() - full.item() == pytest.approx(0.08)
+    assert full_metrics["count"] == faint_metrics["count"] == 1
+    torch.testing.assert_close(full_metrics["residual"], faint_metrics["residual"])
+    faint.backward()
+    assert opacity_scale.grad.item() == pytest.approx(-0.1)
+    empty, empty_metrics = surface_loss(torch.zeros(1, 2), torch.zeros(1), target=1)
+    assert empty.item() == pytest.approx(0.1)
+    assert empty_metrics["count"] == 1
+    assert torch.isfinite(empty)
+
+
+def test_surface_empty_selection_ignores_garbage_and_has_zero_gradients():
+    moments = torch.tensor([[float("nan"), float("nan")]], requires_grad=True)
+    alpha = torch.tensor([float("nan")], requires_grad=True)
+    loss, metrics = trainer.surface_depth_loss(
+        moments, alpha, torch.tensor([float("nan")]), torch.tensor([False]), torch.tensor([True])
+    )
+    assert loss.item() == 0
+    assert metrics["count"] == 0
+    loss.backward()
+    assert torch.equal(moments.grad, torch.zeros_like(moments))
+    assert torch.equal(alpha.grad, torch.zeros_like(alpha))
+
+
+def test_surface_masks_person_and_unsupported_pixels_before_log():
+    moments = torch.tensor([[0.0, 0.0], [float("nan"), 0.0], [float("nan"), 0.0]])
+    loss, metrics = trainer.surface_depth_loss(
+        moments,
+        torch.tensor([1.0, float("nan"), float("nan")]),
+        torch.tensor([1.0, 0.0, float("nan")]),
+        torch.tensor([True, False, True]),
+        torch.tensor([True, True, False]),
+    )
+    assert loss.item() == 0
+    assert metrics["count"] == 1
+
+
+@pytest.mark.parametrize("target", [0.0, -1.0, float("nan"), float("inf")])
+def test_surface_rejects_invalid_selected_target(target):
+    with pytest.raises(ValueError, match="finite and positive"):
+        surface_loss(torch.zeros(1, 2), torch.ones(1), target=target)
+
+
+@pytest.mark.parametrize("which", ["moments", "alpha"])
+def test_surface_rejects_nonfinite_selected_render(which):
+    moments, alpha = torch.zeros(1, 2), torch.ones(1)
+    if which == "moments":
+        moments[0, 1] = float("nan")
+    else:
+        alpha[0] = float("inf")
+    with pytest.raises(ValueError, match="moments and alpha must be finite"):
+        surface_loss(moments, alpha)
+
+
+def test_quaternion_tether_sign_magnitude_angle_and_gradients():
+    q = torch.tensor([[1.0, 0, 0, 0], [-2.0, 0, 0, 0], [1.0, 1.0, 0, 0]], requires_grad=True)
+    reference = torch.tensor([[3.0, 0, 0, 0]]).expand_as(q)
+    penalty = trainer.quaternion_tether(q, reference)
+    torch.testing.assert_close(penalty, torch.tensor([0.0, 0.0, 0.5]))
+    torch.testing.assert_close(penalty, trainer.quaternion_tether(-q, reference))
+    penalty.sum().backward()
+    assert torch.isfinite(q.grad).all()
+    assert q.grad[2, 0] < 0 < q.grad[2, 1]
+
+
+@pytest.mark.parametrize("surface", [False, True])
+@pytest.mark.parametrize("depth", [False, True])
+def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surface, depth):
+    captured = {}
+
+    def rasterization(**kwargs):
+        captured.update(kwargs)
+        colors = kwargs["colors"]
+        output = 0.25 * colors.sum(0)[None, None, None]
+        if kwargs["render_mode"] == "RGB+ED":
+            output = torch.cat((output, torch.full((1, 1, 1, 1), 17.0)), dim=-1)
+        return output, torch.full((1, 1, 1, 1), 0.25), {}
+
+    monkeypatch.setitem(sys.modules, "gsplat", SimpleNamespace(rasterization=rasterization))
+    model = trainer.Model(
+        dict(
+            means=np.array([[0, 0, 1]], dtype=np.float32),
+            quats=np.array([[1, 0, 0, 0]], dtype=np.float32),
+            log_scales=np.zeros((1, 3), dtype=np.float32),
+            logit_opacities=np.zeros(1, dtype=np.float32),
+            f_dc=np.array([[0, 1, 2]], dtype=np.float32),
+        ),
+        "cpu",
+    )
+    model.means.requires_grad_(True)
+    view = torch.eye(4)
+    view[2, 3] = 1  # Features must use current camera-space depth, not world z.
+    K = torch.tensor([[7.0, 0, 2], [0, 9.0, 3], [0, 0, 1]])
+    rgb, alpha, rendered_depth, info = model.render(
+        view, K, 5, 4, depth=depth, surface_depth=surface
+    )
+    assert captured["colors"].shape[-1] == (5 if surface else 3)
+    assert captured["render_mode"] == ("RGB+ED" if depth else "RGB")
+    torch.testing.assert_close(captured["Ks"][0], K)
+    torch.testing.assert_close(rgb[0, 0], 0.25 * (0.5 + trainer.SH_C0 * model.f_dc[0]))
+    assert alpha.shape == (1, 1, 1)
+    if depth:
+        assert rendered_depth.item() == 17
+    else:
+        assert rendered_depth is None
+    if surface:
+        logs = torch.tensor([np.log(2), np.log(2) ** 2], dtype=torch.float32)
+        torch.testing.assert_close(info["log_depth_moments"][0, 0], 0.25 * logs)
+        info["log_depth_moments"][..., 0].sum().backward()
+        assert model.means.grad[0, 2].item() == pytest.approx(0.125)
+    else:
+        assert "log_depth_moments" not in info
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--lambda-surface-depth", "nan"),
+        ("--lambda-surface-depth", "-1"),
+        ("--surface-alpha-weight", "inf"),
+        ("--surface-alpha-weight", "-0.1"),
+        ("--lambda-quat-reg", "-1"),
+        ("--lambda-quat-reg", "nan"),
+        ("--sigma-pos", "0"),
+        ("--clamp-pos", "-1"),
+        ("--m-per-unit", "inf"),
+    ],
+)
+def test_invalid_objective_arguments_fail_before_files_cuda_and_output(
+    tmp_path, monkeypatch, flag, value
+):
+    def unexpected_device(*_):
+        pytest.fail("Argument preflight must run before device selection")
+
+    monkeypatch.setattr(trainer.torch, "device", unexpected_device)
+    with pytest.raises(ValueError, match="must be"):
+        trainer.main(
+            ["--data", str(tmp_path / "absent"), "--out", str(tmp_path / "out"), flag, value]
+        )
+    assert not (tmp_path / "out").exists()
+
+
+def test_invalid_selected_depth_fails_before_cuda_and_output(cameras, monkeypatch):
+    from PIL import Image
+
+    path, data = cameras
+    np.savez(path, **data)
+    depths = np.ones((2, 3, 5), dtype=np.float32)
+    depths[1, 1, 1] = float("nan")
+    np.savez(
+        path.with_name("depth.npz"),
+        depth=depths,
+        supported=np.ones_like(depths, dtype=bool),
+        depth_index=[0, 1],
+    )
+    masks = path.parent / "masks"
+    masks.mkdir()
+    for i in range(2):
+        Image.fromarray(np.zeros((3, 5), dtype=np.uint8)).save(masks / f"{i:04d}.png")
+    monkeypatch.setattr(
+        trainer.torch, "device", lambda *_: pytest.fail("Unexpected CUDA selection")
+    )
+    with pytest.raises(ValueError, match="finite and positive"):
+        trainer.main(
+            [
+                "--data",
+                str(path.parent),
+                "--out",
+                str(path.parent / "out"),
+                "--poses",
+                "0",
+                "--offpath-frame",
+                "1",
+                "--lambda-surface-depth",
+                "1",
+            ]
+        )
+    assert not (path.parent / "out").exists()
+
+
+def test_surface_preflight_resizes_and_ignores_masked_invalid_depth(tmp_path):
+    from PIL import Image
+
+    (tmp_path / "masks").mkdir()
+    # Nearest resize from two to four columns repeats each source column twice.
+    Image.fromarray(np.array([[255, 255, 0, 0]], dtype=np.uint8)).save(
+        tmp_path / "masks" / "0000.png"
+    )
+    reference = np.array([[[float("nan"), 2.0]]], dtype=np.float32)
+    supported = np.ones_like(reference, dtype=bool)
+    trainer.validate_surface_targets(tmp_path, reference, supported, np.array([0]), 4, 1)
+    Image.fromarray(np.zeros((1, 4), dtype=np.uint8)).save(tmp_path / "masks" / "0000.png")
+    supported[0, 0, 0] = False
+    trainer.validate_surface_targets(tmp_path, reference, supported, np.array([0]), 4, 1)
+    supported[0, 0, 0] = True
+    with pytest.raises(ValueError, match="finite and positive"):
+        trainer.validate_surface_targets(tmp_path, reference, supported, np.array([0]), 4, 1)
+
+
+@pytest.mark.parametrize(
+    "invalid", [[0.0, 0, 0, 0], [float("nan"), 0, 0, 0], [float("inf"), 0, 0, 0]]
+)
+@pytest.mark.parametrize("bad_reference", [False, True])
+def test_quaternion_tether_rejects_invalid_current_and_reference(invalid, bad_reference):
+    valid = torch.tensor([[1.0, 0, 0, 0]])
+    invalid = torch.tensor([invalid])
+    current, reference = (valid, invalid) if bad_reference else (invalid, valid)
+    with pytest.raises(ValueError, match="finite and nonzero"):
+        trainer.quaternion_tether(current, reference)
+
+
+@pytest.mark.parametrize("magnitude", [1e-30, 1e30])
+def test_quaternion_tether_normalizes_extreme_finite_magnitudes(magnitude):
+    rotated = torch.tensor([[magnitude, magnitude, 0, 0]])
+    reference = torch.tensor([[1.0, 0, 0, 0]])
+    torch.testing.assert_close(trainer.quaternion_tether(rotated, reference), torch.tensor([0.5]))
+
+
+@pytest.mark.parametrize("use_override", [False, True])
+@pytest.mark.parametrize(
+    "invalid", [[0.0, 0, 0, 0], [float("nan"), 0, 0, 0], [float("inf"), 0, 0, 0]]
+)
+def test_invalid_initial_quaternion_fails_before_cuda_and_output(
+    cameras, monkeypatch, use_override, invalid
+):
+    path, data = cameras
+    np.savez(path, **data)
+    np.savez(
+        path.with_name("depth.npz"),
+        depth=np.ones((2, 3, 5)),
+        supported=np.ones((2, 3, 5), dtype=bool),
+        depth_index=[0, 1],
+    )
+    default = path.with_name("splats.npz")
+    np.savez(default, quats=np.array([[1.0, 0, 0, 0]] if use_override else [invalid]))
+    arguments = [
+        "--data",
+        str(path.parent),
+        "--out",
+        str(path.parent / "out"),
+        "--poses",
+        "0",
+        "--offpath-frame",
+        "1",
+        "--lambda-quat-reg",
+        "0.1",
+    ]
+    if use_override:
+        override = path.with_name("override.npz")
+        np.savez(override, quats=np.array([invalid]))
+        arguments += ["--init-npz", str(override)]
+    monkeypatch.setattr(
+        trainer.torch, "device", lambda *_: pytest.fail("Unexpected CUDA selection")
+    )
+    with pytest.raises(ValueError, match="finite and nonzero"):
+        trainer.main(arguments)
+    assert not (path.parent / "out").exists()

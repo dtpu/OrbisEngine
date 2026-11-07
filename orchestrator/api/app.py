@@ -35,6 +35,7 @@ from orchestrator.api.progress import (
     stage_snapshot,
 )
 from orchestrator.api.reviews import register_review_routes
+from orchestrator.api.world_review import register_world_review_routes
 from orchestrator.api.questions import apply_question_hold, restore_legacy_question_states
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
@@ -575,6 +576,8 @@ def create_app(
             step=request.node_id,
         )
         return {"id": identifier}
+
+    register_world_review_routes(app, repository, actor, review_workspace_root)
 
     @app.post("/api/pipeline/runs/{run_id}/{command}", status_code=202)
     def command(

@@ -629,6 +629,17 @@ class CommandIdentityTests(unittest.TestCase):
                     {key: value for key, value in after.items() if key != helper},
                 )
 
+    def test_pi3x_exact_source_decoder_changes_are_fingerprinted(self):
+        helper = "worker/wander_worker/source_timing.py"
+        command = ["modal", "run", "worker/modal_motion.py", "--experiment", "pi3x"]
+        parameters, before, _ = command_identity(command, self.root)
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed source selection\n")
+        after_parameters, after, _ = command_identity(command, self.root)
+        self.assertEqual(parameters, after_parameters)
+        self.assertNotEqual(before[helper], after[helper])
+
     def test_single_person_lhm_deadline_guard_changes_are_fingerprinted(self):
         helper = "worker/stages/lhm_execution.py"
         command = ["modal", "run", "worker/modal_lhm.py"]

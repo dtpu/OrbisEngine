@@ -8,6 +8,7 @@ import { leadArtifact } from '@/lib/blocks';
 import { GraphCanvas } from '@/components/graph-canvas';
 import { Progress } from '@/components/progress';
 import { RunOverview } from '@/components/run-overview';
+import { WorldReview } from '@/components/world-review';
 import { SavedInputs } from '@/components/saved-inputs';
 import { StageStrip } from '@/components/stage-strip';
 import { Status } from '@/components/status';
@@ -337,6 +338,10 @@ export default function RunConsole({ runId }: { runId: string }) {
 
   function onApprove() {
     if (!run || !selected || !attempt) return;
+    if (selected.id === 'verify') {
+      setError('Use Static world review to review the bound source and render pairs.');
+      return;
+    }
     const text = rationale.trim();
     if (!text) {
       setError('Approval needs a rationale.');
@@ -528,6 +533,9 @@ export default function RunConsole({ runId }: { runId: string }) {
       </header>
 
       <RunOverview runId={runId} onSelectStage={setSelectedId} />
+      {!savedDelivery && run.configuration.options.marble !== 'none' ? (
+        <WorldReview key={runId} runId={runId} />
+      ) : null}
       {savedDelivery ? (
         <p className="notice">
           Prepared from saved inputs. Resume to allow one local packaging attempt. Stage retries are
@@ -876,7 +884,11 @@ export default function RunConsole({ runId }: { runId: string }) {
 
                 {!savedDelivery ? (
                   <div className="decide__actions">
-                    {isGate || selected.definition.kind === 'human' ? (
+                    {selected.id === 'verify' ? (
+                      <a className="button" href="#world-review-title">
+                        Review source comparisons
+                      </a>
+                    ) : isGate || selected.definition.kind === 'human' ? (
                       <button
                         className="button button--approve"
                         type="button"

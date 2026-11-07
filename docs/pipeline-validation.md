@@ -31,6 +31,22 @@ The suite needs the locked inference dependencies for local tensor-based observa
 packaging checks. CI installs that group explicitly; these synthetic checks do not download
 model weights or submit provider jobs.
 
+The dashboard can load a settled run's retained source/render pairs and import an explicit
+static-world review without reopening its agent or paid stages. The API rechecks source,
+camera, world, placement and image hashes, the selected viewer scale, and the existing
+completion contract before marking the run complete. Authentication, stale evidence,
+partial journal writes and changes during completion have regression coverage. A browser
+check against the real API kept uncertain synthetic judgments blocked, then completed the
+same synthetic fixture with explicit passing judgments. This tests the review workflow;
+it does not approve any real reconstruction. Evidence: `.context/evidence/upload-e2e-20261107/`.
+
+New Pi3X camera inference decodes selected source ordinals directly and records their actual
+PTS, timebase and input JPEG hashes. Variable-rate and nonzero-start fixtures check the
+pixel/timestamp correspondence. The retained lobby's 115 selected ordinals and relative
+times are unchanged in an offline extraction check; its old camera matrices were not
+regenerated or relabelled. The worker also forwards its configured Modal settings, GPU
+choice and execution timeout through the isolated agent/stage environment.
+
 Fine-tuning exports bind supplied exclusion masks to the source hash, exact decoded frame
 indices, PTS, timebase, dimensions and camera timestamps before loading the world or creating
 output. Cameras require a source hash or a matching sibling `sequence.json`. Equal mask and
@@ -382,6 +398,22 @@ credentials are not committed. The shared ledger now exhausts the ordinary camer
 allowances for this original source; candidate renaming does not reset them.
 
 ## Remaining boundaries
+
+The November 7 lobby iteration reused the original clip and retained world. Offline camera
+sampling matched all 115 historical source ordinals; no camera inference was claimed for that
+check. Two bounded 800-step GPU experiments executed with corrected depth targets, followed by
+local import, fixed scale diagnostics, source/lateral comparisons and the actual viewer. The
+second used the opt-in surface-depth and quaternion objectives in `scripts/finetune_gsplat.py`.
+Its additional CPU tests cover conflicting depths with a correct mean, gradients, unsupported
+pixels, empty/zero-alpha cases, render channel routing and invalid rotations before GPU setup.
+
+Neither experiment passed scene quality. The final candidate improves source appearance and
+depth concentration but still distorts elevators, glazing and sideways floor/portal views.
+The fixed late-view scale diagnostic is median 1.105 and p90 1.616, outside the unchanged
+0.95–1.05 median and 0.9–1.1 spread bands. It was not promoted, no replacement world or new
+OpenAI call ran, and the new training terms remain opt-in. All 115 saved person frames loaded
+and played in the viewer; fresh person inference, collision/walking support and headset quality
+were not established by this iteration. Private evidence: `.context/evidence/upload-e2e-20261107/`.
 
 - The bounded fresh Modal check above verified its selected workspace and models. New inference
   still requires an applicable budget and remaining shared attempt allowance. World generation

@@ -132,6 +132,7 @@ CODE_FILES = {
         "worker/stages/dense_pi3x.py",
         "worker/wander_worker/masks.py",
         "worker/wander_worker/ply.py",
+        "worker/wander_worker/source_timing.py",
     ),
     "worker/modal_lhm.py": (
         "worker/stages/worker_resources.py",

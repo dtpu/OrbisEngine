@@ -25,6 +25,7 @@ from orchestrator.steps import base_step, needs_of
 
 JOURNAL_FILE = "journal.jsonl"
 ADMISSION_LOCK_FILE = ".step-admission.lock"
+MANUAL_WORLD_REVIEW = "manual-static-world-review"
 
 # What a line can be. A step is work that ran; the rest is the agent or an operator speaking.
 KINDS = (
@@ -77,17 +78,23 @@ class Journal:
         if kind not in KINDS:
             raise ValueError(f"not a kind of thing that happens: {kind}")
         if kind == "question":
-            # Older question projections overwrote node status. New questions are journal
-            # holds, so readers can distinguish them when repairing legacy rows.
+            # Distinguish journal holds from older projections that overwrote node status.
             data["statusSource"] = "journal"
         entry = Entry(kind=kind, at=_now(), data=data)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(
             {"kind": entry.kind, "at": entry.at, "data": entry.data}, separators=(",", ":")
         )
+        payload = (line + "\n").encode()
         descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         try:
-            os.write(descriptor, (line + "\n").encode())
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            original_size = os.fstat(descriptor).st_size
+            if os.write(descriptor, payload) != len(payload):
+                # With the append lock held, only our incomplete line is removed.
+                os.ftruncate(descriptor, original_size)
+                os.fsync(descriptor)
+                raise OSError("Incomplete journal append")
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -155,7 +162,13 @@ class Journal:
     def attempt_number(self, step: str) -> int:
         """How many times this step has been started, plus one."""
         started = sum(
-            1 for e in self.entries() if e.kind == "step.started" and e.data.get("step") == step
+            1
+            for e in self.entries()
+            if e.data.get("step") == step
+            and (
+                e.kind == "step.started"
+                or (e.kind == "step.finished" and e.data.get("origin") == MANUAL_WORLD_REVIEW)
+            )
         )
         return started + 1
 
@@ -248,17 +261,13 @@ class RunProjection:
             step = data["step"]
             self._ensure_node(step)
             self.repository.set_node_status(self.run_id, step, "running")
-            self.repository.record_attempt_started(
-                run_id=self.run_id,
-                node_id=step,
-                attempt_id=data["attempt"],
-                number=int(data.get("number", 1)),
-                command=list(data.get("command") or ()),
-                parameters=dict(data.get("parameters") or {}),
-                started_at=entry.at,
-            )
+            self._record_attempt(entry)
         elif entry.kind == "step.finished":
             step = data["step"]
+            if data.get("origin") == MANUAL_WORLD_REVIEW:
+                # The operator's offline review is already settled when journaled.
+                self._ensure_node(step, refresh_existing=False)
+                self._record_attempt(entry)
             self.repository.record_attempt_finished(
                 run_id=self.run_id,
                 attempt_id=data["attempt"],
@@ -292,6 +301,18 @@ class RunProjection:
             )
         elif entry.kind == "run.finished":
             self.repository.finish_run(self.run_id, data.get("status", "succeeded"))
+
+    def _record_attempt(self, entry: Entry) -> None:
+        data = entry.data
+        self.repository.record_attempt_started(
+            run_id=self.run_id,
+            node_id=data["step"],
+            attempt_id=data["attempt"],
+            number=int(data.get("number", 1)),
+            command=list(data.get("command") or ()),
+            parameters=dict(data.get("parameters") or {}),
+            started_at=entry.at,
+        )
 
     def _ensure_node(self, step: str, *, refresh_existing: bool = True) -> None:
         """Make a row for a step the run is doing but did not plan.
