@@ -1,0 +1,77 @@
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_369b7cb0d734c4 6-8
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_7f95986f97b913 425-439
+  s_20f6c0bf8c5b2c::t_369b7cb0d734c4 400-424,440-443
+scripts/bake_video_colours.py
+  s_20f6c0bf8c5b2c::t_0539eeff1ddc65 460-462,500-502
+  s_20f6c0bf8c5b2c::t_f601432330f16d 463-464
+  s_20f6c0bf8c5b2c::t_5ca0f438b7b3d9 443-459,465-478,481-483,486-499,503-519,529,534-535,540-541,586,588-598,619-624
+  s_20f6c0bf8c5b2c::t_a556995dff3f94 479-480,484-485
+  s_20f6c0bf8c5b2c::t_0bb3c2ec5d80da 583-585,587
+worker/stages/dense_pi3x.py
+  s_20f6c0bf8c5b2c::t_f34e64af57cd17 19,200-203,210-215,351-355,437-440,477-485,499-501,516-517,533,585,615
+  s_20f6c0bf8c5b2c::t_8563aaccc63637 197-199,204-209
+scripts/tests/test_static_cloud_locked.py
+  s_20f6c0bf8c5b2c::t_0bb3c2ec5d80da 88-96
+  s_20f6c0bf8c5b2c::t_b91ad88613a3ca 119-134
+  s_20f6c0bf8c5b2c::t_0539eeff1ddc65 1-87,97-118,135-217
+scripts/tests/test_run_clip_resume.py
+  s_20f6c0bf8c5b2c::t_5005c16cc5f74d 48-53
+  s_20f6c0bf8c5b2c::t_b1e6925a917ca2 54-84
+scripts/tests/test_camera_stitch_integration.py
+  s_20f6c0bf8c5b2c::t_0bb3c2ec5d80da 18,115-124
+  s_20f6c0bf8c5b2c::t_aa655fec502faf 74,76-77
+  s_20f6c0bf8c5b2c::t_7293b3dd33c3b5 6,19-23,25,28-31,37-41,45,47-57,59-67
+  s_20f6c0bf8c5b2c::t_b1e6925a917ca2 1-5,7-17,68-73,75,78-114
+  s_20f6c0bf8c5b2c::t_17fbc7fdfcf8d3 24,26-27,32-36,42-44,46,58
+worker/modal_motion.py
+  s_20f6c0bf8c5b2c::t_8563aaccc63637 72-74,182-184
+  s_20f6c0bf8c5b2c::t_b1e6925a917ca2 84-85
+  s_20f6c0bf8c5b2c::t_f34e64af57cd17 132-133,155,189-190,193
+scripts/tests/test_camera_stitch.py
+  s_20f6c0bf8c5b2c::t_95efabbfbb8d0e 70,78-89,91-95,97-98
+  s_11465a870157de::t_b47f3134fdbbfb 40-42,120-125,129-131
+  s_20f6c0bf8c5b2c::t_22b541b0f346bf 6-7,9
+  s_20f6c0bf8c5b2c::t_5d846ac2914516 1-5,8,10-39,43-69,71-77,99-119,126-128,132-154
+  s_20f6c0bf8c5b2c::t_286b642184be47 90,96
+README.md
+  s_20f6c0bf8c5b2c::t_369b7cb0d734c4 159-161
+scripts/tests/test_orchestrator_parameters.py
+  s_20f6c0bf8c5b2c::t_b1e6925a917ca2 28
+worker/wander_worker/camera_stitch.py
+  s_20f6c0bf8c5b2c::t_95efabbfbb8d0e 35
+  s_20f6c0bf8c5b2c::t_5d846ac2914516 1-31,36-93
+  s_20f6c0bf8c5b2c::t_286b642184be47 32-34
+orchestrator/steps.py
+  s_20f6c0bf8c5b2c::t_f34e64af57cd17 445-452
+scripts/stage_attempts.py
+  s_20f6c0bf8c5b2c::t_0bb3c2ec5d80da 133,156
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_b1e6925a917ca2 1734-1750,3491-3496
+  s_20f6c0bf8c5b2c::t_f34e64af57cd17 1728,4015-4019
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "baa47e0110852b270d2a3c35557a96a7ba9ac50e",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
