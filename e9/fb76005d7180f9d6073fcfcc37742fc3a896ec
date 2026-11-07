@@ -1,0 +1,43 @@
+scripts/finetune_export.py
+  s_20f6c0bf8c5b2c::t_54f7bb2eef3eab 18,134-151,153-170,202-203,238-262
+  s_11465a870157de::t_37f121e8da2a18 152,279-318,324-346,434,456-463
+  s_20f6c0bf8c5b2c::t_8310ab1bf1cc44 319-323
+scripts/tests/test_finetune_export.py
+  s_20f6c0bf8c5b2c::t_3392b3bd139f2b 312
+  s_20f6c0bf8c5b2c::t_bfed53b25a37bc 79,131-133,166-171,205-218,240-244,265-271,273,275,317-319,325-327,333-360
+  s_20f6c0bf8c5b2c::t_0535bb45453660 272,274
+scripts/bake_video_colours.py
+  s_11465a870157de::t_37f121e8da2a18 444-450,475-476,490-494,522-529
+  s_20f6c0bf8c5b2c::t_0577ed10b6f280 443,451-474,477-489,495,505-511,514-515,517-521,530-531,535-536
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_227af24392f462 48-56
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_227af24392f462 24
+  s_20f6c0bf8c5b2c::t_a547cd7bd4be8d 25
+scripts/tests/test_static_cloud.py
+  s_20f6c0bf8c5b2c::t_4a41cfa0f766dc 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9fb76005d7180f9d6073fcfcc37742fc3a896ec",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
