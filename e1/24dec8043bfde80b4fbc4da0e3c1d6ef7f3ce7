@@ -1,0 +1,36 @@
+scripts/tests/test_finetune_export.py
+  s_20f6c0bf8c5b2c::t_bb4a5e2abab7f4 125-151,172,246-265
+  s_20f6c0bf8c5b2c::t_e10fd5217b29a2 7,44,110,156,181-234,237,239,266-290
+  s_20f6c0bf8c5b2c::t_9db766e49c5790 1-6,8-43,45-109,111-124,152-155,157-171,173-180,235-236,238,240-245
+scripts/finetune_export.py
+  s_20f6c0bf8c5b2c::t_85a37a2f9102f0 187-196,254,260-261
+  s_20f6c0bf8c5b2c::t_4d60bd4551f274 11-12,16-17,30,33,67-73,75-119,121-133,153,160-167,169-173,175,197-207,210-216,274-275,303,305,345-347,350-359,364-372
+  s_20f6c0bf8c5b2c::t_b9804e67141e1e 31,57-66,74,120,168,177-182,208-209,304,314,330,348-349,360-363
+  s_20f6c0bf8c5b2c::t_76cfe0c9cded18 174,176
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_f3d35165be4357 16
+scripts/tests/test_finetune_gsplat.py
+  s_20f6c0bf8c5b2c::t_d1cb24fd0ee9ee 1-144
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_f3d35165be4357 34-47
+scripts/finetune_gsplat.py
+  s_20f6c0bf8c5b2c::t_d1cb24fd0ee9ee 72-74,234-235,777-779
+  s_20f6c0bf8c5b2c::t_12706a00fdf1b8 228-233,236-240,490-491,532,537,543-547,789-791,841-842
+  s_20f6c0bf8c5b2c::t_3572c75af6f22f 45-71,75-77,143-144,187,190,196,201,209,213,285,434,437-459,468-470,472-473,488,502,524,540,566,569-571,576-578,631,642,646,668
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e124dec8043bfde80b4fbc4da0e3c1d6ef7f3ce7",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
