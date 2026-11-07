@@ -1,0 +1,35 @@
+scripts/tests/test_orchestrator_session.py
+  s_20f6c0bf8c5b2c::t_90b401fe30e0f5 427,431-438,458,465,468,471,473-479
+scripts/stage_attempts.py
+  s_20f6c0bf8c5b2c::t_b24a4e4acca065 135
+worker/stages/dense_pi3x.py
+  s_20f6c0bf8c5b2c::t_2ed95255b8c181 221,305
+  s_20f6c0bf8c5b2c::t_78b131c55c95c7 231-235,275-277,294-296,301-303,578-582
+  s_20f6c0bf8c5b2c::t_80665735993117 9-10,18,196-220,222-230,236-274,278-293,297-300,304,306-323,333,339-341,343-352,354-355,403-405,452-453,493,527,533-535,569-570
+scripts/tests/test_stage_attempts.py
+  s_20f6c0bf8c5b2c::t_1a762ea16f11d9 632-642
+docs/pipeline-setup.md
+  s_20f6c0bf8c5b2c::t_90b401fe30e0f5 91-96
+orchestrator/session.py
+  s_20f6c0bf8c5b2c::t_90b401fe30e0f5 37,51-52
+scripts/tests/test_dense_pi3x_sampling.py
+  s_20f6c0bf8c5b2c::t_74f45726ce9245 3,73-75
+  s_20f6c0bf8c5b2c::t_76b302d3d9c6e4 6,12
+  s_20f6c0bf8c5b2c::t_78b131c55c95c7 1-2,4-5,7-11,13-72,76-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "563c4f5aa96522b59c595bf5e2253027172429a3",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
