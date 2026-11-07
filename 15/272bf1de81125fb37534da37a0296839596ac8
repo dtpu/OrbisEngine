@@ -1,0 +1,43 @@
+scripts/tests/test_finetune_gsplat.py
+  s_11465a870157de::t_1185d683a54d77 145-267,269-270,272-293,295-301,303,305-372
+  s_20f6c0bf8c5b2c::t_58c2f17ba91163 268,271,294,302,304
+  s_11465a870157de::t_e6a3f72a780045 392-451
+  s_11465a870157de::t_2d3c47540df9de 373-391
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_f170af61433f81 402-417
+scripts/finetune_gsplat.py
+  s_20f6c0bf8c5b2c::t_fe67be19f7e618 347-377,404,410,430-447,558,583-584
+  s_20f6c0bf8c5b2c::t_1706f0f4c7aefa 123-132,380-389,585-586
+  s_11465a870157de::t_1185d683a54d77 681-685,690-693,820-824,989-994
+  s_20f6c0bf8c5b2c::t_ddc898b96098d9 19-21,23
+  s_20f6c0bf8c5b2c::t_5d0e10e0a283f0 121-122,133-171,198,202-205,223-224,226-227
+  s_20f6c0bf8c5b2c::t_180881589d1774 661,667,670-672,679-680,686-689,694,696-697,796-799,815-819,825-827,848-851,986-988,995-997,1054-1066
+  s_20f6c0bf8c5b2c::t_49b3319a499609 22
+  s_20f6c0bf8c5b2c::t_21934e2460b3ab 378-379
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_f170af61433f81 23-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15272bf1de81125fb37534da37a0296839596ac8",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
