@@ -440,13 +440,59 @@ class JsonSource:
         return np.asarray(im)
 
 
-def static_cloud_from_anchors(anchors: Path, cameras: Path, anchor_samples, conf_pct=20.0):
-    """Pi3X dense anchor frames -> one static point cloud in the cameras.json (OpenGL, cam0 = identity) frame.
-    Anchor poses are OpenCV; each anchor's points go through its own camera (local depth is what Pi3X
-    measured), so only the world scale needs fitting (anchor positions are near-collinear on a dolly)."""
-    a = np.load(anchors)
-    cams = json.load(open(cameras))["cameras"]
-    poses = a["poses"].astype(np.float64)
+def static_cloud_from_anchors(
+    anchors: Path,
+    cameras: Path,
+    anchor_samples,
+    conf_pct=20.0,
+    *,
+    exclusion_masks=None,
+    exclusion_report=None,
+):
+    """Map Pi3X anchor points through their own cameras into the public OpenGL frame.
+
+    Optional boolean exclusion masks are keyed by camera sample and already aligned
+    to the anchor pixel grid. The supplied sample list identifies archive rows in order.
+    When provided, exclusion_report receives counts before and after these extra masks.
+    """
+    with np.load(anchors, allow_pickle=False) as a:
+        poses = a["poses"].astype(np.float64)
+        points, valid, people, conf = (a[key] for key in ("points", "valid", "people", "conf"))
+    cams = json.loads(cameras.read_text())["cameras"]
+    anchor_samples = list(anchor_samples)
+    if (
+        not anchor_samples
+        or poses.shape != (len(anchor_samples), 4, 4)
+        or valid.ndim != 3
+        or valid.shape[0] != len(anchor_samples)
+        or not all(valid.shape)
+        or points.shape != (*valid.shape, 3)
+        or people.shape != valid.shape
+        or conf.shape != valid.shape
+    ):
+        raise ValueError("Anchor sample count or pixel grid does not match the anchor archive")
+    if any(
+        not isinstance(i, (int, np.integer))
+        or isinstance(i, (bool, np.bool_))
+        or not 0 <= i < len(cams)
+        for i in anchor_samples
+    ):
+        raise ValueError("Anchor samples must index the camera grid")
+    if exclusion_masks is not None:
+        if (
+            not isinstance(exclusion_masks, dict)
+            or anchor_samples != sorted(set(anchor_samples))
+            or any(type(sample) is not int for sample in exclusion_masks)
+            or set(exclusion_masks) != set(anchor_samples)
+        ):
+            raise ValueError("Anchor exclusion samples must match the ordered anchor samples")
+        for mask in exclusion_masks.values():
+            if (
+                not isinstance(mask, np.ndarray)
+                or mask.dtype != np.bool_
+                or mask.shape != valid.shape[1:]
+            ):
+                raise ValueError("Anchor exclusions must be boolean masks on the anchor pixel grid")
     missing = [i for i in anchor_samples if not cams[i]]
     if missing:
         raise ValueError(
@@ -456,17 +502,38 @@ def static_cloud_from_anchors(anchors: Path, cameras: Path, anchor_samples, conf
     pub = np.array([cams[i]["camera_to_world"] for i in anchor_samples], np.float64)
     ap, pp = poses[:, :3, 3], pub[:, :3, 3]
     S, D = ap - ap.mean(0), pp - pp.mean(0)
-    scale = float(np.sqrt((D**2).sum() / (S**2).sum()))
-    keep = a["valid"] & ~a["people"] & (a["conf"] > np.percentile(a["conf"], conf_pct))
+    anchor_baseline, public_baseline = float((S**2).sum()), float((D**2).sum())
+    if not all(np.isfinite(v) and v > 0 for v in (anchor_baseline, public_baseline)):
+        raise ValueError("Anchor scale needs finite positive pose baselines")
+    scale = float(np.sqrt(public_baseline / anchor_baseline))
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("Anchor scale must be finite and positive")
+    keep = valid & ~people & (conf > np.percentile(conf, conf_pct))
     F = np.diag([1.0, -1.0, -1.0])  # OpenCV camera -> OpenGL camera
     out = []
-    for i in range(len(poses)):
-        P = a["points"][i][keep[i]].astype(np.float64)
+    for i, sample in enumerate(anchor_samples):
+        P = points[i][keep[i]].astype(np.float64)
         C = (P - poses[i][:3, 3]) @ poses[i][:3, :3]  # into the anchor's OpenCV camera
-        C = C[C[:, 2] > 0] * scale
+        usable = (C[:, 2] > 0) & np.isfinite(C).all(axis=1)
+        if exclusion_masks is not None:
+            mask = exclusion_masks[sample]
+            excluded = usable & mask[keep[i]]
+            if exclusion_report is not None:
+                exclusion_report.append(
+                    {
+                        "sample": sample,
+                        "candidatePoints": int(usable.sum()),
+                        "excludedPoints": int(excluded.sum()),
+                        "retainedPoints": int((usable & ~excluded).sum()),
+                    }
+                )
+            usable &= ~excluded
+        C = C[usable] * scale
         W = (C @ F) @ pub[i][:3, :3].T + pub[i][:3, 3]  # OpenGL camera -> public world
         out.append(W.astype(np.float32))
     pts = np.concatenate(out)
+    if not len(pts) or not np.isfinite(pts).all():
+        raise ValueError("Static anchor cloud has no usable finite points")
     print(
         f"static cloud: {len(pts)} points from {len(poses)} anchors, scale {scale:.4f}, bbox {pts.min(0).round(2)} .. {pts.max(0).round(2)}",
         flush=True,
