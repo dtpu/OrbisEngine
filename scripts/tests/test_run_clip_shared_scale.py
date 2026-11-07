@@ -45,6 +45,56 @@ class SharedScaleTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--shared-scale") + 1], value or "auto")
                 self.assertIn(f"1={pipeline.ctx / 'lhm-motion-01'}", command)
 
+    def test_single_person_package_forwards_only_explicit_visibility_statement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pipeline = object.__new__(run_clip.Pipeline)
+            pipeline.ctx, pipeline.name, pipeline.clip = (
+                root / "run",
+                "fixture",
+                root / "source.mp4",
+            )
+            folder = pipeline.ctx / "lhm-motion"
+            folder.mkdir(parents=True)
+            (folder / "sequence.json").write_text(
+                json.dumps({"duration": 1, "frames": ["frame_000.ply"]})
+            )
+            for statement in (
+                None,
+                "Visibility measured from source; hidden geometry is inferred.",
+            ):
+                pipeline.a = SimpleNamespace(lower_body_provenance=statement)
+                with (
+                    patch.object(run_clip, "public_dir", return_value=root / "public"),
+                    patch.object(run_clip, "source_audio_manifest"),
+                    patch.object(run_clip, "run") as process,
+                ):
+                    pipeline.package()
+                command = process.call_args.args[0]
+                if statement is None:
+                    self.assertNotIn("--lower-body", command)
+                else:
+                    self.assertEqual(command[command.index("--lower-body") + 1], statement)
+
+    def test_visibility_statement_rejects_blank_and_unsupported_paths_before_work(self):
+        for flags in (
+            ["--lower-body-provenance", " "],
+            ["--lower-body-provenance", "observed", "--people", "1"],
+            ["--lower-body-provenance", "observed", "--orchestrated"],
+        ):
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    ["run_clip.py", "--clip", "unused.mp4", "--name", "fixture", *flags],
+                ),
+                patch.object(run_clip, "resolve_shots") as shots,
+                self.assertRaises(SystemExit) as exited,
+            ):
+                run_clip.main()
+            self.assertEqual(exited.exception.code, 2)
+            shots.assert_not_called()
+
     def test_missing_reference_animation_is_rejected_before_output_rebuild(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

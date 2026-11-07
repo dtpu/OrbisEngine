@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import run_clip
-from stage_attempts import AUTHORIZATION_SCHEMA, CODE_FILES, StageAttempts, command_identity
+from stage_attempts import AUTHORIZATION_SCHEMA, CODE_FILES, StageAttempts, command_identity, digest
 
 SOURCE = "a" * 64
 
@@ -544,6 +544,7 @@ class CommandIdentityTests(unittest.TestCase):
                         "max_containers": containers,
                         "retries": 0,
                         "scaledown_window": 2,
+                        **({"gpu": "L4"} if worker == "worker/modal_lhm.py" else {}),
                     },
                 )
                 self.assertEqual(low["resources"]["timeout"], 600)
@@ -554,6 +555,36 @@ class CommandIdentityTests(unittest.TestCase):
                 self.assertNotEqual(low, high)
                 self.assertEqual(low, normalized)
                 self.assertNotIn("secret", json.dumps(normalized))
+
+    def test_lhm_gpu_identity_pins_default_and_changed_request(self):
+        command = ["modal", "run", "worker/modal_lhm.py"]
+        default, code, _ = command_identity(command, self.root, environment={})
+        explicit, explicit_code, _ = command_identity(
+            command, self.root, environment={"WANDER_LHM_GPU": "L4"}
+        )
+        changed, changed_code, _ = command_identity(
+            command,
+            self.root,
+            environment={"WANDER_LHM_GPU": "L40S", "PRIVATE_KEY": "secret"},
+        )
+        self.assertEqual(default, explicit)
+        self.assertEqual(code, explicit_code)
+        self.assertEqual(code, changed_code)
+        self.assertEqual(default["resources"]["gpu"], "L4")
+        self.assertEqual(changed["resources"]["gpu"], "L40S")
+        self.assertEqual(
+            {k: v for k, v in default["resources"].items() if k != "gpu"},
+            {k: v for k, v in changed["resources"].items() if k != "gpu"},
+        )
+        self.assertNotEqual(digest(default), digest(changed))
+        self.assertNotIn("secret", json.dumps(changed))
+        with self.assertRaisesRegex(ValueError, "WANDER_LHM_GPU"):
+            command_identity(command, self.root, environment={"WANDER_LHM_GPU": "A10"})
+        other = ["modal", "run", "worker/modal_motion.py"]
+        self.assertEqual(
+            command_identity(other, self.root, environment={}),
+            command_identity(other, self.root, environment={"WANDER_LHM_GPU": "invalid"}),
+        )
 
     def test_irrelevant_workers_ignore_resource_environment(self):
         command = ["modal", "run", "worker/modal_image_to_3d.py"]

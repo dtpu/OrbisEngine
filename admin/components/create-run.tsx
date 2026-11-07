@@ -143,8 +143,9 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
         Start a run
       </h2>
       <p className="field__hint">
-        Upload once. Processing continues automatically and returns a scene preview or a failure
-        report. Failed checks remain visible; there are no automatic paid retries.
+        Uploads queue until a processing worker is connected. The worker processes queued runs and
+        returns a scene preview or a failure report. Failed checks remain visible; there are no
+        automatic paid retries.
       </p>
       <label
         className={`drop${over ? ' drop--over' : ''}`}

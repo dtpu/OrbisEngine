@@ -153,12 +153,27 @@ def test_real_streams_and_package_timeline(tmp_path, monkeypatch, clips, multipl
         "timeline": {"durationSeconds": timeline["duration"]},
         "defaultMode": "original",
     }
+    if not multiple:
+        assert "has not been reviewed" in timeline["lowerBodyProvenance"]
+        assert "is inferred" in timeline["lowerBodyProvenance"]
     assert timeline["duration"] == 0.7  # Deliberately different from the one-second source.
     assert clip.read_bytes() == before  # Embedded AAC remains byte-for-byte intact.
     run_package(
         monkeypatch, module, args, clip, out
     )  # Identical generated declaration is reusable.
     assert json.loads((out / "audio.json").read_text()) == audio
+
+
+def test_single_person_packager_preserves_measured_visibility_statement(
+    tmp_path, monkeypatch, clips
+):
+    module, args = package_inputs(tmp_path, False)
+    out = tmp_path / "world"
+    statement = "Feet are visible initially; off-frame geometry is inferred."
+    run_package(monkeypatch, module, [*args, "--lower-body", statement], clips[False], out)
+    assert (
+        json.loads((out / "person/sequence.json").read_text())["lowerBodyProvenance"] == statement
+    )
 
 
 def test_legacy_sequence_duration_matches_viewer(tmp_path, monkeypatch, clips):
