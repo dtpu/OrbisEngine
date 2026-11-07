@@ -76,7 +76,7 @@ def inputs(tmp_path):
     world = tmp_path / "world.spz"
     world.write_bytes(b"world fixture")
     anchors = tmp_path / "anchors.npz"
-    anchors.write_bytes(b"anchor fixture")
+    np.savez(anchors, valid=np.ones((2, height, width), dtype=bool))
     out = tmp_path / "export"
     argv = [
         "--clip",
@@ -128,6 +128,9 @@ def write_inputs(path, archive, cameras, sequence):
         ("camera-hash", "Camera source hash mismatch"),
         ("sequence-grid", "Camera sequence source indices"),
         ("sequence-time", "Camera sequence timestamps"),
+        ("anchor-sequence", "Anchor samples or source binding"),
+        ("anchor-sequence-order", "Anchor samples or source binding"),
+        ("anchor-duplicate", "unique, ordered camera samples"),
         ("missing-rgb", "Decoded RGB frame count"),
     ],
 )
@@ -160,6 +163,12 @@ def test_rejects_before_creating_output_or_loading_world(inputs, monkeypatch, mu
         sequence["sourceIndices"] = [1, 3]
     elif mutation == "sequence-time":
         sequence["timestamps"][1] = 0.41
+    elif mutation == "anchor-sequence":
+        sequence["anchors"] = [0, 2]
+    elif mutation == "anchor-sequence-order":
+        sequence["anchors"] = [1, 0]
+    elif mutation == "anchor-duplicate":
+        argv[argv.index("--anchor-samples") + 1] = "0,0"
     elif mutation == "missing-rgb":
         decode = export.select_source_frames
 
@@ -193,7 +202,20 @@ def stub_world_geometry(monkeypatch):
         },
     )
     scene = np.array([[0.0, -1.0, 0.0]], dtype=np.float32)
-    build_cloud = Mock(return_value=scene)
+
+    def cloud(*args, exclusion_masks, exclusion_report):
+        exclusion_report.extend(
+            {
+                "sample": sample,
+                "candidatePoints": 2,
+                "excludedPoints": int(mask.any()),
+                "retainedPoints": 2 - int(mask.any()),
+            }
+            for sample, mask in exclusion_masks.items()
+        )
+        return scene
+
+    build_cloud = Mock(side_effect=cloud)
     monkeypatch.setattr(export, "static_cloud_from_anchors", build_cloud)
     monkeypatch.setattr(export, "levelled_origin", lambda *_: (np.eye(4), None))
     monkeypatch.setattr(
@@ -215,7 +237,11 @@ def test_valid_timing_exports_exact_frames_and_pins_inputs(inputs, monkeypatch, 
     alignment.write_text("{}")
     scene, build_cloud = stub_world_geometry(monkeypatch)
     export.main(argv)
-    build_cloud.assert_called_once_with(path / "anchors.npz", path / "cameras.json", [0, 1])
+    build_cloud.assert_called_once()
+    assert build_cloud.call_args.args == (path / "anchors.npz", path / "cameras.json", [0, 1])
+    exclusions = build_cloud.call_args.kwargs["exclusion_masks"]
+    assert not exclusions[0].any()
+    assert exclusions[1][5, 9] and exclusions[1][5, 11]
     out = path / "export"
     assert stale.read_bytes() == b"unrelated anchor cache"
     np.testing.assert_array_equal(np.load(out / "static-scene.npy"), scene)
@@ -236,6 +262,17 @@ def test_valid_timing_exports_exact_frames_and_pins_inputs(inputs, monkeypatch, 
         None if direct_binding else export.sha256(path / "sequence.json")
     )
     assert receipt["anchorSamples"] == [0, 1]
+    depth_exclusions = receipt["depthExclusions"]
+    assert depth_exclusions["includesOriginalSuppliedMasks"]
+    assert depth_exclusions["includesFinalTrainingMasks"]
+    assert [row["sourceIndex"] for row in depth_exclusions["anchors"]] == [0, 2]
+    assert [row["excludedPoints"] for row in depth_exclusions["anchors"]] == [0, 1]
+    for index, row in enumerate(depth_exclusions["anchors"]):
+        with Image.open(out / "masks" / f"{index:04d}.png") as image:
+            assert (
+                row["finalTrainingMaskSha256"]
+                == export.hashlib.sha256((np.asarray(image) > 127).tobytes()).hexdigest()
+            )
     assert receipt["sourceIndices"] == [0, 2]
     assert receipt["sourceProvenance"]["sourceTimeBase"] == str(archive["source_time_base"])
     assert [frame["sourcePts"] for frame in receipt["sourceProvenance"]["frames"]] == archive[
@@ -272,19 +309,52 @@ def test_generated_mask_path_uses_exact_frames_with_legacy_cameras(inputs, monke
     (path / "cameras.json").write_text(json.dumps(cameras))
     masks_arg = argv.index("--masks-npz")
     del argv[masks_arg : masks_arg + 2]
-    stub_world_geometry(monkeypatch)
+    _, build_cloud = stub_world_geometry(monkeypatch)
 
     def person_masks(images, *, dilate_px):
         np.testing.assert_array_equal(images[:, 0, 0, 0], [0, 110])
         assert dilate_px == 16
-        return np.zeros(images.shape[:3], dtype=bool)
+        masks = np.zeros(images.shape[:3], dtype=bool)
+        masks[1, 5, 9] = True
+        return masks
 
     monkeypatch.setitem(
         sys.modules, "wander_worker.masks", SimpleNamespace(people_masks=person_masks)
     )
     export.main(argv)
+    exclusions = build_cloud.call_args.kwargs["exclusion_masks"]
+    assert not exclusions[0].any()
+    assert exclusions[1][5, 11] and not exclusions[1][5, 12]
     receipt = json.loads((path / "export" / "export-receipt.json").read_bytes())
     assert receipt["maskMethod"] == "person"
     assert receipt["masksSha256"] is None
     assert receipt["cameraSequenceSha256"] is None
     assert receipt["sourceIndices"] == [0, 2]
+
+
+def test_original_thin_exclusion_survives_training_resize(inputs, monkeypatch):
+    path, argv, archive, cameras, sequence = inputs
+    original = np.zeros((2, 12, 17), dtype=bool)
+    original[1, 0, 0] = True
+    archive["masks"] = np.packbits(original, axis=2)
+    write_inputs(path, archive, cameras, sequence)
+    size_arg = argv.index("--size")
+    argv[size_arg + 1 : size_arg + 3] = ["1", "1"]
+    _, build_cloud = stub_world_geometry(monkeypatch)
+    export.main(argv)
+    with Image.open(path / "export/masks/0001.png") as image:
+        assert not np.asarray(image).any()
+    np.testing.assert_array_equal(build_cloud.call_args.kwargs["exclusion_masks"][1], original[1])
+
+
+def test_overlap_resize_excludes_both_cells_straddled_by_one_pixel():
+    mask = np.zeros((3, 5), dtype=bool)
+    mask[1, 2] = True
+    # The source center cell crosses both destination grid boundaries.
+    np.testing.assert_array_equal(
+        export.resize_exclusion_overlap(mask, (2, 2)), np.ones((2, 2), dtype=bool)
+    )
+    mask = np.array([[True, False]])
+    np.testing.assert_array_equal(
+        export.resize_exclusion_overlap(mask, (1, 4)), [[True, True, False, False]]
+    )

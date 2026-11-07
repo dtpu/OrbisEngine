@@ -45,6 +45,15 @@ Held-out depth scores include contributing pixel counts and reject empty compari
 checks prevent mismatched training inputs and misleading empty scores; a better training
 score still requires source-matched and off-axis visual review before scene acceptance.
 
+The static depth reference also applies those exclusions at each source anchor, before
+projecting points into other training views. Final dilated training masks and original supplied
+masks are transferred by pixel-cell overlap, so downsampling cannot silently retain a thin
+excluded foreground point. The export receipt records anchor/source associations, mask hashes
+and removed/retained point counts. On the retained lobby inputs this removes 74,567 points that
+the older anchor masks allowed; all 115 training images and masks, camera arrays and initial
+world arrays remain unchanged. This corrects depth supervision, not a visual-quality verdict
+or evidence of a new training run.
+
 The admin's `bun test ./tests` checks schema-derived options and queue decisions. Its production
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.

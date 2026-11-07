@@ -15,6 +15,7 @@ depth.npz, static-scene.npy and export-receipt.json.
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -130,6 +131,43 @@ def supplied_mask_inputs(clip, masks_path, cameras_path, camera_doc, size):
     return images, archive, provenance, masks_sha, sequence_path, sequence_sha
 
 
+def resize_exclusion_overlap(mask, shape):
+    """Exclude a destination cell if it overlaps any excluded source cell."""
+    if not isinstance(mask, np.ndarray) or mask.dtype != np.bool_ or mask.ndim != 2:
+        raise ValueError("Exclusion resize requires a 2D boolean mask")
+    if not all(mask.shape) or len(shape) != 2 or not all(n > 0 for n in shape):
+        raise ValueError("Exclusion resize requires nonempty grids")
+    if mask.shape == shape:
+        return mask.copy()
+
+    def bounds(source, target):
+        # Integer edges avoid treating cells that merely touch as overlapping.
+        edges = np.arange(target + 1, dtype=np.int64) * source
+        return edges[:-1] // target, (edges[1:] + target - 1) // target
+
+    y0, y1 = bounds(mask.shape[0], shape[0])
+    x0, x1 = bounds(mask.shape[1], shape[1])
+    sums = np.pad(mask, ((1, 0), (1, 0))).cumsum(axis=0).cumsum(axis=1)
+    return (
+        sums[np.ix_(y1, x1)] - sums[np.ix_(y0, x1)] - sums[np.ix_(y1, x0)] + sums[np.ix_(y0, x0)]
+    ) > 0
+
+
+def anchor_exclusions(anchors, anchor_samples, masks, archive):
+    with np.load(anchors, allow_pickle=False) as data:
+        grid = data["valid"].shape
+    if len(grid) != 3 or grid[0] != len(anchor_samples) or not all(grid):
+        raise ValueError("Anchor sample count or pixel grid does not match the anchor archive")
+    exclusions = {}
+    for sample in anchor_samples:
+        mask = resize_exclusion_overlap(masks[sample], grid[1:])
+        if archive is not None:
+            full = np.unpackbits(archive["masks"][sample], axis=1, count=int(archive["shape"][2]))
+            mask |= resize_exclusion_overlap(full.astype(bool), grid[1:])
+        exclusions[sample] = mask
+    return exclusions
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", default=ROOT / "public/marble-bedroom-clean.spz", type=Path)
@@ -161,6 +199,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.out.exists() or a.out.is_symlink():
         raise FileExistsError(f"Export directory already exists: {a.out}")
+    if not math.isfinite(a.scale0) or a.scale0 <= 0:
+        raise ValueError("World scale must be finite and positive")
     camera_bytes = a.cameras.read_bytes()
     camera_doc = json.loads(camera_bytes)
     cams = camera_doc["cameras"]
@@ -195,6 +235,31 @@ def main(argv=None):
     if not np.isfinite(export_Ks).all() or np.any(export_Ks[:, (0, 1), (0, 1)] <= 0):
         raise ValueError("Exported camera intrinsics must be finite with positive focal lengths")
     anchor_samples = [int(sample) for sample in a.anchor_samples.split(",")]
+    if anchor_samples != sorted(set(anchor_samples)) or any(
+        not 0 <= sample < len(cams) for sample in anchor_samples
+    ):
+        raise ValueError("Anchor samples must be unique, ordered camera samples")
+    sibling = a.cameras.with_name("sequence.json")
+    if sibling.is_file():
+        sequence_bytes = sibling.read_bytes()
+        sibling_sha = hashlib.sha256(sequence_bytes).hexdigest()
+        if sequence_sha is not None and sibling_sha != sequence_sha:
+            raise ValueError("Camera sequence changed during validation")
+        sequence = json.loads(sequence_bytes)
+        if "anchors" in sequence:
+            recorded = sequence["anchors"]
+            indices = sequence.get("sourceIndices")
+            if (
+                not isinstance(recorded, list)
+                or any(type(sample) is not int for sample in recorded)
+                or recorded != anchor_samples
+                or sequence.get("sourceSha256") != source_sha
+                or not isinstance(indices, list)
+                or any(type(index) is not int for index in indices)
+                or indices != src_idx
+            ):
+                raise ValueError("Anchor samples or source binding do not match camera sequence")
+            sequence_path, sequence_sha = sibling, sibling_sha
     input_hashes = {
         a.clip: source_sha,
         a.cameras: camera_sha,
@@ -210,6 +275,74 @@ def main(argv=None):
     for path, expected in input_hashes.items():
         if sha256(path) != expected:
             raise ValueError(f"Export input changed during preflight: {path}")
+
+    from PIL import Image
+    from scipy import ndimage
+
+    if archive is not None:
+        mask_method = "supplied"
+        full = np.unpackbits(archive["masks"], axis=2, count=SW)
+        masks = np.stack(
+            [
+                np.array(Image.fromarray(m.astype(np.uint8) * 255).resize((W, H), Image.NEAREST))
+                > 127
+                for m in full
+            ]
+        )
+    elif a.moved_mask:
+        mask_method = "moved"
+        # the loss ignores what MOVED, not only the person: a cast shadow or a carried object is
+        # in the frames but not in the static world, so the trainer is graded against pixels the
+        # model can never reproduce and paints them onto the geometry to close the gap
+        sys.path.insert(0, str(ROOT / "worker"))
+        from wander_worker.masks import moved_content_masks
+
+        res = moved_content_masks(imgs, dilate_px=max(1, a.mask_dilate * W // SW), batch_size=8)
+        masks = res["moved"]
+        print(
+            f"moved-content mask: person {100 * res['person'].mean():.1f}% -> moved "
+            f"{100 * masks.mean():.1f}% of pixels, "
+            f"{sum(1 for st in res['stats'] if st['rejected'])}/{len(imgs)} frames fell back to person only",
+            flush=True,
+        )
+    else:
+        mask_method = "person"
+        sys.path.insert(0, str(ROOT / "worker"))
+        from wander_worker.masks import people_masks
+
+        masks = np.concatenate(
+            [
+                people_masks(imgs[i : i + 8], dilate_px=max(1, a.mask_dilate * W // SW))
+                for i in range(0, len(imgs), 8)
+            ]
+        )
+    if (
+        not isinstance(masks, np.ndarray)
+        or masks.dtype != np.bool_
+        or masks.shape != (len(cams), H, W)
+    ):
+        raise ValueError("Expected boolean exclusion masks on the training frame grid")
+    masks = np.stack([ndimage.binary_dilation(mask, iterations=2) for mask in masks])
+    exclusions = anchor_exclusions(a.anchors, anchor_samples, masks, archive)
+    anchor_counts = []
+    # Use the same final exclusion as training, plus the original supplied mask
+    # before nearest-neighbor training resize can drop narrow foreground pixels.
+    scene = static_cloud_from_anchors(
+        a.anchors,
+        a.cameras,
+        anchor_samples,
+        exclusion_masks=exclusions,
+        exclusion_report=anchor_counts,
+    )
+    for record in anchor_counts:
+        sample = record["sample"]
+        mask = exclusions[sample]
+        record.update(
+            sourceIndex=src_idx[sample],
+            excludedAnchorPixels=int(mask.sum()),
+            anchorMaskSha256=hashlib.sha256(mask.tobytes()).hexdigest(),
+            finalTrainingMaskSha256=hashlib.sha256(masks[sample].tobytes()).hexdigest(),
+        )
 
     a.out.mkdir(parents=True, exist_ok=False)
     (a.out / "frames").mkdir()
@@ -271,7 +404,6 @@ def main(argv=None):
     )
 
     # depth: one z-buffered layer per camera from the Pi3X anchor cloud, native units
-    scene = static_cloud_from_anchors(a.anchors, a.cameras, anchor_samples)
     np.save(a.out / "static-scene.npy", scene)
     DW, DH = a.depth_res
     depth = np.zeros((len(cams), DH, DW), np.float32)
@@ -297,51 +429,9 @@ def main(argv=None):
         flush=True,
     )
 
-    from PIL import Image
-    from scipy import ndimage
-
-    if archive is not None:
-        mask_method = "supplied"
-        full = np.unpackbits(archive["masks"], axis=2, count=SW)
-        masks = np.stack(
-            [
-                np.array(Image.fromarray(m.astype(np.uint8) * 255).resize((W, H), Image.NEAREST))
-                > 127
-                for m in full
-            ]
-        )
-    elif a.moved_mask:
-        mask_method = "moved"
-        # the loss ignores what MOVED, not only the person: a cast shadow or a carried object is
-        # in the frames but not in the static world, so the trainer is graded against pixels the
-        # model can never reproduce and paints them onto the geometry to close the gap
-        sys.path.insert(0, str(ROOT / "worker"))
-        from wander_worker.masks import moved_content_masks
-
-        res = moved_content_masks(imgs, dilate_px=max(1, a.mask_dilate * W // SW), batch_size=8)
-        masks = res["moved"]
-        print(
-            f"moved-content mask: person {100 * res['person'].mean():.1f}% -> moved "
-            f"{100 * masks.mean():.1f}% of pixels, "
-            f"{sum(1 for st in res['stats'] if st['rejected'])}/{len(imgs)} frames fell back to person only",
-            flush=True,
-        )
-    else:
-        mask_method = "person"
-        sys.path.insert(0, str(ROOT / "worker"))
-        from wander_worker.masks import people_masks
-
-        masks = np.concatenate(
-            [
-                people_masks(imgs[i : i + 8], dilate_px=max(1, a.mask_dilate * W // SW))
-                for i in range(0, len(imgs), 8)
-            ]
-        )
     for i in range(len(cams)):
         Image.fromarray(imgs[i]).save(a.out / "frames" / f"{i:04d}.jpg", quality=95)
-        m = masks[i]
-        m = ndimage.binary_dilation(m, iterations=2)
-        Image.fromarray((m * 255).astype(np.uint8)).save(a.out / "masks" / f"{i:04d}.png")
+        Image.fromarray((masks[i] * 255).astype(np.uint8)).save(a.out / "masks" / f"{i:04d}.png")
     for path, expected in input_hashes.items():
         if sha256(path) != expected:
             raise ValueError(f"Export input changed during export: {path}")
@@ -363,6 +453,14 @@ def main(argv=None):
             "maskDilationExportPixels": 2,
             "anchorsSha256": input_hashes[a.anchors],
             "anchorSamples": anchor_samples,
+            "depthExclusions": {
+                "method": "source-pixel-cell-overlap",
+                "includesFinalTrainingMasks": True,
+                "includesOriginalSuppliedMasks": archive is not None,
+                "anchorMaskShape": list(exclusions[anchor_samples[0]].shape),
+                "maskHashEncoding": "row-major boolean bytes (0 or 1)",
+                "anchors": anchor_counts,
+            },
             "worldSha256": input_hashes[a.world],
             "size": a.size,
             "depthRes": a.depth_res,
