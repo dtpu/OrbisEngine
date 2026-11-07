@@ -1,0 +1,96 @@
+orchestrator/api/app.py
+  s_11465a870157de::t_34a62cf74af1bc 38,580
+  s_20f6c0bf8c5b2c::t_9a679c3a04f7ef 581
+admin/lib/world-review.ts
+  s_20f6c0bf8c5b2c::t_cccc452fe8d96c 1-81
+orchestrator/cli.py
+  s_20f6c0bf8c5b2c::t_75464f9da75f9a 854-856,864-972,974-976
+  s_11465a870157de::t_1a7a61e448fa03 973
+  s_11465a870157de::t_b0327053cc8bb2 977-978
+docs/automatic-uploads.md
+  s_20f6c0bf8c5b2c::t_4eb835e2309521 134
+  s_20f6c0bf8c5b2c::t_2bc5a35a6ad44a 129-133,135
+orchestrator/journal.py
+  s_20f6c0bf8c5b2c::t_59373d4218606b 93,97
+  s_20f6c0bf8c5b2c::t_7c287ccd4eeff9 28,81,88,91-92,94-96,165-171,264,267-268,270,305-315
+  s_20f6c0bf8c5b2c::t_54b51182d95196 269
+  s_11465a870157de::t_c8a7df8b7f38b7 316
+admin/app/globals.css
+  s_20f6c0bf8c5b2c::t_2ed95255b8c181 2313
+  s_20f6c0bf8c5b2c::t_cccc452fe8d96c 2309-2312,2314-2351
+orchestrator/api/progress.py
+  s_11465a870157de::t_34a62cf74af1bc 40-45
+admin/components/world-review.tsx
+  s_20f6c0bf8c5b2c::t_cccc452fe8d96c 1-3,5-34,37-38,43-50,52-81,92-148,150-163,165-170,175,177-275
+  s_20f6c0bf8c5b2c::t_7be616681fbfe0 83-91
+  s_20f6c0bf8c5b2c::t_c9ea7395851da9 4,36,39-42,51,171-174,176
+  s_20f6c0bf8c5b2c::t_2ed95255b8c181 35,82,149,164
+admin/tests/world-review.test.ts
+  s_20f6c0bf8c5b2c::t_cb593ce41ace7b 1-142
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_61982f98076aba 2608-2609,2677-2678,2705-2706,2733-2734,2739
+  s_11465a870157de::t_34a62cf74af1bc 44-45,3952
+  s_11465a870157de::t_1a7a61e448fa03 1640-1642
+  s_20f6c0bf8c5b2c::t_056b90bd71309c 1622-1623,1644-1651,2572-2577,2583,2594,2602,2637,2641
+orchestrator/api/world_review.py
+  s_11465a870157de::t_2871a9b5874ed8 144-146
+  s_11465a870157de::t_1a7a61e448fa03 71-73
+  s_20f6c0bf8c5b2c::t_12aa34f71ad81b 17,141-142
+  s_11465a870157de::t_8d43970f7eb082 1-16,18-70,74-140,143
+admin/app/runs/[runId]/console.tsx
+  s_20f6c0bf8c5b2c::t_cccc452fe8d96c 11
+  s_20f6c0bf8c5b2c::t_a2db94d8df7e4c 341-344,536-538,887-891
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_9da76fbdaa95ec 34-49
+admin/lib/client.ts
+  s_20f6c0bf8c5b2c::t_cccc452fe8d96c 17,55-71
+  s_20f6c0bf8c5b2c::t_2e8416437e7944 72
+docs/quality-judging.md
+  s_20f6c0bf8c5b2c::t_d989d155bde105 91-104
+  s_20f6c0bf8c5b2c::t_1b6a47179ada0f 90
+  s_20f6c0bf8c5b2c::t_340c28b58f69cb 152-157
+scripts/tests/test_world_review_api.py
+  s_20f6c0bf8c5b2c::t_1b6a47179ada0f 407-408,419,440-451
+  s_20f6c0bf8c5b2c::t_1ac14a1b3fe68d 8,15-16
+  s_20f6c0bf8c5b2c::t_8d0290f803406a 333-335
+  s_11465a870157de::t_2871a9b5874ed8 1-4,6-7,9-14,17-21,23-280,289-293,295-297,369-406,420-439,452-473
+  s_20f6c0bf8c5b2c::t_43cd84f96312eb 281-288,299-300,303,308-309,311,313-318,367-368,409-418
+  s_20f6c0bf8c5b2c::t_cb3b95ff6068e6 339
+  s_20f6c0bf8c5b2c::t_db1fdb93a8d87e 5,22,294,298,301-302,304-307,310,312,319-332,336-338,340-366
+orchestrator/world_review.py
+  s_20f6c0bf8c5b2c::t_cb3b95ff6068e6 434-436
+  s_20f6c0bf8c5b2c::t_12aa34f71ad81b 6,36,46-49,53,341,348,353-356
+  s_20f6c0bf8c5b2c::t_1ac14a1b3fe68d 337-338,375-379
+  s_20f6c0bf8c5b2c::t_8d0290f803406a 317-319
+  s_20f6c0bf8c5b2c::t_59373d4218606b 169-171
+  s_11465a870157de::t_1a7a61e448fa03 99-102,212-216,226-234,419,431-433
+  s_20f6c0bf8c5b2c::t_61982f98076aba 93
+  s_20f6c0bf8c5b2c::t_d989d155bde105 383-399
+  s_20f6c0bf8c5b2c::t_f16f0eb2a064b6 1-4,7-15,17,19-35,37-45,50-52,54-92,94-98,103-168,172-211,217-225,235-242,247-268,330-336,339-340,342-347,349-352,357-373,380-382,400-402,420,429-430,437-438
+  s_20f6c0bf8c5b2c::t_c2a62f13f68897 16,18,269-316,320-329,403-418,421-428
+  s_20f6c0bf8c5b2c::t_ff343c567ede6a 5,243-246,374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77f1c16e37036e9435e3ccccbf7782162529de3b",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
