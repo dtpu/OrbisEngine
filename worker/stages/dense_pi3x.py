@@ -6,7 +6,8 @@ surface limitation remains explicit. All chunks share a measured similarity fram
 """
 
 from __future__ import annotations
-import argparse, gc, hashlib, json, os, sys, time
+import argparse, gc, hashlib, json, math, os, subprocess, sys, time
+from fractions import Fraction
 from pathlib import Path
 import cv2
 import numpy as np
@@ -14,8 +15,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from wander_worker.masks import people_masks
-from wander_worker.ply import write_point_ply, home_distance
+from wander_worker.source_timing import select_source_frames
 
 
 # A similarity transform in three dimensions is only determined by three independent
@@ -193,6 +193,134 @@ def fit_ray_intrinsics(rays, valid, source_size):
     )
 
 
+def decode_camera_samples(video, framesdir, fps):
+    """Write the exact decoded views that will be used for camera inference."""
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("Requested frame rate must be positive and finite")
+    if framesdir.exists() or framesdir.is_symlink():
+        raise FileExistsError(f"Pi3X input directory already exists: {framesdir}")
+    with Path(video).open("rb") as stream:
+        source_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    probe = json.loads(
+        subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,time_base,avg_frame_rate:stream_side_data=rotation:"
+                "frame=pts,duration,pkt_duration",
+                "-of",
+                "json",
+                str(video),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        ).stdout
+    )
+    try:
+        stream = probe["streams"][0]
+        frames = probe["frames"]
+        pts = [int(frame["pts"]) for frame in frames]
+        timebase = Fraction(stream["time_base"])
+        width, height = int(stream["width"]), int(stream["height"])
+        rotation = next(
+            (
+                int(side["rotation"])
+                for side in stream.get("side_data_list", [])
+                if "rotation" in side
+            ),
+            0,
+        )
+    except (IndexError, KeyError, ValueError, ZeroDivisionError) as error:
+        raise ValueError("Invalid source video dimensions or presentation timestamps") from error
+    if (
+        len(pts) < 2
+        or timebase <= 0
+        or min(width, height) <= 0
+        or rotation % 90
+        or any(b <= a for a, b in zip(pts, pts[1:]))
+    ):
+        raise ValueError("Source requires valid dimensions and strictly increasing decoded PTS")
+    if rotation % 180:
+        width, height = height, width
+    source_size = (width, height)
+    input_size = (1024, max(1, round(height * 1024 / width))) if width > 1024 else source_size
+
+    relative_pts = np.array([pts_i - pts[0] for pts_i in pts])
+    try:
+        nominal_rate = Fraction(stream.get("avg_frame_rate", "0/1"))
+    except (ValueError, ZeroDivisionError):
+        nominal_rate = Fraction(0)
+    uniform = nominal_rate > 0 and np.all(
+        np.abs(relative_pts - np.arange(len(pts)) / float(nominal_rate * timebase)) <= 1
+    )
+    if uniform:
+        duration = len(pts) / nominal_rate
+    else:
+        last_duration = int(frames[-1].get("duration") or frames[-1].get("pkt_duration") or 0)
+        if last_duration <= 0:
+            last_duration = pts[-1] - pts[-2]
+        duration = (pts[-1] - pts[0] + last_duration) * timebase
+    requested = np.arange(math.ceil(duration * Fraction(str(fps)))) / fps
+    if uniform:
+        indices = np.clip(np.round(requested * float(nominal_rate)).astype(int), 0, len(pts) - 1)
+    else:
+        targets = requested / float(timebase)
+        right = np.clip(np.searchsorted(relative_pts, targets), 1, len(pts) - 1)
+        left = right - 1
+        indices = np.where(
+            targets - relative_pts[left] <= relative_pts[right] - targets, left, right
+        )
+    if len(indices) < 2 or len(np.unique(indices)) != len(indices):
+        raise ValueError("Source frame rate below requested independent output density")
+
+    indices = indices.tolist()
+    raw, provenance = select_source_frames(
+        video, fps, source_indices=indices, width=input_size[0], height=input_size[1]
+    )
+    selected = provenance["frames"]
+    if (
+        provenance["sourceSha256"] != source_sha
+        or provenance["sourceTimeBase"] != str(timebase)
+        or provenance["sourceFrameCount"] != len(pts)
+        or [frame["sourceIndex"] for frame in selected] != indices
+        or [frame["sourcePts"] for frame in selected] != [pts[i] for i in indices]
+    ):
+        raise ValueError("Decoded camera samples do not match probed source timestamps")
+    images = np.frombuffer(raw, dtype=np.uint8).reshape(
+        len(indices), input_size[1], input_size[0], 3
+    )
+    framesdir.mkdir(parents=True, exist_ok=False)
+    files = []
+    for i, image in enumerate(images):
+        file = framesdir / f"f_{i:06d}.jpg"
+        if not cv2.imwrite(
+            str(file), cv2.cvtColor(image, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 96]
+        ):
+            raise RuntimeError(f"Could not write Pi3X camera sample {i}")
+        selected[i]["cameraInputImageSha256"] = hashlib.sha256(file.read_bytes()).hexdigest()
+        files.append(file)
+    provenance.update(
+        cameraSampling="nominal-cfr-ordinal" if uniform else "nearest-source-pts",
+        cameraInputSize=list(input_size),
+        sourceImageSize=list(source_size),
+    )
+    source_fps = float(nominal_rate if nominal_rate > 0 else len(pts) / duration)
+    return files, provenance, source_size, float(duration), source_fps
+
+
+def camera_source_fields(frame):
+    return dict(
+        time=frame["sourceRelativeTimeSeconds"],
+        sourceIndex=frame["sourceIndex"],
+        sourcePts=frame["sourcePts"],
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
@@ -202,59 +330,29 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--repo", default=os.path.expanduser("~/pi3"))
     a = ap.parse_args()
-    if a.fps < 12:
+    if not math.isfinite(a.fps) or a.fps < 12:
         raise ValueError("Dense quality experiment requires >=12 fps")
     if a.anchors < 2 or a.batch < 1:
         raise ValueError("Need >=2 anchors and a positive batch size")
     out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    framesdir = out / "input"
-    framesdir.mkdir(exist_ok=True)
     temp = out / "batch-input"
-    temp.mkdir(exist_ok=True)
+    basefile = out / "anchors.npz"
+    if any(p.exists() or p.is_symlink() for p in (temp, basefile, out / "cameras.json")):
+        raise FileExistsError("Pi3X output already contains camera or anchor data")
     t0 = time.time()
-    cap = cv2.VideoCapture(a.video)
-    srcfps = cap.get(cv2.CAP_PROP_FPS)
-    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = count / srcfps
-    if not np.isfinite(srcfps) or srcfps <= 0 or count < 2:
-        raise ValueError("Invalid source video metadata")
-    source_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    requested = np.arange(int(np.ceil(duration * a.fps))) / a.fps
-    indices = np.clip(np.round(requested * srcfps).astype(int), 0, count - 1)
-    if len(np.unique(indices)) != len(indices):
-        raise ValueError("Source frame rate below requested independent output density")
-    times = indices / srcfps
-    N = len(indices)
-    decoded = 0
-    for i, idx in enumerate(indices):
-        file = framesdir / f"f_{i:06d}.jpg"
-        if file.exists():
-            decoded = i + 1
-            continue
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-        ok, bgr = cap.read()
-        if not ok:
-            # The container claimed more frames than it holds. Keep the span that exists.
-            print(
-                f"decode stopped at source frame {idx} ({i} of {len(indices)} requested)",
-                flush=True,
-            )
-            break
-        if bgr.shape[1] > 1024:
-            bgr = cv2.resize(bgr, (1024, round(bgr.shape[0] * 1024 / bgr.shape[1])))
-        cv2.imwrite(str(file), bgr, [cv2.IMWRITE_JPEG_QUALITY, 96])
-        decoded = i + 1
-    cap.release()
-    if decoded < len(indices):
-        if not decoded_span_usable(decoded, len(indices)):
-            raise RuntimeError(
-                f"Decode failed: only {decoded} of {len(indices)} requested frames are readable"
-            )
-        indices, times = indices[:decoded], times[:decoded]
-        N = decoded
-    files = sorted(framesdir.glob("f_*.jpg"))
+    files, provenance, source_size, duration, srcfps = decode_camera_samples(
+        a.video, out / "input", a.fps
+    )
+    temp.mkdir(exist_ok=False)
+    source_fields = [camera_source_fields(frame) for frame in provenance["frames"]]
+    indices = np.array([row["sourceIndex"] for row in source_fields])
+    times = [row["time"] for row in source_fields]
+    source_pts = np.array([row["sourcePts"] for row in source_fields])
+    N = len(files)
+    (out / "source-frame-provenance.json").write_text(json.dumps(provenance, indent=2))
     import torch
+    from wander_worker.masks import people_masks
+    from wander_worker.ply import write_point_ply, home_distance
 
     sys.path.insert(0, a.repo)
     from pi3.models.pi3x import Pi3X
@@ -302,13 +400,9 @@ def main():
         return result
 
     anchors = np.unique(np.linspace(0, N - 1, min(a.anchors, N)).round().astype(int)).tolist()
-    basefile = out / "anchors.npz"
-    if basefile.exists():
-        base = dict(np.load(basefile))
-    else:
-        base = predict(anchors)
-        base["people"] = people_masks(base["rgb"], dilate_px=2)
-        np.savez_compressed(basefile, **base)
+    base = predict(anchors)
+    base["people"] = people_masks(base["rgb"], dilate_px=2)
+    np.savez_compressed(basefile, **base)
     inv = np.linalg.inv(base["poses"][0])
     R0, t00 = inv[:3, :3], inv[:3, 3]
     flip = np.array([1.0, -1.0, -1.0])
@@ -355,6 +449,8 @@ def main():
             camera_dir / f"batch_{lo:03d}.npz",
             sample_ids=ids,
             source_indices=indices[ids],
+            source_pts=source_pts[ids],
+            source_time_base=provenance["sourceTimeBase"],
             raw_opencv_camera_to_world=p["poses"],
             batch_rotation=R,
             batch_translation=t,
@@ -394,8 +490,7 @@ def main():
             camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)  # solved per view
             cams[i] = dict(
                 position=camera[:3, 3].tolist(),
-                time=float(times[i]),
-                sourceIndex=int(indices[i]),
+                **source_fields[i],
                 camera_to_world=camera.tolist(),
                 world_to_camera=np.linalg.inv(camera).tolist(),
                 **fit_ray_intrinsics(p["rays"][j], p["valid"][j], source_size),
@@ -429,13 +524,15 @@ def main():
         frames=[f"frame_{i:03d}.ply" for i in range(N)],
         count=N,
         fps=a.fps,
-        timestamps=times.tolist(),
+        timestamps=times,
         duration=duration,
         sourceFps=srcfps,
         sourceIndices=indices.tolist(),
         people_only=True,
         home_distance=home,
-        sourceSha256=hashlib.sha256(Path(a.video).read_bytes()).hexdigest(),
+        sourceSha256=provenance["sourceSha256"],
+        sourcePts=source_pts.tolist(),
+        sourceTimeBase=provenance["sourceTimeBase"],
         seconds=time.time() - t0,
         peakVRAMGB=torch.cuda.max_memory_allocated() / 1e9,
         gpu=torch.cuda.get_device_name(),
@@ -469,6 +566,8 @@ def main():
                     scale=float(scale),
                     world_axis_flip=flip.tolist(),
                 ),
+                sourceSha256=provenance["sourceSha256"],
+                sourceTimeBase=provenance["sourceTimeBase"],
                 cameras=cams,
             ),
             indent=1,
@@ -476,7 +575,11 @@ def main():
     )
     print(
         json.dumps(
-            {k: v for k, v in meta.items() if k not in ("frames", "timestamps", "sourceIndices")}
+            {
+                k: v
+                for k, v in meta.items()
+                if k not in ("frames", "timestamps", "sourceIndices", "sourcePts")
+            }
         ),
         flush=True,
     )

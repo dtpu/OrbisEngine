@@ -88,9 +88,12 @@ and request budgets remain separate requirements.
 Credentials come from the selected shared stage plan. World generation needs `WLT_API_KEY`,
 source-grounded world prompts and object descriptions need `OPENAI_API_KEY`, and Modal needs
 a complete token pair or the selected saved profile. The runner's default Modal profile is
-`dtpu`; set `MODAL_PROFILE` to your own configured profile when appropriate. `MODAL_CONFIG_PATH`
-can select a different TOML file. The doctor reports credential names and configuration status,
-never their values. It does not load dotenv files automatically:
+`dtpu`. Set `MODAL_PROFILE` to your own configured profile when appropriate. To use a different
+TOML file, set `MODAL_CONFIG_PATH` to its absolute path so it resolves from the run directory.
+The supervisor forwards these settings and the optional `WANDER_WORKER_TIMEOUT_SECONDS` and
+`WANDER_LHM_GPU` controls to stage subprocesses. See [paid recovery](paid-recovery.md) for the
+supported workers and values. The doctor reports credential names and configuration status.
+It does not load dotenv files automatically:
 
 ```sh
 set -a
