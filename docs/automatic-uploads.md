@@ -126,6 +126,13 @@ an automatically delivered preview does not satisfy that contract. Calibrated au
 acceptance and autonomous geometry repair remain separate work. A fresh upload is therefore not
 guaranteed to produce an accepted reconstruction.
 
+For a settled upload with a retained verification diagnostic, the dashboard's **Static world
+review** section loads the exact comparison pairs and accepts explicit operator judgments.
+It validates the current source, world, cameras and placement before importing them. This
+offline action does not resume the worker or repeat paid work. A passing static review completes
+the run only when every existing completion check also passes; missing or changed evidence
+keeps acceptance blocked. See [the review contract](quality-judging.md#review-a-settled-upload).
+
 Pause and cancellation still stop new work. Finished automatic runs require an explicit operator
 resume before any new stage starts, and resuming does not restore a consumed paid attempt. Manual
 mode retains explicit stage retries and records a resume when one reopens a finished run. Already

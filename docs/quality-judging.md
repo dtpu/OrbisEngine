@@ -87,6 +87,21 @@ through a successful subprocess exit or cached stage status. Archival retention 
 promotion remain separate decisions; this static-world pass is not complete-scene publication
 approval.
 
+## Review a settled upload
+
+For a run that finished with a blocked or failed static-world review, load the retained
+diagnostic from its dashboard and enter your judgments for every pair. The dashboard submits a
+manual result for that exact diagnostic. The authenticated `GET` and `POST` endpoints are
+`/api/pipeline/runs/{run_id}/world-review`. The POST body contains `diagnosticId`,
+`planSha256`, and the completed manual `result` described above. This action is separate
+from the generic approval control. Active, paused and canceled runs cannot submit a review.
+
+The server revalidates the current anchor and placement receipts, source, world, cameras and
+review evidence locally. It retains the judgment and records its verdict. When a review passes
+and all existing completion checks pass, the run can finish without reopening stage execution.
+If other work remains incomplete, the result preserves the static-world verdict and reports
+what blocks completion. No stage is launched or retried by this action.
+
 ## Timing and provenance limits
 
 The diagnostic reads actual decoded PTS with FFprobe and selects the decoded source-frame ordinal
@@ -134,7 +149,9 @@ six live calibration requests did not establish a valid candidate, Austin's harn
 offline, and this integration's kitchen request returned 429 without a verdict. No new paid call is
 authorized or required by this code.
 
-Cleaning and selection now propagate actual source indices/PTS. Camera estimation still needs
-equivalent provenance, followed by held-out registration and off-axis/temporal review. Only a subsequent explicitly
-bounded design should consider changed-hypothesis repairs or whole-scene promotion. Passing the
-synthetic offline tests proves contract behavior, not live judge accuracy or scene quality.
+Cleaning and selection propagate actual source indices and PTS. New Pi3X solves extract frames
+by decoded source ordinal and retain the original PTS, time base, and hashes of the JPEGs used by
+the solver. Historical camera estimates are not relabeled. The matrices remain estimates, and
+unobserved geometry remains unverified. Held-out registration, off-axis and temporal review are
+still required for whole-scene assessment. The offline tests exercise evidence validation and
+review import using synthetic fixtures. Live judge accuracy and scene quality remain unverified.

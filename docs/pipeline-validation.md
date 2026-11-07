@@ -31,6 +31,22 @@ The suite needs the locked inference dependencies for local tensor-based observa
 packaging checks. CI installs that group explicitly; these synthetic checks do not download
 model weights or submit provider jobs.
 
+The dashboard can load a settled run's retained source/render pairs and import an explicit
+static-world review without reopening its agent or paid stages. The API rechecks source,
+camera, world, placement and image hashes, the selected viewer scale, and the existing
+completion contract before marking the run complete. Authentication, stale evidence,
+partial journal writes and changes during completion have regression coverage. A browser
+check against the real API kept uncertain synthetic judgments blocked, then completed the
+same synthetic fixture with explicit passing judgments. This tests the review workflow;
+it does not approve any real reconstruction. Evidence: `.context/evidence/upload-e2e-20261107/`.
+
+New Pi3X camera inference decodes selected source ordinals directly and records their actual
+PTS, timebase and input JPEG hashes. Variable-rate and nonzero-start fixtures check the
+pixel/timestamp correspondence. The retained lobby's 115 selected ordinals and relative
+times are unchanged in an offline extraction check; its old camera matrices were not
+regenerated or relabelled. The worker also forwards its configured Modal settings, GPU
+choice and execution timeout through the isolated agent/stage environment.
+
 Fine-tuning exports bind supplied exclusion masks to the source hash, exact decoded frame
 indices, PTS, timebase, dimensions and camera timestamps before loading the world or creating
 output. Cameras require a source hash or a matching sibling `sequence.json`. Equal mask and

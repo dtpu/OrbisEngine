@@ -37,7 +37,12 @@ def find_run_directory(root: Path, run_id: str) -> Path | None:
     root = root.resolve()
     for manifest in root.glob("*/run.json"):
         candidate = manifest.parent
-        if candidate.is_symlink() or not candidate.resolve().is_relative_to(root):
+        if (
+            candidate.is_symlink()
+            or manifest.is_symlink()
+            or not manifest.is_file()
+            or not candidate.resolve().is_relative_to(root)
+        ):
             continue
         if read_json(manifest).get("runId") == run_id:
             return candidate

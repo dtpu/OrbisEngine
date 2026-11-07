@@ -41,6 +41,8 @@ from clean_candidates import (
     validate_slug,
 )
 
+DEFAULT_RULER_TOLERANCE = 0.15
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -1617,11 +1619,8 @@ class Pipeline:
             extra=["--images", *images, "--prompt-file", str(self.prompt_json), "--seed", "7"],
         )
 
-    def verify(self):
-        """Import an offline static-world review; diagnostics alone never establish acceptance."""
-        from world_quality_review import assess
-
-        self.state.record("_verify", status="blocked", passed=False, errors=["Review incomplete"])
+    def verification_inputs(self):
+        """Resolve the reviewed geometry and check its current anchor receipts."""
         scale0 = (self.state.data["stages"].get("_scale") or {}).get("scale0")
         if (
             isinstance(scale0, bool)
@@ -1638,8 +1637,18 @@ class Pipeline:
             )
         # verify_world renders with the viewer's own mapping (no re-anchoring), so it needs the
         # packaged, levelled cameras.json, not the raw Pi3X one
-        packaged = public_dir() / "worlds" / f"{self.name}-4d" / "cameras.json"
+        packaged = self.review_path(
+            self.review_public_dir() / "worlds" / f"{self.name}-4d" / "cameras.json"
+        )
         cameras = packaged if packaged.exists() else self.cameras()
+        return world, cameras, scale0
+
+    def verify(self):
+        """Import an offline static-world review; diagnostics alone never establish acceptance."""
+        from world_quality_review import assess
+
+        self.state.record("_verify", status="blocked", passed=False, errors=["Review incomplete"])
+        world, cameras, scale0 = self.verification_inputs()
         review = [
             getattr(self.a, field, None)
             for field in ("quality_plan", "quality_result", "quality_evidence_root")
@@ -2560,12 +2569,18 @@ class Pipeline:
         )
 
     # ---- world scale + fine-tune ------------------------------------------
+    def review_public_dir(self) -> Path:
+        return public_dir()
+
+    def review_path(self, path: Path) -> Path:
+        return path
+
     def base_world_spz(self) -> Path:
         """The selected provider output, before fine-tuning changes its geometry."""
         suffix = WORLD_SUFFIXES.get(self.marble)
         if suffix is None:
             raise RuntimeError("this run does not select a Marble world")
-        path = public_dir() / f"marble-{self.name}-{suffix}.spz"
+        path = self.review_path(self.review_public_dir() / f"marble-{self.name}-{suffix}.spz")
         if not path.is_file():
             raise RuntimeError(f"no Marble world on disk for {self.name}: expected {path}")
         return path
@@ -2576,7 +2591,7 @@ class Pipeline:
             return self.base_world_spz()
         if not self.state.done("finetune"):
             raise RuntimeError("fine-tuning has not completed; final-world checks must wait")
-        path = public_dir() / f"marble-{self.name}-finetuned.spz"
+        path = self.review_path(self.review_public_dir() / f"marble-{self.name}-finetuned.spz")
         if not path.is_file():
             raise RuntimeError(f"fine-tuning output is missing: {path}")
         return path
@@ -2584,14 +2599,14 @@ class Pipeline:
     def placement_is_current(self, world: Path) -> bool:
         """A successful placement applies only to the exact geometry and report it measured."""
         result = self.state.data["stages"].get("_placement_solve") or {}
-        report = public_dir() / "worlds" / f"{self.name}-4d" / "placement.json"
+        report = self.review_public_dir() / "worlds" / f"{self.name}-4d" / "placement.json"
         if not self.state.done("place_fit"):
             return False
         try:
             return (
                 result.get("world") == str(world.resolve())
-                and result.get("worldSha256") == file_sha256(world)
-                and result.get("reportSha256") == file_sha256(report)
+                and result.get("worldSha256") == self.input_hash(self.review_path(world))
+                and result.get("reportSha256") == self.input_hash(self.review_path(report))
                 and result.get("inputReceipt") == self.placement_inputs(world)
             )
         except (OSError, ValueError, KeyError, TypeError, IndexError):
@@ -2619,11 +2634,11 @@ class Pipeline:
 
     def placement_inputs(self, world: Path) -> dict:
         """The geometry, observations and registration actually supplied to place_solve."""
-        wdir = public_dir() / "worlds" / f"{self.name}-4d"
+        wdir = self.review_public_dir() / "worlds" / f"{self.name}-4d"
         files = {}
 
         def include(path, required=True):
-            path = Path(path)
+            path = self.review_path(Path(path))
             if not required and not path.exists():
                 files[str(path.resolve())] = None
                 return
@@ -2659,7 +2674,8 @@ class Pipeline:
         for motion in sorted(masks.parent.glob("track_*/motion.json")):
             include(motion)
         for script in ("place_solve.py", "silhouette_rows.py"):
-            include(ROOT / "scripts" / script)
+            path = ROOT / "scripts" / script
+            files[str(path.resolve())] = self.input_hash(path)
         scale = (self.state.data["stages"].get("_scale") or {}).get("scale0")
         try:
             floor = self.placement().get("floor")
@@ -2686,7 +2702,8 @@ class Pipeline:
         }
 
     def anchor_inputs(self, world: Path) -> dict:
-        files = {str(self.clip.resolve()): self.input_hash(self.clip)}
+        clip = self.review_path(self.clip)
+        files = {str(clip.resolve()): self.input_hash(clip)}
         for script in (
             "anchor_checks.py",
             "world_ruler.py",
@@ -2713,12 +2730,13 @@ class Pipeline:
         placement = self.state.data["stages"]["_placement_solve"]
         anchors = self.state.data["stages"].get("_anchors") or {}
         try:
-            observation = world.with_name(world.stem + "-obs.bin")
+            observation = self.review_path(world.with_name(world.stem + "-obs.bin"))
+            report = self.review_path(self.ctx / "anchors.json")
             return (
                 anchors.get("worldSha256") == placement["worldSha256"]
                 and anchors.get("placementSha256") == placement["reportSha256"]
                 and anchors.get("inputReceipt") == self.anchor_inputs(world)
-                and anchors.get("reportSha256") == self.input_hash(self.ctx / "anchors.json")
+                and anchors.get("reportSha256") == self.input_hash(report)
                 and anchors.get("observationSha256") == self.input_hash(observation)
             )
         except (OSError, ValueError, KeyError, TypeError, IndexError):
@@ -3931,7 +3949,7 @@ def main():
     ap.add_argument(
         "--ruler-tol",
         type=float,
-        default=0.15,
+        default=DEFAULT_RULER_TOLERANCE,
         help="how far the world ruler and the avatar ruler may disagree before the "
         "anchors stage fails the run",
     )

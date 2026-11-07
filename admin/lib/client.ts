@@ -14,6 +14,7 @@ import type {
   SavedInputsAvailability,
   TranscriptTail,
 } from './types';
+import type { ManualWorldReview, WorldReviewBundle, WorldReviewOutcome } from './world-review';
 
 const ROOT = '/api/pipeline';
 
@@ -49,6 +50,24 @@ export async function loadRun(runId: string): Promise<PipelineRun> {
   return (await unwrap(
     await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}`, { cache: 'no-store' }),
   )) as PipelineRun;
+}
+
+export async function loadWorldReview(runId: string): Promise<WorldReviewBundle> {
+  return (await unwrap(
+    await fetch(`${ROOT}/runs/${encodeURIComponent(runId)}/world-review`, { cache: 'no-store' }),
+  )) as WorldReviewBundle;
+}
+
+export async function saveWorldReview(
+  runId: string,
+  bundle: WorldReviewBundle,
+  result: ManualWorldReview,
+): Promise<WorldReviewOutcome> {
+  return (await send(`/runs/${encodeURIComponent(runId)}/world-review`, {
+    diagnosticId: bundle.diagnosticId,
+    planSha256: bundle.planSha256,
+    result,
+  })) as WorldReviewOutcome;
 }
 
 export async function checkSavedInputs(runId: string): Promise<SavedInputsAvailability> {
