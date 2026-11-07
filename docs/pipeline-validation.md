@@ -399,6 +399,22 @@ allowances for this original source; candidate renaming does not reset them.
 
 ## Remaining boundaries
 
+The November 7 lobby iteration reused the original clip and retained world. Offline camera
+sampling matched all 115 historical source ordinals; no camera inference was claimed for that
+check. Two bounded 800-step GPU experiments executed with corrected depth targets, followed by
+local import, fixed scale diagnostics, source/lateral comparisons and the actual viewer. The
+second used the opt-in surface-depth and quaternion objectives in `scripts/finetune_gsplat.py`.
+Its additional CPU tests cover conflicting depths with a correct mean, gradients, unsupported
+pixels, empty/zero-alpha cases, render channel routing and invalid rotations before GPU setup.
+
+Neither experiment passed scene quality. The final candidate improves source appearance and
+depth concentration but still distorts elevators, glazing and sideways floor/portal views.
+The fixed late-view scale diagnostic is median 1.105 and p90 1.616, outside the unchanged
+0.95–1.05 median and 0.9–1.1 spread bands. It was not promoted, no replacement world or new
+OpenAI call ran, and the new training terms remain opt-in. All 115 saved person frames loaded
+and played in the viewer; fresh person inference, collision/walking support and headset quality
+were not established by this iteration. Private evidence: `.context/evidence/upload-e2e-20261107/`.
+
 - The bounded fresh Modal check above verified its selected workspace and models. New inference
   still requires an applicable budget and remaining shared attempt allowance. World generation
   additionally needs verified World Labs/OpenAI access; existing demo worlds must be reused.

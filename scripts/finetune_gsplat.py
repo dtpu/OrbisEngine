@@ -16,6 +16,11 @@ splats sitting more than --prune-depth-cm in FRONT of the measured surface (the 
 runs 3DGS split/clone restricted to observed splats up to --max-splats; --lambda-opacity-entropy
 pushes observed opacities to 0/1.
 
+Opt-in --lambda-surface-depth penalizes alpha-normalized first/second log-depth moments
+on fixed supported non-person pixels; --surface-alpha-weight penalizes missing coverage.
+--lambda-quat-reg tethers normalized orientations to their initialization, ignoring sign.
+Both additional terms default off; position limits remain in measured native units.
+
     python finetune_gsplat.py --data ~/w/ft-corridor --out ~/w/ft-corridor/run1 --iters 3000
 """
 
@@ -113,6 +118,57 @@ def quat_to_rotmat(q):
     ).reshape(-1, 3, 3)
 
 
+def quaternion_tether(quats, reference):
+    """Per-splat sin²(theta/2), invariant to quaternion sign and magnitude."""
+    normalized = []
+    for values in (quats, reference):
+        if values.ndim != 2 or values.shape[-1] != 4 or values.shape != quats.shape:
+            raise ValueError("Quaternion tether inputs must have matching (splats, 4) shapes")
+        if not bool((torch.isfinite(values).all(-1) & (values != 0).any(-1)).all()):
+            raise ValueError("Quaternion tether inputs must be finite and nonzero")
+        # Scale first to normalize even finite magnitudes whose squared norm over/underflows.
+        scaled = values / values.abs().amax(dim=-1, keepdim=True)
+        normalized.append(F.normalize(scaled, dim=-1))
+    current, initial = normalized
+    return (1 - (current * initial).sum(-1).square()).clamp(0, 1)
+
+
+def surface_depth_loss(moments, alpha, reference, supported, valid, alpha_weight=0.1):
+    """Penalize each visible contribution's log-depth residual, including its spread.
+
+    Moments are raw alpha-composited log(z) and log(z)², not expected depth.
+    The fixed source mask never excludes low-alpha pixels. The coverage term discourages
+    transparency, but is not a coverage acceptance test or missing-geometry evidence.
+    """
+    selected = supported & valid
+    target = reference[selected]
+    values = moments[selected]
+    opacity = alpha[selected]
+    if not bool((torch.isfinite(target) & (target > 0)).all()):
+        raise ValueError("Supported unmasked surface depth must be finite and positive")
+    if not bool(torch.isfinite(values).all() & torch.isfinite(opacity).all()):
+        raise ValueError("Supported unmasked rendered surface moments and alpha must be finite")
+    count = target.numel()
+    if not count:
+        zero = values.sum() * 0 + opacity.sum() * 0
+        return zero, dict(residual=zero, coverage=zero, spread=zero, alpha=zero, count=0)
+    denominator = opacity.clamp_min(1e-6)
+    mean = values[..., 0] / denominator
+    second = values[..., 1] / denominator
+    log_target = target.log()
+    squared_error = (second - 2 * log_target * mean + log_target.square()).clamp_min(0)
+    residual = (torch.sqrt(squared_error + 1e-6) - 0.001).mean()
+    coverage = (1 - opacity.clamp(0, 1)).mean()
+    spread = (second - mean.square()).clamp_min(0).mean()
+    return residual + alpha_weight * coverage, dict(
+        residual=residual,
+        coverage=coverage,
+        spread=spread,
+        alpha=opacity.mean(),
+        count=count,
+    )
+
+
 class Model:
     KEYS = ("means", "quats", "log_scales", "logit_op", "f_dc")
 
@@ -139,10 +195,14 @@ class Model:
     def params(self):
         return self.p
 
-    def render(self, viewmat, K, W, H, depth=False):
+    def render(self, viewmat, K, W, H, depth=False, surface_depth=False):
         from gsplat import rasterization
 
         colors = 0.5 + SH_C0 * self.p["f_dc"]
+        if surface_depth:
+            z = (self.means @ viewmat[:3, :3].T + viewmat[:3, 3])[:, 2]
+            log_z = z.clamp_min(0.02).log()
+            colors = torch.cat((colors, log_z[:, None], log_z.square()[:, None]), dim=-1)
         out, alpha, info = rasterization(
             means=self.p["means"],
             quats=self.p["quats"],
@@ -160,9 +220,11 @@ class Model:
             render_mode="RGB+ED" if depth else "RGB",
             rasterize_mode="classic",
         )
+        if surface_depth:
+            info["log_depth_moments"] = out[0, ..., 3:5]
         if depth:
-            return out[0, ..., :3], alpha[0], out[0, ..., 3], info
-        return out[0], alpha[0], None, info
+            return out[0, ..., :3], alpha[0], out[0, ..., -1], info
+        return out[0, ..., :3], alpha[0], None, info
 
 
 def project(means, v, K, W, H, margin=0.05):
@@ -282,6 +344,49 @@ def surgery(model, opt, keep, extra=None, side=None):
     return out
 
 
+def validate_training_arguments(args):
+    """Reject invalid numeric settings before writing output or selecting CUDA."""
+    for name, value in vars(args).items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"--{name.replace('_', '-')} must be finite")
+        if (name.startswith("lambda_") or name.startswith("lr_")) and value < 0:
+            raise ValueError(f"--{name.replace('_', '-')} must be nonnegative")
+    for name in ("sigma_pos", "sigma_scale", "clamp_pos", "m_per_unit"):
+        if getattr(args, name) <= 0:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+    if args.surface_alpha_weight < 0:
+        raise ValueError("--surface-alpha-weight must be nonnegative")
+    for name in ("iters", "eval_every", "tv_every", "prune_every"):
+        if getattr(args, name) < 1:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+
+
+def validate_surface_targets(data, depth_layers, depth_sup, depth_index, width, height):
+    """Check only supported, non-person targets, with the trainer's nearest resize."""
+    rows = np.arange(height) * depth_layers.shape[1] // height
+    columns = np.arange(width) * depth_layers.shape[2] // width
+    for frame, layer in enumerate(depth_index):
+        with Image.open(data / "masks" / f"{frame:04d}.png") as image:
+            valid = np.asarray(image) < 128
+        if valid.shape != (height, width):
+            raise ValueError("Surface depth masks must match the camera image dimensions")
+        reference = depth_layers[layer][rows[:, None], columns]
+        supported = depth_sup[layer][rows[:, None], columns].astype(bool)
+        target = reference[supported & valid]
+        if not np.all(np.isfinite(target) & (target > 0)):
+            raise ValueError("Supported unmasked surface depth must be finite and positive")
+
+
+def validate_initial_quaternions(path):
+    """Opt-in tether preflight before output creation or device selection."""
+    with np.load(path, allow_pickle=False) as splats:
+        quats = splats["quats"]
+    if quats.ndim != 2 or quats.shape[-1] != 4:
+        raise ValueError("Initial quaternion tether inputs must have shape (splats, 4)")
+    if not np.all(np.isfinite(quats).all(-1) & (quats != 0).any(-1)):
+        raise ValueError("Initial quaternion tether inputs must be finite and nonzero")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, required=True)
@@ -296,13 +401,13 @@ def main(argv=None):
         "--sigma-pos",
         type=float,
         default=0.02,
-        help="tether scale for means, native units (0.02 = ~5 cm)",
+        help="tether scale for means in native units; convert using the measured body height",
     )
     ap.add_argument(
         "--clamp-pos",
         type=float,
         default=0.05,
-        help="hard clamp on displacement, native units (~13 cm)",
+        help="hard clamp on displacement in native units; convert using the measured body height",
     )
     ap.add_argument("--sigma-scale", type=float, default=0.5, help="tether on log-scale change")
     ap.add_argument(
@@ -321,6 +426,24 @@ def main(argv=None):
         type=float,
         default=0.0,
         help="weight of |log(rendered depth) - log(wvp depth)| on supported, non-person texels",
+    )
+    ap.add_argument(
+        "--lambda-surface-depth",
+        type=float,
+        default=0.0,
+        help="weight of per-contribution log-depth residual on supported non-person pixels",
+    )
+    ap.add_argument(
+        "--surface-alpha-weight",
+        type=float,
+        default=0.1,
+        help="coverage penalty within the opt-in surface depth objective",
+    )
+    ap.add_argument(
+        "--lambda-quat-reg",
+        type=float,
+        default=0.0,
+        help="weight of mean visible sign-invariant quaternion tether (no legacy 1e3 multiplier)",
     )
     ap.add_argument(
         "--freeze-geometry", action="store_true", help="optimise colour and opacity only"
@@ -432,6 +555,7 @@ def main(argv=None):
         "--m-per-unit", type=float, default=1.7 / 0.6518811, help="metres per native unit"
     )
     a = ap.parse_args(argv)
+    validate_training_arguments(a)
     globals()["CM_PER_UNIT"] = a.m_per_unit * 100
     fig_poses = [int(x) for x in a.poses.split(",")]
     viewmats, Ks, K, W, H = load_cameras(a.data / "cameras.npz")
@@ -456,6 +580,10 @@ def main(argv=None):
         or np.any(depth_index >= len(depth_layers))
     ):
         raise ValueError("Depth data must map every camera to a valid supported depth layer")
+    if a.lambda_surface_depth > 0:
+        validate_surface_targets(a.data, depth_layers, depth_sup, depth_index, W, H)
+    if a.lambda_quat_reg > 0:
+        validate_initial_quaternions(a.init_npz or a.data / "splats.npz")
 
     a.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed)
@@ -530,21 +658,43 @@ def main(argv=None):
     bbox_lo = model.init["means"].min(0).values
     bbox_hi = model.init["means"].max(0).values
     eval_depth_samples = {}
+    eval_surface = {}
 
     def evaluate(tag):
         model_psnr = []
         derr = []
         sample_counts = []
+        surface_records = []
         with torch.no_grad():
             for i in test_idx:
-                img, al, dep, _ = model.render(viewmats[i], Ks[i], W, H, depth=True)
+                img, al, dep, info = model.render(
+                    viewmats[i], Ks[i], W, H, depth=True, surface_depth=a.lambda_surface_depth > 0
+                )
                 gt = imgs[i].float() / 255
                 gd, sup = gt_depth(i)
                 error, count = heldout_depth_error(dep, gd, sup, valid[i], al[..., 0], i)
                 derr.append(error)
                 sample_counts.append(count)
                 model_psnr.append(psnr(img, gt, valid[i]))
+                if a.lambda_surface_depth > 0:
+                    surface, metrics = surface_depth_loss(
+                        info["log_depth_moments"],
+                        al[..., 0],
+                        gd,
+                        sup,
+                        valid[i],
+                        a.surface_alpha_weight,
+                    )
+                    surface_records.append(
+                        dict(frame=i, loss=float(surface))
+                        | {
+                            key: float(value) if key != "count" else value
+                            for key, value in metrics.items()
+                        }
+                    )
         eval_depth_samples[tag] = sample_counts
+        if surface_records:
+            eval_surface[tag] = surface_records
         m = float(np.mean(model_psnr))
         dr = float(np.mean(derr))
         print(
@@ -643,7 +793,10 @@ def main(argv=None):
             gt = imgs[i].float() / 255
             m = valid[i].float()[..., None]
             wgt = 1.0
-        img, alpha, dep, info = model.render(vm, intrinsics, W, H, depth=True)
+        use_surface = a.lambda_surface_depth > 0 and not use_pseudo
+        img, alpha, dep, info = model.render(
+            vm, intrinsics, W, H, depth=True, surface_depth=use_surface
+        )
         if a.densify and it >= a.densify_start:
             info["means2d"].retain_grad()
         l1 = ((img - gt).abs() * m).sum() / (m.sum() * 3)
@@ -659,6 +812,19 @@ def main(argv=None):
             loss = loss + a.lambda_depth * dl
         else:
             dl = torch.zeros(())
+        surface = torch.zeros((), device=dev)
+        surface_metrics = None
+        if use_surface:
+            gd, sup = gt_depth(i)
+            surface, surface_metrics = surface_depth_loss(
+                info["log_depth_moments"],
+                alpha[..., 0],
+                gd,
+                sup,
+                valid[i],
+                a.surface_alpha_weight,
+            )
+            loss = loss + a.lambda_surface_depth * surface
         tv = torch.zeros((), device=dev)
         if a.lambda_depth_tv > 0 and it % a.tv_every == 0:
             fr = int(np.random.choice(train_idx))
@@ -679,6 +845,10 @@ def main(argv=None):
         dpos = ((model.means - model.init["means"]) / a.sigma_pos) ** 2
         dsc = ((model.log_scales - model.init["log_scales"]) / a.sigma_scale) ** 2
         reg = a.lambda_reg * ((dpos.sum(1) + dsc.sum(1)) * w_reg).sum() / n_vis * 1e3
+        quat_reg = torch.zeros((), device=dev)
+        if a.lambda_quat_reg > 0:
+            quat_reg = quaternion_tether(model.quats[vis], model.init["quats"][vis]).mean()
+            reg = reg + a.lambda_quat_reg * quat_reg
         if a.lambda_opacity_entropy > 0 and int(obs.sum()) > 0:
             o = torch.sigmoid(model.logit_op[obs]).clamp(1e-6, 1 - 1e-6)
             reg = (
@@ -813,6 +983,18 @@ def main(argv=None):
                 "psnr_train": psnr(img.detach(), gt, m[..., 0] > 0.5),
                 "t": time.time() - t0,
             }
+            if a.lambda_surface_depth > 0:
+                rec["surface_depth"] = float(surface.detach()) if use_surface else None
+                rec["surface_metrics"] = (
+                    {
+                        key: float(value.detach()) if key != "count" else value
+                        for key, value in surface_metrics.items()
+                    }
+                    if surface_metrics is not None
+                    else None
+                )
+            if a.lambda_quat_reg > 0:
+                rec["quaternion_tether"] = float(quat_reg.detach())
             log.append(rec)
             print(
                 f"it {it}: l1 {rec['l1']:.4f} ssim {rec['ssim']:.3f} depth {rec['depth']:.4f} tv {rec['tv']:.4f} reg {rec['reg']:.4f} "
@@ -869,6 +1051,19 @@ def main(argv=None):
             "log": log,
             "runtime_s": time.time() - t0,
         }
+        if a.lambda_surface_depth > 0:
+            stats["heldout_surface_depth"] = eval_surface
+            stats["surface_depth_metric_units"] = {
+                "residual": "smoothed RMS log-depth ratio per pixel, averaged over fixed source mask",
+                "coverage": "mean 1-alpha over fixed source mask (unweighted)",
+                "spread": "mean within-pixel variance of log-depth contributions",
+                "alpha": "mean rendered alpha over fixed source mask",
+                "count": "supported non-person pixels, independent of rendered alpha",
+            }
+        if a.lambda_quat_reg > 0:
+            stats["quaternion_tether_mean"] = float(
+                quaternion_tether(model.quats[vis], model.init["quats"][vis]).mean()
+            )
     json.dump(stats, open(a.out / "stats.json", "w"), indent=1)
     np.savez(
         a.out / "finetuned.npz",
