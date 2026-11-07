@@ -29,7 +29,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from gsplat import rasterization
 
 SH_C0 = 0.28209479177387814
 CM_PER_UNIT = 260.8  # 1 native unit = 2.608 m (1.7 m / body height 0.6518811)
@@ -41,6 +40,39 @@ def load_images(d: Path, n: int, dev):
     imgs = torch.from_numpy(imgs).to(dev)  # uint8 (F,H,W,3)
     valid = torch.from_numpy(masks < 128).to(dev)  # True = use in loss
     return imgs, valid
+
+
+def load_cameras(path: Path):
+    """Read and validate CPU camera data before allocating the training model."""
+    with np.load(path, allow_pickle=False) as cameras:
+        viewmats = cameras["viewmats"].astype(np.float32)
+        if (
+            viewmats.ndim != 3
+            or viewmats.shape[1:] != (4, 4)
+            or not len(viewmats)
+            or not np.isfinite(viewmats).all()
+        ):
+            raise ValueError("Expected nonempty finite viewmats with shape (frames, 4, 4)")
+        dimensions = [cameras[name] for name in ("width", "height")]
+        if any(d.shape != () or d.dtype.kind not in "iu" or d <= 0 for d in dimensions):
+            raise ValueError("Camera width and height must be positive integers")
+        width, height = map(int, dimensions)
+        K = cameras["K"].astype(np.float32)
+        if K.shape != (3, 3) or not np.isfinite(K).all() or np.any(K.diagonal()[:2] <= 0):
+            raise ValueError("Compatibility K must be 3x3 and finite with positive focal lengths")
+        if "Ks" in cameras:
+            Ks = cameras["Ks"].astype(np.float32)
+        else:
+            Ks = np.repeat(K[None], len(viewmats), axis=0)
+        if (
+            Ks.shape != (len(viewmats), 3, 3)
+            or not np.isfinite(Ks).all()
+            or np.any(Ks[:, (0, 1), (0, 1)] <= 0)
+        ):
+            raise ValueError(
+                "Ks must contain one finite 3x3 matrix with positive focal lengths per frame"
+            )
+    return viewmats, Ks, K, width, height
 
 
 def gaussian_window(size=11, sigma=1.5, dev="cuda"):
@@ -108,6 +140,8 @@ class Model:
         return self.p
 
     def render(self, viewmat, K, W, H, depth=False):
+        from gsplat import rasterization
+
         colors = 0.5 + SH_C0 * self.p["f_dc"]
         out, alpha, info = rasterization(
             means=self.p["means"],
@@ -150,21 +184,21 @@ def project(means, v, K, W, H, margin=0.05):
     return ok, z, ui, vi
 
 
-def visible_mask(model, viewmats, K, W, H, dev, margin=0.05):
+def visible_mask(model, viewmats, Ks, W, H, dev, margin=0.05):
     """Splats that project inside any training frustum in front of the camera."""
     vis = torch.zeros(model.n, dtype=torch.bool, device=dev)
-    for v in viewmats:
+    for v, K in zip(viewmats, Ks, strict=True):
         ok, _, _, _ = project(model.means, v, K, W, H, margin)
         vis |= ok
     return vis
 
 
-def observed_mask(means, viewmats, K, W, H, depths, valids, tol, min_views):
+def observed_mask(means, viewmats, Ks, W, H, depths, valids, tol, min_views):
     """Observed = the training views carry evidence about this splat: it projects inside the image on a
     non-person pixel with a supported wvp depth, and passes the depth test there (z <= depth * (1+tol),
     i.e. it is the front-most surface along that ray, not hidden behind one), in >= min_views views."""
     cnt = torch.zeros(len(means), dtype=torch.int16, device=means.device)
-    for v, gd, sup, val in zip(viewmats, *depths, valids):
+    for v, K, gd, sup, val in zip(viewmats, Ks, *depths, valids, strict=True):
         ok, z, ui, vi = project(means, v, K, W, H, margin=0.0)
         g = gd[vi, ui]
         hit = ok & sup[vi, ui] & val[vi, ui] & (z < g * (1 + tol))
@@ -172,11 +206,11 @@ def observed_mask(means, viewmats, K, W, H, depths, valids, tol, min_views):
     return cnt >= min_views, cnt
 
 
-def depth_offset(means, viewmats, K, W, H, depths, valids):
+def depth_offset(means, viewmats, Ks, W, H, depths, valids):
     """Median signed (splat z - wvp depth) over the sampled views that see each splat; NaN if none."""
     n = len(means)
     err = torch.full((n, len(viewmats)), float("nan"), device=means.device)
-    for j, (v, gd, sup, val) in enumerate(zip(viewmats, *depths, valids)):
+    for j, (v, K, gd, sup, val) in enumerate(zip(viewmats, Ks, *depths, valids, strict=True)):
         ok, z, ui, vi = project(means, v, K, W, H, margin=0.0)
         g = gd[vi, ui]
         sel = ok & sup[vi, ui] & val[vi, ui]
@@ -189,6 +223,19 @@ def psnr(a, b, valid):
         valid.expand_as(a) if valid.dim() == a.dim() else valid[..., None].expand_as(a)
     ]
     return float(10 * torch.log10(1.0 / d.mean().clamp(min=1e-10)))
+
+
+def heldout_depth_error(depth, reference, supported, valid, alpha, frame):
+    selected = supported & valid & (alpha > 0.5)
+    count = int(selected.sum())
+    if not count:
+        raise ValueError(f"Held-out frame {frame} has no supported unmasked rendered depth pixels")
+    error = (
+        (torch.log(depth[selected].clamp(min=0.05)) - torch.log(reference[selected])).abs().median()
+    )
+    if not torch.isfinite(error):
+        raise ValueError(f"Held-out frame {frame} produced a nonfinite depth error")
+    return float(error), count
 
 
 def to_u8(t):
@@ -235,7 +282,7 @@ def surgery(model, opt, keep, extra=None, side=None):
     return out
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
@@ -384,9 +431,32 @@ def main():
     ap.add_argument(
         "--m-per-unit", type=float, default=1.7 / 0.6518811, help="metres per native unit"
     )
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     globals()["CM_PER_UNIT"] = a.m_per_unit * 100
     fig_poses = [int(x) for x in a.poses.split(",")]
+    viewmats, Ks, K, W, H = load_cameras(a.data / "cameras.npz")
+    nF = len(viewmats)
+    if any(not 0 <= frame < nF for frame in (*fig_poses, a.offpath_frame)):
+        raise ValueError("Figure poses and off-path frame must index exported cameras")
+    if a.holdout < 2 or a.train_stride < 1 or a.depth_views < 1:
+        raise ValueError("Holdout must be at least 2, with positive train stride and depth views")
+    test_idx = list(range(0, nF, a.holdout))
+    train_idx = [i for i in range(nF) if i % a.holdout != 0][:: a.train_stride]
+    if not train_idx:
+        raise ValueError("Export must contain a training frame in addition to the holdout")
+    with np.load(a.data / "depth.npz", allow_pickle=False) as dz:
+        depth_layers, depth_sup, depth_index = dz["depth"], dz["supported"], dz["depth_index"]
+    if (
+        depth_layers.ndim != 3
+        or not all(depth_layers.shape)
+        or depth_sup.shape != depth_layers.shape
+        or depth_index.shape != (nF,)
+        or depth_index.dtype.kind not in "iu"
+        or np.any(depth_index < 0)
+        or np.any(depth_index >= len(depth_layers))
+    ):
+        raise ValueError("Depth data must map every camera to a valid supported depth layer")
+
     a.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
@@ -394,17 +464,13 @@ def main():
     t0 = time.time()
 
     s = np.load(a.data / "splats.npz")
-    c = np.load(a.data / "cameras.npz")
     model = Model(np.load(a.init_npz) if a.init_npz else s, dev)
-    viewmats = torch.from_numpy(c["viewmats"]).to(dev)
-    K = torch.from_numpy(c["K"]).to(dev)
-    W, H = int(c["width"]), int(c["height"])
-    nF = len(viewmats)
+    viewmats = torch.from_numpy(viewmats).to(dev)
+    Ks = torch.from_numpy(Ks).to(dev)
+    pseudo_K = torch.from_numpy(K).to(dev)
     imgs, valid = load_images(a.data, nF, dev)
-    dz = np.load(a.data / "depth.npz")
-    depth_layers = torch.from_numpy(dz["depth"]).to(dev)
-    depth_sup = torch.from_numpy(dz["supported"]).to(dev)
-    depth_index = dz["depth_index"]
+    depth_layers = torch.from_numpy(depth_layers).to(dev)
+    depth_sup = torch.from_numpy(depth_sup).to(dev)
 
     def gt_depth(i):
         L = int(depth_index[i])
@@ -414,15 +480,15 @@ def main():
         )
         return d, sup
 
-    test_idx = list(range(0, nF, a.holdout))
-    train_idx = [i for i in range(nF) if i % a.holdout != 0][:: a.train_stride]
     print(
         f"{model.n} splats, {nF} frames ({len(train_idx)} train / {len(test_idx)} test) at {W}x{H}; load {time.time() - t0:.0f}s",
         flush=True,
     )
 
-    vis = visible_mask(model, viewmats[train_idx], K, W, H, dev)
+    vis = visible_mask(model, viewmats[train_idx], Ks[train_idx], W, H, dev)
     n_vis = int(vis.sum())
+    if not n_vis:
+        raise ValueError("No splats are visible in the training views")
     print(f"visible in >=1 training view: {n_vis} ({100 * n_vis / model.n:.1f}%)", flush=True)
 
     use_obs = a.prune or a.densify or a.reg_observed_scale != 1.0 or a.lambda_opacity_entropy > 0
@@ -433,7 +499,7 @@ def main():
             obs, hit_cnt = observed_mask(
                 model.means,
                 viewmats[train_idx],
-                K,
+                Ks[train_idx],
                 W,
                 H,
                 depths,
@@ -455,6 +521,7 @@ def main():
             dv_depths = ([g[0] for g in gds], [g[1] for g in gds])
             dv_valid = [valid[i] for i in dv_idx]
             dv_views = viewmats[dv_idx]
+            dv_Ks = Ks[dv_idx]
         del hit_cnt
     else:
         obs = torch.zeros(model.n, dtype=torch.bool, device=dev)
@@ -462,20 +529,22 @@ def main():
     orig_idx = torch.arange(model.n, dtype=torch.int32, device=dev)
     bbox_lo = model.init["means"].min(0).values
     bbox_hi = model.init["means"].max(0).values
+    eval_depth_samples = {}
 
     def evaluate(tag):
         model_psnr = []
         derr = []
+        sample_counts = []
         with torch.no_grad():
             for i in test_idx:
-                img, al, dep, _ = model.render(viewmats[i], K, W, H, depth=True)
+                img, al, dep, _ = model.render(viewmats[i], Ks[i], W, H, depth=True)
                 gt = imgs[i].float() / 255
-                model_psnr.append(psnr(img, gt, valid[i]))
                 gd, sup = gt_depth(i)
-                sel = sup & valid[i] & (al[..., 0] > 0.5)
-                derr.append(
-                    float((torch.log(dep.clamp(min=0.05)) - torch.log(gd))[sel].abs().median())
-                )
+                error, count = heldout_depth_error(dep, gd, sup, valid[i], al[..., 0], i)
+                derr.append(error)
+                sample_counts.append(count)
+                model_psnr.append(psnr(img, gt, valid[i]))
+        eval_depth_samples[tag] = sample_counts
         m = float(np.mean(model_psnr))
         dr = float(np.mean(derr))
         print(
@@ -494,16 +563,19 @@ def main():
     def render_set(tag):
         with torch.no_grad():
             for i in fig_poses:
-                img, _, _, _ = model.render(viewmats[i], K, W, H)
+                img, _, _, _ = model.render(viewmats[i], Ks[i], W, H)
                 Image.fromarray(to_u8(img)).save(a.out / f"{tag}-pose-{i}.png")
             for d in (0.5, 1.5):
-                img, _, _, _ = model.render(offpath_view(a.offpath_frame, d), K, W, H)
+                img, _, _, _ = model.render(
+                    offpath_view(a.offpath_frame, d), Ks[a.offpath_frame], W, H
+                )
                 Image.fromarray(to_u8(img)).save(a.out / f"{tag}-offpath-{d}m.png")
 
     before, before_list, dr_before = evaluate("before")
     render_set("before")
-    arr = np.asarray(Image.open(a.out / "before-pose-0.png"))
-    print(f"before-pose-0 mean intensity {arr.mean():.1f} (black render would be ~0)", flush=True)
+    first_pose = f"before-pose-{fig_poses[0]}"
+    arr = np.asarray(Image.open(a.out / f"{first_pose}.png"))
+    print(f"{first_pose} mean intensity {arr.mean():.1f} (black render would be ~0)", flush=True)
     if arr.mean() < 2:
         raise SystemExit("render is black: check camera convention / near plane")
 
@@ -556,6 +628,7 @@ def main():
         if use_pseudo:
             j = int(np.random.randint(len(pseudo[0])))
             vm = pseudo[0][j]
+            intrinsics = pseudo_K
             gt = pseudo[1][j].float() / 255
             m = torch.ones((H, W, 1), device=dev)
             wgt = a.pseudo_weight
@@ -566,10 +639,11 @@ def main():
             i = int(order[ptr])
             ptr += 1
             vm = viewmats[i]
+            intrinsics = Ks[i]
             gt = imgs[i].float() / 255
             m = valid[i].float()[..., None]
             wgt = 1.0
-        img, alpha, dep, info = model.render(vm, K, W, H, depth=True)
+        img, alpha, dep, info = model.render(vm, intrinsics, W, H, depth=True)
         if a.densify and it >= a.densify_start:
             info["means2d"].retain_grad()
         l1 = ((img - gt).abs() * m).sum() / (m.sum() * 3)
@@ -591,7 +665,7 @@ def main():
             off_m = float(np.random.uniform(0.25, a.tv_max_m)) * (
                 1.0 if np.random.rand() < 0.5 else -1.0
             )
-            im2, al2, dp2, _ = model.render(offpath_view(fr, off_m), K, W, H, depth=True)
+            im2, al2, dp2, _ = model.render(offpath_view(fr, off_m), Ks[fr], W, H, depth=True)
             ld = torch.log(dp2.clamp(min=0.05))
             mk = (al2[..., 0] > 0.5).float()
             ix = (im2[:, 1:] - im2[:, :-1]).abs().mean(-1)
@@ -700,7 +774,9 @@ def main():
                     n_pruned_op += int((dead & keep).sum())
                     keep &= ~dead
                     if it >= a.prune_depth_start:
-                        off_d = depth_offset(model.means, dv_views, K, W, H, dv_depths, dv_valid)
+                        off_d = depth_offset(
+                            model.means, dv_views, dv_Ks, W, H, dv_depths, dv_valid
+                        )
                         veil = obs & torch.nan_to_num(off_d, nan=0.0).lt(
                             -a.prune_depth_cm / CM_PER_UNIT
                         )
@@ -710,7 +786,9 @@ def main():
                     (vis, obs, orig_idx) = surgery(
                         model, opt, keep, extra, side=[(vis, True), (obs, True), (orig_idx, -1)]
                     )
-                    n_vis = max(1, int(vis.sum()))
+                    n_vis = int(vis.sum())
+                    if not n_vis:
+                        raise ValueError("Pruning removed all visible training splats")
                     w_reg = reg_weights()
                     grad_acc = torch.zeros(model.n, device=dev)
                     grad_cnt = torch.zeros(model.n, device=dev)
@@ -760,6 +838,8 @@ def main():
             "psnr_after_list": after_list,
             "depth_ratio_before": dr_before,
             "depth_ratio_after": dr_after,
+            "heldout_frames": test_idx,
+            "heldout_depth_sample_counts": eval_depth_samples,
             "n_splats": model.n,
             "n_splats_init": int(len(orig_idx)),
             "n_visible": n_vis,

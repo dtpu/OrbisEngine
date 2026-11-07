@@ -31,6 +31,20 @@ The suite needs the locked inference dependencies for local tensor-based observa
 packaging checks. CI installs that group explicitly; these synthetic checks do not download
 model weights or submit provider jobs.
 
+Fine-tuning exports bind supplied exclusion masks to the source hash, exact decoded frame
+indices, PTS, timebase, dimensions and camera timestamps before loading the world or creating
+output. Cameras require a source hash or a matching sibling `sequence.json`. Equal mask and
+camera counts are insufficient: the lobby's two 115-frame grids selected different source
+frames. Exports require a new directory, rebuild the anchor cloud and retain an input-hash
+receipt. Derived exclusion masks need their own provenance and visual coverage review; they
+are not new segmentation predictions or proof that cleaned backgrounds are plausible.
+
+The export retains each frame's camera intrinsics, and the trainer uses them for projection,
+rendering, depth comparisons and offset views. Older exports with one `K` remain supported.
+Held-out depth scores include contributing pixel counts and reject empty comparisons. These
+checks prevent mismatched training inputs and misleading empty scores; a better training
+score still requires source-matched and off-axis visual review before scene acceptance.
+
 The admin's `bun test ./tests` checks schema-derived options and queue decisions. Its production
 build checks the UI and proxy types. Browser checks should use the real API and existing footage,
 not a screenshot-only mock.

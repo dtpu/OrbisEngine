@@ -8,10 +8,13 @@ anchor point cloud instead of read from the wvp.
 
     native = origin_c2w * (Rx(pi) raw / scale0)      scale0 fitted with bake_video_colours.py --diag
 
-Output: splats.npz, cameras.npz, frames/%04d.jpg, masks/%04d.png (255 = person), depth.npz.
+Output: splats.npz, cameras.npz, frames/%04d.jpg, masks/%04d.png (255 = excluded),
+depth.npz, static-scene.npy and export-receipt.json.
 """
 
 import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -23,9 +26,11 @@ from bake_video_colours import (
     read_spz,
     static_cloud_from_anchors,
     zbuffer_depth,
-    video_frames,
 )  # noqa: E402
+from local_clean_video import sha256, validate_masks, write_report  # noqa: E402
+from sfm_frame import framealign_path  # noqa: E402
 from sfm_frame import origin_c2w as levelled_origin, describe as describe_frame  # noqa: E402
+from worker.wander_worker.source_timing import match_camera_selection, select_source_frames  # noqa: E402
 
 
 def quat_mul(a, b):
@@ -49,7 +54,83 @@ def rotmat_to_quat_xyzw(R):
     return Rotation.from_matrix(R).as_quat()
 
 
-def main():
+def decode_frames(clip, indices, size, fps=12.0):
+    width, height = size
+    rgb, provenance = select_source_frames(
+        clip, fps, source_indices=indices, width=width, height=height
+    )
+    if len(rgb) != len(indices) * height * width * 3:
+        raise ValueError("Decoded RGB frame count does not match requested source frames")
+    return np.frombuffer(rgb, dtype=np.uint8).reshape(len(indices), height, width, 3), provenance
+
+
+def supplied_mask_inputs(clip, masks_path, cameras_path, camera_doc, size):
+    """Bind masks, camera labels and decoded RGB to the same source samples."""
+    cameras = camera_doc["cameras"]
+    masks_sha = sha256(masks_path)
+    archive = validate_masks(clip, masks_path)
+    if sha256(masks_path) != masks_sha:
+        raise ValueError("Masks changed during validation")
+    _, source_height, source_width = map(int, archive["shape"])
+    indices = archive["source_indices"].tolist()
+    source_sha = str(archive["source_sha256"])
+    camera_indices = [camera.get("sourceIndex") for camera in cameras]
+    if any(type(index) is not int for index in camera_indices) or camera_indices != indices:
+        raise ValueError("Masks source indices do not match camera source indices")
+    for camera in cameras:
+        dimensions = camera.get("source_image_size")
+        if (
+            not isinstance(dimensions, list)
+            or any(type(value) is not int for value in dimensions)
+            or dimensions != [source_width, source_height]
+        ):
+            raise ValueError("Camera dimensions do not match source mask dimensions")
+
+    sequence_path = None
+    sequence_sha = None
+    fps = 12.0
+    if "sourceSha256" in camera_doc:
+        camera_source_sha = camera_doc["sourceSha256"]
+    else:
+        sequence_path = cameras_path.with_name("sequence.json")
+        if not sequence_path.is_file():
+            raise ValueError("Camera source binding requires sourceSha256 or sibling sequence.json")
+        sequence_bytes = sequence_path.read_bytes()
+        sequence_sha = hashlib.sha256(sequence_bytes).hexdigest()
+        sequence = json.loads(sequence_bytes)
+        camera_source_sha = sequence.get("sourceSha256")
+        sequence_indices = sequence.get("sourceIndices")
+        if (
+            not isinstance(sequence_indices, list)
+            or any(type(index) is not int for index in sequence_indices)
+            or sequence_indices != indices
+        ):
+            raise ValueError("Camera sequence source indices do not match camera source indices")
+        timestamps = sequence.get("timestamps")
+        if (
+            not isinstance(timestamps, list)
+            or any(type(value) not in (float, int) for value in timestamps)
+            or timestamps != [camera.get("time") for camera in cameras]
+        ):
+            raise ValueError("Camera sequence timestamps do not match camera timestamps")
+        fps = sequence.get("fps", fps)
+    if camera_source_sha != source_sha:
+        raise ValueError("Camera source hash mismatch")
+
+    images, provenance = decode_frames(clip, indices, size, fps)
+    if provenance["sourceSha256"] != source_sha:
+        raise ValueError("Decoded source hash does not match masks")
+    if (
+        provenance["sourceTimeBase"] != str(archive["source_time_base"])
+        or [frame["sourceIndex"] for frame in provenance["frames"]] != indices
+        or [frame["sourcePts"] for frame in provenance["frames"]] != archive["source_pts"].tolist()
+    ):
+        raise ValueError("Decoded source timing does not match masks")
+    match_camera_selection(provenance, cameras, indices)
+    return images, archive, provenance, masks_sha, sequence_path, sequence_sha
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", default=ROOT / "public/marble-bedroom-clean.spz", type=Path)
     ap.add_argument("--cameras", default=ROOT / ".context/own/bedroom/pi3x/cameras.json", type=Path)
@@ -69,25 +150,70 @@ def main():
         "--masks-npz",
         type=Path,
         default=None,
-        help="packed per-sample person masks (tracks_to_clean_masks.py) instead of SegFormer",
+        help="exact-source packed exclusion masks on the camera sample grid instead of SegFormer",
     )
     ap.add_argument(
         "--moved-mask",
         action="store_true",
         help="ignore everything that MOVED, not just the person (cast shadow, carried object, passer-by). Off by default.",
     )
-    ap.add_argument("--out", type=Path, required=True)
-    a = ap.parse_args()
-    (a.out / "frames").mkdir(parents=True, exist_ok=True)
-    (a.out / "masks").mkdir(parents=True, exist_ok=True)
+    ap.add_argument("--out", type=Path, required=True, help="new export directory")
+    a = ap.parse_args(argv)
+    if a.out.exists() or a.out.is_symlink():
+        raise FileExistsError(f"Export directory already exists: {a.out}")
+    camera_bytes = a.cameras.read_bytes()
+    camera_doc = json.loads(camera_bytes)
+    cams = camera_doc["cameras"]
+    camera_sha = hashlib.sha256(camera_bytes).hexdigest()
+    archive = masks_sha = sequence_path = sequence_sha = None
+    W, H = a.size
+    if a.masks_npz:
+        imgs, archive, provenance, masks_sha, sequence_path, sequence_sha = supplied_mask_inputs(
+            a.clip, a.masks_npz, a.cameras, camera_doc, a.size
+        )
+        src_idx = archive["source_indices"].tolist()
+    else:
+        src_idx = [int(camera["sourceIndex"]) for camera in cams]
+        indices = sorted(set(src_idx))
+        imgs, provenance = decode_frames(a.clip, indices, a.size)
+        if indices != src_idx:
+            positions = {index: i for i, index in enumerate(indices)}
+            imgs = imgs[[positions[index] for index in src_idx]]
+    source_sha = provenance["sourceSha256"]
 
-    import json
-
-    cams = json.load(open(a.cameras))["cameras"]
     c2w = np.array([c["camera_to_world"] for c in cams], np.float64)
-    src_idx = [int(c["sourceIndex"]) for c in cams]
     Ks = np.array([c["source_intrinsics"] for c in cams], np.float64)
     SW, SH_ = cams[0]["source_image_size"]
+    if not 0 <= a.origin_frame < len(cams):
+        raise ValueError("Origin frame must index an exported camera")
+    if Ks.shape != (len(cams), 3, 3) or SW <= 0 or SH_ <= 0:
+        raise ValueError("Expected one 3x3 intrinsic matrix per camera and positive source size")
+    export_Ks = Ks.copy()
+    export_Ks[:, 0] *= W / SW
+    export_Ks[:, 1] *= H / SH_
+    export_Ks = export_Ks.astype(np.float32)
+    if not np.isfinite(export_Ks).all() or np.any(export_Ks[:, (0, 1), (0, 1)] <= 0):
+        raise ValueError("Exported camera intrinsics must be finite with positive focal lengths")
+    anchor_samples = [int(sample) for sample in a.anchor_samples.split(",")]
+    input_hashes = {
+        a.clip: source_sha,
+        a.cameras: camera_sha,
+        a.anchors: sha256(a.anchors),
+        a.world: sha256(a.world),
+    }
+    if a.masks_npz:
+        input_hashes[a.masks_npz] = masks_sha
+    if sequence_path:
+        input_hashes[sequence_path] = sequence_sha
+    alignment_path = framealign_path(a.cameras)
+    alignment_sha = sha256(alignment_path) if alignment_path.exists() else None
+    for path, expected in input_hashes.items():
+        if sha256(path) != expected:
+            raise ValueError(f"Export input changed during preflight: {path}")
+
+    a.out.mkdir(parents=True, exist_ok=False)
+    (a.out / "frames").mkdir()
+    (a.out / "masks").mkdir()
     print(
         f"{len(cams)} cameras, K spread fx {Ks[:, 0, 0].std():.3f} cx {Ks[:, 0, 2].std():.3f}",
         flush=True,
@@ -125,16 +251,14 @@ def main():
         flush=True,
     )
 
-    W, H = a.size
-    K = Ks[a.origin_frame].copy()
-    K[0] *= W / SW
-    K[1] *= H / SH_
+    K = export_Ks[a.origin_frame]
     gl2cv = np.diag([1.0, -1.0, -1.0, 1.0])
     viewmats = np.linalg.inv(c2w @ gl2cv)
     np.savez(
         a.out / "cameras.npz",
         viewmats=viewmats.astype(np.float32),
-        K=K.astype(np.float32),
+        K=K,
+        Ks=export_Ks,
         c2w_gl=c2w.astype(np.float32),
         width=W,
         height=H,
@@ -147,16 +271,8 @@ def main():
     )
 
     # depth: one z-buffered layer per camera from the Pi3X anchor cloud, native units
-    cache = a.anchors.with_name("static-scene.npy")
-    scene = (
-        np.load(cache)
-        if cache.exists()
-        else static_cloud_from_anchors(
-            a.anchors, a.cameras, [int(x) for x in a.anchor_samples.split(",")]
-        )
-    )
-    if not cache.exists():
-        np.save(cache, scene)
+    scene = static_cloud_from_anchors(a.anchors, a.cameras, anchor_samples)
+    np.save(a.out / "static-scene.npy", scene)
     DW, DH = a.depth_res
     depth = np.zeros((len(cams), DH, DW), np.float32)
     sup = np.zeros((len(cams), DH, DW), bool)
@@ -184,17 +300,9 @@ def main():
     from PIL import Image
     from scipy import ndimage
 
-    want = {s: i for i, s in enumerate(src_idx)}
-    imgs = np.zeros((len(cams), H, W, 3), np.uint8)
-    for j, img in enumerate(video_frames(a.clip, W, H)):
-        if j in want:
-            imgs[want[j]] = img
-    if (
-        a.masks_npz
-    ):  # already dilated by tracks_to_clean_masks.py; Mask R-CNN instances, not SegFormer
-        z = np.load(a.masks_npz)
-        full = np.unpackbits(z["masks"], axis=2)[:, :, : int(z["shape"][2])] > 0
-        assert len(full) == len(cams), f"{len(full)} masks vs {len(cams)} cameras"
+    if archive is not None:
+        mask_method = "supplied"
+        full = np.unpackbits(archive["masks"], axis=2, count=SW)
         masks = np.stack(
             [
                 np.array(Image.fromarray(m.astype(np.uint8) * 255).resize((W, H), Image.NEAREST))
@@ -203,6 +311,7 @@ def main():
             ]
         )
     elif a.moved_mask:
+        mask_method = "moved"
         # the loss ignores what MOVED, not only the person: a cast shadow or a carried object is
         # in the frames but not in the static world, so the trainer is graded against pixels the
         # model can never reproduce and paints them onto the geometry to close the gap
@@ -218,6 +327,7 @@ def main():
             flush=True,
         )
     else:
+        mask_method = "person"
         sys.path.insert(0, str(ROOT / "worker"))
         from wander_worker.masks import people_masks
 
@@ -232,6 +342,34 @@ def main():
         m = masks[i]
         m = ndimage.binary_dilation(m, iterations=2)
         Image.fromarray((m * 255).astype(np.uint8)).save(a.out / "masks" / f"{i:04d}.png")
+    for path, expected in input_hashes.items():
+        if sha256(path) != expected:
+            raise ValueError(f"Export input changed during export: {path}")
+    if (sha256(alignment_path) if alignment_path.exists() else None) != alignment_sha:
+        raise ValueError(f"Export input changed during export: {alignment_path}")
+    write_report(
+        a.out / "export-receipt.json",
+        {
+            "schema": "wander.finetune-export/1",
+            "sourceSha256": source_sha,
+            "sourceIndices": src_idx,
+            "sourceProvenance": provenance,
+            "camerasSha256": camera_sha,
+            "cameraSequenceSha256": sequence_sha,
+            "masksSha256": masks_sha,
+            "framealignSha256": alignment_sha,
+            "maskMethod": mask_method,
+            "maskDilationFullRes": None if archive is not None else a.mask_dilate,
+            "maskDilationExportPixels": 2,
+            "anchorsSha256": input_hashes[a.anchors],
+            "anchorSamples": anchor_samples,
+            "worldSha256": input_hashes[a.world],
+            "size": a.size,
+            "depthRes": a.depth_res,
+            "scale0": a.scale0,
+            "originFrame": a.origin_frame,
+        },
+    )
     print(
         f"wrote {len(cams)} frames/masks to {a.out}; mean person coverage {100 * masks.mean():.1f}%",
         flush=True,
