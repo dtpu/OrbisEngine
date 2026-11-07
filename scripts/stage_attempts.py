@@ -130,6 +130,7 @@ CODE_FILES = {
     "worker/modal_motion.py": (
         "worker/stages/worker_resources.py",
         "worker/stages/dense_pi3x.py",
+        "worker/wander_worker/camera_stitch.py",
         "worker/wander_worker/masks.py",
         "worker/wander_worker/ply.py",
         "worker/wander_worker/source_timing.py",
@@ -152,6 +153,7 @@ CODE_FILES = {
 }
 OUTPUT_FLAGS = {"--out", "--out-dir", "--frames-out", "--frame0", "--masks", "--report"}
 BOOL_FLAGS = {
+    "--anchor-lock",
     "--allow-person-gaps",
     "--allow-missing-person-reference",
     "--moved-mask",

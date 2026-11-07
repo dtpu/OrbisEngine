@@ -397,6 +397,50 @@ Private receipts, numeric audits, raw measurements and viewer screenshots are re
 credentials are not committed. The shared ledger now exhausts the ordinary camera and animation
 allowances for this original source; candidate renaming does not reset them.
 
+## Camera batch consistency, 2026-11-07
+
+The opt-in runner flag `--pi3x-anchor-lock` (worker flag `--anchor-lock`) corrects independent
+Pi3X batches against the same anchor poses, interpolating the correction in recorded
+source time. Each frame's camera and point cloud receive matching transforms; the shared
+anchor cloud retains its single recorded reference transform. Legacy unmarked manifests use
+the original behavior. Unknown modes and contradictory locked source/reference metadata fail
+closed. Resuming a cached camera stage under a different mode stops before paid work or state
+changes; a fresh candidate still uses the original shared attempt allowance.
+
+Retained raw batches from the lobby source were recomputed locally, without new camera
+inference. Exact source-image correspondence ruled out wrong frame ordering. All 11 usable
+held-out static RGB pairs passed the frozen median ≤1 and p90 ≤2 pixel criteria at 672×378;
+two additional pairs lacked enough matches and remain unverified. The largest translation
+step fell from 0.152 to 0.0245 native units (about 0.258 to 0.042 measured body-heights).
+These checks do not establish absolute camera accuracy, unseen geometry or full scene quality.
+
+The diagnostic export rebuilt gravity alignment and all 115 depth targets from the corrected
+cameras and coherent anchor cloud. All 115 training RGB images and masks remain byte-identical
+to the prior export; intrinsics, source indices, timestamps, exclusions and original generated
+world are unchanged. Camera, static cloud, depth, person coordinates and placement are dependent
+artifacts and must be rebuilt together. The general helper tests cover noncommuting rotations,
+shortest-path interpolation, exact anchor locks, camera-space point invariance, timestamp errors,
+invalid affine inputs and small recorded numerical roundoff. No camera quality gate was weakened.
+
+One bounded 800-step GPU trial used those inputs with the previous surface objective and original
+world initialization. Held-out masked PSNR improved from 12.91 to 24.69 dB; minimum per-view
+supported coverage retained was 99.27%. Three of five fixed scale views passed, but the last view
+still had median 1.090 and p90 1.529 against the unchanged 0.95–1.05 and 0.9–1.1 bands. Source
+and lateral comparisons still showed smeared elevators/glazing and stretched floor surfaces.
+
+The isolated viewer loaded all 1,920,000 world splats and all 115 person frames. Retained person
+Gaussians were rigidly re-expressed through the exact SVD camera convention used by their original
+export; camera-local positions agreed within 1.30e-7 native units and orientation matrices within
+4.31e-7, with scale/color/opacity unchanged. Playback and a short right/forward walk worked without
+browser warnings or errors. The floor still visibly distorted and partly obscured the first-frame
+feet; this is not contact, collision or scene acceptance. The source is silent; no headset check
+or fresh person inference ran. The single paid call completed, outputs were hash-verified, and
+its owned app stopped with no tasks; no replacement world or OpenAI call was made.
+
+Private evidence is under `.context/evidence/surface-reconstruction-20261107/`; no generated
+media or inference archives are committed. This option remains experimental and disabled by
+default. A successful camera audit does not promote the retained scene.
+
 ## Remaining boundaries
 
 The November 7 lobby iteration reused the original clip and retained world. Offline camera

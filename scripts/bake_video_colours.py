@@ -440,6 +440,83 @@ class JsonSource:
         return np.asarray(im)
 
 
+def _canonical_anchor_reference(camera_doc, cameras_path, poses, anchor_samples, public_poses):
+    """Validate an explicitly locked camera manifest and its shared anchor frame."""
+    sys.path.insert(0, str(ROOT / "worker"))
+    from wander_worker.camera_stitch import _rigid_poses
+
+    try:
+        sequence = json.loads(cameras_path.with_name("sequence.json").read_text())
+        cameras = camera_doc["cameras"]
+        source_sha = camera_doc["sourceSha256"]
+        indices = [camera["sourceIndex"] for camera in cameras]
+        times = [camera["time"] for camera in cameras]
+        reference = camera_doc["reference"]
+        rotation = np.asarray(reference["rotation"], dtype=np.float64)
+        translation = np.asarray(reference["translation"], dtype=np.float64)
+        scale = reference["scale"]
+        flip = np.asarray(reference["world_axis_flip"], dtype=np.float64)
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "Anchor-locked cameras require complete reference and sequence metadata"
+        ) from error
+    if not isinstance(sequence, dict):
+        raise ValueError("Anchor-locked sequence metadata must be an object")
+    if (
+        not isinstance(source_sha, str)
+        or len(source_sha) != 64
+        or any(character not in "0123456789abcdef" for character in source_sha)
+        or sequence.get("sourceSha256") != source_sha
+        or sequence.get("cameraStitch") != "anchor-locked"
+        or type(sequence.get("count")) is not int
+        or sequence["count"] != len(cameras)
+        or not isinstance(sequence.get("anchors"), list)
+        or any(type(sample) is not int for sample in sequence["anchors"])
+        or sequence["anchors"] != anchor_samples
+        or anchor_samples != sorted(set(anchor_samples))
+        or any(type(index) is not int or index < 0 for index in indices)
+        or any(right <= left for left, right in zip(indices, indices[1:]))
+        or not isinstance(sequence.get("sourceIndices"), list)
+        or any(type(index) is not int for index in sequence["sourceIndices"])
+        or sequence.get("sourceIndices") != indices
+        or any(type(value) not in (int, float) or not np.isfinite(value) for value in times)
+        or any(right <= left for left, right in zip(times, times[1:]))
+        or not isinstance(sequence.get("timestamps"), list)
+        or any(type(value) not in (int, float) for value in sequence["timestamps"])
+        or sequence.get("timestamps") != times
+    ):
+        raise ValueError("Anchor-locked source, sample or timestamp metadata is contradictory")
+    if (
+        rotation.shape != (3, 3)
+        or translation.shape != (3,)
+        or not np.isfinite(rotation).all()
+        or not np.isfinite(translation).all()
+        or type(scale) not in (int, float)
+        or not np.isfinite(scale)
+        or scale <= 0
+        or flip.shape != (3,)
+        or not np.array_equal(flip, [1.0, -1.0, -1.0])
+    ):
+        raise ValueError(
+            "Anchor-locked reference requires finite rotation, translation, positive scale and OpenGL axis flip"
+        )
+    reference_pose = np.eye(4)
+    reference_pose[:3, :3] = rotation
+    reference_pose[:3, 3] = translation
+    # Validate numerical rigidity without changing the recorded shared transform.
+    _rigid_poses(reference_pose[None], 1, "anchor reference")
+    _rigid_poses(poses, len(poses), "raw anchor poses")
+    axis_flip = np.diag(flip)
+    expected = np.repeat(np.eye(4)[None], len(poses), axis=0)
+    expected[:, :3, :3] = axis_flip @ rotation @ poses[:, :3, :3] @ axis_flip
+    expected[:, :3, 3] = ((poses[:, :3, 3] @ rotation.T + translation) * flip) * scale
+    expected = _rigid_poses(expected, len(poses), "canonical anchor poses")
+    _rigid_poses(public_poses, len(poses), "public anchor poses")
+    if not np.allclose(public_poses, expected, rtol=0, atol=1e-6):
+        raise ValueError("Anchor-locked public cameras contradict the recorded canonical reference")
+    return rotation, translation, float(scale), flip
+
+
 def static_cloud_from_anchors(
     anchors: Path,
     cameras: Path,
@@ -449,16 +526,19 @@ def static_cloud_from_anchors(
     exclusion_masks=None,
     exclusion_report=None,
 ):
-    """Map Pi3X anchor points through their own cameras into the public OpenGL frame.
+    """Map Pi3X anchors into the public frame, preserving explicitly locked geometry.
 
     Optional boolean exclusion masks are keyed by camera sample and already aligned
     to the anchor pixel grid. The supplied sample list identifies archive rows in order.
     When provided, exclusion_report receives counts before and after these extra masks.
+    Anchor-locked camera manifests use one recorded reference transform for every
+    point; legacy manifests retain the original per-view camera reattachment.
     """
     with np.load(anchors, allow_pickle=False) as a:
         poses = a["poses"].astype(np.float64)
         points, valid, people, conf = (a[key] for key in ("points", "valid", "people", "conf"))
-    cams = json.loads(cameras.read_text())["cameras"]
+    camera_doc = json.loads(cameras.read_text())
+    cams = camera_doc["cameras"]
     anchor_samples = list(anchor_samples)
     if (
         not anchor_samples
@@ -500,14 +580,22 @@ def static_cloud_from_anchors(
             "from the anchors themselves, so each one must have been solved"
         )
     pub = np.array([cams[i]["camera_to_world"] for i in anchor_samples], np.float64)
-    ap, pp = poses[:, :3, 3], pub[:, :3, 3]
-    S, D = ap - ap.mean(0), pp - pp.mean(0)
-    anchor_baseline, public_baseline = float((S**2).sum()), float((D**2).sum())
-    if not all(np.isfinite(v) and v > 0 for v in (anchor_baseline, public_baseline)):
-        raise ValueError("Anchor scale needs finite positive pose baselines")
-    scale = float(np.sqrt(public_baseline / anchor_baseline))
-    if not np.isfinite(scale) or scale <= 0:
-        raise ValueError("Anchor scale must be finite and positive")
+    stitch_mode = camera_doc.get("cameraStitch", "similarity")
+    if stitch_mode not in ("similarity", "anchor-locked"):
+        raise ValueError("Unknown cameraStitch mode; cannot choose an anchor coordinate frame")
+    canonical = None
+    if stitch_mode == "anchor-locked":
+        canonical = _canonical_anchor_reference(camera_doc, cameras, poses, anchor_samples, pub)
+        scale = canonical[2]
+    else:
+        ap, pp = poses[:, :3, 3], pub[:, :3, 3]
+        S, D = ap - ap.mean(0), pp - pp.mean(0)
+        anchor_baseline, public_baseline = float((S**2).sum()), float((D**2).sum())
+        if not all(np.isfinite(v) and v > 0 for v in (anchor_baseline, public_baseline)):
+            raise ValueError("Anchor scale needs finite positive pose baselines")
+        scale = float(np.sqrt(public_baseline / anchor_baseline))
+        if not np.isfinite(scale) or scale <= 0:
+            raise ValueError("Anchor scale must be finite and positive")
     keep = valid & ~people & (conf > np.percentile(conf, conf_pct))
     F = np.diag([1.0, -1.0, -1.0])  # OpenCV camera -> OpenGL camera
     out = []
@@ -528,8 +616,12 @@ def static_cloud_from_anchors(
                     }
                 )
             usable &= ~excluded
-        C = C[usable] * scale
-        W = (C @ F) @ pub[i][:3, :3].T + pub[i][:3, 3]  # OpenGL camera -> public world
+        if canonical is None:
+            C = C[usable] * scale
+            W = (C @ F) @ pub[i][:3, :3].T + pub[i][:3, 3]  # OpenGL camera -> public world
+        else:
+            rotation, translation, scale, flip = canonical
+            W = (P[usable] @ rotation.T + translation) * scale * flip
         out.append(W.astype(np.float32))
     pts = np.concatenate(out)
     if not len(pts) or not np.isfinite(pts).all():

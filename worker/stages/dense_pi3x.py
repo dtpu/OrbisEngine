@@ -16,6 +16,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wander_worker.source_timing import select_source_frames
+from wander_worker.camera_stitch import stitch_camera_batch
 
 
 # A similarity transform in three dimensions is only determined by three independent
@@ -193,6 +194,25 @@ def fit_ray_intrinsics(rays, valid, source_size):
     )
 
 
+def batch_viewer_transforms(
+    poses, batch_similarity, reference, times, anchor_times, canonical, *, anchor_lock=False
+):
+    """Keep camera and point transforms together for every view in one solve."""
+    s, rotation, translation = batch_similarity
+    reference_rotation, reference_translation, scale = reference
+    cameras = np.array(
+        [
+            viewer_camera(
+                pose, s, rotation, translation, reference_rotation, reference_translation, scale
+            )
+            for pose in poses
+        ]
+    )
+    if not anchor_lock:
+        return cameras, np.broadcast_to(np.eye(4), cameras.shape).copy()
+    return stitch_camera_batch(cameras, times, anchor_times, canonical)
+
+
 def decode_camera_samples(video, framesdir, fps):
     """Write the exact decoded views that will be used for camera inference."""
     if not math.isfinite(fps) or fps <= 0:
@@ -328,6 +348,11 @@ def main():
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument("--anchors", type=int, default=8)
     ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument(
+        "--anchor-lock",
+        action="store_true",
+        help="experimental shared-anchor correction of camera and per-frame point geometry; requires downstream revalidation",
+    )
     ap.add_argument("--repo", default=os.path.expanduser("~/pi3"))
     a = ap.parse_args()
     if not math.isfinite(a.fps) or a.fps < 12:
@@ -409,6 +434,10 @@ def main():
     zz = (base["points"][0] @ R0.T + t00)[..., 2]
     good = base["valid"][0] & (~base["people"][0]) & (zz > 0)
     scale = 3 / np.median(zz[good])
+    canonical = np.array(
+        [viewer_camera(pose, 1.0, np.eye(3), np.zeros(3), R0, t00, scale) for pose in base["poses"]]
+    )
+    anchor_times = np.asarray(times)[anchors]
     rng = np.random.default_rng(13)
     matches = []
     for j in range(len(anchors)):
@@ -445,6 +474,15 @@ def main():
         print("alignment", float(s), rms, flush=True)
         if not np.isfinite(rms) or not 0.1 < s < 10:
             raise RuntimeError("Invalid anchor alignment")
+        batch_cameras, point_maps = batch_viewer_transforms(
+            p["poses"],
+            (s, R, t),
+            (R0, t00, scale),
+            np.asarray(times)[ids],
+            anchor_times,
+            canonical,
+            anchor_lock=a.anchor_lock,
+        )
         np.savez_compressed(
             camera_dir / f"batch_{lo:03d}.npz",
             sample_ids=ids,
@@ -458,6 +496,9 @@ def main():
             reference_rotation=R0,
             reference_translation=t00,
             world_scale=scale,
+            camera_stitch="anchor-locked" if a.anchor_lock else "similarity",
+            viewer_camera_to_world=batch_cameras,
+            viewer_point_maps=point_maps,
         )
         # Full-resolution masks preserve limbs; resize to the actual Pi3X pixel grid.
         full = np.stack([np.asarray(Image.open(files[i])) for i in ids])
@@ -472,6 +513,8 @@ def main():
             xyz = p["points"][j][valid] @ R.T * s + t
             col = p["rgb"][j][valid]
             xyz = (xyz @ R0.T + t00) * scale * flip
+            if a.anchor_lock:
+                xyz = xyz @ point_maps[j, :3, :3].T + point_maps[j, :3, 3]
             sparse = len(xyz) < MINIMUM_PERSON_POINTS
             if sparse:
                 # The subject could not be reconstructed here, so write no person cloud. The
@@ -487,7 +530,7 @@ def main():
             else:
                 write_point_ply(out / f"frame_{i:03d}.ply", xyz.astype("float32"), col)
                 point_counts.append(len(xyz))
-            camera = viewer_camera(p["poses"][j], s, R, t, R0, t00, scale)  # solved per view
+            camera = batch_cameras[j]  # the same corrected frame as its exported points
             cams[i] = dict(
                 position=camera[:3, 3].tolist(),
                 **source_fields[i],
@@ -539,6 +582,7 @@ def main():
         torch=torch.__version__,
         anchors=anchors,
         batch=a.batch,
+        cameraStitch="anchor-locked" if a.anchor_lock else "similarity",
         pointCounts=point_counts,
         note="Each source frame reconstructed with shared static anchors. >=12 independent frames/sec; single observed-facing surface, not complete human volume.",
     )
@@ -568,6 +612,7 @@ def main():
                 ),
                 sourceSha256=provenance["sourceSha256"],
                 sourceTimeBase=provenance["sourceTimeBase"],
+                cameraStitch="anchor-locked" if a.anchor_lock else "similarity",
                 cameras=cams,
             ),
             indent=1,
