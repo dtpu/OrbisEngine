@@ -647,6 +647,7 @@
       import '@fontsource/instrument-serif';
       import '@fontsource-variable/manrope';
       import { mountQuestViewPanel } from '/src/quest-view-panel.ts';
+      import { playbackState, togglePlayback } from '/src/scene-playback.js';
 
       const WALK = new URLSearchParams(location.search).get('walk') !== '0';
 
@@ -947,11 +948,9 @@
       }
 
       /* ---------------- controls ---------------- */
-      function setPlayLabel(running) {
+      function setPlayLabel(running, label = 'Play camera move') {
         $('play').classList.toggle('running', running);
-        $('playlabel').textContent = running
-          ? 'Playing — press any key to stop'
-          : 'Play camera move';
+        if ($('playlabel').textContent !== label) $('playlabel').textContent = label;
       }
       function api() {
         try {
@@ -965,7 +964,7 @@
         const w = api();
         if (!w) return;
         void w.unlockAudio?.();
-        w.showreel(!w.reel);
+        togglePlayback(w);
         try {
           frame.contentWindow.focus();
         } catch {}
@@ -996,16 +995,13 @@
         } catch {}
       }
 
-      // Reflect the viewer's own reel state, so driving it with WASD (which cancels the reel)
-      // puts the button back by itself.
-      let wasRunning = false;
+      // Authored tours drive the camera; other scenes expose ordinary clip play/pause.
+      // Reflect keyboard transport changes and refresh the label after scene switches.
       setInterval(() => {
         const w = api();
-        const r = !!(w && w.reel);
-        if (r !== wasRunning) {
-          wasRunning = r;
-          setPlayLabel(r);
-        }
+        if (!ready || !w) return;
+        const state = playbackState(w);
+        setPlayLabel(state.running, state.label);
       }, 120);
 
       /* ---------------- edge of the filmed world ----------------

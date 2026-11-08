@@ -21,6 +21,9 @@ Reviewed picker entries can name a private `sceneManifest` asset. Its
 URL options take precedence. The manifest cannot change the scene ID or select another
 manifest. These generated configurations are published with the media, outside Git. The
 gym and kitchen selections retain their existing reviewed assets through these configurations.
+Scenes without a configured camera tour play and pause the clip from the current view. A
+`reelkeys` path, `reel` path, or explicit `reelmode` opts into camera playback; `reelmode=stationary`
+keeps the view fixed. Unconfigured scenes never borrow another room's camera tour.
 Restart the local server to pick up a newly published snapshot. A running server pins its snapshot
 so a publish cannot mix an old scene manifest with new frames. `/api/shared-assets` shows the active
 snapshot, timestamp, and file count without exposing credentials.
