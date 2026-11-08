@@ -73,6 +73,14 @@ def package(context):
     return world, source
 
 
+def configure_run(context, **options):
+    run_file = context.run_dir / "run.json"
+    described = json.loads(run_file.read_text())
+    described["options"].update(options)
+    run_file.write_text(json.dumps(described))
+    return cli.RunContext.load()
+
+
 def session_for(context, *, status="completed", body=None):
     session = RunSession(
         context.run_id,
@@ -178,6 +186,52 @@ def test_lost_package_prerequisite_stops_further_paid_work(run, monkeypatch, sta
     popen.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("mode", "selected_world"),
+    [
+        ("video", "marble_video"),
+        ("image", "marble_image"),
+        ("multi", "marble_multi"),
+        ("both", "marble_video"),
+    ],
+)
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+@pytest.mark.parametrize("source_prompt", [True, False])
+def test_lost_world_prerequisite_stops_further_paid_work(
+    run, monkeypatch, mode, selected_world, status, source_prompt
+):
+    run = configure_run(run, marble=mode, all_people=True)
+    journal = run.journal()
+    lost = "world_prompt" if source_prompt else selected_world
+    journal.append("step.started", step=lost, attempt="one", number=1)
+    journal.append("step.finished", step=lost, attempt="one", status=status)
+    assert admission_problem(run, "frame_align", [], journal) is None
+    popen = Mock(side_effect=AssertionError("paid work launched after the world was lost"))
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+
+    assert cli.main(["step", "--wait", "lhm_frozen_00"]) == 2
+
+    finished = journal.entries()[-1]
+    assert finished.kind == "run.finished" and finished.data["status"] == "failed"
+    assert f"{lost} ({status})" in finished.data["summary"]
+    assert finished.data["delivery"]["status"] == "unavailable"
+    popen.assert_not_called()
+
+
+def test_pending_world_and_failed_alternate_do_not_hold_people_work(run):
+    run = configure_run(run, marble="both")
+    journal = run.journal()
+    journal.append("step.finished", step="marble_image", attempt="one", status="failed")
+    assert admission_problem(run, "lhm_frozen", [], journal) is None
+    assert unpaid_prerequisite_problem(run, "lhm_frozen", journal) is None
+
+
+def test_blocked_finetune_in_runner_state_prevents_further_paid_work(run):
+    run = configure_run(run, marble="video", finetune=True)
+    (run.run_dir / "state.json").write_text('{"stages":{"finetune":{"status":"blocked"}}}')
+    assert "finetune (blocked)" in admission_problem(run, "anchors", [], run.journal())
+
+
 def test_lost_prerequisite_check_ignores_unpaid_and_unrelated_failures(run):
     journal = run.journal()
     # Unpaid steps can be rerun; clean does not feed the package of a run without a world.
@@ -188,17 +242,21 @@ def test_lost_prerequisite_check_ignores_unpaid_and_unrelated_failures(run):
     assert "lhm_frozen" in admission_problem(run, "pi3x", [], journal)
 
 
-def test_failed_unpaid_prerequisite_holds_paid_work_until_it_succeeds(run, monkeypatch):
+@pytest.mark.parametrize(("mode", "prerequisite"), [("none", "person_prep"), ("video", "review")])
+def test_failed_unpaid_prerequisite_holds_paid_work_until_it_succeeds(
+    run, monkeypatch, mode, prerequisite
+):
+    run = configure_run(run, marble=mode)
     journal = run.journal()
-    journal.append("step.finished", step="person_prep", attempt="one", status="failed")
+    journal.append("step.finished", step=prerequisite, attempt="one", status="failed")
     popen = Mock(side_effect=AssertionError("paid work launched without its prerequisite"))
     monkeypatch.setattr(cli.subprocess, "Popen", popen)
     assert cli.main(["step", "--wait", "lhm_frozen"]) == 2
     # Held, not finished: the unpaid step may still be rerun.
     assert Journal(run.run_dir).finished() is None
     popen.assert_not_called()
-    assert unpaid_prerequisite_problem(run, "person_prep", journal) is None
-    journal.append("step.finished", step="person_prep", attempt="two", status="succeeded")
+    assert unpaid_prerequisite_problem(run, prerequisite, journal) is None
+    journal.append("step.finished", step=prerequisite, attempt="two", status="succeeded")
     assert unpaid_prerequisite_problem(run, "lhm_frozen", journal) is None
 
 
@@ -285,10 +343,7 @@ def test_success_still_requires_full_existing_completion_checks(run):
 
 def test_viewable_world_with_missing_manual_review_never_succeeds(run):
     package(run)
-    described = json.loads((run.run_dir / "run.json").read_text())
-    described["options"]["marble"] = "video"
-    (run.run_dir / "run.json").write_text(json.dumps(described))
-    run = cli.RunContext.load()
+    run = configure_run(run, marble="video")
     (run.run_dir / "public/marble-example-clean.spz").write_bytes(b"world fixture")
     stages = {name: {"status": "ok"} for name in cli.plan_for(run)}
     stages["_verify"] = {"status": "blocked", "passed": False}
