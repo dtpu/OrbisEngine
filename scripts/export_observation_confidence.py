@@ -134,6 +134,13 @@ def load_source_masks(path: Path, world_dir: Path, cams):
         raise ValueError(f"--masks is not a file: {path}")
     try:
         with np.load(path) as archive:
+            if "packedMasks" in archive.files or "metadata" in archive.files:
+                from single_person_masks import load_archive
+
+                sequence = json.loads((world_dir / "person" / "sequence.json").read_text())
+                masks, _ = load_archive(path, sequence, cams)
+                require_mask_coverage(masks, cams)
+                return masks
             if "masks" in archive.files:
                 indices = archive["indices"]
                 shape = tuple(int(v) for v in archive["shape"])

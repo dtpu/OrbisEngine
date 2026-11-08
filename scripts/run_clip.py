@@ -2691,8 +2691,23 @@ class Pipeline:
         # crop interpretation even when all previously recorded files remain identical.
         for motion in sorted(masks.parent.glob("track_*/motion.json")):
             include(motion)
-        for script in ("place_solve.py", "silhouette_rows.py"):
-            path = ROOT / "scripts" / script
+        code_paths = [
+            ROOT / "scripts" / script for script in ("place_solve.py", "silhouette_rows.py")
+        ]
+        if not people.is_file():
+            single_masks = self.ctx / "single-person-masks.npz"
+            include(single_masks, required=False)
+            if single_masks.is_file():
+                include(self.clip)
+            code_paths.extend(
+                [
+                    ROOT / "worker/wander_worker/source_timing.py",
+                    ROOT / "scripts/single_person_masks.py",
+                ]
+            )
+        # These are trusted repository code, not run media. Retained reviews confine
+        # review_path to the run root; do not send code paths through that resolver.
+        for path in code_paths:
             files[str(path.resolve())] = self.input_hash(path)
         scale = (self.state.data["stages"].get("_scale") or {}).get("scale0")
         try:
@@ -2980,6 +2995,25 @@ class Pipeline:
         out = wdir / "placement.json"
         world = self.world_spz()
         world_hash = file_sha256(world)
+        people = wdir / "people.json"
+        single_masks = self.ctx / "single-person-masks.npz"
+        if not people.exists():
+            run(
+                [
+                    PY,
+                    "scripts/single_person_masks.py",
+                    "--source",
+                    str(self.clip),
+                    "--sequence",
+                    str(wdir / "person" / "sequence.json"),
+                    "--cameras",
+                    str(wdir / "cameras.json"),
+                    "--out",
+                    str(single_masks),
+                ],
+                self.ctx / "single-person-masks.log",
+                attempts=1,
+            )
         inputs = self.placement_inputs(world)
         cmd = [
             PY,
@@ -3001,7 +3035,12 @@ class Pipeline:
         cmd += (
             ["--people", str(people), "--masks", str(self.ctx / "tracks" / "masks.npz")]
             if people.exists()
-            else ["--person", str(wdir / "person" / "sequence.json")]
+            else [
+                "--person",
+                str(wdir / "person" / "sequence.json"),
+                "--single-person-masks",
+                str(single_masks),
+            ]
         )
         if not self.a.allow_bad_size:
             cmd.append("--fail-on-size")
@@ -3077,6 +3116,9 @@ class Pipeline:
         ]
         if masks is not None:
             export += ["--masks", str(masks)]
+        elif (self.ctx / "single-person-masks.npz").is_file():
+            # The exporter rejects unavailable selected masks; never call them background.
+            export += ["--masks", str(self.ctx / "single-person-masks.npz")]
         run(export, self.ctx / "observation.log", attempts=1)
         cmd = [
             PY,

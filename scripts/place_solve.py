@@ -433,7 +433,10 @@ def load_tracks(cfg):
             tr = (p.get("transform") or {}).get("translation") or [0, 0, 0]
             out.append((p["id"], base / p["id"] / "sequence.json", np.array(tr, float), man))
         return out
-    return [(Path(s).parent.parent.name, ROOT / s, np.zeros(3), None) for s in cfg["seq"]]
+    return [
+        (cfg.get("personId", Path(s).parent.parent.name), ROOT / s, np.zeros(3), None)
+        for s in cfg["seq"]
+    ]
 
 
 def stats_cm(v, mpu):
@@ -499,6 +502,7 @@ def silhouette_fit(
     jerk,
     stature,
     size_prior,
+    single_person_masks=None,
 ):
     """Fit each person's ray depth from observed silhouette height, without changing articulation.
 
@@ -515,7 +519,16 @@ def silhouette_fit(
         avatar_rows,
     )
 
-    masks, _hw, ms = load_track_masks(masks_path)
+    single_masks = None
+    if single_person_masks is not None:
+        from single_person_masks import load_archive
+
+        if len(feats) != 1 or tracks[0][3] is not None:
+            raise ValueError("single-person masks require exactly one untracked person")
+        single_masks, _provenance = load_archive(single_person_masks, feats[0][4], cameras)
+        masks, ms = {}, 1.0
+    else:
+        masks, _hw, ms = load_track_masks(masks_path)
     by_src = {c["sourceIndex"]: c for c in cameras}
     result = {}
     for pi, (tid, frames, tr, _low, seq) in enumerate(feats):
@@ -551,18 +564,25 @@ def silhouette_fit(
             return rows
 
         man = tracks[pi][3]
-        if not man:
+        if not man and single_masks is None:
             continue
-        person = next(p for p in man["people"] if p["id"] == tid)
-        samples = {s: i for i, s in enumerate(man["sourceIndices"])}
-        motion = load_track_motion(masks_path, person["track"])
+        if single_masks is None:
+            person = next(p for p in man["people"] if p["id"] == tid)
+            samples = {s: i for i, s in enumerate(man["sourceIndices"])}
+            motion = load_track_motion(masks_path, person["track"])
+        else:
+            motion, samples = None, {}
         cropped_top = cropped_bottom = 0
         data = []
         for fi, (fr, src) in enumerate(zip(frames, seq["sourceIndices"])):
             cam = by_src.get(src)
             record = motion.get(src) if motion is not None else None
             sample = samples.get(src) if motion is None else record["sample"] if record else None
-            mask = masks.get(person["track"], {}).get(sample)
+            mask = (
+                single_masks.get(src)
+                if single_masks is not None
+                else masks.get(person["track"], {}).get(sample)
+            )
             if cam is None or mask is None:
                 data.append(None)
                 continue
@@ -598,6 +618,10 @@ def silhouette_fit(
                 )
             )
         if sum(d is not None for d in data) < 3:
+            if single_masks is not None:
+                raise ValueError(
+                    "single-person placement needs at least 3 usable source silhouette observations"
+                )
             continue
         nf = len(data)
         # Missing samples borrow a basis, but receive no fabricated silhouette observation.
@@ -713,11 +737,15 @@ def silhouette_fit(
             croppedTopFrames=cropped_top,
             croppedBottomFrames=cropped_bottom,
             measurementProvenance=dict(
-                masks=str(masks_path),
-                sampleMapping="tracker sourceIndex to sample"
+                masks=str(single_person_masks or masks_path),
+                sampleMapping="explicit sourceIndex (single-person archive)"
+                if single_masks is not None
+                else "tracker sourceIndex to sample"
                 if motion is not None
                 else "manifest order (legacy motion metadata absent)",
-                cropBounds="mask boundary plus projected body bounds (censoring only)"
+                cropBounds="source mask boundary only; no inferred body bounds"
+                if single_masks is not None
+                else "mask boundary plus projected body bounds (censoring only)"
                 if motion is not None
                 else "mask boundary only (legacy motion metadata absent)",
             ),
@@ -774,10 +802,17 @@ def main():
         type=Path,
         help="tracked masks.npz; defaults to the configured runs root/<clip>/tracks/masks.npz",
     )
+    ap.add_argument(
+        "--single-person-masks", type=Path, help="source-indexed undilated single-person archive"
+    )
     ap.add_argument("--measure-only", action="store_true")
     ap.add_argument("--scale", type=float, default=None, help="override the registration scale")
     ap.add_argument("--floor", type=float, default=None)
     a = ap.parse_args()
+    if a.single_person_masks and (not a.person or a.people or a.masks):
+        ap.error("--single-person-masks requires --person and excludes --people/--masks")
+    if a.single_person_masks and not a.single_person_masks.is_file():
+        ap.error(f"single-person masks are missing: {a.single_person_masks}")
     masks_path = tracked_masks_path(a.clip, a.masks)
     if a.world:
         # Explicit run/output roots may be outside this checkout. ROOT / an absolute path
@@ -796,6 +831,7 @@ def main():
             cfg["people"] = rel(a.people)
         else:
             cfg["seq"] = [rel(a.person)]
+            cfg["personId"] = "person"
         if cfg["scale"] is None or cfg["floor"] is None:
             sys.exit("--world needs --scale (the fitted scale0) and --floor")
     else:
@@ -1184,7 +1220,11 @@ def main():
         noiseFloor=dict(contactCm=a.sigma_contact_cm, refusals=refusals, ok=not refusals),
         surface=meta,
     )
-    if a.silhouette_sigma_px > 0 and masks_path.exists() and cfg["contact"] == "floor":
+    if (
+        a.silhouette_sigma_px > 0
+        and (a.single_person_masks or masks_path.exists())
+        and cfg["contact"] == "floor"
+    ):
         fits = silhouette_fit(
             feats,
             tracks,
@@ -1199,6 +1239,7 @@ def main():
             a.max_jerk_cm / 100 / mpu,
             stature,
             a.silhouette_size_prior,
+            **({"single_person_masks": a.single_person_masks} if a.single_person_masks else {}),
         )
         for tid, fit_person in fits.items():
             entry = doc["perPerson"][tid]
@@ -1223,7 +1264,8 @@ def main():
             doc["reprojectionCostPx"] = None
             edges = np.array([e for f in fits.values() for e in f["edgeResidualsPx"]])
             doc["silhouetteFit"] = dict(
-                masks=str(masks_path),
+                masks=str(a.single_person_masks or masks_path),
+                **({"observationKind": "single-person-source"} if a.single_person_masks else {}),
                 sigmaPx=a.silhouette_sigma_px,
                 edgeResidualPx=dict(
                     median=float(np.median(edges)), p90=float(np.percentile(edges, 90))

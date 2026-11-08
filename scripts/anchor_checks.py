@@ -167,6 +167,62 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
     return rows
 
 
+def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
+    """Audit the applied single-person transform against known exact-source observations."""
+    from single_person_masks import load_archive
+    from motion_silhouette import splat_silhouette, iou
+    from place_solve import read_ply
+
+    seq = json.loads((wd / "person" / "sequence.json").read_text())
+    cams = json.loads(cameras.read_text())["cameras"]
+    ground, _ = load_archive(Path(masks or placement["silhouetteFit"]["masks"]), seq, cams)
+    by_source = {cam["sourceIndex"]: cam for cam in cams}
+    person = placement["perPerson"]["person"]
+    size = person.get("sizeScale", 1)
+    scale = placement["registrationScale"]
+    overlaps, ratios = [], []
+    for k in (
+        np.linspace(0, len(seq["sourceIndices"]) - 1, min(n, len(seq["sourceIndices"])))
+        .round()
+        .astype(int)
+    ):
+        source = seq["sourceIndices"][k]
+        if source not in ground:
+            continue
+        cam, mask = by_source[source], ground[source]
+        vertex = read_ply(wd / "person" / seq["frames"][k])
+        xyz = np.column_stack([vertex["x"], vertex["y"], vertex["z"]])
+        sizes = np.column_stack([vertex["scale_0"], vertex["scale_1"], vertex["scale_2"]])
+        offset = person.get("offsetUnits", placement["offsetUnits"])[k]
+        xyz = (
+            xyz * size
+            + (np.array(placement["pos0"]) + person["constantUnits"] + np.array(offset)) / scale
+        )
+        predicted = splat_silhouette(
+            xyz, vertex["opacity"], sizes + np.log(size), cam, mask.shape, 30000
+        )
+        ratios.append(float(predicted.sum() / mask.sum()))
+        overlaps.append(iou(predicted, mask))
+    area = float(np.mean(ratios)) if ratios else None
+    overlap = float(np.mean(overlaps)) if overlaps else None
+    why = []
+    if overlap is not None and overlap < IOU_MIN:
+        why.append(f"silhouette IoU {overlap:.3f} < {IOU_MIN}")
+    if area is not None and not AREA_LO <= area <= AREA_HI:
+        why.append(f"area ratio {area:.3f} outside {AREA_LO}-{AREA_HI}")
+    if len(ratios) < MIN_FRAMES:
+        why.append(f"only {len(ratios)} measured frames")
+    return dict(
+        ok=not why,
+        n=len(ratios),
+        iou=overlap,
+        areaRatio=area,
+        why=why,
+        inSample=True,
+        method="single person, applied placement; known source masks; CPU splat approximation; verify in live viewer",
+    )
+
+
 def check_silhouette(
     clip: str, n: int = 12, *, world_dir=None, cameras=None, video=None, masks=None, placement=None
 ) -> dict:
@@ -176,6 +232,8 @@ def check_silhouette(
     wd = world_dir or ROOT / "public" / "worlds" / WORLD_DIR.get(clip, f"{clip}-4d")
     placement_path = placement or wd / "placement.json"
     place = json.loads(placement_path.read_text()) if placement_path.exists() else {}
+    if (place.get("silhouetteFit") or {}).get("observationKind") == "single-person-source":
+        return fitted_single_silhouette(wd, cameras or wd / "cameras.json", place, n, masks=masks)
     if place.get("silhouetteFit"):
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
