@@ -1,0 +1,26 @@
+orchestrator/cli.py
+  s_20f6c0bf8c5b2c::t_b9a13e65d9a44c 153
+scripts/tests/test_orchestrator_journal.py
+  s_20f6c0bf8c5b2c::t_b9a13e65d9a44c 18,356-360,364-365
+scripts/tests/test_anchor_run_inputs.py
+  s_20f6c0bf8c5b2c::t_5cbf1d7b7e1320 194-195
+  s_20f6c0bf8c5b2c::t_7319bcb5af223a 193,202-211,240-242
+scripts/anchor_checks.py
+  s_20f6c0bf8c5b2c::t_7319bcb5af223a 30,134-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19dc9926fadb0e8273f257313ab955cb0688fde9",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
