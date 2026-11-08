@@ -81,6 +81,37 @@ the same image thresholds without refitting: IoU 0.804–0.881 and maximum boot-
 promising placement diagnostic, not an accepted transform. A separate localhost viewer labels
 the experiment and retained failures; the run's package and default preview remain unchanged.
 
+## Measured placement continuation
+
+A subsequent local-only investigation evaluated all 90 frames of that frozen sparse fit.
+All silhouette IoUs exceeded 0.75, but ten frames exceeded the unchanged 0.08-body-height boot
+limit. This exposed a default-path omission: only tracked people supplied measured silhouettes
+to placement. Single-person uploads skipped the correction entirely.
+
+The corrected single-person path records exact source-indexed, undilated observations without
+inventing a tracker identity. One candidate used all 90 FFmpeg-decoded observations, with solver
+weights and guards unchanged. Separately OpenCV-decoded observations at the same timestamps
+gave mean IoU 0.8465, minimum 0.8057, and 89/90 boot-edge passes. These share the source/model
+and are not held-out timestamps or segmentation ground truth. Sample 21, explicitly declared
+critical before the solve, measured 0.08209 against the 0.080 limit. The candidate therefore
+remains failed despite the improvement; the threshold was not rounded or relaxed.
+
+An independent query of the generated road's Gaussian footprint gave supported contact at all
+90 fitted foot centers: absolute residual p90 0.02696, maximum 0.05718 body-heights against the
+fixed 0.08 bound. This is a local support diagnostic, not sole contact, collision or physical
+scale evidence. Replacing the global floor with local rendered support did not explain the
+camera-height failure: the preceding candidate measured approximately 1.303 and 1.306
+body-heights respectively. Ground directly below the recorded cameras has no source point-hull
+support, and gravity was inferred from the road without walls. The universal handheld-camera
+prior conflicts with the source-fitting body, but physical camera height remains unverified.
+
+The original world-depth spread, final size and contact-noise guards still fail. No new provider
+request, generation, quality override, live-run mutation or promotion occurred. The actual
+single-person extractor, exact cache reuse, solver and all-frame projections were exercised
+locally. The automatic pipeline still stops at the preceding scale failure for this run.
+Evidence is under `.context/evidence/ground-alignment-20261108/`, including the preserved failed
+candidate, both source-mask archives, full-sequence comparisons and local support measurements.
+
 ## Cost and retained evidence
 
 All four owned Modal apps stopped with zero tasks; the admission watcher was stopped after

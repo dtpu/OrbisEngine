@@ -131,6 +131,14 @@ staging receipts and [paid recovery](paid-recovery.md) before deliberately stagi
 The doctor does not initiate staging or repair. Local reference-frame models may still need
 their separately reviewed Torch/Hugging Face cache preparation before processing a source.
 
+Single-person placement now measures an undilated Mask R-CNN instance at every packaged source
+ordinal, using the cached COCO_V1 checkpoint also used by the default reference-frame preparation.
+This local pass never downloads weights. It records the exact source, decoder, checkpoint and
+frame hashes in `single-person-masks.npz`; changed inputs invalidate reuse. Frames with zero or
+multiple confident people remain unavailable, and fewer than three usable observations block the
+fit. Inpainting masks cannot substitute for these observations. A fitted silhouette still must
+pass the existing world-scale, size, contact and final quality checks.
+
 Fine-tuning checks are included only when that stage is in the selected plan. Set
 `WANDER_GPU_BOX=user@host` and optionally `WANDER_GPU_KEY=/absolute/path/to/key`. Remote mode
 uses SSH batch mode, strict existing host-key verification, a bounded connection timeout and
