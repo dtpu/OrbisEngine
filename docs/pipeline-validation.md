@@ -581,3 +581,40 @@ stopped with zero tasks. A redundant stop command returned nonzero because the a
 stopped; it did not invalidate training or recovery. All 109 historical claims remain settled.
 Private evidence: `.context/evidence/surface-reconstruction-20261107/trial-13/` and
 `trial-13-plane-targets/`. No generated targets or scene assets are committed.
+
+## Global point protection follow-up, 2026-11-08
+
+The portal audit's 204 supported pixels all sample the lower visible floor/threshold, not the
+upper glass or red railing. Twenty-eight floor-selected points account for 83% of trial13's
+positive raw-depth error increase; 26 of those points receive planar training targets in other
+views despite zero rewrites inside the portal image region. Some points lie near the original
+plane-admission cutoff. Source depth bias versus a real threshold/level difference remains
+unresolved; the image crop alone cannot distinguish them.
+
+A follow-up protected every original frontmost point ID, including exact ties, observed inside
+the unchanged negative/portal/glass regions. It restored exactly 511 training pixels to original
+raw depth, leaving 3,495,394 changed pixels. It added no support, changed no plane/ROI/holdout,
+and retained the same initialization, trainer and 4,000-step settings. Protected-point exposure
+in the derived targets is now zero. This tracks original supervision, not learned-splat ancestry.
+
+Both fixed floor gates still pass (p90 0.003411/0.005976 body-heights), with 100% original-supported
+coverage and all five fixed scale checks passing. Portal raw-depth p90 improves from 0.072674 to
+0.058758 body-heights but remains worse than trial12's 0.018151. All 28 lower-floor pixels improve;
+there is no clear visual portal improvement. Global target protection partly helps but does not
+prove the remaining cause: neighboring Gaussian footprints, topology coupling and actual floor
+boundary geometry still need distinguishing. Mean heldout PSNR is 27.11 dB; sample 0 remains below
+initialization. First-frame bottom-fifth occlusion improves by only five pixels (5.81% → 5.56%).
+
+Eight source views, two lateral views and actual viewer playback/stepping/short walking were
+reviewed. All 3,136,219 world splats and 115 person frames load without captured browser errors,
+but reflective walls/glass, lateral appearance and shoe contact still fail review. This candidate
+is not promoted. The single call's 114 outputs were hash-verified; its owned app stopped with zero
+tasks. Worker estimate: $0.06914 for 93.88 seconds, excluding startup/build/storage/egress. All 110
+historical claims remain settled. Evidence: `trial-14/` and `trial-14-plane-targets/` beneath
+`.context/evidence/surface-reconstruction-20261107/`.
+
+A separate CPU-only appearance preflight found just 87 of 2,000 points with adequate observation
+count and angular conditioning, all on the metal facade. A first-order directional color fit
+improved their heldout mean error from 5.80 to 3.44/255, but had no diffuse control or late-view
+coverage. Physical correspondence versus shifting reflections/misprojection remains unresolved.
+No view-dependent-color implementation or paid trial followed this inconclusive study.
