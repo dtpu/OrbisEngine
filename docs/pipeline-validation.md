@@ -457,6 +457,24 @@ not historical ancestry through earlier training runs. `n_new` counts surviving 
 prune/clone/split counters describe cumulative operations. A CPU regression exercises optimizer
 surgery from five to six to four splats and verifies both counts and retained row identities.
 
+## Separate training and evaluation depth
+
+`finetune_gsplat.py --training-depth PATH` accepts a derived training archive while retaining
+`--data/depth.npz` for every evaluation. Both depth objectives, observed-splat selection and
+depth pruning use the training archive. Without the option, their existing targets are unchanged.
+
+The override must preserve the original array shapes/dtypes, support and frame-to-layer mapping.
+Supported values must be finite and positive. Changes to unsupported texels, excluded person-mask
+texels, layers used by optimization holdouts, or texels never sampled by training views fail before
+CUDA selection or output creation. Protection follows the actual nearest-neighbor sampling: even
+one masked output pixel protects its source texel. Shared holdout layers are protected in full.
+`stats.json` records separate paths and SHA-256 hashes for training and evaluation archives.
+
+These checks establish target separation, not the correctness of the derived geometry. Target
+construction and review remain an offline experiment; no floor-fitting rule, clip constant or
+new default pipeline behavior is introduced. CPU regressions execute the production evaluator
+against deliberately different training/reference depths and cover both surface-objective modes.
+
 ## Joint source refinement, 2026-11-08
 
 The retained lobby source (`1e1d1b38db09636c5aa4488464d955d461bd35cfd76d839d748edc986ef03cd7`)
@@ -526,3 +544,40 @@ were not established by this iteration. Private evidence: `.context/evidence/upl
   after changing those inputs while retaining the shared paid ledger.
 - Automatic single-person object processing detects thrown objects; 3D object packaging needs
   tracked-person mode. Static-world review is still explicit and does not accept the entire scene.
+
+## Restricted plane training, 2026-11-08
+
+A subsequent 4,000-iteration trial changed only admitted floor training depths. A CPU preflight
+restricted changes to finite, multiview-supported floor cells, preserved all five optimization
+holdout layers byte-for-byte, and excluded the original person, opaque-negative and portal/glass
+masks. It changed 3,495,905 supported texels; original RGB, cameras, support, initialization and
+evaluation depth were unchanged. The source-depth SHA-256 in the GPU result matches the original
+archive; the training archive has a separate hash. No cleaning, person or world generation ran.
+
+| Check | Result |
+| --- | --- |
+| Independent plane-reference ray-depth p90 at 57/114 | 0.00336/0.00627 body-heights; both pass the unchanged ≤0.02 limit and ≥50% reduction from trial08 (89.41%/88.00% achieved) |
+| Original supported rendered coverage | 100% at both audit views |
+| Fixed scale diagnostic | 5/5 pass; median ratios 1.002–1.004, p90 1.014–1.017 |
+| Mean optimization-held-out masked PSNR | 21.95 → 27.12 dB; sample 0 falls 0.139 dB versus initialization, so the no-regression check still fails |
+| Avatar bottom-fifth occlusion at sample 0 | 5.81%, versus 7.06% in trial12 and 24.53% in trial08; identical person-only pixels and placement |
+| Portal raw-depth p90 at 114 | 0.07267 body-heights versus trial12's 0.01815, on only 9.61% supported pixels; a reported regression, not a pass |
+
+The floor checks constrain the fitted surface but are not unseen-view validation: samples 57/114
+are training views. Original-reference depth disagreement increases where the plane differs from
+noisy raw floor depth. The portal regression needs separate diagnosis; it must not be dismissed as
+the same tradeoff without evidence. Holdout image changes versus trial12 are mixed (three lower,
+two higher), and all comparisons retain the original thresholds and regions.
+
+Manual review of eight source views, two lateral views and the real viewer still finds smeared
+glass/reflective walls, stretched lateral appearance and partial first-frame shoe occlusion.
+All 3,136,652 world splats and 115 person frames loaded; playback, pause, stepping and a short walk
+worked with no captured browser warnings/errors. This is **failed, improved**, not scene acceptance
+or a fresh full upload-to-scene pass. No full collision course or headset validation was performed.
+
+The single paid call completed in 93.55 worker seconds (estimated $0.06890 excluding startup,
+build, storage and egress). All 114 outputs were size/hash-verified and the owned app was verified
+stopped with zero tasks. A redundant stop command returned nonzero because the app was already
+stopped; it did not invalidate training or recovery. All 109 historical claims remain settled.
+Private evidence: `.context/evidence/surface-reconstruction-20261107/trial-13/` and
+`trial-13-plane-targets/`. No generated targets or scene assets are committed.

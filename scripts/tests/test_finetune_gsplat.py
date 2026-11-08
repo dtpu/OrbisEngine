@@ -1,15 +1,243 @@
 """CPU checks for calibration and view routing in the standalone GPU trainer."""
 
 from pathlib import Path
+import ast
+import hashlib
+import inspect
 import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import finetune_gsplat as trainer
+
+
+def test_depth_archive_hashing_without_python311_file_digest(tmp_path, monkeypatch):
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+    source = tmp_path / "depth.npz"
+    training = tmp_path / "training.npz"
+    # Include more than one read chunk; independent one-shot hashing verifies the bytes.
+    np.savez(source, depth=np.arange(300_000, dtype=np.float32))
+    np.savez(training, depth=np.arange(300_000, dtype=np.float32) + 1)
+    records = trainer.depth_archive_provenance(source, training)
+    for role, path in (("evaluation", source), ("training", training)):
+        assert records[role] == {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+
+@pytest.fixture
+def training_depth_inputs(tmp_path):
+    source = {
+        "depth": np.full((3, 1, 2), 2.0, dtype=np.float32),
+        "supported": np.ones((3, 1, 2), dtype=bool),
+        "depth_index": np.arange(3, dtype=np.int32),
+    }
+    source["supported"][2, 0, 0] = False
+    np.savez(tmp_path / "depth.npz", **source)
+    np.savez(
+        tmp_path / "cameras.npz",
+        viewmats=np.repeat(np.eye(4, dtype=np.float32)[None], 3, axis=0),
+        K=np.eye(3, dtype=np.float32),
+        width=4,
+        height=2,
+    )
+    (tmp_path / "masks").mkdir()
+    for i in range(3):
+        mask = np.zeros((2, 4), dtype=np.uint8)
+        if i == 1:
+            mask[0, 0] = 255  # Other pixels using this same depth texel remain valid.
+        Image.fromarray(mask).save(tmp_path / "masks" / f"{i:04d}.png")
+    override = {k: v.copy() for k, v in source.items()}
+    override["depth"][1, 0, 1] = 3
+    return tmp_path, source, override
+
+
+def test_training_and_evaluation_depth_routes_preserve_source(training_depth_inputs):
+    data, source, override = training_depth_inputs
+    path = data / "training.npz"
+    np.savez(path, **override)
+    arrays = tuple(source.values())
+    training = trainer.load_training_depth(path, arrays, data, [1], [0, 2], 4, 2)
+    targets = trainer.DepthTargets(arrays, training, 4, 2, "cpu")
+    train, support = targets.training(1)
+    evaluation, eval_support = targets.evaluation(1)
+    torch.testing.assert_close(train, torch.tensor([[2.0, 2.0, 3.0, 3.0], [2.0, 2.0, 3.0, 3.0]]))
+    torch.testing.assert_close(evaluation, torch.full((2, 4), 2.0))
+    torch.testing.assert_close(support, eval_support)
+    # The actual observed/depth-prune consumers must see different depth where changed.
+    means = torch.tensor([[2.0, 0.5, 2.5]])
+    K = torch.tensor([[3.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]])[None]
+    views = torch.eye(4)[None]
+    valid = torch.ones((1, 2, 4), dtype=torch.bool)
+    for depth, expected in [(train, True), (evaluation, False)]:
+        observed, _ = trainer.observed_mask(
+            means, views, K, 4, 2, ([depth], [support]), valid, 0, 1
+        )
+        assert observed.item() is expected
+    assert trainer.depth_offset(means, views, K, 4, 2, ([train], [support]), valid).item() == -0.5
+    assert (
+        trainer.depth_offset(means, views, K, 4, 2, ([evaluation], [support]), valid).item() == 0.5
+    )
+    default = trainer.DepthTargets(arrays, None, 4, 2, "cpu")
+    assert default.source is default.training_depth
+    for i in range(3):
+        for actual, expected in zip(default.training(i), targets.evaluation(i), strict=True):
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    provenance = trainer.depth_archive_provenance(data / "depth.npz", path)
+    assert provenance["evaluation"]["sha256"] != provenance["training"]["sha256"]
+    assert provenance["training"]["path"] == str(path.resolve())
+    default_provenance = trainer.depth_archive_provenance(data / "depth.npz", None)
+    assert default_provenance["training"] == default_provenance["evaluation"]
+
+
+@pytest.mark.parametrize("surface_enabled", [False, True])
+def test_actual_evaluate_function_uses_original_depth(training_depth_inputs, surface_enabled):
+    _, source, override = training_depth_inputs
+    targets = trainer.DepthTargets(tuple(source.values()), override["depth"], 4, 2, "cpu")
+    # Execute the production nested evaluator with CPU fixtures. Frame 1 intentionally
+    # differs between targets, making an accidental training() call observable.
+    module = ast.parse(inspect.getsource(trainer.main))
+    evaluator = next(
+        node
+        for node in module.body[0].body
+        if isinstance(node, ast.FunctionDef) and node.name == "evaluate"
+    )
+    log_depth = torch.full((2, 4), np.log(2), dtype=torch.float32)
+    rendered = (
+        torch.zeros((2, 4, 3)),
+        torch.ones((2, 4, 1)),
+        torch.full((2, 4), 2.0),
+        {"log_depth_moments": torch.stack((log_depth, log_depth.square()), dim=-1)},
+    )
+    scope = dict(vars(trainer)) | dict(
+        model=SimpleNamespace(render=lambda *_args, **_kwargs: rendered),
+        test_idx=[1],
+        viewmats=torch.eye(4).repeat(3, 1, 1),
+        Ks=torch.eye(3).repeat(3, 1, 1),
+        W=4,
+        H=2,
+        imgs=torch.zeros((3, 2, 4, 3), dtype=torch.uint8),
+        valid=torch.ones((3, 2, 4), dtype=torch.bool),
+        depth_targets=targets,
+        a=SimpleNamespace(lambda_surface_depth=float(surface_enabled), surface_alpha_weight=0.1),
+        eval_depth_samples={},
+        eval_surface={},
+    )
+    exec(compile(ast.Module(body=[evaluator], type_ignores=[]), trainer.__file__, "exec"), scope)
+    _, _, error = scope["evaluate"]("test")
+    assert error == 0
+    assert scope["eval_depth_samples"]["test"] == [8]
+    if surface_enabled:
+        assert scope["eval_surface"]["test"][0]["loss"] == pytest.approx(0, abs=1e-7)
+
+
+@pytest.mark.parametrize(
+    "mutation,error",
+    [
+        ("support", "supported"),
+        ("index", "depth_index"),
+        ("shape", "shape and dtype"),
+        ("dtype", "shape and dtype"),
+        ("support-dtype", "shape and dtype"),
+        ("index-dtype", "shape and dtype"),
+        ("missing", "missing depth"),
+        ("nonfinite", "finite and positive"),
+        ("zero", "finite and positive"),
+        ("unsupported", "unsupported"),
+        ("person", "person-mask"),
+        ("heldout", "heldout"),
+        ("shared-heldout-layer", "heldout"),
+    ],
+)
+def test_invalid_training_depth_fails_before_cuda_and_output(
+    training_depth_inputs, monkeypatch, mutation, error
+):
+    data, source, override = training_depth_inputs
+    if mutation == "support":
+        override["supported"][0, 0, 0] = False
+    elif mutation == "index":
+        override["depth_index"][1] = 0
+    elif mutation == "shape":
+        override["depth"] = override["depth"][:, :, :1]
+    elif mutation in ("dtype", "support-dtype", "index-dtype"):
+        field = {"dtype": "depth", "support-dtype": "supported", "index-dtype": "depth_index"}[
+            mutation
+        ]
+        override[field] = override[field].astype(np.float64)
+    elif mutation == "missing":
+        del override["depth"]
+    elif mutation in ("nonfinite", "zero"):
+        override["depth"][1, 0, 1] = np.nan if mutation == "nonfinite" else 0
+    elif mutation == "unsupported":
+        override["depth"][2, 0, 0] = 3
+    elif mutation == "person":
+        override["depth"][1, 0, 0] = 3
+    elif mutation == "heldout":
+        override["depth"][0, 0, 1] = 3
+    elif mutation == "shared-heldout-layer":
+        source["depth_index"][0] = override["depth_index"][0] = 1
+        np.savez(data / "depth.npz", **source)
+    path = data / "training.npz"
+    np.savez(path, **override)
+    monkeypatch.setattr(trainer.torch, "device", lambda *_: pytest.fail("Unexpected CUDA"))
+    with pytest.raises(ValueError, match=error):
+        trainer.main(
+            [
+                "--data",
+                str(data),
+                "--out",
+                str(data / "out"),
+                "--poses",
+                "0",
+                "--offpath-frame",
+                "1",
+                "--holdout",
+                "2",
+                "--training-depth",
+                str(path),
+            ]
+        )
+    assert not (data / "out").exists()
+
+
+@pytest.mark.parametrize("override_enabled", [False, True])
+def test_training_depth_preflight_accepts_valid_override_and_default(
+    training_depth_inputs, monkeypatch, override_enabled
+):
+    data, _, override = training_depth_inputs
+    path = data / "training.npz"
+    np.savez(path, **override)
+
+    def stop_at_device(*_):
+        raise RuntimeError("Reached device selection")
+
+    monkeypatch.setattr(trainer.torch, "device", stop_at_device)
+    args = [
+        "--data",
+        str(data),
+        "--out",
+        str(data / "out"),
+        "--poses",
+        "0",
+        "--offpath-frame",
+        "1",
+        "--holdout",
+        "2",
+    ]
+    if override_enabled:
+        args += ["--training-depth", str(path)]
+    else:
+        monkeypatch.setattr(
+            trainer, "load_training_depth", lambda *_: pytest.fail("Unexpected override")
+        )
+    with pytest.raises(RuntimeError, match="Reached device selection"):
+        trainer.main(args)
 
 
 def test_topology_report_keeps_initial_count_and_row_provenance_after_prune_and_grow():
