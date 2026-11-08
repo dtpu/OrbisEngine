@@ -1,0 +1,21 @@
+src/scene-playback.js
+  s_20f6c0bf8c5b2c::t_065145296997ee 25-26
+scripts/test-scene-playback.js
+  s_20f6c0bf8c5b2c::t_065145296997ee 78-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0529627125ca4b963fc3186a486b8cfa1bdeeecc",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
