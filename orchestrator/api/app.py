@@ -9,6 +9,7 @@ import secrets
 import shutil
 import tempfile
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -20,6 +21,7 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
+    Response,
     UploadFile,
     status,
 )
@@ -28,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from orchestrator.api.artifacts import ArtifactReader, register_artifact_routes, safe_filename
+from orchestrator.api.upload_reuse import matching_upload, upload_lock
 from orchestrator.api.progress import (
     StageSnapshot,
     find_run_directory,
@@ -363,9 +366,11 @@ def create_app(
 
     @app.post("/api/pipeline/runs/upload", status_code=201)
     async def upload_run(
+        response: Response,
         source: UploadFile = File(),
         options: str = Form(default="{}"),
         budget: str = Form(default="{}"),
+        reuse_existing: bool = Form(default=False),
         requested_id: str | None = Form(
             default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
         ),
@@ -380,7 +385,10 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(error)) from error
         require_supported_budget(budget_policy)
         run_id = requested_id or f"run-{uuid.uuid4().hex}"
-        require_new_run(run_id)
+        if reuse_existing and review_workspace_root is None:
+            raise HTTPException(503, "upload reuse requires a shared runs root")
+        if not reuse_existing:
+            require_new_run(run_id)
         filename = source_filename(source.filename or "source.bin")
         digest = hashlib.sha256()
         size = 0
@@ -398,42 +406,73 @@ def create_app(
             if not size:
                 raise HTTPException(status_code=422, detail="source upload is empty")
             source_sha256 = digest.hexdigest()
-            artifact_id = f"artifact:{run_id}:source"
-            if len(artifact_id) > 128:
-                artifact_id = f"artifact:{hashlib.sha256(run_id.encode()).hexdigest()}:source"
-            storage_key = f"sources/{source_sha256[:2]}/{source_sha256}"
-            source_store.put(stored_path, storage_key)
-            run = Run(
-                id=run_id,
-                graph_version=GRAPH_VERSION,
-                code_revision=settings.code_revision,
-                container_digest=settings.container_digest,
-                source_sha256=source_sha256,
-                source_artifact_id=artifact_id,
-                configuration={"options": graph_options.model_dump(mode="json")},
-                budget=budget_policy,
-                created_by=user,
-            )
-            submit(
-                run,
-                stored_path,
-                filename,
-                {
-                    "artifact_id": artifact_id,
-                    "run_id": run_id,
-                    "sha256": source_sha256,
-                    "size": size,
-                    "media_type": source.content_type or "application/octet-stream",
-                    "storage_key": storage_key,
-                    "filename": filename,
-                },
-            )
-        return {
-            "id": run_id,
-            "status": run.status,
-            "sourceArtifactId": artifact_id,
-            "sourceSha256": source_sha256,
-        }
+
+            def publish_upload():
+                lock = (
+                    upload_lock(review_workspace_root, source_sha256)
+                    if reuse_existing
+                    else nullcontext()
+                )
+                with lock:
+                    if reuse_existing:
+                        existing = matching_upload(
+                            repository, review_workspace_root, source_sha256, size, graph_options
+                        )
+                        if existing is not None:
+                            live = with_live_state(existing)
+                            return {
+                                "id": live["id"],
+                                "status": live["status"],
+                                "sourceArtifactId": live["sourceArtifactId"],
+                                "sourceSha256": source_sha256,
+                                "reused": True,
+                            }
+                    require_new_run(run_id)
+                    artifact_id = f"artifact:{run_id}:source"
+                    if len(artifact_id) > 128:
+                        artifact_id = (
+                            f"artifact:{hashlib.sha256(run_id.encode()).hexdigest()}:source"
+                        )
+                    storage_key = f"sources/{source_sha256[:2]}/{source_sha256}"
+                    source_store.put(stored_path, storage_key)
+                    run = Run(
+                        id=run_id,
+                        graph_version=GRAPH_VERSION,
+                        code_revision=settings.code_revision,
+                        container_digest=settings.container_digest,
+                        source_sha256=source_sha256,
+                        source_artifact_id=artifact_id,
+                        configuration={"options": graph_options.model_dump(mode="json")},
+                        budget=budget_policy,
+                        created_by=user,
+                    )
+                    submit(
+                        run,
+                        stored_path,
+                        filename,
+                        {
+                            "artifact_id": artifact_id,
+                            "run_id": run_id,
+                            "sha256": source_sha256,
+                            "size": size,
+                            "media_type": source.content_type or "application/octet-stream",
+                            "storage_key": storage_key,
+                            "filename": filename,
+                        },
+                    )
+                    return {
+                        "id": run_id,
+                        "status": run.status,
+                        "sourceArtifactId": artifact_id,
+                        "sourceSha256": source_sha256,
+                        "reused": False,
+                    }
+
+            # File locks and hashing retained footage must not block the ASGI event loop.
+            result = await asyncio.to_thread(publish_upload)
+        if result["reused"]:
+            response.status_code = 200
+        return result
 
     @app.get("/api/pipeline")
     async def list_runs(user: str = Depends(actor)):

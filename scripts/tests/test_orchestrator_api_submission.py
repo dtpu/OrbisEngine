@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,116 @@ class ProductionSubmissionTests(unittest.TestCase):
         summary = self.repository.run_summary("run-upload")
         self.assertIs(summary["configuration"]["options"]["hands_off"], True)
         self.assertFalse((manifest.parent / "paused").exists())
+
+    def test_repeated_upload_reopens_same_run_without_storage_or_attempts(self):
+        original = self.upload().json()
+        before = self.repository.run_summary(original["id"])
+        with patch.object(FilesystemSourceStore, "put", side_effect=AssertionError("new storage")):
+            response = self.upload("second-name", filename="renamed.mp4", reuse_existing="true")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {**original, "reused": True})
+        self.assertEqual(self.repository.run_summary(original["id"]), before)
+        self.assertEqual(len(self.manifests()), 1)
+        self.assertEqual(len(self.repository.list_runs()), 1)
+        self.assertFalse(list(self.temporary.iterdir()))
+
+    def test_repeated_upload_with_same_requested_id_is_reopened_only_when_opted_in(self):
+        self.assertEqual(self.upload().status_code, 201)
+        self.assertEqual(self.upload().status_code, 409)
+        repeated = self.upload(reuse_existing="true")
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertTrue(repeated.json()["reused"])
+
+    def test_repeat_preserves_pause_failure_and_manual_processing_mode(self):
+        from orchestrator.journal import Journal
+
+        self.assertEqual(self.upload().status_code, 201)
+        directory = self.manifests()[0].parent
+        (directory / "paused").write_text("operator hold")
+        response = self.upload(
+            "second-name", reuse_existing="true", options='{"marble":"none","hands_off":true}'
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "paused")
+        self.assertFalse(json.loads((directory / "run.json").read_text())["options"]["hands_off"])
+        self.assertTrue((directory / "paused").exists())
+        (directory / "paused").unlink()
+        journal = Journal(directory)
+        journal.append("run.finished", status="failed", summary="World checks did not pass.")
+        original_journal = journal.path.read_bytes()
+        response = self.upload("third-name", reuse_existing="true")
+        self.assertEqual(response.json()["status"], "failed")
+        self.assertEqual(journal.path.read_bytes(), original_journal)
+        self.assertEqual(self.repository.run_summary("run-upload")["attempts"], [])
+        self.assertNotIn(directory, runs_needing_work(self.root / "runs"))
+
+    def test_repeat_does_not_substitute_different_bytes_or_processing_options(self):
+        self.assertEqual(self.upload().status_code, 201)
+        for run_id, changes in (
+            ("new-bytes", {"content": VIDEO + b"different"}),
+            ("new-options", {"options": '{"marble":"image"}'}),
+        ):
+            with self.subTest(run_id=run_id):
+                response = self.upload(run_id, reuse_existing="true", **changes)
+                self.assertEqual(response.status_code, 201, response.text)
+                self.assertEqual(response.json()["id"], run_id)
+                self.assertFalse(response.json()["reused"])
+
+    def test_repeat_skips_corrupt_missing_escaping_or_mismatched_retained_input(self):
+        for damage in ("corrupt", "missing", "escaping", "options"):
+            with self.subTest(damage=damage):
+                original_id = f"original-{damage}"
+                # Distinct bytes keep previous subtests out of this lookup.
+                content = VIDEO + damage.encode()
+                self.upload(original_id, content=content)
+                manifest_path = next(
+                    path
+                    for path in self.manifests()
+                    if json.loads(path.read_text())["runId"] == original_id
+                )
+                manifest = json.loads(manifest_path.read_text())
+                source = Path(manifest["source"])
+                if damage == "corrupt":
+                    source.write_bytes(b"x" * len(content))
+                elif damage == "missing":
+                    source.unlink()
+                elif damage == "escaping":
+                    outside = self.root / "outside.mp4"
+                    outside.write_bytes(content)
+                    source.unlink()
+                    source.symlink_to(outside)
+                else:
+                    manifest["options"]["marble"] = "image"
+                    manifest_path.write_text(json.dumps(manifest))
+                response = self.upload(f"new-{damage}", content=content, reuse_existing="true")
+                self.assertEqual(response.status_code, 201, response.text)
+                self.assertFalse(response.json()["reused"])
+
+    def test_simultaneous_repeated_uploads_publish_only_one_run(self):
+        # Each TestClient request runs in its own portal/thread, sharing real SQLite and disk.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(
+                executor.map(
+                    lambda run_id: self.upload(run_id, reuse_existing="true"),
+                    ("concurrent-one", "concurrent-two"),
+                )
+            )
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 201])
+        self.assertEqual(responses[0].json()["id"], responses[1].json()["id"])
+        self.assertEqual(len(self.repository.list_runs()), 1)
+        self.assertEqual(len(self.manifests()), 1)
+
+    def test_repeat_requires_authentication_and_still_rejects_unsupported_budget(self):
+        self.upload()
+        response = self.client.post(
+            "/api/pipeline/runs/upload",
+            data={"reuse_existing": "true"},
+            files={"source": ("clip.mp4", VIDEO, "video/mp4")},
+        )
+        self.assertEqual(response.status_code, 401)
+        response = self.upload("second-name", reuse_existing="true", budget='{"maximum_cost":1}')
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(len(self.repository.list_runs()), 1)
 
     def test_worker_presence_tracks_upload_scope_and_disconnect_without_starting_work(self):
         self.assertEqual(self.upload(options='{"marble":"none","hands_off":true}').status_code, 201)

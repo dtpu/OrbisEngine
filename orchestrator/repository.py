@@ -665,6 +665,16 @@ class PipelineRepository:
             ).all()
         return [self.run_summary(identifier) for identifier in identifiers]
 
+    def runs_for_source(self, source_sha256: str) -> list[dict[str, Any]]:
+        """Find prior uploads independently of the dashboard's recent-run limit."""
+        with self.sessions() as session:
+            identifiers = session.scalars(
+                select(RunRecord.id)
+                .where(RunRecord.source_sha256 == source_sha256)
+                .order_by(RunRecord.created_at.desc(), RunRecord.id.desc())
+            ).all()
+        return [self.run_summary(identifier) for identifier in identifiers]
+
     def add_message(
         self,
         *,

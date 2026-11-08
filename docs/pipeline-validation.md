@@ -9,6 +9,16 @@ upload through the real runner and packager with simulated providers, without a 
 paid retry. Rejected previews retain a failed run status and their quality reason; they are not
 counted as accepted reconstructions.
 
+Repeated dashboard uploads reopen a matching run after verifying its source bytes and processing
+options. Production SQLite/filesystem tests cover simultaneous submissions, renamed files,
+changed options, damaged/missing/escaping sources, and preserving paused or failed outcomes.
+The browser check uploads a clip again after cancellation and verifies the same canceled run is
+returned without a second queue entry. A real retained bottle-source upload also reopened its
+paused delivery run; all 240 person frames and the room loaded, playback advanced, and sound
+could be enabled and muted. The run count, attempt/artifact/event counts, journals, source
+manifests and paid ledger were unchanged. This verifies reuse and delivery, not fresh inference
+or reconstruction acceptance. Evidence: `.context/evidence/practical-e2e-20261108/`.
+
 ## What is tested
 
 `uv run --locked --group dev --group inference pytest` includes:

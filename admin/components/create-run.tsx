@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { checkSetup, loadOptionsSchema, uploadRun } from '@/lib/client';
-import { formatBytes } from '@/lib/format';
+import { checkSetup, loadOptionsSchema, uploadRun, type UploadRunResult } from '@/lib/client';
+import { formatBytes, statusLabel } from '@/lib/format';
 import { automaticUploadOptions, optionFields, setupBlocked } from '@/lib/options';
 import type { GraphOptions, OptionsSchema, SetupReport } from '@/lib/types';
 
@@ -51,7 +51,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
   const [setup, setSetup] = useState<SetupReport | null>(null);
   const [checking, setChecking] = useState(false);
   const [canQueueLater, setCanQueueLater] = useState(false);
-  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [uploadedRun, setUploadedRun] = useState<UploadRunResult | null>(null);
   const [over, setOver] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +100,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
   async function upload() {
     if (!file || !options || progress !== null) return;
     setError(null);
-    setCreatedId(null);
+    setUploadedRun(null);
     setProgress(0);
     try {
       const run = await uploadRun({
@@ -109,7 +109,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
         requestedId: requestedId.trim() || undefined,
         onProgress: setProgress,
       });
-      setCreatedId(run.id);
+      setUploadedRun(run);
       setFile(null);
       setRequestedId('');
       setCanQueueLater(false);
@@ -143,9 +143,9 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
         Start a run
       </h2>
       <p className="field__hint">
-        Uploads queue until a processing worker is connected. The worker processes queued runs and
-        returns a scene preview or a failure report. Failed checks remain visible; there are no
-        automatic paid retries.
+        Uploading the same video file with the same processing options opens the existing run. New
+        runs queue until a processing worker is connected. The worker returns a scene preview or a
+        failure report. Failed checks remain visible and paid retries require operator action.
       </p>
       <label
         className={`drop${over ? ' drop--over' : ''}`}
@@ -291,8 +291,7 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
       {canQueueLater ? (
         <div className="field">
           <p className="field__hint">
-            Resolve the checks before processing, or queue the clip while the worker is being set
-            up.
+            Upload to open a matching run or queue a new run while you resolve these checks.
           </p>
           <button
             className="button button--quiet"
@@ -304,10 +303,13 @@ export function CreateRun({ onCreated }: { onCreated: (runId: string) => void })
           </button>
         </div>
       ) : null}
-      {createdId ? (
+      {uploadedRun ? (
         <p className="notice notice--ok" role="status">
-          Queued <Link href={`/runs/${encodeURIComponent(createdId)}`}>{createdId}</Link>. Open the
-          run to follow its stages and previews.
+          {uploadedRun.reused ? 'Opened existing run' : 'Queued'}{' '}
+          <Link href={`/runs/${encodeURIComponent(uploadedRun.id)}`}>{uploadedRun.id}</Link>
+          {uploadedRun.reused
+            ? ` (${statusLabel(uploadedRun.status)}).`
+            : '. Open the run to follow its stages and previews.'}
         </p>
       ) : null}
       <p className="field__hint">

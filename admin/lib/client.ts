@@ -10,6 +10,7 @@ import type {
   ReviewTranscript,
   RunArtifact,
   RunCommand,
+  RunStatus,
   PreparedSavedInputRun,
   SavedInputsAvailability,
   TranscriptTail,
@@ -85,16 +86,25 @@ export async function prepareSavedInputRun(
   })) as PreparedSavedInputRun;
 }
 
+export interface UploadRunResult {
+  id: string;
+  status: RunStatus;
+  sourceArtifactId: string;
+  sourceSha256: string;
+  reused: boolean;
+}
+
 export async function uploadRun(input: {
   file: File;
   options: GraphOptions;
   requestedId?: string;
   onProgress?: (fraction: number) => void;
-}): Promise<{ id: string }> {
+}): Promise<UploadRunResult> {
   const form = new FormData();
   form.set('source', input.file);
   form.set('options', JSON.stringify(input.options));
   form.set('budget', JSON.stringify({}));
+  form.set('reuse_existing', 'true');
   if (input.requestedId) form.set('requested_id', input.requestedId);
 
   // XHR rather than fetch: it is the only browser API that reports upload progress, and clips
@@ -113,7 +123,7 @@ export async function uploadRun(input: {
         body = null;
       }
       if (request.status >= 200 && request.status < 300) {
-        resolve(body as { id: string });
+        resolve(body as UploadRunResult);
         return;
       }
       const detail =
