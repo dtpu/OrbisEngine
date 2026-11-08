@@ -1,0 +1,49 @@
+orchestrator/api/upload_reuse.py
+  s_20f6c0bf8c5b2c::t_7d2fb8c823fd35 1-76
+orchestrator/api/app.py
+  s_20f6c0bf8c5b2c::t_9866dd4b527a94 12,24,33,369,373,388-391,409-475
+scripts/test-admin-live-browser.ts
+  s_20f6c0bf8c5b2c::t_d670cbeec7757f 125-150,155-156
+  s_11465a870157de::t_408c4d17de3856 151-154,164-168
+admin/lib/client.ts
+  s_20f6c0bf8c5b2c::t_e20b595ae7410d 13,89-96,102,107,126
+admin/components/create-run.tsx
+  s_11465a870157de::t_13943c8a3180fa 146-148
+  s_20f6c0bf8c5b2c::t_e20b595ae7410d 5-6,54,103,112,294,306,308-312
+admin/tests/upload-client.test.ts
+  s_20f6c0bf8c5b2c::t_9d99128afc988d 1-72
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_bc72604959722c 12-21
+scripts/tests/test_orchestrator_api_submission.py
+  s_20f6c0bf8c5b2c::t_620e26ee732d8d 12,104-165,168-204,207-212
+  s_20f6c0bf8c5b2c::t_c20bd595fefef0 166-167,205-206
+  s_11465a870157de::t_aa74e48b24f5a1 213
+orchestrator/repository.py
+  s_20f6c0bf8c5b2c::t_7d2fb8c823fd35 668-677
+docs/automatic-uploads.md
+  s_20f6c0bf8c5b2c::t_d670cbeec7757f 109-124,126-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "565f2ba91aa79177bda8093c4b9651789c4f1040",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
