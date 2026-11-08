@@ -1,0 +1,35 @@
+scripts/tests/test_finetune_gsplat.py
+  s_20f6c0bf8c5b2c::t_08138b2ebbb9c6 89-134,145-153,157-178,187-193
+  s_11465a870157de::t_99c02693a61116 135-144,154-156,179-186
+  s_20f6c0bf8c5b2c::t_0bd43e3c9cba4a 15-72
+scripts/finetune_gsplat.py
+  s_20f6c0bf8c5b2c::t_27996b620f370e 184,199-206,706-708,1075-1077,1127-1128,1136
+  s_20f6c0bf8c5b2c::t_f9837631527fd8 399-418,422-436,634-635
+  s_11465a870157de::t_99c02693a61116 419-421
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_39d5fe8eedb942 444-459
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5095a83f6c7630ad0e953c341188f83b97759a0",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
