@@ -11,7 +11,8 @@ import json
 from typing import Any
 
 from orchestrator.journal import Journal
-from orchestrator.steps import STEPS, base_step, stage_graph
+from orchestrator.pipeline import world_half
+from orchestrator.steps import STEPS, RunOptions, base_step, stage_graph
 
 
 def hands_off(options: dict[str, Any]) -> bool:
@@ -53,7 +54,7 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
                 f"Hands-off paid step {step} already has an attempt or retained result. "
                 "Automatic paid retries are disabled; retain its outputs and provider receipt."
             )
-        if lost := failed_package_prerequisite(context, journal, paid=True):
+        if lost := failed_preview_prerequisite(context, journal, paid=True):
             return (
                 f"Hands-off paid step {step} was not started: required paid step {lost} cannot "
                 "run again, so no packaged preview can follow and further paid work is wasted."
@@ -62,14 +63,14 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
 
 
 def unpaid_prerequisite_problem(context, step: str, journal: Journal) -> str | None:
-    """Hold paid work while an unpaid prerequisite of the package is failed.
+    """Hold paid work while an unpaid prerequisite of the preview is failed.
 
     Unlike a paid failure this is not final: rerunning the unpaid step is admitted, and paid
     work resumes once it succeeds. A failure that repeats leaves the run without runnable work.
     """
     if not hands_off(context.options) or not STEPS[base_step(step)].paid:
         return None
-    if failed := failed_package_prerequisite(context, journal, paid=False):
+    if failed := failed_preview_prerequisite(context, journal, paid=False):
         return (
             f"Hands-off paid step {step} was not started: required step {failed} has not "
             "succeeded, so no packaged preview can follow yet. Rerun it first."
@@ -77,15 +78,19 @@ def unpaid_prerequisite_problem(context, step: str, journal: Journal) -> str | N
     return None
 
 
-def failed_package_prerequisite(context, journal: Journal, *, paid: bool) -> str | None:
-    """A paid (or unpaid) prerequisite of the package whose latest outcome is a failure.
+def failed_preview_prerequisite(context, journal: Journal, *, paid: bool) -> str | None:
+    """A paid (or unpaid) prerequisite of the preview whose latest outcome is a failure.
 
-    Hands-off runs never repeat a paid step, so a paid failure is final: the package, and with
-    it any preview, can no longer be produced. An unpaid step can still be rerun.
+    The viewer needs the people package and the selected static world, if requested.
+    Hands-off runs can rerun an unpaid prerequisite. A paid prerequisite failure is final.
     """
-    stages, deps = stage_graph(context.options)
+    options = RunOptions.model_validate(context.options)
+    stages, deps = stage_graph(options)
     package = "package_people" if "package_people" in stages else "package"
+    _, _, world = world_half(options.marble)
     required, pending = set(), [package]
+    if world:
+        pending.append("finetune" if options.finetune else world)
     while pending:
         name = pending.pop()
         if name not in required:
@@ -97,8 +102,8 @@ def failed_package_prerequisite(context, journal: Journal, *, paid: bool) -> str
         if entry.kind == "step.finished"
     }
     for name, record in stage_records(context.run_dir).items():
-        if isinstance(record, dict) and record.get("status") == "failed":
-            outcomes.setdefault(name, "failed")
+        if isinstance(record, dict) and (status := record.get("status")) in ("failed", "blocked"):
+            outcomes.setdefault(name, status)
     for name in stages:
         if (
             name in required

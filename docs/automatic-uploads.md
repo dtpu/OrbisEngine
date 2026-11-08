@@ -97,11 +97,14 @@ change the submitted run through extra stage flags or automatically retry a paid
 Existing provider ledgers and unresolved-operation guards continue to apply. A known provider
 operation must be recovered separately rather than submitted again.
 
-Once a paid stage that the package depends on fails or is blocked, the run cannot produce a
-preview, because hands-off mode never repeats a paid stage. The next paid launch is then
+Once a paid stage required by the people package or selected world fails or is blocked, the run
+cannot produce its requested preview, because hands-off mode never repeats a paid stage. The next paid launch is then
 refused and the run finishes `failed`, so it does not spend on a world generation or avatars
-that can no longer be packaged. Stages already running finish and keep their outputs. While an
-unpaid package prerequisite (such as `person_prep`) is failed, paid launches are held instead:
+that can no longer be delivered. This includes the source description, the selected generation,
+and fine-tuning when requested. In `both` mode the preview uses the video world; a failed alternate
+image world does not prevent that preview. Pending independent stages still run in parallel.
+Stages already running finish and keep their outputs. While an
+unpaid preview prerequisite (such as `person_prep` or `review`) is failed, paid launches are held instead:
 rerunning that step is still admitted, and paid work resumes only once it succeeds. Unpaid steps
 use the same fixed defaults on a rerun, so a failure caused by the footage itself, such as no
 fully visible person, repeats and the run ends without spending on generation.
