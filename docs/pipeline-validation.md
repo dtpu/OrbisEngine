@@ -441,6 +441,62 @@ Private evidence is under `.context/evidence/surface-reconstruction-20261107/`; 
 media or inference archives are committed. This option remains experimental and disabled by
 default. A successful camera audit does not promote the retained scene.
 
+## Refinement initialization and provenance
+
+`finetune_gsplat.py --init-npz` may start with a different number of splats, but its `scale0`,
+`origin_c2w`, `R_raw_to_native` and `fb` metadata must match the exported training dataset.
+Missing, malformed, nonfinite or mismatched metadata now fails before selecting CUDA or creating
+the output directory. Without this check, optimization could use one native coordinate frame
+while the saved model inherited another frame's import transform. The default initialization is
+unchanged.
+
+Topology changes retain the actual initial count in `stats.json` and `finetuned.npz`.
+`orig_index` refers to rows in the selected initialization for the current invocation; `-1` marks
+rows created during that invocation. `orig_index_source` identifies that initialization. It is
+not historical ancestry through earlier training runs. `n_new` counts surviving new rows;
+prune/clone/split counters describe cumulative operations. A CPU regression exercises optimizer
+surgery from five to six to four splats and verifies both counts and retained row identities.
+
+## Joint source refinement, 2026-11-08
+
+The retained lobby source (`1e1d1b38db09636c5aa4488464d955d461bd35cfd76d839d748edc986ef03cd7`)
+was tested on the camera-correction branch without waiting for a merge. This experiment joined
+the prior trained room's 1,920,000 splats with all 1,346,352 corrected measured source points,
+then ran 4,000 iterations with existing pruning/densification and a 3,600,000-splat ceiling.
+Original RGB, masks, cameras and depth targets were unchanged. A separate planar-depth preflight
+failed a glass-region exclusion check and produced no usable target archive; it was not used.
+The measured source initialization remains an offline experiment, not a new default pipeline.
+
+| Check | Result |
+| --- | --- |
+| Final splats | 3,144,402; initial count and current-run provenance preserved |
+| Mean optimization-held-out masked PSNR | 21.95 → 27.05 dB; all five exceed the prior trained room, but sample 0 falls 0.127 dB against the joint initialization, failing the unchanged no-regression check |
+| Fixed scale diagnostic, 480×200 | 5/5 pass unchanged bands; late median/p90 1.002/1.010 |
+| Rendered raw-depth p90 error, samples 57/114 | 0.1155/0.3457 → 0.0100/0.0107 body-heights; supported coverage 100% |
+| Independent floor ray-plane p90 | 0.02309/0.04002 body-heights; both fail ≤0.02 and the required 50% reduction |
+| Avatar bottom-fifth occlusion at sample 0 | 24.53% → 7.06% with unchanged person-only pixels and placement; left-shoe occlusion remains |
+
+The original depth targets themselves have floor ray-plane p90 errors of 0.02297/0.03845
+body-heights. Their signed residuals correlate with the trained result at 0.925/0.960. This
+attributes the remaining floor error to the targets; it does not replace the independent floor
+criterion. Portal/glass regions retain only 9.6%/15.1% measured depth support. Eight source views
+and two lateral views show sharper fixtures but persistent distorted glass and floor texture.
+
+The actual viewer loaded all 115 person frames and the final world. Playback, pause, frame
+stepping and a short right/forward walk worked, with no captured browser warnings/errors.
+The first frame was also checked at the measured 35.37° vertical field of view. The source is
+silent. This does not establish full temporal fidelity, wall/stair collisions or headset quality.
+The candidate remains **failed, improved** and is not promoted; it is not a fresh full upload run.
+Camera/person inference, cleaning and world generation were verified reuse, not re-executed.
+
+The first training attempt was interrupted by a local polling-timeout bug. The next call
+completed despite a connection failure; all 114 retained files were recovered and hash-verified
+without resubmission. Both owned apps stopped with zero tasks and both claims were reconciled.
+Worker-only estimates were $0.02334 for the interrupted call and $0.07506 for the completed call;
+these exclude startup, build, storage and egress. Private evidence is under
+`.context/evidence/surface-reconstruction-20261107/trial-11/` and `trial-12/`; media and credentials
+are not committed. The existing scene is preserved while the next geometric hypothesis is assessed.
+
 ## Remaining boundaries
 
 The November 7 lobby iteration reused the original clip and retained world. Offline camera

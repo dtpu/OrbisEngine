@@ -12,6 +12,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import finetune_gsplat as trainer
 
 
+def test_topology_report_keeps_initial_count_and_row_provenance_after_prune_and_grow():
+    model = trainer.Model(
+        dict(
+            means=np.arange(15, dtype=np.float32).reshape(5, 3),
+            quats=np.tile(np.array([1, 0, 0, 0], dtype=np.float32), (5, 1)),
+            log_scales=np.zeros((5, 3), dtype=np.float32),
+            logit_opacities=np.zeros(5, dtype=np.float32),
+            f_dc=np.zeros((5, 3), dtype=np.float32),
+        ),
+        "cpu",
+    )
+    orig_index = torch.arange(model.n_init, dtype=torch.int32)
+    assert model.topology_stats(orig_index) == {
+        "n_splats": 5,
+        "n_splats_init": 5,
+        "n_new": 0,
+    }
+    opt = torch.optim.Adam(
+        [{"params": [p.requires_grad_(True)], "name": k} for k, p in model.params().items()]
+    )
+    # Populate real optimizer state before the same topology surgery used by training.
+    sum(p.sum() for p in model.params().values()).backward()
+    opt.step()
+    original_means = model.means.detach().clone()
+    extra = {k: p.detach()[[0, 0, 2]].clone() for k, p in model.params().items()}
+    extra["means"] += 100
+    (orig_index,) = trainer.surgery(
+        model,
+        opt,
+        torch.tensor([True, False, True, False, True]),
+        extra,
+        side=[(orig_index, -1)],
+    )
+    assert orig_index.tolist() == [0, 2, 4, -1, -1, -1]
+    assert model.topology_stats(orig_index) == {
+        "n_splats": 6,
+        "n_splats_init": 5,
+        "n_new": 3,
+    }
+    # A later prune removes both an original and a newly created row. n_new is survivors,
+    # not cumulative additions; retained original indices must not be renumbered.
+    (orig_index,) = trainer.surgery(
+        model,
+        opt,
+        torch.tensor([False, True, True, False, True, True]),
+        side=[(orig_index, -1)],
+    )
+    assert orig_index.tolist() == [2, 4, -1, -1]
+    assert model.topology_stats(orig_index) == {
+        "n_splats": 4,
+        "n_splats_init": 5,
+        "n_new": 2,
+    }
+    torch.testing.assert_close(model.means[:2], original_means[[2, 4]])
+    torch.testing.assert_close(model.means[2:], extra["means"][1:])
+    assert all(len(p) == len(orig_index) for p in model.params().values())
+
+
 @pytest.fixture
 def cameras(tmp_path):
     compatibility = np.eye(3, dtype=np.float32)
@@ -26,6 +84,111 @@ def cameras(tmp_path):
         height=3,
     )
     return tmp_path / "cameras.npz", data
+
+
+@pytest.fixture
+def initial_frame_inputs(cameras):
+    camera_path, camera_data = cameras
+    np.savez(camera_path, **camera_data)
+    np.savez(
+        camera_path.with_name("depth.npz"),
+        depth=np.ones((2, 3, 5)),
+        supported=np.ones((2, 3, 5), dtype=bool),
+        depth_index=[0, 1],
+    )
+    metadata = dict(scale0=2.0, origin_c2w=np.eye(4), R_raw_to_native=np.eye(3), fb=12)
+    export = camera_path.with_name("splats.npz")
+    initial = camera_path.with_name("alternative.npz")
+    np.savez(export, **metadata, means=np.zeros((2, 3)))
+    np.savez(initial, **metadata, means=np.zeros((5, 3)))
+    return export, initial, metadata
+
+
+def test_initial_frame_accepts_matching_metadata_with_different_model_count(initial_frame_inputs):
+    export, initial, _ = initial_frame_inputs
+    trainer.validate_initial_frame(initial, export)
+
+
+@pytest.mark.parametrize("field", ["scale0", "origin_c2w", "R_raw_to_native", "fb"])
+@pytest.mark.parametrize("mutation", ["missing", "mismatch", "shape", "nan", "string"])
+@pytest.mark.parametrize("change_export", [False, True])
+def test_initial_frame_rejects_invalid_metadata_before_cuda_and_output(
+    initial_frame_inputs, monkeypatch, field, mutation, change_export
+):
+    export, initial, metadata = initial_frame_inputs
+    if mutation == "missing":
+        del metadata[field]
+    elif mutation == "mismatch":
+        metadata[field] = np.asarray(metadata[field]) + 1
+    elif mutation == "shape":
+        metadata[field] = np.asarray(metadata[field])[None]
+    elif mutation == "nan":
+        metadata[field] = np.full(np.shape(metadata[field]), np.nan)
+    else:
+        metadata[field] = np.full(np.shape(metadata[field]), "invalid")
+    np.savez(export if change_export else initial, **metadata)
+    out = export.parent / "out"
+    monkeypatch.setattr(trainer.torch, "device", lambda *_: pytest.fail("Unexpected CUDA"))
+    with pytest.raises(ValueError, match=field):
+        trainer.main(
+            [
+                "--data",
+                str(export.parent),
+                "--out",
+                str(out),
+                "--poses",
+                "0",
+                "--offpath-frame",
+                "1",
+                "--init-npz",
+                str(initial),
+            ]
+        )
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("scale0", 0.0), ("scale0", -1.0), ("fb", -1), ("fb", 256), ("fb", 12.0), ("fb", True)],
+)
+def test_initial_frame_rejects_invalid_scale_and_fractional_bits(
+    initial_frame_inputs, field, value
+):
+    export, initial, metadata = initial_frame_inputs
+    metadata[field] = value
+    np.savez(initial, **metadata)
+    with pytest.raises(ValueError, match=field):
+        trainer.validate_initial_frame(initial, export)
+
+
+@pytest.mark.parametrize("use_override", [False, True])
+def test_initial_frame_preflight_preserves_default_and_accepts_valid_override(
+    initial_frame_inputs, monkeypatch, use_override
+):
+    export, initial, _ = initial_frame_inputs
+    if not use_override:
+        monkeypatch.setattr(
+            trainer, "validate_initial_frame", lambda *_: pytest.fail("No alternate initialization")
+        )
+
+    def stop_at_device(*_):
+        raise RuntimeError("Reached device selection")
+
+    monkeypatch.setattr(trainer.torch, "device", stop_at_device)
+    arguments = [
+        "--data",
+        str(export.parent),
+        "--out",
+        str(export.parent / "out"),
+        "--poses",
+        "0",
+        "--offpath-frame",
+        "1",
+    ]
+    if use_override:
+        arguments += ["--init-npz", str(initial)]
+    with pytest.raises(RuntimeError, match="Reached device selection"):
+        trainer.main(arguments)
 
 
 @pytest.mark.parametrize("legacy", [True, False])

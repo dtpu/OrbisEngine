@@ -181,6 +181,7 @@ class Model:
             "f_dc": torch.from_numpy(s["f_dc"]).to(dev),
         }
         self.init = {k: v.clone() for k, v in self.p.items()}
+        self.n_init = self.n
 
     @property
     def n(self):
@@ -194,6 +195,14 @@ class Model:
 
     def params(self):
         return self.p
+
+    def topology_stats(self, orig_index):
+        """Counts for this invocation; -1 marks surviving rows created during training."""
+        return {
+            "n_splats": self.n,
+            "n_splats_init": self.n_init,
+            "n_new": int((orig_index < 0).sum()),
+        }
 
     def render(self, viewmat, K, W, H, depth=False, surface_depth=False):
         from gsplat import rasterization
@@ -385,6 +394,44 @@ def validate_initial_quaternions(path):
         raise ValueError("Initial quaternion tether inputs must have shape (splats, 4)")
     if not np.all(np.isfinite(quats).all(-1) & (quats != 0).any(-1)):
         raise ValueError("Initial quaternion tether inputs must be finite and nonzero")
+
+
+def validate_initial_frame(initial_path, export_path):
+    """An alternate model must use the export's exact native-to-raw mapping."""
+    shapes = {"scale0": (), "origin_c2w": (4, 4), "R_raw_to_native": (3, 3), "fb": ()}
+    metadata = []
+    for path in (export_path, initial_path):
+        values = {}
+        with np.load(path, allow_pickle=False) as splats:
+            for name, shape in shapes.items():
+                if name not in splats:
+                    raise ValueError(f"Initialization frame metadata {name} is missing from {path}")
+                value = splats[name]
+                if (
+                    value.shape != shape
+                    or value.dtype.kind not in "iuf"
+                    or not np.isfinite(value).all()
+                ):
+                    raise ValueError(
+                        f"Initialization frame metadata {name} in {path} must be finite numeric shape {shape}"
+                    )
+                if name == "scale0" and value <= 0:
+                    raise ValueError(
+                        f"Initialization frame metadata scale0 in {path} must be positive"
+                    )
+                # The SPZ fractional-bit count is stored as an unsigned byte in its header.
+                if name == "fb" and (value.dtype.kind not in "iu" or not 0 <= value <= 255):
+                    raise ValueError(
+                        f"Initialization frame metadata fb in {path} must be an integer in [0, 255]"
+                    )
+                values[name] = value
+        metadata.append(values)
+    for name in shapes:
+        if not np.array_equal(metadata[0][name], metadata[1][name]):
+            raise ValueError(
+                f"--init-npz frame metadata {name} does not match {export_path}; "
+                "use an initialization exported in the same native frame"
+            )
 
 
 def main(argv=None):
@@ -584,6 +631,8 @@ def main(argv=None):
         validate_surface_targets(a.data, depth_layers, depth_sup, depth_index, W, H)
     if a.lambda_quat_reg > 0:
         validate_initial_quaternions(a.init_npz or a.data / "splats.npz")
+    if a.init_npz is not None:
+        validate_initial_frame(a.init_npz, a.data / "splats.npz")
 
     a.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed)
@@ -654,7 +703,9 @@ def main(argv=None):
     else:
         obs = torch.zeros(model.n, dtype=torch.bool, device=dev)
 
-    orig_idx = torch.arange(model.n, dtype=torch.int32, device=dev)
+    # Index the selected initialization for this invocation, not its historical ancestry.
+    orig_index_source = str((a.init_npz or a.data / "splats.npz").resolve())
+    orig_idx = torch.arange(model.n_init, dtype=torch.int32, device=dev)
     bbox_lo = model.init["means"].min(0).values
     bbox_hi = model.init["means"].max(0).values
     eval_depth_samples = {}
@@ -1008,7 +1059,6 @@ def main(argv=None):
     after, after_list, dr_after = evaluate("after")
     render_set("after")
     with torch.no_grad():
-        alive = orig_idx >= 0
         d = (model.means - model.init["means"]).norm(dim=1)[vis]
         ds = (model.log_scales - model.init["log_scales"]).abs().max(1).values[vis]
         op0 = torch.sigmoid(model.init["logit_op"])[vis]
@@ -1022,11 +1072,11 @@ def main(argv=None):
             "depth_ratio_after": dr_after,
             "heldout_frames": test_idx,
             "heldout_depth_sample_counts": eval_depth_samples,
-            "n_splats": model.n,
-            "n_splats_init": int(len(orig_idx)),
+            **model.topology_stats(orig_idx),
+            "orig_index_source": orig_index_source,
+            "orig_index_semantics": "Row in this invocation's initialization; -1 = created during this invocation",
             "n_visible": n_vis,
             "n_observed": int(obs.sum()),
-            "n_new": int((~alive).sum()),
             "n_pruned_opacity": n_pruned_op,
             "n_pruned_depth": n_pruned_depth,
             "n_cloned": n_cloned,
@@ -1074,6 +1124,8 @@ def main(argv=None):
         f_dc=model.f_dc.detach().cpu().numpy(),
         visible=vis.cpu().numpy(),
         orig_index=orig_idx.cpu().numpy(),
+        orig_index_source=orig_index_source,
+        n_splats_init=model.n_init,
         scale0=s["scale0"],
         origin_c2w=s["origin_c2w"],
         R_raw_to_native=s["R_raw_to_native"],
@@ -1081,7 +1133,7 @@ def main(argv=None):
     )
     print(
         f"PSNR before {before:.2f} -> after {after:.2f} dB; depth ratio {dr_before:.3f} -> {dr_after:.3f}; "
-        f"{len(orig_idx)} -> {model.n} splats (pruned {n_pruned_op + n_pruned_depth}, added {stats['n_new']}); "
+        f"{stats['n_splats_init']} -> {stats['n_splats']} splats (pruned {n_pruned_op + n_pruned_depth}, surviving new {stats['n_new']}); "
         f"displacement median {stats['disp_cm_median']:.1f} cm p90 {stats['disp_cm_p90']:.1f} cm; "
         f"opacity killed {stats['opacity_dropped_below_0.05']}, new {stats['opacity_raised_above_0.5_from_below_0.1']}; {time.time() - t0:.0f}s",
         flush=True,
