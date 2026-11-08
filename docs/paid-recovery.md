@@ -20,6 +20,12 @@ and provider error text. This bounds requests and completion tokens for that hel
 tokens, monetary charges, or other OpenAI clients. Without the environment variable, calls remain
 unbudgeted; the HTTP 429 handling below still applies.
 
+Source descriptions use the existing GPT-6 Astra model with explicit `low` reasoning for factual
+frame extraction, one request, and a 300-second HTTP socket timeout. Explicit alternate models keep
+their provider reasoning default. The output records `model`, `reasoningEffort`, and `timeoutSeconds`
+on success or request failure. The socket timeout is not an overall run deadline. A timeout still
+consumes its claim; this setting does not authorize a retry or relax duplicate-request protection.
+
 Bounded failures retain the numeric HTTP status and finite recognized provider error-code, type,
 and parameter identifiers when available. HTTP error bodies are read once, up to 16 KiB; raw bodies,
 messages, headers and arbitrary strings are never retained. The returned `errorGuidance` is static
@@ -149,7 +155,7 @@ The JSON must contain exactly these fields:
 - `expiresAtEpoch`: a finite positive Unix timestamp, later than the claim time.
 - `operations`: a nonempty object mapping concrete operation names to nonnegative integer counts
   of **prior logical-stage executions** expected at submission. For example, `{"clean_first": 3,
-  "clean": 4}` authorizes those two operations in order against the shared inpainting count;
+"clean": 4}` authorizes those two operations in order against the shared inpainting count;
   it does not authorize a retry of either one. Inspect the actual shared ledger when setting counts.
 
 Each claim reads and validates the permit under the ledger lock, records its exact file hash,

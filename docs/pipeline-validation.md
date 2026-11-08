@@ -495,14 +495,14 @@ Original RGB, masks, cameras and depth targets were unchanged. A separate planar
 failed a glass-region exclusion check and produced no usable target archive; it was not used.
 The measured source initialization remains an offline experiment, not a new default pipeline.
 
-| Check | Result |
-| --- | --- |
-| Final splats | 3,144,402; initial count and current-run provenance preserved |
-| Mean optimization-held-out masked PSNR | 21.95 → 27.05 dB; all five exceed the prior trained room, but sample 0 falls 0.127 dB against the joint initialization, failing the unchanged no-regression check |
-| Fixed scale diagnostic, 480×200 | 5/5 pass unchanged bands; late median/p90 1.002/1.010 |
-| Rendered raw-depth p90 error, samples 57/114 | 0.1155/0.3457 → 0.0100/0.0107 body-heights; supported coverage 100% |
-| Independent floor ray-plane p90 | 0.02309/0.04002 body-heights; both fail ≤0.02 and the required 50% reduction |
-| Avatar bottom-fifth occlusion at sample 0 | 24.53% → 7.06% with unchanged person-only pixels and placement; left-shoe occlusion remains |
+| Check                                        | Result                                                                                                                                                            |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Final splats                                 | 3,144,402; initial count and current-run provenance preserved                                                                                                     |
+| Mean optimization-held-out masked PSNR       | 21.95 → 27.05 dB; all five exceed the prior trained room, but sample 0 falls 0.127 dB against the joint initialization, failing the unchanged no-regression check |
+| Fixed scale diagnostic, 480×200              | 5/5 pass unchanged bands; late median/p90 1.002/1.010                                                                                                             |
+| Rendered raw-depth p90 error, samples 57/114 | 0.1155/0.3457 → 0.0100/0.0107 body-heights; supported coverage 100%                                                                                               |
+| Independent floor ray-plane p90              | 0.02309/0.04002 body-heights; both fail ≤0.02 and the required 50% reduction                                                                                      |
+| Avatar bottom-fifth occlusion at sample 0    | 24.53% → 7.06% with unchanged person-only pixels and placement; left-shoe occlusion remains                                                                       |
 
 The original depth targets themselves have floor ray-plane p90 errors of 0.02297/0.03845
 body-heights. Their signed residuals correlate with the trained result at 0.925/0.960. This
@@ -564,14 +564,14 @@ masks. It changed 3,495,905 supported texels; original RGB, cameras, support, in
 evaluation depth were unchanged. The source-depth SHA-256 in the GPU result matches the original
 archive; the training archive has a separate hash. No cleaning, person or world generation ran.
 
-| Check | Result |
-| --- | --- |
+| Check                                               | Result                                                                                                                     |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Independent plane-reference ray-depth p90 at 57/114 | 0.00336/0.00627 body-heights; both pass the unchanged ≤0.02 limit and ≥50% reduction from trial08 (89.41%/88.00% achieved) |
-| Original supported rendered coverage | 100% at both audit views |
-| Fixed scale diagnostic | 5/5 pass; median ratios 1.002–1.004, p90 1.014–1.017 |
-| Mean optimization-held-out masked PSNR | 21.95 → 27.12 dB; sample 0 falls 0.139 dB versus initialization, so the no-regression check still fails |
-| Avatar bottom-fifth occlusion at sample 0 | 5.81%, versus 7.06% in trial12 and 24.53% in trial08; identical person-only pixels and placement |
-| Portal raw-depth p90 at 114 | 0.07267 body-heights versus trial12's 0.01815, on only 9.61% supported pixels; a reported regression, not a pass |
+| Original supported rendered coverage                | 100% at both audit views                                                                                                   |
+| Fixed scale diagnostic                              | 5/5 pass; median ratios 1.002–1.004, p90 1.014–1.017                                                                       |
+| Mean optimization-held-out masked PSNR              | 21.95 → 27.12 dB; sample 0 falls 0.139 dB versus initialization, so the no-regression check still fails                    |
+| Avatar bottom-fifth occlusion at sample 0           | 5.81%, versus 7.06% in trial12 and 24.53% in trial08; identical person-only pixels and placement                           |
+| Portal raw-depth p90 at 114                         | 0.07267 body-heights versus trial12's 0.01815, on only 9.61% supported pixels; a reported regression, not a pass           |
 
 The floor checks constrain the fitted surface but are not unseen-view validation: samples 57/114
 are training views. Original-reference depth disagreement increases where the plane differs from
@@ -628,3 +628,20 @@ count and angular conditioning, all on the metal facade. A first-order direction
 improved their heldout mean error from 5.80 to 3.44/255, but had no diffuse control or late-view
 coverage. Physical correspondence versus shifting reflections/misprojection remains unresolved.
 No view-dependent-color implementation or paid trial followed this inconclusive study.
+
+## Fresh source-description latency, 2026-11-08
+
+A new 7.42-second public forest-walk source reached the real dashboard and production upload
+worker. Person preparation, camera reconstruction and canonical-avatar inference completed.
+The first six-frame description request timed out after 181 seconds; authenticated, read-only
+model access subsequently succeeded with both HTTP clients in under one second. That rules out
+an ongoing authentication refusal, but does not establish the cause of the request timeout.
+
+One separately recorded operator trial kept the model and six source frames, selected explicit
+low reasoning for extraction, and used a 300-second socket timeout. It completed in 15.42 seconds
+with 4,622 input and 432 completion tokens. Manual comparison found the road, woodland, materials
+and lighting description supported by the samples, with the road beyond the crest labelled unknown.
+This is one successful description trial, not a latency guarantee or full reconstruction pass.
+The original blocked automatic stage and both request claims remain intact. No automatic paid
+retry or world generation occurred in this check. Private evidence:
+`.context/evidence/practical-e2e-20261108/fresh-run/description-result.json`.
