@@ -75,3 +75,30 @@ test('button state follows keyboard playback and switching between camera and cl
     'Playing — press any key to stop',
   );
 });
+
+test.each([false, true])('pausing preserves mute with cameraReel=%s', (cameraReel) => {
+  let unlocks = 0;
+  const api = {
+    cameraReel,
+    playing: true,
+    reel: cameraReel ? {} : null,
+    muted: true,
+    unlockAudio() {
+      unlocks++;
+      this.muted = false;
+    },
+    play(on) {
+      this.playing = on;
+    },
+    showreel(on) {
+      this.reel = on ? {} : null;
+    },
+  };
+  togglePlayback(api);
+  expect(playbackState(api).running).toBe(false);
+  expect(unlocks).toBe(0);
+  expect(api.muted).toBe(true);
+  togglePlayback(api);
+  expect(playbackState(api).running).toBe(true);
+  expect(unlocks).toBe(1);
+});

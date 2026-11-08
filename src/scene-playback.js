@@ -22,6 +22,8 @@ export function playbackState(api) {
 }
 
 export function togglePlayback(api) {
+  // A pause gesture must not unlock audio and change an initially muted scene.
+  if (!playbackState(api).running) void api.unlockAudio?.();
   if (api.cameraReel === false) api.play(!api.playing);
   else api.showreel(!api.reel);
 }

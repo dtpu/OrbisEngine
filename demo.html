@@ -963,7 +963,6 @@
       $('play').addEventListener('click', () => {
         const w = api();
         if (!w) return;
-        void w.unlockAudio?.();
         togglePlayback(w);
         try {
           frame.contentWindow.focus();
