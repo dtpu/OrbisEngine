@@ -4,6 +4,10 @@ The pipeline can submit a clip, retain its source, run stages, recover from a fa
 package a viewer scene. Passing these checks does **not** establish fresh provider access or
 acceptable reconstruction quality. The doctor reports those separately.
 
+The [November 8 fresh-upload trial](fresh-upload-trial.md) reached a playable scene using live
+providers after an explicit source-description recovery. Its scale and avatar alignment checks
+failed; it is retained as an unaccepted preview, not a successful automatic reconstruction.
+
 New dashboard uploads use [automatic processing](automatic-uploads.md). Tests exercise a single
 upload through the real runner and packager with simulated providers, without a human answer or
 paid retry. Rejected previews retain a failed run status and their quality reason; they are not
