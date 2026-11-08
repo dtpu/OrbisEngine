@@ -91,12 +91,31 @@ def gaussian_window(size=11, sigma=1.5, dev="cuda"):
 def ssim_map(x, y, win):
     """x, y: (1,3,H,W) in [0,1]. Returns per-pixel SSIM (1,3,H,W)."""
     C1, C2 = 0.01**2, 0.03**2
-    mu_x = F.conv2d(x, win, padding=5, groups=3)
-    mu_y = F.conv2d(y, win, padding=5, groups=3)
-    sxx = F.conv2d(x * x, win, padding=5, groups=3) - mu_x**2
-    syy = F.conv2d(y * y, win, padding=5, groups=3) - mu_y**2
-    sxy = F.conv2d(x * y, win, padding=5, groups=3) - mu_x * mu_y
+    padding = tuple(size // 2 for size in win.shape[-2:])
+    mu_x = F.conv2d(x, win, padding=padding, groups=3)
+    mu_y = F.conv2d(y, win, padding=padding, groups=3)
+    sxx = F.conv2d(x * x, win, padding=padding, groups=3) - mu_x**2
+    syy = F.conv2d(y * y, win, padding=padding, groups=3) - mu_y**2
+    sxy = F.conv2d(x * y, win, padding=padding, groups=3) - mu_x * mu_y
     return ((2 * mu_x * mu_y + C1) * (2 * sxy + C2)) / ((mu_x**2 + mu_y**2 + C1) * (sxx + syy + C2))
+
+
+def masked_rgb_loss(img, gt, valid, win, lambda_ssim, weight=1.0):
+    """Pointwise masked L1 and SSIM over wholly valid in-image windows."""
+    l1 = ((img - gt).abs() * valid).sum() / (valid.sum() * 3).clamp(min=1)
+    sm = ssim_map(img.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None], win)
+    kernel = tuple(win.shape[-2:])
+    padding = tuple(size // 2 for size in kernel)
+    excluded = (1 - valid).permute(2, 0, 1)[None]
+    # Masking SSIM centers alone leaks excluded RGB through local statistics.
+    centers = 1 - F.max_pool2d(excluded, kernel, stride=1, padding=padding)
+    eligible = centers.sum()
+    count = eligible * 3
+    ss = (sm * centers).sum() / count.clamp(min=1)
+    # No supported windows means zero SSIM penalty, retaining a gradient path.
+    ss = torch.where(count > 0, ss, ss + 1)
+    loss = weight * ((1 - lambda_ssim) * l1 + lambda_ssim * (1 - ss))
+    return loss, l1, ss, eligible
 
 
 def quat_to_rotmat(q):
@@ -946,10 +965,7 @@ def main(argv=None):
         )
         if a.densify and it >= a.densify_start:
             info["means2d"].retain_grad()
-        l1 = ((img - gt).abs() * m).sum() / (m.sum() * 3)
-        sm = ssim_map(img.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None], win)
-        ss = (sm * m.permute(2, 0, 1)[None]).sum() / (m.sum() * 3)
-        loss = wgt * ((1 - a.lambda_ssim) * l1 + a.lambda_ssim * (1 - ss))
+        loss, l1, ss, ssim_count = masked_rgb_loss(img, gt, m, win, a.lambda_ssim, wgt)
         if a.lambda_depth > 0 and not use_pseudo:
             gd, sup = depth_targets.training(i)
             md = (sup & valid[i]).float()
@@ -1119,10 +1135,12 @@ def main(argv=None):
                     grad_cnt.zero_()
 
         if it % 50 == 0 or it == 1:
+            ssim_windows = int(ssim_count.detach())
             rec = {
                 "it": it,
                 "l1": float(l1.detach()),
-                "ssim": float(ss.detach()),
+                "ssim": float(ss.detach()) if ssim_windows else None,
+                "ssim_windows": ssim_windows,
                 "depth": float(dl.detach()),
                 "tv": float(tv.detach()),
                 "reg": float(reg.detach()),
@@ -1143,8 +1161,9 @@ def main(argv=None):
             if a.lambda_quat_reg > 0:
                 rec["quaternion_tether"] = float(quat_reg.detach())
             log.append(rec)
+            ssim_text = f"{rec['ssim']:.3f}" if rec["ssim"] is not None else "unknown (0 windows)"
             print(
-                f"it {it}: l1 {rec['l1']:.4f} ssim {rec['ssim']:.3f} depth {rec['depth']:.4f} tv {rec['tv']:.4f} reg {rec['reg']:.4f} "
+                f"it {it}: l1 {rec['l1']:.4f} ssim {ssim_text} depth {rec['depth']:.4f} tv {rec['tv']:.4f} reg {rec['reg']:.4f} "
                 f"train psnr {rec['psnr_train']:.2f} n {model.n} | {rec['t']:.0f}s VRAM {torch.cuda.max_memory_allocated() / 1e9:.1f} GB",
                 flush=True,
             )

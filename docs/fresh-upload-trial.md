@@ -132,6 +132,58 @@ identical camera renders. The diagnostic remains visibly labelled failed. Its if
 emitted an intermittent MutationObserver error without a source or stack; no control failure was
 observed, and the cause remains unverified.
 
+## Source geometry and world refinement
+
+After the measured-placement viewer fix landed, the retained source cameras and anchor depths
+were checked before further fitting. All eight predeclared longer-baseline RGB camera checks
+passed; two short batch-boundary checks failed and two pairs lacked useful parallax. Native
+anchor self-projections passed in all eight views, while legacy reattachment missed two. Seven
+independent RGB correspondence checks supported the raw depth/camera pairing. These are
+consistency measurements, not physical calibration, and no source cameras were rewritten.
+
+One 800-step refinement reused the original generated world, source frames, cameras and raw
+depth. It froze opacity, scales and orientation, kept all 1,920,000 splats, and bounded center
+movement to two body-heights. Exact source-mask validation found six foreground pixels omitted
+by the legacy training resize; those were excluded before this trial. The general exporter fix
+subsequently makes all supplied-mask resizing conservative before dilation. The trial's small
+input repair and that broader exporter correction are distinct changes.
+
+The candidate **failed acceptance** despite substantial image improvement:
+
+| Fixed check | Result |
+| --- | --- |
+| Held-out masked RGB | All seven improve; mean PSNR 16.95 → 28.84 dB |
+| Five alpha-rendered depth ratios | All pass: p10 0.923–0.936, median 0.992–0.995, p90 1.004–1.009 |
+| Depth-spread p90 on original compared pixels | All five fail; increases of 20–33% against a 5% allowance |
+| Opaque coverage retention | Two unsupported regions fail the 99% requirement: 98.81% and 98.46% |
+| Unchanged foot centers | Contact falls from 90/90 to 49/90; absolute error p90 0.153 body-heights against 0.08 |
+| Static background appearance | Person-shaped outline at beginning, middle and end |
+
+The original-world foot query was replayed and reproduced the preceding residuals exactly.
+Neither scale, camera, body ruler, placement nor evaluation pixels were refitted. Nearest-center
+depth loses 6,555–7,744 previously compared rays per view; favorable ratios on the remaining rays
+cannot be counted as a full-set pass. The ghost appears in both float training renders and the
+imported SPZ, so export quantization alone cannot explain it.
+
+The real desktop viewer loaded the isolated refined world and all 90 person samples. Playback,
+pause and lateral movement worked, but visible road seams, ghost fragments and stretched nearby
+trees remain. These walking views are not source-camera matches or headset evidence. The local
+comparison at `http://127.0.0.1:5399/reviews/forest-refinement-01/index.html` labels the candidate
+failed and links the preserved original. No live-run state, quality threshold or shipping asset
+was changed. Final verification remains unrun because the required geometry checks still fail.
+
+Evidence is under `.context/evidence/source-geometry-20261108/`, including all five fixed-grid
+measurements, 90 foot queries, source/before/after panels, browser captures and input hashes.
+The next investigation must explain the masked-region ghost and support-surface regression
+before another training attempt; improved RGB scores alone are insufficient.
+
+A subsequent CPU-only audit found a separate loss-mask defect in the exact trainer used above:
+SSIM convolved unmasked RGB with an 11×11 window, then masked only the output center. Changing
+only excluded target RGB altered background gradients even though masked L1 was unchanged.
+Full-window SSIM validity made the fixture's loss and gradients invariant. This identifies a
+general training bug, not the measured cause of all scene artifacts. The paid candidate predates
+that correction, and no corrected reconstruction or further paid trial is claimed.
+
 ## Cost and retained evidence
 
 All four owned Modal apps stopped with zero tasks; the admission watcher was stopped after
@@ -146,3 +198,10 @@ Media, provider receipts, screenshots, hashes, local diagnostics, original faile
 and the budget reconciliation are ignored local evidence under
 `.context/evidence/practical-e2e-20261108/fresh-run/`. They are not committed. The failed run's
 outputs remain under `.context/app/runs/pexels-5738706/`; no candidate was promoted or published.
+
+The subsequent refinement adds one completed claim, leaving 115 settled claims (99 completed,
+16 failed). Its owned Modal app is stopped with zero tasks. Worker time was 24.54 seconds and
+estimated compute US$0.0181, excluding build, startup, storage and egress. The full US$0.75
+reservation remains held pending billing reconciliation: total conservative usage/reserve is
+US$7.6524 with US$2.3476 unallocated within the original US$10 limit. No replacement world or
+additional paid retry was submitted.

@@ -3,6 +3,15 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- A raw-depth refinement of the forest world improved all seven RGB holdouts and passed all five
+  alpha-rendered depth-ratio checks, but worsened within-pixel depth spread by 20–33%, lost too much
+  opaque coverage in two unsupported regions, and reduced unchanged foot-contact passes from
+  90/90 to 49/90. A person-shaped outline remained in the static world despite source-mask exclusion.
+  Source-matched image scores and median depth agreement do not establish a coherent supporting
+  surface. Keep this candidate failed; do not refit the feet or select favorable pixels to erase the
+  regression. The ghost's cause remains unproved. Evidence:
+  `.context/evidence/source-geometry-20261108/forest-refinement-01/`.
+
 - Correct avatar appearance does not establish motion depth. On a fresh forest-walk source,
   the frozen reference matched its observed silhouette (IoU 0.898), but the adjacent animated
   sample was oversized (IoU 0.568) with essentially unchanged native body length. The error

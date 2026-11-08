@@ -343,8 +343,11 @@ def test_original_thin_exclusion_survives_training_resize(inputs, monkeypatch):
     _, build_cloud = stub_world_geometry(monkeypatch)
     export.main(argv)
     with Image.open(path / "export/masks/0001.png") as image:
-        assert not np.asarray(image).any()
-    np.testing.assert_array_equal(build_cloud.call_args.kwargs["exclusion_masks"][1], original[1])
+        assert np.asarray(image).all()
+    # The single training cell contains foreground, so none of its source extent
+    # may supply background geometry, even when the original person is very thin.
+    assert build_cloud.call_args.kwargs["exclusion_masks"][1].all()
+    assert not build_cloud.call_args.kwargs["exclusion_masks"][0].any()
 
 
 def test_overlap_resize_excludes_both_cells_straddled_by_one_pixel():
@@ -358,3 +361,82 @@ def test_overlap_resize_excludes_both_cells_straddled_by_one_pixel():
     np.testing.assert_array_equal(
         export.resize_exclusion_overlap(mask, (1, 4)), [[True, True, False, False]]
     )
+
+
+def brute_overlap(mask, shape):
+    """Reference rectangle intersections, without rounding or summed-area tables."""
+    sh, sw = mask.shape
+    dh, dw = shape
+    result = np.zeros(shape, dtype=bool)
+    for sy, sx in np.argwhere(mask):
+        for dy in range(dh):
+            for dx in range(dw):
+                if (
+                    sy * dh < (dy + 1) * sh
+                    and (sy + 1) * dh > dy * sh
+                    and sx * dw < (dx + 1) * sw
+                    and (sx + 1) * dw > dx * sw
+                ):
+                    result[dy, dx] = True
+    return result
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [((7, 11), (3, 4)), ((3, 4), (7, 11)), ((7, 3), (4, 11)), ((4, 6), (2, 3))],
+)
+def test_overlap_resize_matches_exact_rectangle_intersections(source, target):
+    # Every single-cell position checks edges, thin features and zero-area touches;
+    # random multi-cell masks also check the summed-area rectangle subtraction.
+    for index in range(np.prod(source)):
+        mask = np.zeros(source, dtype=bool)
+        mask.flat[index] = True
+        np.testing.assert_array_equal(
+            export.resize_exclusion_overlap(mask, target), brute_overlap(mask, target)
+        )
+    rng = np.random.default_rng(82)
+    for _ in range(5):
+        mask = rng.random(source) < 0.15
+        np.testing.assert_array_equal(
+            export.resize_exclusion_overlap(mask, target), brute_overlap(mask, target)
+        )
+
+
+@pytest.mark.parametrize("shape", [(1, 1), (3, 4), (13, 17)])
+@pytest.mark.parametrize("foreground", [False, True])
+def test_overlap_resize_uniform_masks(shape, foreground):
+    result = export.resize_exclusion_overlap(np.full((7, 11), foreground), shape)
+    assert result.dtype == np.bool_
+    np.testing.assert_array_equal(result, np.full(shape, foreground))
+
+
+def test_overlap_resize_same_grid_preserves_every_cell():
+    mask = np.random.default_rng(29).random((13, 17)) < 0.3
+    result = export.resize_exclusion_overlap(mask, mask.shape)
+    np.testing.assert_array_equal(result, mask)
+    assert not np.shares_memory(result, mask)
+
+
+def test_thin_foreground_missed_by_nearest_neighbor_is_excluded(inputs, monkeypatch):
+    path, argv, archive, cameras, sequence = inputs
+    original = np.zeros((2, 12, 17), dtype=bool)
+    original[1, :, 0] = True
+    archive["masks"] = np.packbits(original, axis=2)
+    write_inputs(path, archive, cameras, sequence)
+    size_arg = argv.index("--size")
+    argv[size_arg + 1 : size_arg + 3] = ["7", "5"]
+    nearest = np.asarray(
+        Image.fromarray(original[1].astype(np.uint8)).resize((7, 5), Image.Resampling.NEAREST)
+    )
+    assert not nearest.any()
+    stub_world_geometry(monkeypatch)
+    export.main(argv)
+    with Image.open(path / "export/masks/0001.png") as image:
+        excluded = np.asarray(image) > 0
+    # Positive overlap is the left column; existing two-pixel dilation covers
+    # two more columns, but must not consume the remaining clear background.
+    expected = np.zeros((5, 7), dtype=bool)
+    expected[:, :3] = True
+    np.testing.assert_array_equal(excluded, expected)
+    with Image.open(path / "export/masks/0000.png") as image:
+        assert not np.asarray(image).any()

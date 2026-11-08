@@ -282,13 +282,7 @@ def main(argv=None):
     if archive is not None:
         mask_method = "supplied"
         full = np.unpackbits(archive["masks"], axis=2, count=SW)
-        masks = np.stack(
-            [
-                np.array(Image.fromarray(m.astype(np.uint8) * 255).resize((W, H), Image.NEAREST))
-                > 127
-                for m in full
-            ]
-        )
+        masks = np.stack([resize_exclusion_overlap(m.astype(bool), (H, W)) for m in full])
     elif a.moved_mask:
         mask_method = "moved"
         # the loss ignores what MOVED, not only the person: a cast shadow or a carried object is
@@ -326,7 +320,7 @@ def main(argv=None):
     exclusions = anchor_exclusions(a.anchors, anchor_samples, masks, archive)
     anchor_counts = []
     # Use the same final exclusion as training, plus the original supplied mask
-    # before nearest-neighbor training resize can drop narrow foreground pixels.
+    # projected directly onto the anchor grid to preserve source-cell coverage.
     scene = static_cloud_from_anchors(
         a.anchors,
         a.cameras,
