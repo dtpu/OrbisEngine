@@ -1,5 +1,13 @@
 import { SceneScope } from './scene-scope.js';
 
+// Decoder/worker promises can reject with strings or empty values. The shell and
+// XR sidebar need a nonempty error field to distinguish rollback from success.
+function loadFailureMessage(error) {
+  return typeof error?.message === 'string' && error.message.trim()
+    ? error.message
+    : 'The scene could not finish loading. Choose it again to retry.';
+}
+
 /** Transactional scene ownership, separate from WebGL and asset preparation. */
 export function createSceneSession({ renderer, template, initial, clips, createRuntime }) {
   let active = null;
@@ -162,7 +170,7 @@ export function createSceneSession({ renderer, template, initial, clips, createR
               } catch (restoreError) {
                 previous.deactivate();
                 throw new Error(
-                  `${error.message} The previous scene could not resume; choose a clip to retry.`,
+                  `${loadFailureMessage(error)} The previous scene could not resume; choose a clip to retry.`,
                   { cause: restoreError },
                 );
               }
@@ -196,14 +204,14 @@ export function createSceneSession({ renderer, template, initial, clips, createR
           message.setAttribute('role', 'alert');
           message.style.cssText =
             'position:fixed;inset:24px auto auto 24px;z-index:100;color:white;background:#211;padding:16px';
-          message.textContent = error.message;
+          message.textContent = loadFailureMessage(error);
           document.body.append(message);
         }
         notify({
           id: active?.api.demo || id,
           requestedId: id,
           loading: false,
-          error: error.message,
+          error: loadFailureMessage(error),
           resumePlayback: previousPlaying,
         });
         throw error;

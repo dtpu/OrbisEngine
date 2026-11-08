@@ -141,7 +141,9 @@
       }
       .hbtn {
         display: inline-flex;
+        flex-shrink: 0;
         align-items: center;
+        white-space: nowrap;
         gap: 8px;
         height: 34px;
         padding: 0 14px;
@@ -535,6 +537,22 @@
         }
         .ctitle {
           font-size: 18px;
+        }
+      }
+      @media (max-width: 1000px) {
+        #shell {
+          grid-template-rows: auto minmax(0, 1fr);
+        }
+        header {
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 12px;
+        }
+        header > :not(.spacer) {
+          flex-shrink: 0;
+        }
+        .hmenu {
+          margin-left: auto;
         }
       }
     </style>
