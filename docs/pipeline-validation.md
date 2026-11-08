@@ -69,6 +69,13 @@ frames. Exports require a new directory, rebuild the anchor cloud and retain an 
 receipt. Derived exclusion masks need their own provenance and visual coverage review; they
 are not new segmentation predictions or proof that cleaned backgrounds are plausible.
 
+Supplied training masks now use positive pixel-cell overlap before the existing dilation.
+Nearest-neighbor resizing could discard thin foreground even after dilation: the retained forest
+export missed six overlapping pixels across three of 90 frames. The corrected resize misses none
+against an independent rectangle-intersection reference. Its conservative boundary also excludes
+18,394 additional training pixels across the sequence; it does not establish segmentation quality
+or guarantee that a trained world is ghost-free.
+
 The export retains each frame's camera intrinsics, and the trainer uses them for projection,
 rendering, depth comparisons and offset views. Older exports with one `K` remain supported.
 Held-out depth scores include contributing pixel counts and reject empty comparisons. These
