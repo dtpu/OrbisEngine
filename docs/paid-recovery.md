@@ -77,6 +77,22 @@ Additional selected shots share their original source's allowance and are treate
 the same stage. Automatic `--all-shots` processing can therefore stop after the first shot;
 review subsequent shots separately with distinct hypotheses instead of changing the source hash.
 
+## Bounded polling of an existing Modal call
+
+In the pinned Modal 1.5.5 client, a `FunctionCall.get(timeout=...)` poll with no result raises
+Python's built-in `TimeoutError`. It is distinct from `modal.exception.TimeoutError` and
+provider execution failures. Catching only the provider class can accidentally exit `app.run()`
+and stop a healthy paid job when the first short poll expires.
+
+Direct diagnostic launchers can use `scripts/modal_polling.py::wait_for_call` after recording
+the existing call ID. It polls that same call within a finite overall timeout, continuing only
+after an exact built-in polling timeout whose traceback identifies the pinned SDK's local poll.
+Unknown origins or a changed SDK fail closed; remote timeouts, cancellation and other errors propagate.
+At the overall deadline it invokes the supplied cancellation callback once, then fails. The caller
+must supply a callback that cancels only its owned call and records that request; the helper does
+not establish ownership, submit work, retry a generation, or settle the paid ledger. Retain and
+recover outputs and provider state before reconciling an interrupted attempt.
+
 ## Optional single-person worker resource ceilings
 
 Set `WANDER_WORKER_TIMEOUT_SECONDS=600` in the launching process to limit the GPU functions
