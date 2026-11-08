@@ -1,0 +1,21 @@
+docs/known-limits.md
+  s_11465a870157de::t_5abaa900512f7a 6
+docs/pipeline-validation.md
+  s_11465a870157de::t_cb18346aeb7051 584-620
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93ac406c2fe5a54d7133e20342f69cc6497a9308",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
