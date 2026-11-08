@@ -1,0 +1,21 @@
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_9b9c20d593624b 28-36
+docs/fresh-upload-trial.md
+  s_20f6c0bf8c5b2c::t_9b9c20d593624b 115-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ffc409be7a7f5ace4337dea5c83fa109d0cb7371",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
