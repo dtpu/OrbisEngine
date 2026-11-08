@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -352,10 +353,16 @@ class CommandTests(unittest.TestCase):
         self.assertIn("--stage-ledger", command, "the legacy spend ledger must stay in play")
 
     def test_the_legacy_pipeline_writes_into_this_run_and_nowhere_else(self):
-        environment = step_environment(self.context)
+        with patch.dict(os.environ):
+            os.environ.pop("NUMBA_CACHE_DIR", None)
+            environment = step_environment(self.context)
+            os.environ["NUMBA_CACHE_DIR"] = str(self.root / "outside-cache")
+            overridden = step_environment(self.context)
         self.assertEqual(environment["WANDER_RUNS_DIR"], str(self.run_dir.parent))
         self.assertTrue(environment["WANDER_PUBLIC_DIR"].startswith(str(self.run_dir)))
         self.assertEqual(environment["PYTHONUNBUFFERED"], "1")
+        self.assertEqual(environment["NUMBA_CACHE_DIR"], str(self.run_dir / "numba-cache"))
+        self.assertEqual(overridden["NUMBA_CACHE_DIR"], environment["NUMBA_CACHE_DIR"])
 
     def test_flags_are_recorded_as_what_was_asked_for(self):
         self.assertEqual(
