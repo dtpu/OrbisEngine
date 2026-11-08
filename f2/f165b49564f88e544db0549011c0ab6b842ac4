@@ -1,0 +1,32 @@
+scripts/modal_polling.py
+  s_11465a870157de::t_c41615a739106c 1-104
+scripts/tests/test_modal_polling.py
+  s_11465a870157de::t_c41615a739106c 1-221
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_4657533621fc7d 89-90
+  s_20f6c0bf8c5b2c::t_4579673d46f0f8 80-88,91-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2f165b49564f88e544db0549011c0ab6b842ac4",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
