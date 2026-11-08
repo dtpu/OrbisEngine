@@ -200,6 +200,68 @@ for (const playing of [true, false]) {
   });
 }
 
+for (const [description, reason] of [
+  ['string rejection', 'decoder rejected the asset'],
+  ['empty object', {}],
+  ['null rejection', null],
+  ['undefined rejection', undefined],
+  ['blank message', new Error('   ')],
+]) {
+  for (const phase of ['preparation', 'activation']) {
+    test(`${phase} ${description} reports failure instead of successful rollback`, async () => {
+      const f = await fixture();
+      const done = f.session.select('B');
+      if (phase === 'preparation') f.latest().preparation.reject(reason);
+      else {
+        f.latest().activations.push(() => Promise.reject(reason));
+        f.resolve();
+      }
+      let rejected = false;
+      await done.catch((error) => {
+        rejected = true;
+        expect(error).toBe(reason);
+      });
+      expect(rejected).toBe(true);
+      expect(window.wander.demo).toBe('A');
+      expect(window.wander.playing).toBe(true);
+      expect(window.__loadingScene).toBe(null);
+      expect(f.events.at(-1)).toMatchObject({
+        id: 'A',
+        requestedId: 'B',
+        loading: false,
+        error: 'The scene could not finish loading. Choose it again to retry.',
+      });
+      // Retrying the rejected selection must create a fresh runtime and succeed.
+      const retry = f.session.select('B');
+      f.resolve();
+      await retry;
+      expect(window.wander.demo).toBe('B');
+      expect(f.events.at(-1).error).toBeUndefined();
+      expect(f.live.size).toBe(2);
+    });
+  }
+}
+
+test('initial non-Error rejection renders a readable startup alert', async () => {
+  const events = [];
+  window.addEventListener('wander:scenechange', (event) => events.push(event.detail));
+  const session = createSceneSession({
+    renderer: {},
+    template: { content: { cloneNode: () => new Element() } },
+    initial: new URLSearchParams({ demo: 'A' }),
+    clips: [{ id: 'A' }],
+    createRuntime: () => Promise.reject('decoder rejected the asset'),
+  });
+  sessions.push(session);
+  await session.ready.catch(() => {});
+  const alert = document.getElementById('scene-load-error');
+  expect(alert.role).toBe('alert');
+  expect(alert.textContent).toBe('The scene could not finish loading. Choose it again to retry.');
+  expect(window.__wanderStartupError).toBe(true);
+  expect(window.__loadingScene).toBe(null);
+  expect(events.at(-1).error).toBe(alert.textContent);
+});
+
 test('failed rollback clears pending, reports error, and permits retrying current', async () => {
   const f = await fixture();
   const a = f.latest();
