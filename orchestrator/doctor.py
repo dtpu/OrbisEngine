@@ -405,12 +405,13 @@ def inspect_setup(
                 "Confirm account permissions, credits and run budget before a paid launch.",
             )
     configured = _modal_configuration()
-    modal_available = shutil.which(os.environ.get("WANDER_MODAL") or "modal")
+    modal = os.environ.get("WANDER_MODAL", str(Path(sys.executable).with_name("modal")))
+    modal_available = shutil.which(modal)
     add(
         "tool.modal",
         "okay" if modal_available else "blocked",
         f"Configured Modal executable is {'available' if modal_available else 'missing'}.",
-        "uv sync --locked",
+        "Run uv sync --locked or correct the configured WANDER_MODAL executable.",
     )
     modal_auth = add(
         "modal.auth",

@@ -126,6 +126,23 @@ class DoctorTests(unittest.TestCase):
         report = doctor.inspect_setup()
         self.assertEqual(self.check(report, "tool.harness")["status"], "blocked")
 
+    def test_modal_tool_checks_interpreter_sibling_and_respects_override(self):
+        sibling = str(Path(sys.executable).with_name("modal"))
+        with patch.object(
+            doctor.shutil,
+            "which",
+            side_effect=lambda name: None if name == sibling else f"/bin/{name}",
+        ) as which:
+            report = doctor.inspect_setup()
+            self.assertEqual(self.check(report, "tool.modal")["status"], "blocked")
+            which.assert_any_call(sibling)
+            self.assertFalse(any(call.args == ("modal",) for call in which.call_args_list))
+
+            os.environ["WANDER_MODAL"] = "reviewed-modal"
+            report = doctor.inspect_setup()
+            self.assertEqual(self.check(report, "tool.modal")["status"], "okay")
+            which.assert_any_call("reviewed-modal")
+
     def test_failing_tool_version_probe_blocks(self):
         def fail_version(argv, **kwargs):
             if argv[-1] == "-version":

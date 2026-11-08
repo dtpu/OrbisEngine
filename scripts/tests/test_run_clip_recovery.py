@@ -8,6 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -47,6 +49,30 @@ class RunnerRecoveryTests(unittest.TestCase):
         self.pipeline.state = run_clip.State(self.pipeline.ctx / "state.json")
         self.pipeline.track_or_skip = Mock(return_value={"quality": {"firstSample": 0}})
         self.volume = Volume(self.root / "volume")
+
+    def test_modal_cli_uses_the_interpreter_sibling_unless_overridden(self):
+        shadow = self.root / "modal"
+        shadow.write_text("#!/bin/sh\nexit 1\n")
+        shadow.chmod(0o755)
+        environment = {**os.environ, "PATH": str(self.root)}
+        environment.pop("WANDER_MODAL", None)
+        command = [
+            sys.executable,
+            "-B",
+            "-c",
+            "import shutil, run_clip; print(shutil.which('modal')); print(run_clip.MODAL)",
+        ]
+        output = subprocess.check_output(
+            command, cwd=run_clip.ROOT / "scripts", env=environment, text=True, timeout=10
+        )
+        self.assertEqual(
+            output.splitlines(), [str(shadow), str(Path(sys.executable).with_name("modal"))]
+        )
+        environment["WANDER_MODAL"] = str(shadow)
+        output = subprocess.check_output(
+            command, cwd=run_clip.ROOT / "scripts", env=environment, text=True, timeout=10
+        )
+        self.assertEqual(output.splitlines(), [str(shadow), str(shadow)])
 
     def destination(self, mode, idx=None):
         suffix = "" if idx is None else f"-{idx:02d}"
