@@ -441,6 +441,22 @@ Private evidence is under `.context/evidence/surface-reconstruction-20261107/`; 
 media or inference archives are committed. This option remains experimental and disabled by
 default. A successful camera audit does not promote the retained scene.
 
+## Refinement initialization and provenance
+
+`finetune_gsplat.py --init-npz` may start with a different number of splats, but its `scale0`,
+`origin_c2w`, `R_raw_to_native` and `fb` metadata must match the exported training dataset.
+Missing, malformed, nonfinite or mismatched metadata now fails before selecting CUDA or creating
+the output directory. Without this check, optimization could use one native coordinate frame
+while the saved model inherited another frame's import transform. The default initialization is
+unchanged.
+
+Topology changes retain the actual initial count in `stats.json` and `finetuned.npz`.
+`orig_index` refers to rows in the selected initialization for the current invocation; `-1` marks
+rows created during that invocation. `orig_index_source` identifies that initialization. It is
+not historical ancestry through earlier training runs. `n_new` counts surviving new rows;
+prune/clone/split counters describe cumulative operations. A CPU regression exercises optimizer
+surgery from five to six to four splats and verifies both counts and retained row identities.
+
 ## Remaining boundaries
 
 The November 7 lobby iteration reused the original clip and retained world. Offline camera
