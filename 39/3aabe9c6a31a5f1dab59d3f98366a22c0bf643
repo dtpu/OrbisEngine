@@ -1,0 +1,52 @@
+scripts/anchor_checks.py
+  s_11465a870157de::t_685b6c535f77e5 170,178,236
+  s_20f6c0bf8c5b2c::t_507295cfae0dc0 171-177,179-225,235
+scripts/export_observation_confidence.py
+  s_11465a870157de::t_7c6f7b301f6843 137-143
+docs/fresh-upload-trial.md
+  s_20f6c0bf8c5b2c::t_2c8c55bc3c8d2a 84-114
+scripts/place_solve.py
+  s_20f6c0bf8c5b2c::t_507295cfae0dc0 436-439,581-585,805-806,1223-1227
+  s_11465a870157de::t_7c6f7b301f6843 505,522-531,567,569-574,740-743,746-748,812-815,834,1242,1267
+  s_11465a870157de::t_8b4545bcf409ec 621-624
+  s_20f6c0bf8c5b2c::t_45e9fc0c31b615 807,1268
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_2c8c55bc3c8d2a 19-27
+scripts/single_person_masks.py
+  s_11465a870157de::t_8b4545bcf409ec 23,84-85,90-91,110,131-135,206-207,238-239
+  s_11465a870157de::t_6a79ebd46695e0 1-13,15-22,24-34,38-48,52-65,71-83,86-89,92-109,111-113,117-118,124,128-130,136-173,180-196,202,208-229,231-237,240-283,304-308,313-318,325-335,339,344-361
+  s_20f6c0bf8c5b2c::t_507295cfae0dc0 14,35-37,49-51,66-70,114-116,119-123,125-127,174-179,197-201,203-205,230,284-303,309-312,319-324,336-338,340-343
+docs/pipeline-setup.md
+  s_20f6c0bf8c5b2c::t_2c8c55bc3c8d2a 134-141
+scripts/run_clip.py
+  s_20f6c0bf8c5b2c::t_507295cfae0dc0 3002-3015,3038-3043
+  s_11465a870157de::t_7c6f7b301f6843 2697,2998-3001,3016,3119-3121
+  s_11465a870157de::t_8ec00c0d999b4d 2694-2696,2698-2710
+scripts/tests/test_single_person_masks.py
+  s_11465a870157de::t_8b4545bcf409ec 31-334
+  s_11465a870157de::t_668d78ac54b661 1-30,335-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "393aabe9c6a31a5f1dab59d3f98366a22c0bf643",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
