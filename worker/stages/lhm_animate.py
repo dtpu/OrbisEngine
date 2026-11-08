@@ -44,6 +44,27 @@ def decodable_span(readable, total: int) -> int:
     return low + 1
 
 
+def source_pose_provenance(records: list[dict | None], *, supplied_intrinsics: bool) -> dict:
+    """Count successful pose samples by origin.
+
+    In a mixed sequence, the intrinsics flag describes the fresh samples only.
+    """
+    fresh = 0
+    retained = 0
+    for record in records:
+        if record is None:
+            continue
+        if record.get("retainedOriginalPose") is True:
+            retained += 1
+        else:
+            fresh += 1
+    return {
+        "freshSourcePoseSamples": fresh,
+        "retainedSourcePoseSamples": retained,
+        "sourcePosesReestimatedWithSuppliedIntrinsics": supplied_intrinsics and fresh > 0,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     for key in ("video", "canonical", "reference", "out", "model"):
@@ -446,6 +467,7 @@ def main():
         missing=missing,
     )
     (out / "motion.json").write_text(json.dumps(motion, indent=2))
+    pose_provenance = source_pose_provenance(records, supplied_intrinsics=bool(cameras))
     sequence = dict(
         frame_format="gaussian-ply",
         frames=frames,
@@ -462,7 +484,7 @@ def main():
         allRequestedSamplesReconstructed=not missing,
         canonicalStateSha256=hashlib.sha256(Path(a.canonical).read_bytes()).hexdigest(),
         poseRecovery=dict(
-            originalPosesRetained=len(seed_records),
+            originalPosesRetained=pose_provenance["retainedSourcePoseSamples"],
             lowerDetectionThreshold=0.1,
             recoveredSamples=[r["sample"] for r in valid_records if r.get("recoveredMissingPose")],
         )
@@ -489,7 +511,6 @@ def main():
         if cameras
         else "OpenCV source camera for each timestamp; world motion unregistered",
         fixedWorldScaleControl=a.fixed_world_scale,
-        sourcePosesReestimatedWithSuppliedIntrinsics=bool(a.fixed_world_scale is not None),
         cameraMetadataSha256=hashlib.sha256(Path(a.cameras).read_bytes()).hexdigest()
         if cameras
         else None,
@@ -497,7 +518,8 @@ def main():
         peakVRAMGB=torch.cuda.max_memory_allocated() / 1e9,
         gpu=torch.cuda.get_device_name(),
         torch=torch.__version__,
-        note="One source-conditioned canonical appearance. Independent MultiHMR pose per decoded source sample; no stock motion, pose interpolation, or appearance regeneration. Hidden surfaces remain learned inference.",
+        note="One source-conditioned canonical appearance. Each pose comes from fresh MultiHMR inference or a retained track sample. Hidden surfaces remain learned inference.",
+        **pose_provenance,
     )
     (out / "sequence.json").write_text(json.dumps(sequence, indent=2))
     print(
