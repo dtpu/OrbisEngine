@@ -1,0 +1,21 @@
+scripts/run_pipeline.py
+  s_20f6c0bf8c5b2c::t_adfdbda2e3d6d9 46
+scripts/tests/test_run_pipeline.py
+  s_20f6c0bf8c5b2c::t_adfdbda2e3d6d9 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a9c28ece7cbac6c27e3d6b5398cda46dd636c28a",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
