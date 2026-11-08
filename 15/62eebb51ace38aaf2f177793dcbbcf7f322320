@@ -1,0 +1,32 @@
+demo.html
+  s_20f6c0bf8c5b2c::t_515f944d672e06 144,146,542-556
+  s_11465a870157de::t_c18d7280ccf1f1 557
+scripts/test-scene-session.js
+  s_11465a870157de::t_7c9d6454018ca4 203-264
+src/scene-session.js
+  s_11465a870157de::t_7c9d6454018ca4 3-10,173,207,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1562eebb51ace38aaf2f177793dcbbcf7f322320",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
