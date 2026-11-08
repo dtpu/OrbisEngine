@@ -54,7 +54,7 @@ import lhm_frozen_candidates  # noqa: E402
 
 # A clean clone uses its own toolchain and ignored output directories.
 PY = os.environ.get("WANDER_PYTHON", sys.executable)
-MODAL = os.environ.get("WANDER_MODAL", shutil.which("modal") or str(ROOT / ".venv/bin/modal"))
+MODAL = os.environ.get("WANDER_MODAL", str(Path(sys.executable).with_name("modal")))
 SHARE = Path(os.environ.get("WANDER_SHARE_DIR", ROOT / ".context/share")).expanduser().resolve()
 CLIPS = Path(os.environ.get("WANDER_CLIPS_DIR", ROOT / ".context/clips")).expanduser().resolve()
 MARBLE_DIR = (
