@@ -3,6 +3,19 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- Correct avatar appearance does not establish motion depth. On a fresh forest-walk source,
+  the frozen reference matched its observed silhouette (IoU 0.898), but the adjacent animated
+  sample was oversized (IoU 0.568) with essentially unchanged native body length. The error
+  was already present in the camera-space pose; raw and packaged projections matched.
+  A fixed registration scale cancels in source-camera projection. A sparse three-mask placement
+  fit improved IoU to 0.839–0.847 and boot-edge error to 0.024–0.027 body-heights, but still
+  failed camera-height and contact-noise checks. Five held-out frames subsequently passed the
+  image thresholds without refitting, but 82 samples remained unmeasured and the generated
+  world's depth-spread gate still failed. Do not promote this fitted
+  candidate or reverse the upstream log-depth/focal operation order, which matches its training
+  target. Evidence: `.context/evidence/practical-e2e-20261108/fresh-run/pose-audit/` and
+  `placement-probe/`.
+
 - Restricting planar training targets to measured lobby floor support fixed the two declared floor-depth checks (p90 0.00336/0.00627 body-heights), but did not establish scene quality. Glass/reflective walls and lateral appearance still distort, the first-frame shoe remains partly occluded, and one optimization holdout loses image agreement. Portal raw-depth p90 also regressed against the preceding candidate on sparse support. Separate training depth from unchanged evaluation depth, preserve the source/region checks, and diagnose the remaining residuals before another refinement. These floor audit views were training views, not unseen geometry. Globally protecting the same measured point IDs across views then reduced portal p90 error from 0.07267 to 0.05876 body-heights, still worse than the preceding raw-depth fit (0.01815); no clear visual repair followed. Image-region exclusions alone do not protect a shared 3D point in other views, and target protection does not isolate neighboring learned Gaussian footprints. Evidence: `.context/evidence/surface-reconstruction-20261107/trial-13/` and `trial-14/`.
 
 - Jointly refining the corrected lobby room with measured source splats improved image agreement and passed all five fixed scale checks, but did not meet the independent planar-floor criterion. After 4,000 iterations, floor ray-plane p90 errors were 0.02309/0.04002 body-heights against a 0.02 limit; the original depth targets themselves had 0.02297/0.03845 error. Further fitting of those same targets cannot be assumed to remove their nonplanarity. Glass regions remain mostly unsupported, and first-frame shoe occlusion persists. Keep raw-depth agreement separate from independent surface quality; no threshold was relaxed. Evidence: `.context/evidence/surface-reconstruction-20261107/trial-12/`.
