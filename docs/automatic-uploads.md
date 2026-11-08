@@ -106,11 +106,27 @@ rerunning that step is still admitted, and paid work resumes only once it succee
 use the same fixed defaults on a rerun, so a failure caused by the footage itself, such as no
 fully visible person, repeats and the run ends without spending on generation.
 
-The shared stage ledger counts executions per source SHA-256 across all runs, including
+The dashboard reopens an existing run when an upload has identical source bytes and the same
+processing options. It checks the retained source against its digest and chooses the newest
+matching run whose source is still intact. Renaming the file or requesting a new run name does
+not start it again. A manual run can also match; reopening it preserves its processing mode,
+pause/cancel state, attempts and quality outcome. It does not resume processing, regenerate
+assets or certify that a preview passes review. Missing preview files remain missing.
+
+This lookup works with the worker offline: after the setup check, **Queue for later** can open
+the existing run instead of queuing a duplicate. The response and dashboard explicitly identify
+the existing run and its current status. API callers opt in with multipart
+`reuse_existing=true` on `/api/pipeline/runs/upload`; matches return HTTP 200 with `reused: true`,
+while new submissions return HTTP 201 with `reused: false`. Matching and publication are locked
+per source across API processes sharing the runs root. Callers omitting this field retain the
+explicit new-run behavior; source-artifact submissions are unchanged.
+
+The shared stage ledger still counts executions per source SHA-256 across all runs, including
 historical imports. A second execution needs an explicit new hypothesis, which a hands-off run
-cannot supply. Uploading a video that was already processed therefore blocks at its first
-previously executed paid stage. Use a source that has not been processed before. An upload
-does not reuse earlier outputs or worlds.
+cannot supply. Changed options, missing local runs or different source bytes do not authorize a
+paid repeat. When no matching run can be reopened, a previously processed source can still block
+at its first previously executed paid stage. The shortcut opens saved work; it does not import
+historical outputs or worlds into a new run.
 
 When the agent needs a decision, exhausts its useful work, or stalls, the run records a final
 failure with its reason instead of waiting for a question in the UI. Existing outputs and

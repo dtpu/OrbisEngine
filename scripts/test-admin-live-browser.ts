@@ -122,6 +122,38 @@ try {
   await page.screenshot({ path: `${output}/canceled.png`, fullPage: true });
   assert.equal(failedResponses.length, 0, JSON.stringify(failedResponses));
 
+  // A second upload opens the existing outcome, including a cancellation. It cannot
+  // silently create a new queued run or resume the one the operator stopped.
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.locator('#option-marble').waitFor();
+  await page.locator('#requested-id').fill(`${runId}-repeat`);
+  await page.locator('input[type=file]').setInputFiles(resolve(clip));
+  await page.locator('#option-marble').selectOption('none');
+  await page.locator('#option-objects').uncheck();
+  const repeatSetup = page.waitForResponse((response) =>
+    response.url().endsWith('/api/pipeline/doctor'),
+  );
+  await page.getByRole('button', { name: 'Upload and process', exact: true }).click();
+  assert.equal((await repeatSetup).status(), 200);
+  const repeatResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/pipeline/runs/upload'),
+  );
+  await page.getByRole('button', { name: 'Queue for later', exact: true }).click();
+  const reopened = await repeatResponse;
+  assert.equal(reopened.status(), 200, await reopened.text());
+  const repeated = await reopened.json();
+  assert.equal(repeated.id, runId);
+  assert.equal(repeated.reused, true);
+  assert.equal(repeated.status, 'canceled');
+  await page.getByRole('status').filter({ hasText: 'Opened existing run' }).waitFor();
+  assert.deepEqual(await summary(), canceled);
+  const listed = await (await page.request.get(`${base}/api/pipeline`)).json();
+  assert.deepEqual(
+    listed.runs.map((run: { id: string }) => run.id),
+    [runId],
+  );
+  await page.screenshot({ path: `${output}/reopened.png`, fullPage: true });
+
   await page.goto(`${base}/runs/${runId}-missing`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('alert').filter({ hasText: 'unknown run' }).waitFor();
   await page.screenshot({ path: `${output}/missing-run.png`, fullPage: true });
@@ -129,7 +161,11 @@ try {
   assert.deepEqual(pageErrors, []);
   await writeFile(
     `${output}/report.json`,
-    JSON.stringify({ runId, source, setup, canceled, failedResponses, pageErrors }, null, 2),
+    JSON.stringify(
+      { runId, source, setup, canceled, repeated, failedResponses, pageErrors },
+      null,
+      2,
+    ),
   );
   console.log(JSON.stringify({ runId, source, status: canceled.status, output }));
 } finally {
