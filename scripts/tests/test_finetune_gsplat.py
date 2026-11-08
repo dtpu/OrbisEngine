@@ -840,3 +840,150 @@ def test_invalid_initial_quaternion_fails_before_cuda_and_output(
     with pytest.raises(ValueError, match="finite and nonzero"):
         trainer.main(arguments)
     assert not (path.parent / "out").exists()
+
+
+def routed_rgb_loss(img, gt, mask, win, lambda_ssim=0.2, weight=1.0):
+    """Execute the actual training-loop assignment without GPU initialization."""
+    tree = ast.parse(inspect.getsource(trainer.main))
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "masked_rgb_loss"
+    ]
+    assert len(assignments) == 1
+    scope = dict(vars(trainer))
+    scope.update(
+        img=img, gt=gt, m=mask, win=win, a=SimpleNamespace(lambda_ssim=lambda_ssim), wgt=weight
+    )
+    exec(compile(ast.Module(body=assignments, type_ignores=[]), trainer.__file__, "exec"), scope)
+    return scope["loss"], scope["l1"], scope["ss"]
+
+
+@pytest.mark.parametrize("kernel", [3, 11])
+@pytest.mark.parametrize("location", ["interior", "edge"])
+def test_training_rgb_loss_ignores_excluded_targets_and_render_gradients(kernel, location):
+    generator = torch.Generator().manual_seed(92)
+    rendered = torch.rand((23, 25, 3), generator=generator)
+    target = torch.rand(rendered.shape, generator=generator)
+    mask = torch.ones((23, 25, 1))
+    if location == "interior":
+        mask[9:14, 10:15] = 0
+    else:
+        mask[:5, :5] = 0
+    valid = mask[..., 0].bool()
+    changed = target.clone()
+    changed[~valid] = torch.rand(changed[~valid].shape, generator=generator)
+    win = trainer.gaussian_window(size=kernel, dev="cpu")
+
+    def measure(gt):
+        img = rendered.clone().requires_grad_()
+        loss, _, _ = routed_rgb_loss(img, gt, mask, win)
+        loss.backward()
+        return loss.detach(), img.grad
+
+    first, grad_first = measure(target)
+    second, grad_second = measure(changed)
+    torch.testing.assert_close(first, second, rtol=0, atol=0)
+    torch.testing.assert_close(grad_first, grad_second, rtol=0, atol=0)
+    assert torch.count_nonzero(grad_first[~valid]) == 0
+    assert torch.count_nonzero(grad_first[valid]) > 0
+    changed[valid] = 0
+    third, _ = measure(changed)
+    assert third != first
+
+
+@pytest.mark.parametrize("weight", [0.3, 1.0])
+def test_training_rgb_loss_preserves_fully_valid_formula_and_gradients(weight):
+    generator = torch.Generator().manual_seed(12)
+    img = torch.rand((13, 17, 3), generator=generator, requires_grad=True)
+    gt = torch.rand(img.shape, generator=generator)
+    mask = torch.ones((13, 17, 1))
+    win = trainer.gaussian_window(dev="cpu")
+    loss, l1, ss = routed_rgb_loss(img, gt, mask, win, weight=weight)
+    expected_l1 = (img - gt).abs().mean()
+    expected_ss = trainer.ssim_map(
+        img.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None], win
+    ).mean()
+    expected = weight * (0.8 * expected_l1 + 0.2 * (1 - expected_ss))
+    torch.testing.assert_close(l1, expected_l1)
+    torch.testing.assert_close(ss, expected_ss)
+    torch.testing.assert_close(loss, expected)
+    torch.testing.assert_close(
+        torch.autograd.grad(loss, img, retain_graph=True)[0], torch.autograd.grad(expected, img)[0]
+    )
+
+
+@pytest.mark.parametrize("all_excluded", [False, True])
+def test_training_rgb_loss_without_valid_windows_is_finite_and_has_no_ssim_penalty(all_excluded):
+    img = torch.full((5, 7, 3), 0.7, requires_grad=True)
+    gt = torch.full_like(img, 0.2)
+    mask = torch.zeros((5, 7, 1)) if all_excluded else torch.ones((5, 7, 1))
+    if not all_excluded:
+        mask[2, 3] = 0  # Every 11x11 in-image window intersects this cell.
+    loss, l1, ss = routed_rgb_loss(img, gt, mask, trainer.gaussian_window(dev="cpu"))
+    assert torch.isfinite(loss)
+    assert ss.item() == 1
+    torch.testing.assert_close(loss, 0.8 * l1)
+    loss.backward()
+    assert torch.isfinite(img.grad).all()
+    assert torch.count_nonzero(img.grad[mask[..., 0] == 0]) == 0
+    if all_excluded:
+        assert loss.item() == 0
+        assert l1.item() == 0
+    else:
+        assert l1.item() == pytest.approx(0.5)
+        assert torch.count_nonzero(img.grad) > 0
+
+
+@pytest.mark.parametrize("empty_windows", [False, True])
+def test_training_log_reports_ssim_support_and_unknown_without_windows(
+    monkeypatch, capsys, empty_windows
+):
+    img = torch.full((5, 7, 3), 0.7, requires_grad=True)
+    gt = torch.full_like(img, 0.2)
+    mask = torch.ones((5, 7, 1))
+    if empty_windows:
+        mask[2, 3] = 0
+    _, l1, ss, count = trainer.masked_rgb_loss(
+        img, gt, mask, trainer.gaussian_window(dev="cpu"), 0.2
+    )
+    assert count.device == img.device
+    assert count.item() == (0 if empty_windows else 35)
+    tree = ast.parse(inspect.getsource(trainer.main))
+    logging = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "it % 50 == 0 or it == 1"
+    ]
+    assert len(logging) == 1
+    scope = dict(vars(trainer))
+    scope.update(
+        it=1,
+        img=img,
+        gt=gt,
+        m=mask,
+        l1=l1,
+        ss=ss,
+        ssim_count=count,
+        dl=torch.tensor(0.0),
+        tv=torch.tensor(0.0),
+        reg=torch.tensor(0.0),
+        model=SimpleNamespace(n=1),
+        t0=trainer.time.time(),
+        log=[],
+        a=SimpleNamespace(lambda_surface_depth=0, lambda_quat_reg=0),
+    )
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 0)
+    exec(compile(ast.Module(body=logging, type_ignores=[]), trainer.__file__, "exec"), scope)
+    record = scope["log"][0]
+    assert record["ssim_windows"] == count.item()
+    output = capsys.readouterr().out
+    if empty_windows:
+        assert record["ssim"] is None
+        assert "ssim unknown (0 windows)" in output
+    else:
+        assert record["ssim"] == ss.item()
+        assert f"ssim {ss.item():.3f}" in output

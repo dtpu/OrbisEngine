@@ -177,6 +177,13 @@ measurements, 90 foot queries, source/before/after panels, browser captures and 
 The next investigation must explain the masked-region ghost and support-surface regression
 before another training attempt; improved RGB scores alone are insufficient.
 
+A subsequent CPU-only audit found a separate loss-mask defect in the exact trainer used above:
+SSIM convolved unmasked RGB with an 11×11 window, then masked only the output center. Changing
+only excluded target RGB altered background gradients even though masked L1 was unchanged.
+Full-window SSIM validity made the fixture's loss and gradients invariant. This identifies a
+general training bug, not the measured cause of all scene artifacts. The paid candidate predates
+that correction, and no corrected reconstruction or further paid trial is claimed.
+
 ## Cost and retained evidence
 
 All four owned Modal apps stopped with zero tasks; the admission watcher was stopped after

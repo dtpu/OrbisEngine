@@ -76,6 +76,16 @@ against an independent rectangle-intersection reference. Its conservative bounda
 18,394 additional training pixels across the sequence; it does not establish segmentation quality
 or guarantee that a trained world is ghost-free.
 
+The trainer's SSIM term also needs an exclusion covering its entire convolution window.
+Masking only the center of each SSIM output let foreground RGB affect nearby background loss
+and gradients. A CPU counterexample changed only excluded target pixels: pointwise L1 stayed
+identical, while combined loss changed by 0.0004393 and valid-background gradients changed by
+up to 0.0003837. Requiring full-window validity removes that leakage in the fixture. It reduces
+SSIM supervision near mask boundaries and does not establish its contribution to a real scene's
+ghosting or surface errors; those require a separately evaluated reconstruction.
+The training log records the eligible SSIM-window count. With no eligible windows, SSIM contributes
+zero loss and its reported score is unknown rather than a fabricated perfect match.
+
 The export retains each frame's camera intrinsics, and the trainer uses them for projection,
 rendering, depth comparisons and offset views. Older exports with one `K` remain supported.
 Held-out depth scores include contributing pixel counts and reject empty comparisons. These
