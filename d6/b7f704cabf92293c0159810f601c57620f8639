@@ -1,0 +1,41 @@
+docs/paid-recovery.md
+  s_20f6c0bf8c5b2c::t_1cc99eb06d2395 23-28
+  s_11465a870157de::t_2e210d6264b242 158
+scripts/world_prompt.py
+  s_20f6c0bf8c5b2c::t_d0eb22a846c2b6 11,23-25,93,105-116,121-122
+worker/stages/vlm_judge.py
+  s_11465a870157de::t_1d3094964f71e4 68-70
+  s_20f6c0bf8c5b2c::t_d0eb22a846c2b6 73-74,85-86
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_1cc99eb06d2395 631-647
+  s_11465a870157de::t_03f0e1f811f1bd 498-505,567-568,570-574
+scripts/tests/test_world_prompt.py
+  s_11465a870157de::t_1d3094964f71e4 50-56
+  s_20f6c0bf8c5b2c::t_d0eb22a846c2b6 1-49,57-66
+scripts/tests/test_vlm_budget.py
+  s_20f6c0bf8c5b2c::t_d0eb22a846c2b6 63-64,139-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6b7f704cabf92293c0159810f601c57620f8639",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
