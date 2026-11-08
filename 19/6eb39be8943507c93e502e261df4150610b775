@@ -1,0 +1,32 @@
+docs/automatic-uploads.md
+  s_20f6c0bf8c5b2c::t_dfdca9d9be168a 100-101,103-107
+orchestrator/run_policy.py
+  s_20f6c0bf8c5b2c::t_945d4dc2bbb0b3 14-15,57,66,73,81-82,84-85,87-88,90,92-93,105-106
+scripts/tests/test_hands_off_runs.py
+  s_20f6c0bf8c5b2c::t_cf80c3432ed517 76-83,189-190,197-234,245-249,251,258-259,346
+  s_11465a870157de::t_00231c19a53daa 191-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "196eb39be8943507c93e502e261df4150610b775",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
