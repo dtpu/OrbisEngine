@@ -442,6 +442,14 @@ STEPS: dict[str, Step] = {
             name="pi3x",
             summary="Solve the camera path and dense per-frame geometry from the source clip",
             writes="pi3x/cameras.json, pi3x/frame_*.ply, pi3x/anchors.npz, pose-guard.json",
+            parameters=tunables(
+                pi3x_anchor_lock=knob(
+                    "boolean",
+                    False,
+                    "experimental correction of each camera batch to its shared anchor poses; "
+                    "moves per-frame points with cameras and requires downstream revalidation",
+                )
+            ),
             paid=True,
             caution=(
                 "The pose guard raises when the camera teleports: a soft cut, or a solve that "

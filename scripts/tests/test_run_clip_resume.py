@@ -45,6 +45,43 @@ def settle(p):
         p.state.record(stage, status="ok")
 
 
+@pytest.mark.parametrize(
+    "requested,saved", [(True, "similarity"), (False, "anchor-locked"), (False, "unknown")]
+)
+def test_cached_camera_mode_mismatch_stops_before_stage_or_review_changes(
+    pipeline, monkeypatch, requested, saved
+):
+    p = pipeline
+    settle(p)
+    p.a.only = "pi3x"
+    p.a.pi3x_anchor_lock = requested
+    folder = p.ctx / "pi3x"
+    folder.mkdir()
+    (folder / "cameras.json").write_text(json.dumps({"cameraStitch": saved}))
+    before = (p.ctx / "state.json").read_bytes()
+    execute = Mock(side_effect=AssertionError("must not run a stage"))
+    monkeypatch.setattr(p, "stage_fn", execute)
+    with pytest.raises(ValueError, match="Cached Pi3X camera stitching mode"):
+        p.go()
+    execute.assert_not_called()
+    assert (p.ctx / "state.json").read_bytes() == before
+
+
+def test_default_camera_resume_preserves_unmarked_legacy_camera_files(pipeline, monkeypatch):
+    p = pipeline
+    settle(p)
+    p.a.only = "pi3x"
+    folder = p.ctx / "pi3x"
+    folder.mkdir()
+    path = folder / "cameras.json"
+    path.write_text('{"cameras": []}')
+    execute = Mock(side_effect=AssertionError("cached camera must not rerun"))
+    monkeypatch.setattr(p, "stage_fn", execute)
+    assert p.go() == 0
+    execute.assert_not_called()
+    assert path.read_text() == '{"cameras": []}'
+
+
 def test_direct_rerun_replaces_reused_provenance_and_preserves_untouched_inputs(
     pipeline, monkeypatch
 ):

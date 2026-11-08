@@ -69,7 +69,9 @@ cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missin
     volumes={"/cache": cache},
     **INFERENCE_RESOURCES,
 )
-def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
+def reconstruct(
+    video_bytes: bytes, experiment: str, batch: int = 16, anchor_lock: bool = False
+) -> dict:
     import io
     import json
     import subprocess
@@ -79,6 +81,8 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
     import time
     import traceback
 
+    if type(anchor_lock) is not bool or (anchor_lock and experiment != "pi3x"):
+        raise ValueError("anchor_lock must be boolean and is supported only for pi3x")
     started = time.time()
     root = Path(tempfile.mkdtemp(prefix="motion-"))
     source, out = root / "input.mp4", root / "output"
@@ -125,6 +129,8 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
                 "--batch",
                 str(batch),
             ]
+            if anchor_lock:
+                command.append("--anchor-lock")
         else:
             raise ValueError("Unknown experiment")
         cache.commit()
@@ -146,6 +152,7 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
     inference_wall = time.time() - started
     report = dict(
         experiment=experiment,
+        anchorLock=anchor_lock,
         inferenceWallSeconds=inference_wall,
         error=error,
         gpu="L4",
@@ -172,14 +179,18 @@ def reconstruct(video_bytes: bytes, experiment: str, batch: int = 16) -> dict:
 
 
 @app.local_entrypoint()
-def main(video: str, out: str, experiment: str = "vdpm", batch: int = 16):
+def main(
+    video: str, out: str, experiment: str = "vdpm", batch: int = 16, anchor_lock: bool = False
+):
     import io
     import json
     import tarfile
 
+    if anchor_lock and experiment != "pi3x":
+        raise ValueError("--anchor-lock requires --experiment pi3x")
     destination = Path(out)
     destination.mkdir(parents=True, exist_ok=False)
-    result = reconstruct.remote(Path(video).read_bytes(), experiment, batch)
+    result = reconstruct.remote(Path(video).read_bytes(), experiment, batch, anchor_lock)
     archive_path = destination / "artifacts.tar.gz"
     archive_path.write_bytes(result["archive"])
     with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:

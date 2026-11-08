@@ -25,6 +25,7 @@ OVERRIDDEN = {("person_prep", "method"): "segformer"}
 # Which script each step's knobs are passed to. run_clip.py forwards its own flags; the rest
 # are called by it and own theirs.
 SCRIPTS = {
+    "pi3x": "run_clip.py",
     "clean": "run_clip.py",
     "clean_first": "run_clip.py",
     "clean_multi": "run_clip.py",

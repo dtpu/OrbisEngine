@@ -156,6 +156,9 @@ uv run --locked --group inference scripts/run_clip.py \
 - Read [paid recovery](docs/paid-recovery.md) before retrying a failed paid stage.
 - [Pipeline setup](docs/pipeline-setup.md) explains dependencies, credentials and read-only model-cache checks.
 - [Pipeline validation](docs/pipeline-validation.md) separates tested orchestration from fresh GPU inference and visual quality.
+- Experimental `--pi3x-anchor-lock` keeps camera batches tied to their shared anchor solve.
+  Use a fresh candidate and the same paid-attempt ledger; it changes the coordinate frame and
+  requires rebuilding downstream artifacts. It remains off by default pending scene validation.
 
 **Clips that work:** one continuous shot, 5 to 15 seconds, people at least 150 px tall, some
 sideways camera movement, decent light.

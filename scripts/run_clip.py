@@ -1725,10 +1725,28 @@ class Pipeline:
                 str(self.clip),
                 "--out",
                 str(self.ctx / "pi3x"),
+                *(["--anchor-lock"] if getattr(self.a, "pi3x_anchor_lock", False) else []),
             ],
             self.ctx / "pi3x.log",
         )
         self.pose_guard()
+
+    def validate_cached_camera_mode(self):
+        """A requested camera setting must not silently reuse another mode's solve."""
+        camera_path = self.ctx / "pi3x/cameras.json"
+        requested = "anchor-locked" if getattr(self.a, "pi3x_anchor_lock", False) else "similarity"
+        if not camera_path.exists() and requested == "similarity":
+            return  # preserve legacy missing-artifact handling in the dependent stages
+        try:
+            saved = json.loads(camera_path.read_text()).get("cameraStitch", "similarity")
+        except (OSError, ValueError, AttributeError) as error:
+            raise ValueError("Cannot verify the cached Pi3X camera stitching mode") from error
+        if saved not in ("similarity", "anchor-locked") or saved != requested:
+            raise ValueError(
+                f"Cached Pi3X camera stitching mode {saved!r} does not match requested {requested!r}. "
+                "Use the saved setting to resume, or a fresh run directory for changed camera settings "
+                "with the existing shared paid ledger. No camera inference was started."
+            )
 
     def pose_guard(self):
         """Between the solve and everything that reads it: did the camera teleport?
@@ -3470,6 +3488,12 @@ class Pipeline:
                 f"{' --people' if self.multi else ''}. This run's stages: {self.stages}"
             )
         wanted = set(a.only.split(",")) if a.only else set(self.stages)
+        if (
+            "pi3x" in wanted
+            and self.state.done("pi3x")
+            and "pi3x" not in (a.force or "").split(",")
+        ):
+            self.validate_cached_camera_mode()
         if a.skip_finetune:
             wanted.discard("finetune")
         if "verify" not in wanted and (
@@ -3988,6 +4012,11 @@ def main():
     )
     ap.add_argument("--ft-iters", type=int, default=4000)
     ap.add_argument("--skip-finetune", action="store_true")
+    ap.add_argument(
+        "--pi3x-anchor-lock",
+        action="store_true",
+        help="experimental shared-anchor camera/point correction; rerun downstream geometry and quality checks",
+    )
     ap.add_argument("--skip-marble", action="store_true", help="alias for --marble none")
     ap.add_argument("--dilate", type=int, default=20)
     ap.add_argument(
