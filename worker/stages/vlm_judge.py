@@ -65,10 +65,13 @@ BOUNDARY = (
 )
 
 
-def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
+def ask_images(
+    model, images, prompt, detail="low", retries=3, timeout=180, *, reasoning_effort=None
+):
     """One chat call carrying `prompt` plus every image in `images`. Returns the parsed JSON object,
     or {"error": ...}. `detail` is the OpenAI image fidelity knob: "low" is enough to screen a frame,
-    "high" is needed to read materials, signage and layout off a full-resolution pair."""
+    "high" is needed to read materials, signage and layout off a full-resolution pair.
+    Omit `reasoning_effort` to use the selected model's provider default."""
     content = [{"type": "text", "text": prompt}]
     for img in images:
         b = base64.b64encode(open(img, "rb").read()).decode()
@@ -79,6 +82,8 @@ def ask_images(model, images, prompt, detail="low", retries=3, timeout=180):
             }
         )
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
     if "WANDER_VLM_BUDGET" in os.environ:
         return _ask_bounded(body, timeout)
     req = urllib.request.Request(

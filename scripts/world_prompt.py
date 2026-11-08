@@ -8,7 +8,7 @@ and the full cleaned clip before generation; a few prompt frames do not prove te
 
   world_prompt.py --clip public/clips/gym.mp4 --n 6 --out .context/prompt/gym.json
 
-Writes {"text_prompt", "structured": {...}, "frames": [...]} plus sampled PNGs next to it.
+Writes the description or request error with sampled frames and request settings.
 """
 
 import argparse, json, os, sys
@@ -19,6 +19,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker" / "stages"))
+
+DEFAULT_MODEL = "gpt-6-astra"
+REQUEST_TIMEOUT_SECONDS = 300
 
 BRIEF = """These images sample ONE continuous shot of a real place in time order. A generative
 3D world model will receive the cleaned video, or explicitly selected still images. Write a factual
@@ -87,7 +90,7 @@ def main():
     )
     ap.add_argument("--n", type=int, default=6)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default="gpt-6-astra")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
     a = ap.parse_args()
 
     out = Path(a.out)
@@ -99,11 +102,24 @@ def main():
         raise SystemExit("OPENAI_API_KEY unset; source ~/.openai-env")
     from vlm_judge import ask_images  # noqa: E402
 
-    rec = ask_images(a.model, paths, BRIEF, detail="high")
+    reasoning_effort = "low" if a.model == DEFAULT_MODEL else None
+    rec = ask_images(
+        a.model,
+        paths,
+        BRIEF,
+        detail="high",
+        retries=1,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        reasoning_effort=reasoning_effort,
+    )
+    if not isinstance(rec, dict):
+        rec = {"error": "VLM response is not a JSON object"}
     rec["clip"] = a.clip
     rec["frames"] = frames
     rec["framePaths"] = paths
     rec["model"] = a.model
+    rec["reasoningEffort"] = reasoning_effort
+    rec["timeoutSeconds"] = REQUEST_TIMEOUT_SECONDS
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1))
     print(json.dumps(rec, indent=1))

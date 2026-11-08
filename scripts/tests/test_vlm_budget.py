@@ -60,6 +60,8 @@ def test_success_quota_duplicate_and_token_bound(budget, monkeypatch):
     assert network.call_count == 2
     body = json.loads(network.call_args.args[0].data)
     assert body["max_completion_tokens"] == 4096
+    assert "reasoning_effort" not in body
+    assert network.call_args.kwargs["timeout"] == 180
     data = json.loads(budget.read_text())
     assert data["calls"][0]["usage"] == {
         "prompt_tokens": 10,
@@ -134,7 +136,25 @@ def test_unconfigured_retains_retries(budget, monkeypatch):
     monkeypatch.setattr(vlm_judge.time, "sleep", lambda _: None)
     assert ask() == {"ok": True}
     assert network.call_count == 2
-    assert "max_completion_tokens" not in json.loads(network.call_args.args[0].data)
+    body = json.loads(network.call_args.args[0].data)
+    assert "max_completion_tokens" not in body
+    assert "reasoning_effort" not in body
+    assert network.call_args.kwargs["timeout"] == 180
+
+
+@pytest.mark.parametrize("bounded", [True, False])
+def test_explicit_reasoning_effort_and_timeout_reach_the_request(budget, monkeypatch, bounded):
+    if not bounded:
+        monkeypatch.delenv("WANDER_VLM_BUDGET")
+    network = Mock(side_effect=lambda *a, **kw: response())
+    monkeypatch.setattr(vlm_judge.urllib.request, "urlopen", network)
+    assert ask(reasoning_effort="low", timeout=300) == {"ok": True}
+    body = json.loads(network.call_args.args[0].data)
+    assert body["reasoning_effort"] == "low"
+    assert network.call_args.kwargs["timeout"] == 300
+    if bounded:
+        assert "duplicate" in ask(reasoning_effort="low", timeout=300)["error"]
+    assert network.call_count == 1
 
 
 def test_configured_bounds_and_model_are_used(budget, monkeypatch):
