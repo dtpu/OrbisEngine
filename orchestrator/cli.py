@@ -150,6 +150,7 @@ def step_environment(context: RunContext) -> dict[str, str]:
     return {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
+        "NUMBA_CACHE_DIR": str(root / "numba-cache"),
         "WANDER_RUNS_DIR": str(root.parent),
         "WANDER_PUBLIC_DIR": str(root / "public"),
         "WANDER_CLIPS_DIR": str(root / "clips"),

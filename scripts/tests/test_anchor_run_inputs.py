@@ -190,15 +190,25 @@ def test_single_person_reordered_sequence_reads_exact_source_poses(inputs, monke
     assert seen == [f"frame-{index}.ply" for index in range(41, 49)]
 
 
-def test_single_person_reads_explicit_video_instead_of_sequence_source(
-    inputs, tmp_path, monkeypatch
+@pytest.mark.parametrize("supervised", [False, True], ids=["standalone", "supervised"])
+def test_single_person_caches_masks_for_the_explicit_source(
+    inputs, tmp_path, monkeypatch, supervised
 ):
     import motion_audit
     import motion_silhouette
     import person_masks_tight
 
     seen = []
-    monkeypatch.setattr(anchor_checks, "ROOT", tmp_path / "isolated-cache")
+    repository = tmp_path / "repository"
+    standalone_cache = repository / ".context" / "anchors"
+    monkeypatch.setattr(anchor_checks, "ROOT", repository)
+    if supervised:
+        run_dir = tmp_path / "run"
+        monkeypatch.setenv("WANDER_RUN_DIR", str(run_dir))
+        cache = run_dir / "anchor-cache"
+    else:
+        monkeypatch.delenv("WANDER_RUN_DIR", raising=False)
+        cache = standalone_cache
     monkeypatch.setattr(
         motion_audit,
         "seed_boxes",
@@ -227,6 +237,9 @@ def test_single_person_reads_explicit_video_instead_of_sequence_source(
     kwargs["video"] = changed
     assert anchor_checks.check_silhouette("gym", **kwargs)["ok"] is True
     assert seen == [str(inputs["video"]), str(changed)]
+    assert len(list(cache.glob("tight-masks-*.npz"))) == 2
+    if supervised:
+        assert not standalone_cache.exists()
 
 
 def test_camera_trace_and_noise_read_explicit_placement(inputs, tmp_path, monkeypatch):

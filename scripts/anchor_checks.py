@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -130,7 +131,9 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
         key = hashlib.sha256(
             (str(wd.resolve()) + json.dumps(stamp) + json.dumps(pick) + json.dumps(seq)).encode()
         ).hexdigest()
-        cache = ROOT / ".context" / "anchors" / f"tight-masks-{key}.npz"
+        run_dir = os.environ.get("WANDER_RUN_DIR")
+        cache_dir = Path(run_dir) / "anchor-cache" if run_dir else ROOT / ".context" / "anchors"
+        cache = cache_dir / f"tight-masks-{key}.npz"
         if not cache.is_file():
             hw = tuple(pick[0]["source_image_size"][::-1])
             seeds = motion_audit.seed_boxes(wd, pick, seq, hw)
