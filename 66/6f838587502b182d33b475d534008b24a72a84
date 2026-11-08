@@ -1,0 +1,28 @@
+scripts/finetune_export.py
+  s_20f6c0bf8c5b2c::t_b82e5a31fa36fe 285,323
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_e2a57d6e2ebf05 72-78
+scripts/tests/test_finetune_export.py
+  s_20f6c0bf8c5b2c::t_b82e5a31fa36fe 346-350
+  s_20f6c0bf8c5b2c::t_c34300fe5ba692 364-442
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_e2a57d6e2ebf05 6-14
+docs/fresh-upload-trial.md
+  s_20f6c0bf8c5b2c::t_e2a57d6e2ebf05 135-179,194-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "666f838587502b182d33b475d534008b24a72a84",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
