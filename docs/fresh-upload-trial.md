@@ -112,6 +112,17 @@ locally. The automatic pipeline still stops at the preceding scale failure for t
 Evidence is under `.context/evidence/ground-alignment-20261108/`, including the preserved failed
 candidate, both source-mask archives, full-sequence comparisons and local support measurements.
 
+The continuation also found that the viewer applied recorded placement offsets inside optional
+foot effects. Disabling those effects or switching to discrete frame meshes lost the offsets
+while retaining the fitted body size. Offsets now apply independently in both playback modes;
+additional stance correction defaults off when a measured placement table is present. The real
+viewer showed matching displayed person transforms at frames 0 and 25 across these modes,
+loaded all 90 samples, and passed pause, stepping, final-frame looping and nearby walking checks.
+Discrete mode still uses a different existing walk-eye stature estimate, so these were not
+identical camera renders. The diagnostic remains visibly labelled failed. Its iframe wrapper
+emitted an intermittent MutationObserver error without a source or stack; no control failure was
+observed, and the cause remains unverified.
+
 ## Cost and retained evidence
 
 All four owned Modal apps stopped with zero tasks; the admission watcher was stopped after
