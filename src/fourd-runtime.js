@@ -36,6 +36,7 @@ import {
 import { disposeScene, SceneScope } from './scene-scope.js';
 import { ALL } from './scene-catalog.ts';
 import { resolveSceneConfig } from './scene-config.ts';
+import { cameraReelMode } from './scene-playback.js';
 
 // A cancelled asynchronous XR setup must finish cleanup before another scene uses its renderer.
 const rendererActivations = new WeakMap();
@@ -4167,7 +4168,8 @@ export async function createFourD({ search, renderer, root, scope }) {
   );
   const V = (a) => new THREE.Vector3(...a);
   const REEL_RESTART = 9.5; // behind-mode reel restarts the clip here so the stairs (t > 9.5 s) never play
-  const reelMode = q.get('reelmode') || 'behind';
+  const reelMode = cameraReelMode(q);
+  const cameraReel = reelMode !== 'stationary';
   // ?reelmode=keys + ?reelkeys=t:x,y,z[:lx,ly,lz];...  free-camera waypoints in world units, Catmull-Rom
   // through the positions (clamped to the preset's box, so an authored path can never leave it); a key
   // with no look target frames the person, so the shot translates while it tracks him.
@@ -4259,6 +4261,10 @@ export async function createFourD({ search, renderer, root, scope }) {
     camera.quaternion.slerp(tmpQ, snap ? 1 : 0.12);
   }
   function showreel(on = true) {
+    if (!cameraReel) {
+      play(on);
+      return;
+    }
     if (on) {
       reel = { t: 0 };
       play(true);
@@ -4276,6 +4282,10 @@ export async function createFourD({ search, renderer, root, scope }) {
         ? rt - REEL_RESTART
         : rt;
   function reelSet(rt, snap = true) {
+    if (!cameraReel) {
+      setTime(rt);
+      return;
+    }
     if (!reel) reel = { t: 0 };
     reel.t = rt;
     setTime(reelVideoTime(rt) % dur);
@@ -4457,7 +4467,7 @@ export async function createFourD({ search, renderer, root, scope }) {
         applyTime();
         break;
       case 'KeyP':
-        showreel(!reel);
+        showreel(cameraReel ? !reel : !playing);
         break;
       case 'KeyH':
         showHelp = !showHelp;
@@ -4700,6 +4710,7 @@ export async function createFourD({ search, renderer, root, scope }) {
     setTime,
     showreel,
     reelSet,
+    cameraReel,
     get reel() {
       return reel;
     },
