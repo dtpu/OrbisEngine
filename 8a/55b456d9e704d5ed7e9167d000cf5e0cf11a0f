@@ -1,0 +1,21 @@
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_2fab0ab80cdfa1 460-499
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_2fab0ab80cdfa1 6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a55b456d9e704d5ed7e9167d000cf5e0cf11a0f",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
