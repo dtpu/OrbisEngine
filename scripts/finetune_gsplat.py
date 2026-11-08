@@ -25,6 +25,7 @@ Both additional terms default off; position limits remain in measured native uni
 """
 
 import argparse
+import hashlib
 import json
 import math
 import time
@@ -386,6 +387,97 @@ def validate_surface_targets(data, depth_layers, depth_sup, depth_index, width, 
             raise ValueError("Supported unmasked surface depth must be finite and positive")
 
 
+def load_training_depth(path, source, data, train_frames, heldout_frames, width, height):
+    """Allow changed training targets only at supported, unmasked, non-heldout texels."""
+    depth, supported, index = source
+    with np.load(path, allow_pickle=False) as archive:
+        values = []
+        for name, original in zip(("depth", "supported", "depth_index"), source, strict=True):
+            if name not in archive:
+                raise ValueError(f"Training depth archive is missing {name}")
+            value = archive[name]
+            if value.shape != original.shape or value.dtype != original.dtype:
+                raise ValueError(f"Training depth {name} shape and dtype must match source depth")
+            if name != "depth" and not np.array_equal(value, original):
+                raise ValueError(f"Training depth {name} must remain identical to source depth")
+            values.append(value)
+    training = values[0]
+    if depth.dtype.kind != "f" or supported.dtype.kind != "b":
+        raise ValueError("Training depth requires floating depth and boolean supported arrays")
+    if not np.all(np.isfinite(training[supported]) & (training[supported] > 0)):
+        raise ValueError("Supported training depth must be finite and positive")
+    changed = ~((training == depth) | (np.isnan(training) & np.isnan(depth)))
+    if np.any(changed & ~supported):
+        raise ValueError("Training depth must not change unsupported pixels")
+    if np.any(changed[index[heldout_frames]]):
+        raise ValueError("Training depth must not change heldout-view layers")
+    rows = np.arange(height) * depth.shape[1] // height
+    columns = np.arange(width) * depth.shape[2] // width
+    allowed = np.zeros_like(supported)
+    excluded = np.zeros_like(supported)
+    train_frames = set(train_frames)
+    for frame, layer in enumerate(index):
+        with Image.open(data / "masks" / f"{frame:04d}.png") as image:
+            valid = np.asarray(image) < 128
+        if valid.shape != (height, width):
+            raise ValueError("Training depth masks must match the camera image dimensions")
+        # Reverse the trainer's nearest sampling. Any excluded output pixel protects
+        # its source texel, even when another pixel/frame using that texel is valid.
+        np.logical_or.at(excluded[layer], (rows[:, None], columns), ~valid)
+        if frame in train_frames:
+            np.logical_or.at(allowed[layer], (rows[:, None], columns), valid)
+    if np.any(changed & excluded):
+        raise ValueError("Training depth must not change excluded person-mask pixels")
+    if np.any(changed & ~allowed):
+        raise ValueError("Training depth may change only texels sampled by training views")
+    return training
+
+
+class DepthTargets:
+    """Keep evaluation on the original archive regardless of training-target overrides."""
+
+    def __init__(self, source, training_depth, width, height, device):
+        depth, supported, self.index = source
+        self.source = torch.from_numpy(depth).to(device)
+        self.training_depth = (
+            self.source if training_depth is None else torch.from_numpy(training_depth).to(device)
+        )
+        self.supported = torch.from_numpy(supported).to(device)
+        self.size = (height, width)
+
+    def _sample(self, depth, frame):
+        layer = int(self.index[frame])
+        target = F.interpolate(depth[layer][None, None], size=self.size, mode="nearest")[0, 0]
+        support = (
+            F.interpolate(
+                self.supported[layer][None, None].float(), size=self.size, mode="nearest"
+            )[0, 0]
+            > 0.5
+        )
+        return target, support
+
+    def training(self, frame):
+        return self._sample(self.training_depth, frame)
+
+    def evaluation(self, frame):
+        return self._sample(self.source, frame)
+
+
+def depth_archive_provenance(source_path, training_path):
+    records = {}
+    for role, path in (("evaluation", source_path), ("training", training_path or source_path)):
+        with path.open("rb") as stream:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        records[role] = {"path": str(path.resolve()), "sha256": digest.hexdigest()}
+    records["semantics"] = (
+        "Evaluation always uses original source depth; training depth is used only for "
+        "losses, observed selection and depth pruning. Support/index and heldout layers are unchanged."
+    )
+    return records
+
+
 def validate_initial_quaternions(path):
     """Opt-in tether preflight before output creation or device selection."""
     with np.load(path, allow_pickle=False) as splats:
@@ -438,6 +530,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument(
+        "--training-depth",
+        type=Path,
+        default=None,
+        help="optional derived depth archive for training only; evaluation keeps --data/depth.npz",
+    )
     ap.add_argument("--iters", type=int, default=3000)
     ap.add_argument("--holdout", type=int, default=25)
     ap.add_argument(
@@ -629,6 +727,13 @@ def main(argv=None):
         raise ValueError("Depth data must map every camera to a valid supported depth layer")
     if a.lambda_surface_depth > 0:
         validate_surface_targets(a.data, depth_layers, depth_sup, depth_index, W, H)
+    source_depth = (depth_layers, depth_sup, depth_index)
+    training_depth = (
+        load_training_depth(a.training_depth, source_depth, a.data, train_idx, test_idx, W, H)
+        if a.training_depth is not None
+        else None
+    )
+    depth_provenance = depth_archive_provenance(a.data / "depth.npz", a.training_depth)
     if a.lambda_quat_reg > 0:
         validate_initial_quaternions(a.init_npz or a.data / "splats.npz")
     if a.init_npz is not None:
@@ -646,16 +751,7 @@ def main(argv=None):
     Ks = torch.from_numpy(Ks).to(dev)
     pseudo_K = torch.from_numpy(K).to(dev)
     imgs, valid = load_images(a.data, nF, dev)
-    depth_layers = torch.from_numpy(depth_layers).to(dev)
-    depth_sup = torch.from_numpy(depth_sup).to(dev)
-
-    def gt_depth(i):
-        L = int(depth_index[i])
-        d = F.interpolate(depth_layers[L][None, None], size=(H, W), mode="nearest")[0, 0]
-        sup = (
-            F.interpolate(depth_sup[L][None, None].float(), size=(H, W), mode="nearest")[0, 0] > 0.5
-        )
-        return d, sup
+    depth_targets = DepthTargets(source_depth, training_depth, W, H, dev)
 
     print(
         f"{model.n} splats, {nF} frames ({len(train_idx)} train / {len(test_idx)} test) at {W}x{H}; load {time.time() - t0:.0f}s",
@@ -671,7 +767,7 @@ def main(argv=None):
     use_obs = a.prune or a.densify or a.reg_observed_scale != 1.0 or a.lambda_opacity_entropy > 0
     if use_obs:
         with torch.no_grad():
-            gds = [gt_depth(i) for i in train_idx]
+            gds = [depth_targets.training(i) for i in train_idx]
             depths = ([g[0] for g in gds], [g[1] for g in gds])
             obs, hit_cnt = observed_mask(
                 model.means,
@@ -694,7 +790,7 @@ def main(argv=None):
         )
         dv_idx = train_idx[:: max(1, len(train_idx) // a.depth_views)][: a.depth_views]
         with torch.no_grad():
-            gds = [gt_depth(i) for i in dv_idx]
+            gds = [depth_targets.training(i) for i in dv_idx]
             dv_depths = ([g[0] for g in gds], [g[1] for g in gds])
             dv_valid = [valid[i] for i in dv_idx]
             dv_views = viewmats[dv_idx]
@@ -722,7 +818,7 @@ def main(argv=None):
                     viewmats[i], Ks[i], W, H, depth=True, surface_depth=a.lambda_surface_depth > 0
                 )
                 gt = imgs[i].float() / 255
-                gd, sup = gt_depth(i)
+                gd, sup = depth_targets.evaluation(i)
                 error, count = heldout_depth_error(dep, gd, sup, valid[i], al[..., 0], i)
                 derr.append(error)
                 sample_counts.append(count)
@@ -855,7 +951,7 @@ def main(argv=None):
         ss = (sm * m.permute(2, 0, 1)[None]).sum() / (m.sum() * 3)
         loss = wgt * ((1 - a.lambda_ssim) * l1 + a.lambda_ssim * (1 - ss))
         if a.lambda_depth > 0 and not use_pseudo:
-            gd, sup = gt_depth(i)
+            gd, sup = depth_targets.training(i)
             md = (sup & valid[i]).float()
             dl = (
                 (torch.log(dep.clamp(min=0.05)) - torch.log(gd)).abs() * md
@@ -866,7 +962,7 @@ def main(argv=None):
         surface = torch.zeros((), device=dev)
         surface_metrics = None
         if use_surface:
-            gd, sup = gt_depth(i)
+            gd, sup = depth_targets.training(i)
             surface, surface_metrics = surface_depth_loss(
                 info["log_depth_moments"],
                 alpha[..., 0],
@@ -1072,6 +1168,7 @@ def main(argv=None):
             "depth_ratio_after": dr_after,
             "heldout_frames": test_idx,
             "heldout_depth_sample_counts": eval_depth_samples,
+            "depth_archives": depth_provenance,
             **model.topology_stats(orig_idx),
             "orig_index_source": orig_index_source,
             "orig_index_semantics": "Row in this invocation's initialization; -1 = created during this invocation",
@@ -1097,7 +1194,10 @@ def main(argv=None):
             "opacity_raised_above_0.5_from_below_0.1": int(((op0 < 0.1) & (op1 > 0.5)).sum()),
             "iters": a.iters,
             "args": vars(a)
-            | {k: str(getattr(a, k)) for k in ("data", "out", "pseudo_dir", "init_npz")},
+            | {
+                k: str(getattr(a, k))
+                for k in ("data", "out", "pseudo_dir", "init_npz", "training_depth")
+            },
             "log": log,
             "runtime_s": time.time() - t0,
         }
