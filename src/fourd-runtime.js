@@ -13,6 +13,7 @@ import { personVisibility } from '/src/person-visibility.ts';
 import { countGridFootprintContacts } from '/src/walk-collision.ts';
 import { interpolateBottleFloor } from '/src/interaction/bottle-floor.ts';
 import { applyPersonSizeAtAnchor, parsePersonSize } from '/src/person-size.ts';
+import { applyPlacementOffset, stanceCorrectionEnabled } from '/src/person-placement.ts';
 import {
   parseStaticColliders,
   highestSupport,
@@ -943,7 +944,7 @@ export async function createFourD({ search, renderer, root, scope }) {
     const a = v.split(',').map(Number);
     return a.length === 3 && a.every(Number.isFinite) ? a : d;
   };
-  const interp = q.get('interp') !== '0'; // interpolated single-mesh person by default; ?interp=0 = 132 hard-switched meshes
+  const interp = q.get('interp') !== '0'; // interpolated single mesh by default; ?interp=0 switches discrete frame meshes
 
   // renderer knobs (QUALITY-RESEARCH item 1): ?dpr= pixel ratio cap (1), ?maxstd= Gaussian cutoff in
   // std devs (sqrt 5, Spark default sqrt 8), ?lod=0 disables Spark's LoD slice, ?lodcount= its budget
@@ -1523,7 +1524,7 @@ export async function createFourD({ search, renderer, root, scope }) {
   const status = () => {
     // Late frame completions must not erase a fatal startup diagnostic.
     if (scope.disposed) return;
-    const mode = interp ? ' (interpolated, 1 mesh)' : ' (132 meshes)';
+    const mode = interp ? ' (interpolated, 1 mesh)' : ' (discrete meshes)';
     const objectWarningText = objectTrackWarnings.length
       ? `\nObjects skipped: ${objectTrackWarnings.join(', ')}`
       : '';
@@ -1847,7 +1848,12 @@ export async function createFourD({ search, renderer, root, scope }) {
     // shadow position. ?feet=0 disables snap+stance+shadow, ?stance=0 / ?shadow=0 individually.
     const feetOn = interp && q.get('feet') !== '0',
       lockOn = feetOn && q.get('feetlock') === '1';
-    const stanceOn = feetOn && q.get('stance') !== '0' && !lockOn,
+    const stanceOn = stanceCorrectionEnabled(
+        q.get('stance'),
+        feetOn,
+        lockOn,
+        Boolean(placement?.perPerson?.[meta.id]?.offsetUnits || placeOff),
+      ),
       shadowOn = feetOn && q.get('shadow') !== '0';
     const feet = new Array(nF); // [lowY, cx, cz] per keyframe, native units
     // feet[k] = [nativeY, cx, cz, worldUpHeight]. Without ?rotfix the first three are exactly what
@@ -1915,8 +1921,18 @@ export async function createFourD({ search, renderer, root, scope }) {
       person.scale.copy(registeredScale);
       const { i, j, u, tt } = placementSample || { i: 0, j: 0, u: 0, tt: 0 };
       if (interp && placementSample) applyFeet(i, j, u, tt);
+      applyPlacementOffset(
+        person.position,
+        placement?.perPerson?.[meta.id]?.offsetUnits,
+        placeOff,
+        first,
+        i,
+        j,
+        u,
+      );
       applySize(i, j, u);
       person.updateMatrixWorld(true);
+      updateContactShadow(i, j, u);
     }
     function setRegistration({ position, rotation, scale }) {
       if (position) basePos.copy(position);
@@ -2227,22 +2243,20 @@ export async function createFourD({ search, renderer, root, scope }) {
         )
         .applyQuaternion(person.quaternion);
       person.position.copy(basePos).add(tmpV);
-      const ownPlace = placement?.perPerson?.[meta.id]?.offsetUnits;
-      if (ownPlace || placeOff) {
-        // person table follows sequence indices, including missing samples
-        const offsets = ownPlace || placeOff,
-          start = ownPlace ? 0 : first;
-        const o = offsets[start + i] || [0, 0, 0],
-          o2 = offsets[start + j] || o;
-        person.position.x += o[0] + (o2[0] - o[0]) * u;
-        person.position.y += o[1] + (o2[1] - o[1]) * u;
-        person.position.z += o[2] + (o2[2] - o[2]) * u;
-      }
-      if (shadow) {
-        person.updateMatrixWorld(true);
-        const w = person.localToWorld(new THREE.Vector3(cx, low, cz));
-        shadow.position.set(w.x, (fl ?? floorY) + 0.005 * upm, w.z);
-      }
+    }
+    function updateContactShadow(i, j, u) {
+      if (!shadow || !feet[i]) return;
+      const a = feet[i],
+        b = feet[j] || a;
+      const tr = lockTrend ? lockTrend[i] * (1 - u) + lockTrend[j] * u : 0;
+      const w = person.localToWorld(
+        new THREE.Vector3(
+          a[1] + (b[1] - a[1]) * u,
+          a[0] + (b[0] - a[0]) * u + tr,
+          a[2] + (b[2] - a[2]) * u,
+        ),
+      );
+      shadow.position.set(w.x, (feetInfo.fl ?? floorY) + 0.005 * upm, w.z);
     }
     // the cast's shared scale and this person's base position, once every body has been measured
     function place(s, pos0, rot0) {
