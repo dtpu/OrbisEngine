@@ -25,6 +25,15 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   nor a wider handheld-camera band is justified. Preserve missing physical calibration as
   unknown and the candidate as failed. Evidence: `.context/evidence/ground-alignment-20261108/`.
 
+- The forest scale failure is not rescued by replacing nearest-center depth with alpha-composited
+  visible depth. At the same five source cameras and original compared texels, rendered p10 ratios
+  were 0.816–0.829 against the unchanged 0.9–1.1 band; the separate packaged-camera renderer agreed.
+  This establishes disagreement with the retained Pi3X depth estimate, not which reconstruction
+  is physically correct. Source support covers only about 60–63% of the diagnostic image, and no
+  independently labelled road region was available. Do not treat full generated opacity as observed
+  geometry or change the scale gate to make this candidate pass. Evidence:
+  `.context/evidence/ground-alignment-20261108/world-depth-audit/`.
+
 - Restricting planar training targets to measured lobby floor support fixed the two declared floor-depth checks (p90 0.00336/0.00627 body-heights), but did not establish scene quality. Glass/reflective walls and lateral appearance still distort, the first-frame shoe remains partly occluded, and one optimization holdout loses image agreement. Portal raw-depth p90 also regressed against the preceding candidate on sparse support. Separate training depth from unchanged evaluation depth, preserve the source/region checks, and diagnose the remaining residuals before another refinement. These floor audit views were training views, not unseen geometry. Globally protecting the same measured point IDs across views then reduced portal p90 error from 0.07267 to 0.05876 body-heights, still worse than the preceding raw-depth fit (0.01815); no clear visual repair followed. Image-region exclusions alone do not protect a shared 3D point in other views, and target protection does not isolate neighboring learned Gaussian footprints. Evidence: `.context/evidence/surface-reconstruction-20261107/trial-13/` and `trial-14/`.
 
 - Jointly refining the corrected lobby room with measured source splats improved image agreement and passed all five fixed scale checks, but did not meet the independent planar-floor criterion. After 4,000 iterations, floor ray-plane p90 errors were 0.02309/0.04002 body-heights against a 0.02 limit; the original depth targets themselves had 0.02297/0.03845 error. Further fitting of those same targets cannot be assumed to remove their nonplanarity. Glass regions remain mostly unsupported, and first-frame shoe occlusion persists. Keep raw-depth agreement separate from independent surface quality; no threshold was relaxed. Evidence: `.context/evidence/surface-reconstruction-20261107/trial-12/`.

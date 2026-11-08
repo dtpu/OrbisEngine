@@ -112,6 +112,15 @@ locally. The automatic pipeline still stops at the preceding scale failure for t
 Evidence is under `.context/evidence/ground-alignment-20261108/`, including the preserved failed
 candidate, both source-mask archives, full-sequence comparisons and local support measurements.
 
+A subsequent local depth audit kept the original five cameras and compared source texels, and
+rendered all 96,000 pixels per view with covariance-aware alpha compositing. The lower-tail depth
+ratios remained outside the unchanged band: p10 0.816–0.829 instead of the center diagnostic's
+0.842–0.848. The existing renderer with packaged cameras independently reproduced the failure.
+All generated pixels had high opacity, while source-depth support covered only about 60–63% of
+each image. This rules out the nearest-center approximation as a sufficient explanation; it
+does not establish Pi3X as physical ground truth. No replacement scale metric or quality override
+was introduced. Source-matched images and numerical parity checks are in `world-depth-audit/`.
+
 The continuation also found that the viewer applied recorded placement offsets inside optional
 foot effects. Disabling those effects or switching to discrete frame meshes lost the offsets
 while retaining the fitted body size. Offsets now apply independently in both playback modes;
