@@ -1,0 +1,30 @@
+scripts/test-scene-playback.js
+  s_20f6c0bf8c5b2c::t_495c6f82896c22 1-77
+package.json
+  s_20f6c0bf8c5b2c::t_084ec69fc329fc 15
+src/scene-playback.js
+  s_20f6c0bf8c5b2c::t_495c6f82896c22 1-27
+demo.html
+  s_20f6c0bf8c5b2c::t_495c6f82896c22 650,951,967,998-999,1002-1004
+  s_20f6c0bf8c5b2c::t_a1cf13a624e813 953
+docs/shared-assets.md
+  s_20f6c0bf8c5b2c::t_495c6f82896c22 24-26
+src/fourd-runtime.js
+  s_20f6c0bf8c5b2c::t_495c6f82896c22 39,4171-4172,4264-4267,4285-4288,4470,4713
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85a509eab4d693293ddc7458fe7ecff6a115781c",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
