@@ -182,7 +182,67 @@ SSIM convolved unmasked RGB with an 11×11 window, then masked only the output c
 only excluded target RGB altered background gradients even though masked L1 was unchanged.
 Full-window SSIM validity made the fixture's loss and gradients invariant. This identifies a
 general training bug, not the measured cause of all scene artifacts. The paid candidate predates
-that correction, and no corrected reconstruction or further paid trial is claimed.
+that correction. The following continuation records its separately evaluated reconstruction.
+
+## Corrected exclusion trial — November 9
+
+The merged foreground-exclusion corrections were tested on the same forest source and original
+world. The re-export retained all 90 RGB frames, cameras and initial splats byte-for-byte.
+Conservative masks added 18,388 excluded training pixels relative to the preceding trial's
+already repaired masks. They also removed 275 anchor points without moving or adding points,
+changing 17,271 depth texels and removing support from 676. This tests the paired mask and SSIM
+corrections, not an isolated SSIM ablation. Evaluation retained the original depth, support,
+RGB masks, cameras, body ruler and 90 foot centers.
+
+The first submission stalled during app initialization before any function call or training
+output was observed. Its app stopped with zero tasks, the local client exited, and the failed
+claim was reconciled without erasing its reservation. The final ordinary execution uploaded
+inputs separately to the existing private volume and verified all 186 remote file hashes before
+launch. With that changed transport, initialization completed and the pinned worker ran once.
+This is evidence of a successful alternate transport, not proof of the stalled RPC's cause.
+
+The 800-step training completed and all 30 output files were recovered with hash verification.
+The imported world retained all 1,920,000 splats. The real viewer loaded the isolated candidate
+and all 90 animated samples; playback, pause and sideways movement worked. Visible road seams
+and a person-shaped outline remain. Static training renders also show that outline without the
+animated avatar. The candidate remains **failed**, and the original run is unchanged.
+
+The independent fixed-reference checks passed all seven RGB holdouts (mean PSNR 16.95 →
+28.83 dB on quantized renders) and all five alpha-rendered depth-ratio checks. All five
+original-pixel depth-spread checks still failed, increasing 20–35% against a 5% allowance.
+One unsupported region retained only 98.80% opaque coverage against 99%. Contact passed at
+31/90 unchanged foot centers, down from the original 90/90 and preceding candidate's 49/90;
+absolute residual p90 was 0.1179 body-heights against 0.08. The latter residual is smaller than
+the preceding candidate's, but more queries fail the combined spread/contact checks. No single
+improving score overrides the failed surface criteria. Input and reference hashes were unchanged
+through evaluation.
+
+The earlier candidate's support regression was also investigated independently. Replaying the
+original query reproduced its results; the float model failed the same 49/90 contacts as SPZ.
+Vertical center movement alone reproduced most failures (58/90 pass), while horizontal movement
+alone retained 89/90. All 90 candidate queries remain opaque. Average depth error can improve
+while the worst within-pixel spread grows, including on source-supported, mask-clear pixels.
+A mean linear-depth loss alone is therefore not an established remedy. A separate penalty on
+worst-case surface spread is proposed but unimplemented and unvalidated; coherent surfaces can
+still have the wrong height. Physical calibration and the preceding avatar-placement failures
+remain unresolved.
+
+Evidence: `.context/evidence/forest-refinement-next-20261109/`, with the source analysis under
+`surface-cause/` and the completed reconstruction under `trial-03/`. The labelled local comparison
+is `http://127.0.0.1:5399/reviews/forest-refinement-03/index.html`. No production trainer change,
+new world generation, tolerance change, automatic worker or scene promotion occurred in this
+continuation. The merged correction had already passed 2,206 Python tests and CI; this
+continuation passed the repository format check and exercised the actual paid worker and viewer.
+
+The shared ledger now retains 117 settled claims: 100 completed and 17 failed. All three ordinary
+forest fine-tune executions are consumed, including the failed initialization. Both apps owned
+by this continuation are stopped with zero tasks. The completed worker took 43.36 seconds;
+US$0.03193 is its compute estimate only, excluding startup, build, storage and egress. Keeping
+both new US$0.75 reservations yields US$9.1524 conservatively used or reserved and US$0.8476
+unallocated within the original US$10 cap. This is not an invoice. No further paid execution is
+submitted. Outputs and staged inputs are retained in the existing private Modal volume; local
+screenshots and analysis remain on disk. Shared S3 archival is blocked because the existing
+author credential chain is unavailable; viewer credentials are not substituted.
 
 ## Cost and retained evidence
 

@@ -82,7 +82,9 @@ and gradients. A CPU counterexample changed only excluded target pixels: pointwi
 identical, while combined loss changed by 0.0004393 and valid-background gradients changed by
 up to 0.0003837. Requiring full-window validity removes that leakage in the fixture. It reduces
 SSIM supervision near mask boundaries and does not establish its contribution to a real scene's
-ghosting or surface errors; those require a separately evaluated reconstruction.
+ghosting or surface errors. The subsequent corrected forest reconstruction still showed road
+seams and a static person outline in the real viewer; see the
+[retained trial report](fresh-upload-trial.md#corrected-exclusion-trial--november-9).
 The training log records the eligible SSIM-window count. With no eligible windows, SSIM contributes
 zero loss and its reported score is unknown rather than a fabricated perfect match.
 
