@@ -1,0 +1,33 @@
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_dc4aa043390936 85-87
+docs/fresh-upload-trial.md
+  s_11465a870157de::t_f81c993b610e41 185-209,220-245
+  s_20f6c0bf8c5b2c::t_28bbef1ef09d9e 210-219
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_28bbef1ef09d9e 6-13
+  s_20f6c0bf8c5b2c::t_dc4aa043390936 14-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e6039ddb7fd2404d99a813eda3eaac3ca20c96d",
+  "prompts": {},
+  "sessions": {
+    "s_11465a870157de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
