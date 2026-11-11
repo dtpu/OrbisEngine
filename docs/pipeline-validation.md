@@ -90,8 +90,11 @@ zero loss and its reported score is unknown rather than a fabricated perfect mat
 
 An experimental [surface-spread regression term](surface-spread-refinement.md) compares each
 training location with its frozen initialization before aggregating positive increases. Local
-checks distinguish that calculation from a mean that hides worsening pixels; the option remains
-disabled by default and does not establish reconstruction or walkability acceptance.
+checks distinguish that calculation from a mean that hides worsening pixels. One explicitly
+approved GPU trial passed all five spread and coverage checks, but failed all five depth-ratio
+checks and retained only 47/90 passing foot contacts. Its real viewer still showed a static
+person remnant and road seam. The option remains disabled by default; this measured improvement
+does not establish reconstruction or walkability acceptance.
 
 The export retains each frame's camera intrinsics, and the trainer uses them for projection,
 rendering, depth comparisons and offset views. Older exports with one `K` remain supported.

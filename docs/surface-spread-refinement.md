@@ -65,3 +65,55 @@ Initial reference rendering adds setup time and memory when enabled. None is add
 
 Local evidence is under `.context/evidence/surface-tail-20261111/`. Sources, previous rejected
 candidates, evaluation references and live run state remain unchanged.
+
+## Approved forest trial — November 11
+
+The explicitly approved fourth fine-tune executed once at commit `b9c15f8`, starting from the
+original world and the same corrected export as trial03. It used 800 steps, spread weight `1`,
+native body-height ruler `0.6345488724524215` and tail fraction `0.1`. All other optimizer
+arguments, source cameras, evaluation rays, masks, foot positions and thresholds stayed fixed.
+No world was regenerated. This is one measured configuration, not a parameter sweep.
+
+| Fixed check | Previous trial03 | New trial04 |
+| --- | ---: | ---: |
+| Alpha-rendered depth ratios | 5/5 | 0/5 |
+| Opaque coverage retention | 4/5 | 5/5 |
+| Depth-spread non-regression | 0/5 | 5/5 |
+| Foot support | 41/90 | 58/90 |
+| Foot contact | 31/90 | 47/90 |
+| Held-out RGB improvement | 7/7 | 7/7 |
+
+Spread p90 fell to 54–63% of the original world's values across both fixed pixel groups.
+Coverage retained 99.013–100% of original opaque pixels. However, all five depth-ratio p10
+values remained between 0.827 and 0.841, below the unchanged 0.9 limit. Foot-contact error
+was 0.0370 body-heights at the median, 0.1144 at p90 and 0.2232 at worst. The original world
+passed all 90 foot queries. Neither trained candidate is accepted.
+
+With the original evaluation masks and quantized renders, mean held-out PSNR improved from
+16.9514 to 28.5318 dB, 0.2994 dB below trial03. The separate trainer float/fresh-mask score
+was 28.5413 dB. Actual GPU reference setup rendered 83 training and seven held-out views in
+0.935 seconds, caching 182.9 MB. Initialization and camera hashes matched, all initial held-out
+regression values were zero, and no selected reference pixel had near-zero alpha. The seven
+final diagnostic tail means were 0.00172–0.03739 body-heights; these are not acceptance scores.
+
+The real browser viewer loaded all 90 person frames and about 800,000 world splats at its
+current level of detail. Play/pause, source inset, final-frame stepping and lateral movement
+worked. The source is silent and correctly showed no soundtrack. Static source-camera renders
+still contain a person-shaped remnant, and the viewer retains a road-texture seam and distorted
+side-view surfaces. Lateral views at approximately 0.53 and 1.57 body-heights are navigation
+checks, not source-camera matches or headset/collision validation. The preceding avatar
+placement failure is also unchanged.
+
+This trial demonstrates a useful reduction in spread, but also the limitation of preserving a
+surface without establishing its correct depth and contact. It remains a rejected diagnostic
+preview at `/reviews/forest-spread-regression-04/index.html`; the option stays off by default.
+Do not repeat this fit or tune against the fixed evaluation feet. A further hypothesis needs
+independent evidence about depth bias and supported ground before another paid execution.
+
+Evidence is under `.context/evidence/surface-tail-20261111/trial-04/`. All 79 evaluation input
+hashes were unchanged. The one provider call completed, all 30 outputs were recovered and hash
+verified, and its app stopped with zero tasks. Worker elapsed time was 112.825 seconds, with
+an estimated $0.08309 compute charge excluding startup, build, storage and egress. The full
+$0.75 reservation remains pending billing reconciliation: cumulative conservative usage plus
+reserves is $9.90242 of the original $10, not a final invoice. Outputs remain on the private
+provider volume and locally; shared-S3 archival is blocked by unavailable author credentials.
