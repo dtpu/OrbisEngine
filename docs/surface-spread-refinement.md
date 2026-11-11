@@ -104,6 +104,16 @@ side-view surfaces. Lateral views at approximately 0.53 and 1.57 body-heights ar
 checks, not source-camera matches or headset/collision validation. The preceding avatar
 placement failure is also unchanged.
 
+Offline localization retained all 272,075 original view-ray observations: 95.19% of trial04's
+ratios below 0.9 were already below 0.9 in the original world, and 81.43% lie in the furthest
+estimated source-depth quartile. On 39,642 rays that were in-band in trial03 and near again in
+trial04, median ratio changed from 0.8302 originally to 0.9837 and then 0.8386; median spread
+changed from 0.1577 to 0.3072 and then 0.1079 body-heights. This supports narrower distributions
+around an original-like near mean, not a unique causal explanation or physical depth proof.
+The 43 failed feet divide into 23 spread-only, 11 height-only and nine combined failures;
+none fails opacity. All 21 localization input hashes were unchanged. These diagnostic ray
+labels do not replace the original quantile acceptance rules.
+
 This trial demonstrates a useful reduction in spread, but also the limitation of preserving a
 surface without establishing its correct depth and contact. It remains a rejected diagnostic
 preview at `/reviews/forest-spread-regression-04/index.html`; the option stays off by default.
