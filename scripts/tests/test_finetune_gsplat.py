@@ -96,8 +96,12 @@ def test_training_and_evaluation_depth_routes_preserve_source(training_depth_inp
     assert default_provenance["training"] == default_provenance["evaluation"]
 
 
-@pytest.mark.parametrize("surface_enabled", [False, True])
-def test_actual_evaluate_function_uses_original_depth(training_depth_inputs, surface_enabled):
+@pytest.mark.parametrize(
+    "surface_enabled,spread_enabled", [(False, False), (True, False), (True, True)]
+)
+def test_actual_evaluate_function_uses_original_depth(
+    training_depth_inputs, surface_enabled, spread_enabled
+):
     _, source, override = training_depth_inputs
     targets = trainer.DepthTargets(tuple(source.values()), override["depth"], 4, 2, "cpu")
     # Execute the production nested evaluator with CPU fixtures. Frame 1 intentionally
@@ -113,10 +117,22 @@ def test_actual_evaluate_function_uses_original_depth(training_depth_inputs, sur
         torch.zeros((2, 4, 3)),
         torch.ones((2, 4, 1)),
         torch.full((2, 4), 2.0),
-        {"log_depth_moments": torch.stack((log_depth, log_depth.square()), dim=-1)},
+        {
+            "log_depth_moments": torch.stack((log_depth, log_depth.square()), dim=-1),
+            "linear_depth_moments": torch.tensor([2.0, 5.0]).expand(2, 4, 2),
+        },
     )
+
+    def render(*_args, **kwargs):
+        assert kwargs == dict(
+            depth=True,
+            surface_depth=surface_enabled,
+            surface_spread_unit=0.47 if spread_enabled else None,
+        )
+        return rendered
+
     scope = dict(vars(trainer)) | dict(
-        model=SimpleNamespace(render=lambda *_args, **_kwargs: rendered),
+        model=SimpleNamespace(render=render),
         test_idx=[1],
         viewmats=torch.eye(4).repeat(3, 1, 1),
         Ks=torch.eye(3).repeat(3, 1, 1),
@@ -125,9 +141,18 @@ def test_actual_evaluate_function_uses_original_depth(training_depth_inputs, sur
         imgs=torch.zeros((3, 2, 4, 3), dtype=torch.uint8),
         valid=torch.ones((3, 2, 4), dtype=torch.bool),
         depth_targets=targets,
-        a=SimpleNamespace(lambda_surface_depth=float(surface_enabled), surface_alpha_weight=0.1),
+        a=SimpleNamespace(
+            lambda_surface_depth=float(surface_enabled),
+            surface_alpha_weight=0.1,
+            lambda_surface_spread_regression=float(spread_enabled),
+            surface_spread_unit=0.47,
+            surface_spread_tail_fraction=0.1,
+        ),
         eval_depth_samples={},
         eval_surface={},
+        eval_spread={},
+        heldout_spread_references={1: dict(spread=torch.zeros((2, 4)), low_alpha_count=0)},
+        train_spread_references={},
     )
     exec(compile(ast.Module(body=[evaluator], type_ignores=[]), trainer.__file__, "exec"), scope)
     _, _, error = scope["evaluate"]("test")
@@ -135,6 +160,17 @@ def test_actual_evaluate_function_uses_original_depth(training_depth_inputs, sur
     assert scope["eval_depth_samples"]["test"] == [8]
     if surface_enabled:
         assert scope["eval_surface"]["test"][0]["loss"] == pytest.approx(0, abs=1e-7)
+    if spread_enabled:
+        record = scope["eval_spread"]["test"][0]
+        assert record == dict(
+            frame=1,
+            reference_low_alpha_count=0,
+            tail_mean=pytest.approx(np.sqrt(1 + 1e-6) - 0.001),
+            count=8,
+            tail_count=1,
+            unit_native=0.47,
+            tail_fraction=0.1,
+        )
 
 
 @pytest.mark.parametrize(
@@ -637,6 +673,385 @@ def test_surface_rejects_nonfinite_selected_render(which):
         surface_loss(moments, alpha)
 
 
+def linear_surface_packet(depths, weights, unit=1.0):
+    normalized = depths / unit
+    moments = torch.stack(
+        ((normalized * weights).sum(-1), (normalized.square() * weights).sum(-1)), dim=-1
+    )
+    return moments, weights.sum(-1)
+
+
+def tail_loss(moments, alpha, fraction=0.1):
+    return trainer.surface_spread_regression_loss(
+        moments,
+        alpha,
+        torch.zeros_like(alpha),
+        torch.ones_like(alpha, dtype=torch.bool),
+        torch.ones_like(alpha, dtype=torch.bool),
+        fraction,
+    )
+
+
+def test_tail_masks_unsupported_nonfinite_pixels_and_gradients():
+    moments = torch.tensor([[2.0, 5.0], [float("nan"), 0], [float("inf"), 0]], requires_grad=True)
+    alpha = torch.tensor([1.0, float("nan"), float("inf")], requires_grad=True)
+    loss, metrics = trainer.surface_spread_regression_loss(
+        moments,
+        alpha,
+        torch.tensor([0.0, float("nan"), float("nan")]),
+        torch.tensor([True, False, True]),
+        torch.tensor([True, True, False]),
+    )
+    assert metrics["count"] == metrics["tail_count"] == 1
+    assert loss.item() == pytest.approx(np.sqrt(1 + 1e-6) - 0.001)
+    loss.backward()
+    assert torch.isfinite(moments.grad).all() and torch.isfinite(alpha.grad).all()
+    assert torch.count_nonzero(moments.grad[1:]) == torch.count_nonzero(alpha.grad[1:]) == 0
+    assert torch.count_nonzero(moments.grad[0]) > 0
+
+
+@pytest.mark.parametrize("which", ["first", "second", "alpha"])
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf")])
+def test_tail_rejects_nonfinite_selected_data(which, invalid):
+    moments, alpha = torch.tensor([[2.0, 5.0]]), torch.ones(1)
+    if which == "alpha":
+        alpha[0] = invalid
+    else:
+        moments[0, 0 if which == "first" else 1] = invalid
+    with pytest.raises(ValueError, match="moments and alpha must be finite"):
+        tail_loss(moments, alpha)
+
+
+def test_tail_empty_selection_reports_unknown_and_has_finite_zero_gradients():
+    moments = torch.tensor([[float("nan"), float("nan")]], requires_grad=True)
+    alpha = torch.tensor([float("nan")], requires_grad=True)
+    loss, metrics = trainer.surface_spread_regression_loss(
+        moments, alpha, torch.tensor([float("nan")]), torch.tensor([False]), torch.tensor([True])
+    )
+    assert loss.item() == 0
+    assert metrics == dict(tail_mean=None, count=0, tail_count=0)
+    record = trainer.surface_spread_tail_record(metrics, 0.47, 0.1)
+    assert record == dict(
+        tail_mean=None, count=0, tail_count=0, unit_native=0.47, tail_fraction=0.1
+    )
+    loss.backward()
+    assert torch.equal(moments.grad, torch.zeros_like(moments))
+    assert torch.equal(alpha.grad, torch.zeros_like(alpha))
+
+
+def test_tail_low_and_zero_alpha_never_change_fixed_count():
+    moments = torch.tensor([[2.0, 5.0], [2e-5, 5e-5], [2e-8, 5e-8], [0, 0]], requires_grad=True)
+    alpha = torch.tensor([1.0, 1e-5, 1e-8, 0], requires_grad=True)
+    loss, metrics = tail_loss(moments, alpha, fraction=1.0)
+    assert metrics["count"] == metrics["tail_count"] == 4
+    assert loss.item() == pytest.approx(
+        (2 * (np.sqrt(1 + 1e-6) - 0.001) + np.sqrt(0.05 - 0.02**2 + 1e-6) - 0.001) / 4
+    )
+    loss.backward()
+    assert torch.isfinite(moments.grad).all() and torch.isfinite(alpha.grad).all()
+
+
+def test_spread_float32_negative_cancellation_is_clamped_with_finite_gradients():
+    moments = torch.tensor([[1.0001, 1.0002]], dtype=torch.float32, requires_grad=True)
+    alpha = torch.ones(1, requires_grad=True)
+    assert (moments.double()[0, 1] - moments.double()[0, 0].square()).item() < 0
+    loss, _ = tail_loss(moments, alpha)
+    assert loss.item() == 0
+    loss.backward()
+    assert torch.isfinite(moments.grad).all() and torch.isfinite(alpha.grad).all()
+
+
+def spread_reference(depths, weights, unit=1.0):
+    moments, alpha = linear_surface_packet(depths, weights, unit)
+    selected = torch.ones_like(alpha, dtype=torch.bool)
+    return trainer.surface_spread_values(moments, alpha, selected, selected)
+
+
+def test_spread_regression_catches_worsening_pixels_hidden_by_improved_extremes():
+    initial_std = torch.tensor([1.0] * 95 + [30.0] * 5, dtype=torch.float64)
+    current_std = torch.tensor([2.0] * 90 + [3.0] * 10, dtype=torch.float64)
+    assert current_std.mean() < initial_std.mean()
+    assert current_std.topk(10).values.mean() < initial_std.topk(10).values.mean()
+    assert current_std.quantile(0.9) > initial_std.quantile(0.9)
+    weights = torch.full((100, 2), 0.5, dtype=torch.float64)
+    initial_depths = torch.stack((40 - initial_std, 40 + initial_std), dim=-1)
+    current_depths = torch.stack((40 - current_std, 40 + current_std), dim=-1)
+    reference = spread_reference(initial_depths, weights)
+    moments, alpha = linear_surface_packet(current_depths, weights)
+    selected = torch.ones(100, dtype=torch.bool)
+    loss, metrics = trainer.surface_spread_regression_loss(
+        moments, alpha, reference, selected, selected
+    )
+    assert loss.item() == pytest.approx(
+        (np.sqrt(9 + 1e-6) + np.sqrt(4 + 1e-6)) / 2 - np.sqrt(1 + 1e-6)
+    )
+    assert metrics["count"] == 100 and metrics["tail_count"] == 10
+
+
+def test_spread_regression_equal_mean_mixed_depths_move_together_and_reference_is_detached():
+    depths = torch.tensor([[1.0, 3.0]], dtype=torch.float64, requires_grad=True)
+    weights = torch.tensor([[0.5, 0.5]], dtype=torch.float64)
+    assert (depths * weights).sum() == 2
+    reference = torch.zeros(1, dtype=torch.float64, requires_grad=True)
+    moments, alpha = linear_surface_packet(depths, weights)
+    selected = torch.tensor([True])
+    loss, _ = trainer.surface_spread_regression_loss(moments, alpha, reference, selected, selected)
+    assert loss.item() > 0.99
+    loss.backward()
+    assert depths.grad[0, 0] < 0 < depths.grad[0, 1]
+    assert depths.grad.sum().item() == pytest.approx(0, abs=1e-12)
+    assert reference.grad is None
+
+
+@pytest.mark.parametrize("scale", [1.0, 0.5])
+def test_spread_regression_matching_or_reduced_spread_has_zero_loss_and_gradients(scale):
+    weights = torch.tensor([[0.5, 0.5]], dtype=torch.float64)
+    reference = spread_reference(torch.tensor([[1.0, 3.0]], dtype=torch.float64), weights)
+    depths = torch.tensor([[2 - scale, 2 + scale]], dtype=torch.float64, requires_grad=True)
+    moments, alpha = linear_surface_packet(depths, weights)
+    selected = torch.tensor([True])
+    loss, _ = trainer.surface_spread_regression_loss(moments, alpha, reference, selected, selected)
+    assert loss.item() == 0
+    loss.backward()
+    assert torch.equal(depths.grad, torch.zeros_like(depths))
+
+
+def test_spread_regression_unit_scaling_preserves_loss():
+    depths = torch.tensor([[1.0, 3.0], [2.0, 4.0]], dtype=torch.float64)
+    initial = torch.tensor([[1.5, 2.5], [2.5, 3.5]], dtype=torch.float64)
+    weights = torch.full_like(depths, 0.5)
+    selected = torch.ones(2, dtype=torch.bool)
+    values = []
+    for scale in (1, 17):
+        moments, alpha = linear_surface_packet(depths * scale, weights, 0.47 * scale)
+        reference = spread_reference(initial * scale, weights, 0.47 * scale)
+        loss, _ = trainer.surface_spread_regression_loss(
+            moments, alpha, reference, selected, selected
+        )
+        values.append(loss)
+    torch.testing.assert_close(*values, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("fraction,expected", [(0.01, 1), (0.2, 1), (0.21, 2), (1.0, 5)])
+def test_spread_regression_tail_rounds_up_and_keeps_zero_increases(fraction, expected):
+    moments = torch.tensor([[2.0, 5.0]] * 5)
+    alpha = torch.ones(5)
+    reference = torch.tensor([0.0, 0.0, 10.0, 10.0, 10.0])
+    selected = torch.ones(5, dtype=torch.bool)
+    loss, metrics = trainer.surface_spread_regression_loss(
+        moments, alpha, reference, selected, selected, fraction
+    )
+    assert metrics["count"] == 5 and metrics["tail_count"] == expected
+    assert loss.item() == pytest.approx((np.sqrt(1 + 1e-6) - 0.001) * min(2, expected) / expected)
+
+
+@pytest.mark.parametrize("reference", [-1.0, float("nan"), float("inf")])
+def test_spread_regression_rejects_invalid_selected_reference(reference):
+    with pytest.raises(ValueError, match="initial spread must be finite and nonnegative"):
+        trainer.surface_spread_regression_loss(
+            torch.tensor([[2.0, 5.0]]),
+            torch.ones(1),
+            torch.tensor([reference]),
+            torch.tensor([True]),
+            torch.tensor([True]),
+        )
+
+
+def test_actual_reference_setup_separates_train_holdout_and_freezes_initial_maps():
+    tree = ast.parse(inspect.getsource(trainer.main)).body[0]
+    setup = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(child, ast.Name) and child.id == "reference_started"
+            for child in ast.walk(node)
+        )
+    )
+    optimizer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "opt" for target in node.targets)
+    )
+    assert tree.body.index(setup) < tree.body.index(optimizer)
+    values = torch.tensor([[[2.0, 5.0], [0.0, 0.0], [float("nan"), 0.0]]], requires_grad=True)
+    alphas = torch.tensor([[[1.0], [0.0], [float("nan")]]])
+    calls = []
+
+    def render(view, _K, _W, _H, **kwargs):
+        assert not torch.is_grad_enabled()
+        assert kwargs == dict(depth=True, surface_depth=True, surface_spread_unit=0.47)
+        calls.append(("render", int(view[0, 3])))
+        return None, alphas, None, {"linear_depth_moments": values}
+
+    def targets(role, frame):
+        calls.append((role, frame))
+        return None, torch.tensor([[True, True, False]])
+
+    views = torch.eye(4).repeat(3, 1, 1)
+    views[:, 0, 3] = torch.arange(3)
+    scope = dict(vars(trainer)) | dict(
+        model=SimpleNamespace(render=render),
+        train_idx=[1, 2],
+        test_idx=[0],
+        viewmats=views,
+        Ks=torch.eye(3).repeat(3, 1, 1),
+        W=3,
+        H=1,
+        depth_targets=SimpleNamespace(
+            training=lambda i: targets("train", i), evaluation=lambda i: targets("eval", i)
+        ),
+        valid=torch.ones((3, 1, 3), dtype=torch.bool),
+        a=SimpleNamespace(lambda_surface_spread_regression=1, surface_spread_unit=0.47),
+        spread_reference_provenance={},
+    )
+    exec(compile(ast.Module(body=[setup], type_ignores=[]), trainer.__file__, "exec"), scope)
+    assert calls == [
+        ("render", 1),
+        ("train", 1),
+        ("render", 2),
+        ("train", 2),
+        ("render", 0),
+        ("eval", 0),
+    ]
+    assert set(scope["train_spread_references"]) == {1, 2}
+    assert set(scope["heldout_spread_references"]) == {0}
+    for refs in (scope["train_spread_references"], scope["heldout_spread_references"]):
+        for reference in refs.values():
+            assert reference["count"] == 2 and reference["low_alpha_count"] == 1
+            assert not reference["spread"].requires_grad
+            assert reference["spread"][0, 0].item() == pytest.approx(np.sqrt(1 + 1e-6) - 0.001)
+    with torch.no_grad():
+        values.zero_()
+    assert scope["train_spread_references"][1]["spread"][0, 0] > 0.99
+    metadata = scope["spread_reference_provenance"]
+    assert metadata["render_count"] == 3 and metadata["cached_bytes"] == 3 * 3 * 8
+    assert metadata["setup_seconds"] >= 0
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_spread_reference_provenance_records_exact_initialization_and_cameras(tmp_path, resume):
+    initialization = tmp_path / "resume.npz"
+    exported = tmp_path / "splats.npz"
+    cameras = tmp_path / "cameras.npz"
+    np.savez(initialization, means=np.arange(6))
+    np.savez(exported, means=np.arange(9))
+    np.savez(cameras, viewmats=np.eye(4))
+    tree = ast.parse(inspect.getsource(trainer.main)).body[0]
+    assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and ast.unparse(node.targets[0]) == "spread_reference_provenance"
+    )
+    scope = dict(vars(trainer)) | dict(
+        a=SimpleNamespace(
+            init_npz=initialization if resume else None,
+            data=tmp_path,
+            surface_spread_unit=0.47,
+            lambda_surface_spread_regression=1,
+        ),
+        train_idx=[1],
+        test_idx=[0],
+    )
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), trainer.__file__, "exec"), scope)
+    provenance = scope["spread_reference_provenance"]
+    expected = initialization if resume else exported
+    assert provenance["path"] == str(expected.resolve())
+    assert provenance["sha256"] == hashlib.sha256(expected.read_bytes()).hexdigest()
+    assert provenance["cameras"] == dict(
+        path=str(cameras.resolve()), sha256=hashlib.sha256(cameras.read_bytes()).hexdigest()
+    )
+    assert provenance["training_frames"] == [1] and provenance["heldout_frames"] == [0]
+    assert provenance["unit_native"] == 0.47
+
+
+@pytest.mark.parametrize("pseudo", [False, True])
+def test_actual_training_routes_regression_only_to_training_reference(pseudo):
+    tree = ast.parse(inspect.getsource(trainer.main)).body[0]
+    loop = next(
+        node for node in tree.body if isinstance(node, ast.For) and ast.unparse(node.target) == "it"
+    )
+    start = next(
+        i
+        for i, node in enumerate(loop.body)
+        if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "use_surface"
+    )
+    end = next(
+        i
+        for i, node in enumerate(loop.body)
+        if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "tv"
+    )
+    calls = []
+    rgb = torch.zeros((1, 3, 3), requires_grad=True)
+    logs = torch.full((1, 3), np.log(2), dtype=torch.float32)
+    linear = torch.tensor([[[2.0, 5.0], [float("nan"), 0], [float("nan"), 0]]], requires_grad=True)
+    alpha = torch.ones((1, 3, 1))
+
+    def render(*_args, **kwargs):
+        calls.append(kwargs)
+        return (
+            rgb,
+            alpha,
+            torch.full((1, 3), 2.0),
+            dict(
+                log_depth_moments=torch.stack((logs, logs.square()), -1),
+                linear_depth_moments=linear,
+            ),
+        )
+
+    def training(frame):
+        assert frame == 1 and not pseudo
+        return torch.full((1, 3), 2.0), torch.tensor([[True, True, False]])
+
+    valid = torch.tensor([[[True, False, True]]]).repeat(2, 1, 1)
+    scope = dict(vars(trainer)) | dict(
+        a=SimpleNamespace(
+            lambda_surface_depth=1,
+            lambda_surface_spread_regression=2,
+            surface_spread_unit=0.47,
+            surface_spread_tail_fraction=0.1,
+            surface_alpha_weight=0.1,
+            densify=False,
+            lambda_ssim=0,
+            lambda_depth=0,
+        ),
+        use_pseudo=pseudo,
+        model=SimpleNamespace(render=render),
+        vm=torch.eye(4),
+        intrinsics=torch.eye(3),
+        W=3,
+        H=1,
+        it=1,
+        i=1,
+        gt=torch.zeros_like(rgb),
+        m=valid[1].float()[..., None],
+        win=trainer.gaussian_window(dev="cpu"),
+        wgt=1,
+        dev="cpu",
+        valid=valid,
+        depth_targets=SimpleNamespace(training=training),
+        train_spread_references={1: dict(spread=torch.zeros((1, 3)), low_alpha_count=0)},
+        heldout_spread_references={},
+    )
+    exec(
+        compile(ast.Module(body=loop.body[start:end], type_ignores=[]), trainer.__file__, "exec"),
+        scope,
+    )
+    assert calls == [
+        dict(depth=True, surface_depth=not pseudo, surface_spread_unit=None if pseudo else 0.47)
+    ]
+    if pseudo:
+        assert scope["spread_metrics"] is None
+        assert scope["loss"].item() == 0
+    else:
+        assert scope["spread_metrics"]["count"] == scope["spread_metrics"]["tail_count"] == 1
+        assert scope["loss"].item() == pytest.approx(2 * (np.sqrt(1 + 1e-6) - 0.001), abs=1e-6)
+        scope["loss"].backward()
+        assert torch.count_nonzero(linear.grad[0, 1:]) == 0
+
+
 def test_quaternion_tether_sign_magnitude_angle_and_gradients():
     q = torch.tensor([[1.0, 0, 0, 0], [-2.0, 0, 0, 0], [1.0, 1.0, 0, 0]], requires_grad=True)
     reference = torch.tensor([[3.0, 0, 0, 0]]).expand_as(q)
@@ -650,7 +1065,8 @@ def test_quaternion_tether_sign_magnitude_angle_and_gradients():
 
 @pytest.mark.parametrize("surface", [False, True])
 @pytest.mark.parametrize("depth", [False, True])
-def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surface, depth):
+@pytest.mark.parametrize("unit", [None, 0.5])
+def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surface, depth, unit):
     captured = {}
 
     def rasterization(**kwargs):
@@ -677,9 +1093,9 @@ def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surf
     view[2, 3] = 1  # Features must use current camera-space depth, not world z.
     K = torch.tensor([[7.0, 0, 2], [0, 9.0, 3], [0, 0, 1]])
     rgb, alpha, rendered_depth, info = model.render(
-        view, K, 5, 4, depth=depth, surface_depth=surface
+        view, K, 5, 4, depth=depth, surface_depth=surface, surface_spread_unit=unit
     )
-    assert captured["colors"].shape[-1] == (5 if surface else 3)
+    assert captured["colors"].shape[-1] == 3 + 2 * surface + 2 * (unit is not None)
     assert captured["render_mode"] == ("RGB+ED" if depth else "RGB")
     torch.testing.assert_close(captured["Ks"][0], K)
     torch.testing.assert_close(rgb[0, 0], 0.25 * (0.5 + trainer.SH_C0 * model.f_dc[0]))
@@ -691,10 +1107,17 @@ def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surf
     if surface:
         logs = torch.tensor([np.log(2), np.log(2) ** 2], dtype=torch.float32)
         torch.testing.assert_close(info["log_depth_moments"][0, 0], 0.25 * logs)
-        info["log_depth_moments"][..., 0].sum().backward()
+        info["log_depth_moments"][..., 0].sum().backward(retain_graph=unit is not None)
         assert model.means.grad[0, 2].item() == pytest.approx(0.125)
     else:
         assert "log_depth_moments" not in info
+    if unit is not None:
+        torch.testing.assert_close(info["linear_depth_moments"][0, 0], torch.tensor([1.0, 4.0]))
+        model.means.grad = None
+        info["linear_depth_moments"].sum().backward()
+        assert model.means.grad[0, 2].item() == pytest.approx(4.5)
+    else:
+        assert "linear_depth_moments" not in info
 
 
 @pytest.mark.parametrize(
@@ -709,6 +1132,14 @@ def test_render_routes_moment_channels_and_expected_depth_last(monkeypatch, surf
         ("--sigma-pos", "0"),
         ("--clamp-pos", "-1"),
         ("--m-per-unit", "inf"),
+        ("--lambda-surface-spread-regression", "-1"),
+        ("--lambda-surface-spread-regression", "nan"),
+        ("--surface-spread-unit", "0"),
+        ("--surface-spread-unit", "-1"),
+        ("--surface-spread-unit", "inf"),
+        ("--surface-spread-tail-fraction", "0"),
+        ("--surface-spread-tail-fraction", "1.01"),
+        ("--surface-spread-tail-fraction", "nan"),
     ],
 )
 def test_invalid_objective_arguments_fail_before_files_cuda_and_output(
@@ -721,6 +1152,40 @@ def test_invalid_objective_arguments_fail_before_files_cuda_and_output(
     with pytest.raises(ValueError, match="must be"):
         trainer.main(
             ["--data", str(tmp_path / "absent"), "--out", str(tmp_path / "out"), flag, value]
+        )
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--lambda-surface-depth", "1"],
+        ["--surface-spread-unit", "0.47"],
+        [
+            "--surface-spread-unit",
+            "0.47",
+            "--lambda-surface-depth",
+            "1",
+            "--surface-alpha-weight",
+            "0",
+        ],
+    ],
+)
+def test_spread_regression_requires_explicit_ruler_depth_and_coverage_before_io(
+    tmp_path, monkeypatch, extra
+):
+    monkeypatch.setattr(torch, "device", lambda *_: pytest.fail("Unexpected CUDA selection"))
+    with pytest.raises(ValueError, match="must be"):
+        trainer.main(
+            [
+                "--data",
+                str(tmp_path / "absent"),
+                "--out",
+                str(tmp_path / "out"),
+                "--lambda-surface-spread-regression",
+                "1",
+                *extra,
+            ]
         )
     assert not (tmp_path / "out").exists()
 
@@ -939,8 +1404,9 @@ def test_training_rgb_loss_without_valid_windows_is_finite_and_has_no_ssim_penal
 
 
 @pytest.mark.parametrize("empty_windows", [False, True])
+@pytest.mark.parametrize("spread_state", ["disabled", "active", "empty", "pseudo"])
 def test_training_log_reports_ssim_support_and_unknown_without_windows(
-    monkeypatch, capsys, empty_windows
+    monkeypatch, capsys, empty_windows, spread_state
 ):
     img = torch.full((5, 7, 3), 0.7, requires_grad=True)
     gt = torch.full_like(img, 0.2)
@@ -974,12 +1440,40 @@ def test_training_log_reports_ssim_support_and_unknown_without_windows(
         model=SimpleNamespace(n=1),
         t0=trainer.time.time(),
         log=[],
-        a=SimpleNamespace(lambda_surface_depth=0, lambda_quat_reg=0),
+        i=1,
+        spread_metrics=(
+            dict(tail_mean=torch.tensor(0.25), count=7, tail_count=1)
+            if spread_state == "active"
+            else dict(tail_mean=None, count=0, tail_count=0)
+            if spread_state == "empty"
+            else None
+        ),
+        train_spread_references={1: dict(low_alpha_count=2)},
+        a=SimpleNamespace(
+            lambda_surface_depth=0,
+            lambda_quat_reg=0,
+            lambda_surface_spread_regression=float(spread_state != "disabled"),
+            surface_spread_unit=0.47,
+            surface_spread_tail_fraction=0.1,
+        ),
     )
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 0)
     exec(compile(ast.Module(body=logging, type_ignores=[]), trainer.__file__, "exec"), scope)
     record = scope["log"][0]
     assert record["ssim_windows"] == count.item()
+    if spread_state == "disabled":
+        assert "surface_spread_regression" not in record
+    elif spread_state == "pseudo":
+        assert record["surface_spread_regression"] is None
+    else:
+        assert record["surface_spread_regression"] == dict(
+            tail_mean=0.25 if spread_state == "active" else None,
+            count=7 if spread_state == "active" else 0,
+            tail_count=1 if spread_state == "active" else 0,
+            unit_native=0.47,
+            tail_fraction=0.1,
+            reference_low_alpha_count=2,
+        )
     output = capsys.readouterr().out
     if empty_windows:
         assert record["ssim"] is None

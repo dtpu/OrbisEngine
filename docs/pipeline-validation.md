@@ -88,6 +88,11 @@ seams and a static person outline in the real viewer; see the
 The training log records the eligible SSIM-window count. With no eligible windows, SSIM contributes
 zero loss and its reported score is unknown rather than a fabricated perfect match.
 
+An experimental [surface-spread regression term](surface-spread-refinement.md) compares each
+training location with its frozen initialization before aggregating positive increases. Local
+checks distinguish that calculation from a mean that hides worsening pixels; the option remains
+disabled by default and does not establish reconstruction or walkability acceptance.
+
 The export retains each frame's camera intrinsics, and the trainer uses them for projection,
 rendering, depth comparisons and offset views. Older exports with one `K` remain supported.
 Held-out depth scores include contributing pixel counts and reject empty comparisons. These
