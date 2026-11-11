@@ -1,0 +1,23 @@
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_ed1db55e3afaf1 6-15
+docs/surface-spread-refinement.md
+  s_20f6c0bf8c5b2c::t_ed1db55e3afaf1 68-119
+docs/pipeline-validation.md
+  s_20f6c0bf8c5b2c::t_ed1db55e3afaf1 93-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c94cfa7db3b3635df13393082a41d07cf9abbffa",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
