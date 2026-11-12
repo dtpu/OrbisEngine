@@ -3,6 +3,12 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
+  Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
+  accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the
+  fixed compared pixels and change no depth-ratio band labels. No acceptance verdict was
+  replaced. See [the depth-supervision checks](depth-supervision-diagnostics.md).
+
 - Local color completion alone did not remove the forest's static person remnant. Transferring
   nearby visible points' color adjustments preserved the defective texture. Replacing the
   unobserved core with nearby donors' weighted-median colors reduced that core, but the outline

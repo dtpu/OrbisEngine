@@ -1190,7 +1190,8 @@ def test_spread_regression_requires_explicit_ruler_depth_and_coverage_before_io(
     assert not (tmp_path / "out").exists()
 
 
-def test_invalid_selected_depth_fails_before_cuda_and_output(cameras, monkeypatch):
+@pytest.mark.parametrize("depth_flag", ["--lambda-depth", "--lambda-surface-depth"])
+def test_invalid_selected_depth_fails_before_cuda_and_output(cameras, monkeypatch, depth_flag):
     from PIL import Image
 
     path, data = cameras
@@ -1221,7 +1222,7 @@ def test_invalid_selected_depth_fails_before_cuda_and_output(cameras, monkeypatc
                 "0",
                 "--offpath-frame",
                 "1",
-                "--lambda-surface-depth",
+                depth_flag,
                 "1",
             ]
         )
@@ -1481,3 +1482,136 @@ def test_training_log_reports_ssim_support_and_unknown_without_windows(
     else:
         assert record["ssim"] == ss.item()
         assert f"ssim {ss.item():.3f}" in output
+
+
+@pytest.mark.parametrize("invalid", [0.0, float("nan"), float("inf"), -2.0])
+def test_masked_depth_excludes_invalid_values_before_logs_and_gradients(invalid):
+    prediction = torch.tensor([[4.0, invalid, invalid]], requires_grad=True)
+    reference = torch.tensor([[2.0, invalid, invalid]], requires_grad=True)
+    loss = trainer.expected_depth_loss(
+        prediction,
+        reference,
+        torch.tensor([[True, False, True]]),
+        torch.tensor([[True, True, False]]),
+    )
+    assert loss.item() == pytest.approx(np.log(2))
+    loss.backward()
+    torch.testing.assert_close(prediction.grad, torch.tensor([[0.25, 0.0, 0.0]]))
+    torch.testing.assert_close(reference.grad, torch.tensor([[-0.5, 0.0, 0.0]]))
+
+
+@pytest.mark.parametrize("invalid", [0.0, -1.0, float("nan"), float("inf"), -float("inf")])
+def test_masked_depth_rejects_invalid_selected_reference(invalid):
+    with pytest.raises(ValueError, match="finite and positive"):
+        trainer.expected_depth_loss(
+            torch.ones(1),
+            torch.tensor([invalid]),
+            torch.ones(1, dtype=torch.bool),
+            torch.ones(1, dtype=torch.bool),
+        )
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
+def test_masked_depth_rejects_nonfinite_selected_prediction(invalid):
+    with pytest.raises(ValueError, match="rendered depth must be finite"):
+        trainer.expected_depth_loss(
+            torch.tensor([invalid]),
+            torch.ones(1),
+            torch.ones(1, dtype=torch.bool),
+            torch.ones(1, dtype=torch.bool),
+        )
+
+
+def test_masked_depth_empty_selection_has_finite_zero_gradient():
+    prediction = torch.tensor([float("nan"), float("inf"), -1.0, 0.0], requires_grad=True)
+    loss = trainer.expected_depth_loss(
+        prediction,
+        prediction.detach(),
+        torch.tensor([False, True, False, True]),
+        torch.tensor([True, False, True, False]),
+    )
+    assert loss.item() == 0 and loss.requires_grad
+    loss.backward()
+    torch.testing.assert_close(prediction.grad, torch.zeros_like(prediction))
+
+
+def test_masked_depth_preserves_absolute_log_mean_and_prediction_clamp():
+    prediction = torch.tensor([4.0, 1.0, -2.0, 0.0], dtype=torch.float64, requires_grad=True)
+    reference = torch.tensor([2.0, 2.0, 0.1, 0.1], dtype=torch.float64)
+    selected = torch.ones(4, dtype=torch.bool)
+    loss = trainer.expected_depth_loss(prediction, reference, selected, selected)
+    assert loss.item() == pytest.approx(np.log(2))
+    loss.backward()
+    torch.testing.assert_close(
+        prediction.grad, torch.tensor([1 / 16, -1 / 4, 0, 0], dtype=torch.float64)
+    )
+
+
+@pytest.mark.parametrize("pseudo", [False, True])
+def test_actual_training_ordinary_depth_uses_masked_helper_without_opacity_exclusion(pseudo):
+    tree = ast.parse(inspect.getsource(trainer.main)).body[0]
+    loop = next(
+        node for node in tree.body if isinstance(node, ast.For) and ast.unparse(node.target) == "it"
+    )
+    start = next(
+        i
+        for i, node in enumerate(loop.body)
+        if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "use_surface"
+    )
+    end = next(
+        i
+        for i, node in enumerate(loop.body)
+        if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "tv"
+    )
+    prediction = torch.tensor([[4.0, float("nan"), float("inf")]], requires_grad=True)
+    reference = torch.tensor([[2.0, 0.0, float("nan")]])
+    supported = torch.tensor([[True, False, True]])
+    valid = torch.tensor([[[True, True, False]]])
+    rgb = torch.zeros((1, 3, 3), requires_grad=True)
+    calls = []
+
+    def depth_loss(*args):
+        calls.append(args)
+        return trainer.expected_depth_loss(*args)
+
+    def training(frame):
+        assert frame == 0 and not pseudo
+        return reference, supported
+
+    scope = dict(vars(trainer)) | dict(
+        a=SimpleNamespace(
+            lambda_surface_depth=0,
+            lambda_surface_spread_regression=0,
+            lambda_depth=0.7,
+            lambda_ssim=0,
+            densify=False,
+        ),
+        use_pseudo=pseudo,
+        model=SimpleNamespace(
+            render=lambda *_args, **_kwargs: (rgb, torch.zeros((1, 3, 1)), prediction, {})
+        ),
+        vm=torch.eye(4),
+        intrinsics=torch.eye(3),
+        W=3,
+        H=1,
+        it=1,
+        i=0,
+        gt=torch.zeros_like(rgb),
+        m=valid[0].float()[..., None],
+        win=trainer.gaussian_window(dev="cpu"),
+        wgt=1,
+        dev="cpu",
+        valid=valid,
+        depth_targets=SimpleNamespace(training=training),
+        expected_depth_loss=depth_loss,
+    )
+    exec(
+        compile(ast.Module(body=loop.body[start:end], type_ignores=[]), trainer.__file__, "exec"),
+        scope,
+    )
+    assert len(calls) == int(not pseudo)
+    assert scope["loss"].item() == pytest.approx(0 if pseudo else 0.7 * np.log(2))
+    if not pseudo:
+        assert calls[0][0] is prediction and calls[0][1] is reference
+        scope["loss"].backward()
+        torch.testing.assert_close(prediction.grad, torch.tensor([[0.175, 0, 0]]))

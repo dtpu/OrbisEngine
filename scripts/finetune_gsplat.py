@@ -155,6 +155,24 @@ def quaternion_tether(quats, reference):
     return (1 - (current * initial).sum(-1).square()).clamp(0, 1)
 
 
+def expected_depth_loss(prediction, reference, supported, valid):
+    """Mean absolute log-depth residual on fixed supported, non-person pixels.
+
+    Select before nonlinear arithmetic so excluded invalid values cannot poison gradients.
+    Opacity does not exclude targets; finite predictions retain the historical 0.05 clamp.
+    """
+    selected = supported & valid
+    target = reference[selected]
+    values = prediction[selected]
+    if not bool((torch.isfinite(target) & (target > 0)).all()):
+        raise ValueError("Supported unmasked depth must be finite and positive")
+    if not bool(torch.isfinite(values).all()):
+        raise ValueError("Supported unmasked rendered depth must be finite")
+    if not target.numel():
+        return values.sum() * 0
+    return (values.clamp(min=0.05).log() - target.log()).abs().mean()
+
+
 def surface_depth_loss(moments, alpha, reference, supported, valid, alpha_weight=0.1):
     """Penalize each visible contribution's log-depth residual, including its spread.
 
@@ -901,7 +919,7 @@ def main(argv=None):
         or np.any(depth_index >= len(depth_layers))
     ):
         raise ValueError("Depth data must map every camera to a valid supported depth layer")
-    if a.lambda_surface_depth > 0:
+    if a.lambda_depth > 0 or a.lambda_surface_depth > 0:
         validate_surface_targets(a.data, depth_layers, depth_sup, depth_index, W, H)
     source_depth = (depth_layers, depth_sup, depth_index)
     training_depth = (
@@ -1210,10 +1228,7 @@ def main(argv=None):
         loss, l1, ss, ssim_count = masked_rgb_loss(img, gt, m, win, a.lambda_ssim, wgt)
         if a.lambda_depth > 0 and not use_pseudo:
             gd, sup = depth_targets.training(i)
-            md = (sup & valid[i]).float()
-            dl = (
-                (torch.log(dep.clamp(min=0.05)) - torch.log(gd)).abs() * md
-            ).sum() / md.sum().clamp(min=1)
+            dl = expected_depth_loss(dep, gd, sup, valid[i])
             loss = loss + a.lambda_depth * dl
         else:
             dl = torch.zeros(())
