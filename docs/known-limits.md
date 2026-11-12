@@ -14,6 +14,13 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   at the saved endpoint, while a supervised control still fails height; preserving visibility
   alone is not a validated repair. See [the diagnosis](forest-observation-diagnostics.md).
 
+- A third local color candidate selected all rendered points with zero mask-clear exposure,
+  including points changed during training, and filtered visible donors before finding neighbors.
+  This reduced the bright torso-shaped remnant more than the unchanged-point probes, but a dark
+  lower-body patch, road seam and lateral distortion remain. All non-color bytes stayed identical;
+  depth remains 0/5 and foot contact 47/90. The reusable
+  [completion tool](masked-color-completion.md) is opt-in and does not establish scene acceptance.
+
 - Penalizing per-pixel depth-spread increases from frozen initialization improved the forest's
   spread checks from 0/5 to 5/5 and coverage from 4/5 to 5/5, but depth-ratio checks regressed
   from 5/5 to 0/5. Foot contact improved from 31/90 to 47/90, still below the original world's
