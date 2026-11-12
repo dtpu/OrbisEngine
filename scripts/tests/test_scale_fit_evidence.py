@@ -160,3 +160,16 @@ def test_logs_without_complete_bands_keep_the_old_report():
     one = 'depth-ratio-bands {"frame": 0, "bands": []}'
     assert run_clip.distance_bands(one, 2) is None
     assert run_clip.band_summary(None) == ""
+
+
+def test_band_summary_keeps_gate_precision_and_flags_collapsed_quartiles():
+    edge = {"band": 1, "p10": 0.8964, "median": 1.0, "p90": 1.1021}
+    split = {"frame": 0, "bands": [edge, {"band": 3, "p10": 0.75, "median": 0.88, "p90": 1.0}]}
+    collapsed = {"frame": 1, "bands": [{"band": 3, "p10": 0.9, "median": 1.0, "p90": 1.1}]}
+    summary = run_clip.band_summary([split, collapsed])
+    assert "(0.896, 1.0, 1.102)" in summary
+    assert "(0.9, 1.0, 1.1, 'only one non-empty quartile')" in summary
+
+
+def test_malformed_band_lines_are_evidence_loss_not_a_crash():
+    assert run_clip.distance_bands('depth-ratio-bands {"frame": 0, "bands": [', 1) is None

@@ -381,10 +381,13 @@ def distance_bands(log_text: str, frames: int):
 
     Descriptive evidence only: the gate still reads the whole-frame p10/median/p90.
     """
-    found = [
-        json.loads(m)
-        for m in re.findall(r"^depth-ratio-bands (\{.*\})$", log_text, flags=re.MULTILINE)
-    ]
+    try:
+        found = [
+            json.loads(m)
+            for m in re.findall(r"^depth-ratio-bands (\{.*\})$", log_text, flags=re.MULTILINE)
+        ]
+    except json.JSONDecodeError:
+        return None
     return found if found and len(found) == frames else None
 
 
@@ -396,7 +399,9 @@ def band_summary(bands) -> str:
     def pick(frame, last):
         rows = frame["bands"]
         row = rows[-1] if last else rows[0]
-        return (round(row["p10"], 2), round(row["median"], 2), round(row["p90"], 2))
+        # Three decimals, like the gate's own medians: 1.102 must not read as 1.1.
+        stats = tuple(round(row[k], 3) for k in ("p10", "median", "p90"))
+        return stats if len(rows) > 1 else (*stats, "only one non-empty quartile")
 
     near = [pick(frame, False) for frame in bands]
     far = [pick(frame, True) for frame in bands]
@@ -2899,18 +2904,17 @@ class Pipeline:
             log,
             attempts=1,
         )
+        text = log.read_text()
         rows = [
             tuple(float(x) for x in m)
-            for m in re.findall(
-                r"\(ratio ([0-9.]+)\), p10 ([0-9.]+) p90 ([0-9.]+)", log.read_text()
-            )
+            for m in re.findall(r"\(ratio ([0-9.]+)\), p10 ([0-9.]+) p90 ([0-9.]+)", text)
         ]
         if not rows:
             raise RuntimeError(f"the depth-ratio diagnostic printed no ratios; see {log}")
         figure = SHARE / f"{tag}-depth-ratio.png"
         if not figure.is_file() or figure.stat().st_size == 0:
             raise RuntimeError(f"the depth-ratio diagnostic produced no figure; see {log}")
-        return rows, figure, distance_bands(log.read_text(), len(rows))
+        return rows, figure, distance_bands(text, len(rows))
 
     def person_ply(self) -> Path:
         p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
