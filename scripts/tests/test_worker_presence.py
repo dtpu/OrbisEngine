@@ -226,7 +226,9 @@ def test_supervisor_refreshes_during_blocking_work_and_cleans_up(
         ) == run_available
         assert worker_status(tmp_path, "selected", hands_off=True)["busyWorkers"] == 1
         path = next((tmp_path / ".workers").glob("*.json"))
-        baseline = json.loads(path.read_text())["last_seen"]
+        # Capture before the next callback, not midway through its locked write.
+        with instances[0]._lock:
+            baseline = json.loads(path.read_text())["last_seen"]
         # The main supervisor is blocked here; only its background heartbeat can advance.
         assert refreshed.wait(2)
         with instances[0]._lock:

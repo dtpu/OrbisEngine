@@ -3,6 +3,34 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- Penalizing per-pixel depth-spread increases from frozen initialization improved the forest's
+  spread checks from 0/5 to 5/5 and coverage from 4/5 to 5/5, but depth-ratio checks regressed
+  from 5/5 to 0/5. Foot contact improved from 31/90 to 47/90, still below the original world's
+  90/90; a static person remnant and road seam remained. This explicitly approved fourth fit
+  used weight 1 with all previous inputs and acceptance criteria unchanged. Reduced spread
+  does not establish correct surface depth or contact; repeating this configuration is not
+  justified. No further paid execution is authorized. Evidence:
+  `.context/evidence/surface-tail-20261111/trial-04/` and
+  [the measured report](surface-spread-refinement.md#approved-forest-trial--november-11).
+
+- Applying conservative masks and full-window SSIM exclusion to the forest refinement did not
+  remove the static person outline or repair the road. All seven fixed RGB holdouts improved,
+  but all five depth-spread checks failed and only 31/90 unchanged foot contacts passed.
+  The fresh export also removed 275 source-anchor points, so this is a paired exclusion test,
+  not an isolated SSIM experiment. All three ordinary fine-tune executions are consumed,
+  including a failed app initialization; do not repeat the same fit. Evidence:
+  `.context/evidence/forest-refinement-next-20261109/trial-03/`.
+
+- The forest refinement's foot-contact regression is actual supporting-splat movement, not a
+  coordinate or SPZ import error. Holding horizontal positions fixed still leaves only 58/90
+  contacts passing, while horizontal movement alone retains 89/90. All 90 queries remain opaque.
+  Average depth error improves while the worst depth spread increases, including on mask-clear,
+  source-supported pixels; replacing log depth with a mean linear-depth loss alone is therefore
+  not an established remedy. Preserve the fixed feet and evaluation rays. A separate penalty on
+  the worst surface spread is a proposed experiment, not a validated fix, and cannot by itself
+  guarantee the correct height of a coherent surface. Evidence:
+  `.context/evidence/forest-refinement-next-20261109/surface-cause/`.
+
 - A raw-depth refinement of the forest world improved all seven RGB holdouts and passed all five
   alpha-rendered depth-ratio checks, but worsened within-pixel depth spread by 20–33%, lost too much
   opaque coverage in two unsupported regions, and reduced unchanged foot-contact passes from

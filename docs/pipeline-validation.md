@@ -82,9 +82,19 @@ and gradients. A CPU counterexample changed only excluded target pixels: pointwi
 identical, while combined loss changed by 0.0004393 and valid-background gradients changed by
 up to 0.0003837. Requiring full-window validity removes that leakage in the fixture. It reduces
 SSIM supervision near mask boundaries and does not establish its contribution to a real scene's
-ghosting or surface errors; those require a separately evaluated reconstruction.
+ghosting or surface errors. The subsequent corrected forest reconstruction still showed road
+seams and a static person outline in the real viewer; see the
+[retained trial report](fresh-upload-trial.md#corrected-exclusion-trial--november-9).
 The training log records the eligible SSIM-window count. With no eligible windows, SSIM contributes
 zero loss and its reported score is unknown rather than a fabricated perfect match.
+
+An experimental [surface-spread regression term](surface-spread-refinement.md) compares each
+training location with its frozen initialization before aggregating positive increases. Local
+checks distinguish that calculation from a mean that hides worsening pixels. One explicitly
+approved GPU trial passed all five spread and coverage checks, but failed all five depth-ratio
+checks and retained only 47/90 passing foot contacts. Its real viewer still showed a static
+person remnant and road seam. The option remains disabled by default; this measured improvement
+does not establish reconstruction or walkability acceptance.
 
 The export retains each frame's camera intrinsics, and the trainer uses them for projection,
 rendering, depth comparisons and offset views. Older exports with one `K` remain supported.

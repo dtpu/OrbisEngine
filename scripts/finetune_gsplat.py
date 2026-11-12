@@ -18,8 +18,10 @@ pushes observed opacities to 0/1.
 
 Opt-in --lambda-surface-depth penalizes alpha-normalized first/second log-depth moments
 on fixed supported non-person pixels; --surface-alpha-weight penalizes missing coverage.
+Opt-in --lambda-surface-spread-regression penalizes the worst positive per-pixel linear
+depth spread increases from frozen initialization, in explicit --surface-spread-unit native units; it requires both terms above.
 --lambda-quat-reg tethers normalized orientations to their initialization, ignoring sign.
-Both additional terms default off; position limits remain in measured native units.
+All additional terms default off; position limits remain in measured native units.
 
     python finetune_gsplat.py --data ~/w/ft-corridor --out ~/w/ft-corridor/run1 --iters 3000
 """
@@ -189,6 +191,95 @@ def surface_depth_loss(moments, alpha, reference, supported, valid, alpha_weight
     )
 
 
+def surface_spread_values(moments, alpha, supported, valid):
+    """Smoothed linear standard deviation on fixed supported, non-person pixels.
+
+    Moments are alpha-composited z/unit and (z/unit)^2. Variance is
+    max(m2/max(alpha,1e-6) - (m1/max(alpha,1e-6))^2, 0), then spread is
+    sqrt(variance+1e-6)-0.001. The smoothing scale is 0.001 explicit ruler units.
+    Double-precision subtraction cannot recover float32 raster accumulation precision.
+    Low/zero alpha stays selected; zero alpha's mathematical zero is not observed geometry.
+    """
+    selected = supported & valid
+    values = moments[selected].double()
+    opacity = alpha[selected].double()
+    if not bool(torch.isfinite(values).all() & torch.isfinite(opacity).all()):
+        raise ValueError("Supported unmasked rendered spread moments and alpha must be finite")
+    denominator = opacity.clamp_min(1e-6)
+    mean = values[..., 0] / denominator
+    variance = (values[..., 1] / denominator - mean.square()).clamp_min(0)
+    return torch.sqrt(variance + 1e-6) - 0.001
+
+
+def surface_spread_regression_loss(moments, alpha, reference, supported, valid, fraction=0.1):
+    """Worst ceil(fraction*N) positive spread increases from frozen initialization.
+
+    Clamp each pixel's increase BEFORE top-k/averaging so improvements elsewhere cannot
+    cancel deterioration. This is a regression constraint, not a physical surface target.
+    The required separate depth/coverage objective remains necessary; disappearance and
+    coherent incorrect height can still escape this spread term.
+    """
+    if not math.isfinite(fraction) or not 0 < fraction <= 1:
+        raise ValueError("Surface spread tail fraction must be finite and in (0, 1]")
+    spread = surface_spread_values(moments, alpha, supported, valid)
+    initial = reference[supported & valid].detach().double()
+    if not bool((torch.isfinite(initial) & (initial >= 0)).all()):
+        raise ValueError("Supported unmasked initial spread must be finite and nonnegative")
+    count = spread.numel()
+    if not count:
+        return spread.sum(), dict(tail_mean=None, count=0, tail_count=0)
+    increases = F.relu(spread - initial)
+    tail_count = math.ceil(fraction * count)
+    tail = increases.topk(tail_count).values.mean()
+    return tail, dict(tail_mean=tail, count=count, tail_count=tail_count)
+
+
+def initial_surface_spread_references(
+    model, frames, viewmats, Ks, width, height, targets, valid, unit
+):
+    """Capture this invocation's initial model once, before optimization, without gradients.
+
+    Call separately for training and evaluation frames/target accessors. References are
+    detached copies; no heldout reference is used to supervise a training or pseudo view.
+    """
+    references = {}
+    with torch.no_grad():
+        for frame in frames:
+            _, alpha, _, info = model.render(
+                viewmats[frame],
+                Ks[frame],
+                width,
+                height,
+                depth=True,
+                surface_depth=True,
+                surface_spread_unit=unit,
+            )
+            _, supported = targets(frame)
+            selected = supported & valid[frame]
+            spread = surface_spread_values(
+                info["linear_depth_moments"], alpha[..., 0], supported, valid[frame]
+            )
+            reference = torch.zeros_like(alpha[..., 0], dtype=torch.float64)
+            reference[selected] = spread
+            references[frame] = dict(
+                spread=reference.detach().clone(),
+                count=spread.numel(),
+                low_alpha_count=int((alpha[..., 0][selected] <= 1e-6).sum()),
+            )
+    return references
+
+
+def surface_spread_tail_record(metrics, unit, fraction):
+    """JSON-safe measured support and ruler; empty support is never reported as perfect."""
+    return dict(
+        tail_mean=float(metrics["tail_mean"].detach()) if metrics["count"] else None,
+        count=metrics["count"],
+        tail_count=metrics["tail_count"],
+        unit_native=unit,
+        tail_fraction=fraction,
+    )
+
+
 class Model:
     KEYS = ("means", "quats", "log_scales", "logit_op", "f_dc")
 
@@ -224,14 +315,23 @@ class Model:
             "n_new": int((orig_index < 0).sum()),
         }
 
-    def render(self, viewmat, K, W, H, depth=False, surface_depth=False):
+    def render(self, viewmat, K, W, H, depth=False, surface_depth=False, surface_spread_unit=None):
         from gsplat import rasterization
 
         colors = 0.5 + SH_C0 * self.p["f_dc"]
-        if surface_depth:
+        if surface_depth or surface_spread_unit is not None:
             z = (self.means @ viewmat[:3, :3].T + viewmat[:3, 3])[:, 2]
+        if surface_depth:
             log_z = z.clamp_min(0.02).log()
             colors = torch.cat((colors, log_z[:, None], log_z.square()[:, None]), dim=-1)
+        if surface_spread_unit is not None:
+            if not math.isfinite(surface_spread_unit) or surface_spread_unit <= 0:
+                raise ValueError("Surface spread unit must be finite and positive")
+            linear_start = colors.shape[-1]
+            normalized_z = z / surface_spread_unit
+            colors = torch.cat(
+                (colors, normalized_z[:, None], normalized_z.square()[:, None]), dim=-1
+            )
         out, alpha, info = rasterization(
             means=self.p["means"],
             quats=self.p["quats"],
@@ -251,6 +351,8 @@ class Model:
         )
         if surface_depth:
             info["log_depth_moments"] = out[0, ..., 3:5]
+        if surface_spread_unit is not None:
+            info["linear_depth_moments"] = out[0, ..., linear_start : linear_start + 2]
         if depth:
             return out[0, ..., :3], alpha[0], out[0, ..., -1], info
         return out[0, ..., :3], alpha[0], None, info
@@ -385,6 +487,18 @@ def validate_training_arguments(args):
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
     if args.surface_alpha_weight < 0:
         raise ValueError("--surface-alpha-weight must be nonnegative")
+    if args.surface_spread_unit is not None and args.surface_spread_unit <= 0:
+        raise ValueError("--surface-spread-unit must be positive")
+    if not 0 < args.surface_spread_tail_fraction <= 1:
+        raise ValueError("--surface-spread-tail-fraction must be in (0, 1]")
+    if args.lambda_surface_spread_regression > 0:
+        if args.surface_spread_unit is None:
+            raise ValueError("--surface-spread-unit must be explicit when tail loss is enabled")
+        if args.lambda_surface_depth <= 0 or args.surface_alpha_weight <= 0:
+            raise ValueError(
+                "--lambda-surface-depth and --surface-alpha-weight must be positive "
+                "when tail loss is enabled"
+            )
     for name in ("iters", "eval_every", "tv_every", "prune_every"):
         if getattr(args, name) < 1:
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
@@ -497,6 +611,31 @@ def depth_archive_provenance(source_path, training_path):
     return records
 
 
+def surface_spread_reference_provenance(path, camera_path, unit, train_frames, heldout_frames):
+    with path.open("rb") as stream:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    with camera_path.open("rb") as stream:
+        camera_digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            camera_digest.update(chunk)
+    return dict(
+        path=str(path.resolve()),
+        sha256=digest.hexdigest(),
+        cameras=dict(path=str(camera_path.resolve()), sha256=camera_digest.hexdigest()),
+        unit_native=unit,
+        training_frames=list(train_frames),
+        heldout_frames=list(heldout_frames),
+        semantics=(
+            "Frozen renders of this invocation's initialization, captured before optimization. "
+            "Training references use training source support/masks; heldout references use "
+            "original evaluation source support/masks and are diagnostic only. "
+            "Zero/low-alpha pixels remain selected; reference spread is not observed truth."
+        ),
+    )
+
+
 def validate_initial_quaternions(path):
     """Opt-in tether preflight before output creation or device selection."""
     with np.load(path, allow_pickle=False) as splats:
@@ -602,6 +741,24 @@ def main(argv=None):
         type=float,
         default=0.1,
         help="coverage penalty within the opt-in surface depth objective",
+    )
+    ap.add_argument(
+        "--lambda-surface-spread-regression",
+        type=float,
+        default=0.0,
+        help="weight of worst positive spread increases from initialization; requires depth and coverage",
+    )
+    ap.add_argument(
+        "--surface-spread-unit",
+        type=float,
+        default=None,
+        help="explicit positive native-unit ruler (measured body height for scene trials)",
+    )
+    ap.add_argument(
+        "--surface-spread-tail-fraction",
+        type=float,
+        default=0.1,
+        help="fraction of fixed supported non-person pixels in the worst spread tail, in (0, 1]",
     )
     ap.add_argument(
         "--lambda-quat-reg",
@@ -757,6 +914,17 @@ def main(argv=None):
         validate_initial_quaternions(a.init_npz or a.data / "splats.npz")
     if a.init_npz is not None:
         validate_initial_frame(a.init_npz, a.data / "splats.npz")
+    spread_reference_provenance = (
+        surface_spread_reference_provenance(
+            a.init_npz or a.data / "splats.npz",
+            a.data / "cameras.npz",
+            a.surface_spread_unit,
+            train_idx,
+            test_idx,
+        )
+        if a.lambda_surface_spread_regression > 0
+        else None
+    )
 
     a.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed)
@@ -825,16 +993,65 @@ def main(argv=None):
     bbox_hi = model.init["means"].max(0).values
     eval_depth_samples = {}
     eval_surface = {}
+    eval_spread = {}
+    train_spread_references = {}
+    heldout_spread_references = {}
+    if a.lambda_surface_spread_regression > 0:
+        reference_started = time.time()
+        train_spread_references = initial_surface_spread_references(
+            model,
+            train_idx,
+            viewmats,
+            Ks,
+            W,
+            H,
+            depth_targets.training,
+            valid,
+            a.surface_spread_unit,
+        )
+        heldout_spread_references = initial_surface_spread_references(
+            model,
+            test_idx,
+            viewmats,
+            Ks,
+            W,
+            H,
+            depth_targets.evaluation,
+            valid,
+            a.surface_spread_unit,
+        )
+        spread_reference_provenance["setup_seconds"] = time.time() - reference_started
+        spread_reference_provenance["render_count"] = len(train_idx) + len(test_idx)
+        spread_reference_provenance["cached_bytes"] = sum(
+            reference["spread"].numel() * reference["spread"].element_size()
+            for references in (train_spread_references, heldout_spread_references)
+            for reference in references.values()
+        )
+        print(
+            f"spread references: {len(train_idx)} train / {len(test_idx)} heldout, "
+            f"{spread_reference_provenance['cached_bytes'] / 1e6:.1f} MB, "
+            f"{spread_reference_provenance['setup_seconds']:.1f}s",
+            flush=True,
+        )
 
     def evaluate(tag):
         model_psnr = []
         derr = []
         sample_counts = []
         surface_records = []
+        spread_records = []
         with torch.no_grad():
             for i in test_idx:
                 img, al, dep, info = model.render(
-                    viewmats[i], Ks[i], W, H, depth=True, surface_depth=a.lambda_surface_depth > 0
+                    viewmats[i],
+                    Ks[i],
+                    W,
+                    H,
+                    depth=True,
+                    surface_depth=a.lambda_surface_depth > 0,
+                    surface_spread_unit=(
+                        a.surface_spread_unit if a.lambda_surface_spread_regression > 0 else None
+                    ),
                 )
                 gt = imgs[i].float() / 255
                 gd, sup = depth_targets.evaluation(i)
@@ -858,9 +1075,27 @@ def main(argv=None):
                             for key, value in metrics.items()
                         }
                     )
+                if a.lambda_surface_spread_regression > 0:
+                    reference = heldout_spread_references[i]
+                    _, metrics = surface_spread_regression_loss(
+                        info["linear_depth_moments"],
+                        al[..., 0],
+                        reference["spread"],
+                        sup,
+                        valid[i],
+                        a.surface_spread_tail_fraction,
+                    )
+                    spread_records.append(
+                        dict(frame=i, reference_low_alpha_count=reference["low_alpha_count"])
+                        | surface_spread_tail_record(
+                            metrics, a.surface_spread_unit, a.surface_spread_tail_fraction
+                        )
+                    )
         eval_depth_samples[tag] = sample_counts
         if surface_records:
             eval_surface[tag] = surface_records
+        if spread_records:
+            eval_spread[tag] = spread_records
         m = float(np.mean(model_psnr))
         dr = float(np.mean(derr))
         print(
@@ -960,8 +1195,15 @@ def main(argv=None):
             m = valid[i].float()[..., None]
             wgt = 1.0
         use_surface = a.lambda_surface_depth > 0 and not use_pseudo
+        use_spread = a.lambda_surface_spread_regression > 0 and not use_pseudo
         img, alpha, dep, info = model.render(
-            vm, intrinsics, W, H, depth=True, surface_depth=use_surface
+            vm,
+            intrinsics,
+            W,
+            H,
+            depth=True,
+            surface_depth=use_surface,
+            surface_spread_unit=a.surface_spread_unit if use_spread else None,
         )
         if a.densify and it >= a.densify_start:
             info["means2d"].retain_grad()
@@ -988,6 +1230,18 @@ def main(argv=None):
                 a.surface_alpha_weight,
             )
             loss = loss + a.lambda_surface_depth * surface
+        spread_metrics = None
+        if use_spread:
+            gd, sup = depth_targets.training(i)
+            spread_regression, spread_metrics = surface_spread_regression_loss(
+                info["linear_depth_moments"],
+                alpha[..., 0],
+                train_spread_references[i]["spread"],
+                sup,
+                valid[i],
+                a.surface_spread_tail_fraction,
+            )
+            loss = loss + a.lambda_surface_spread_regression * spread_regression
         tv = torch.zeros((), device=dev)
         if a.lambda_depth_tv > 0 and it % a.tv_every == 0:
             fr = int(np.random.choice(train_idx))
@@ -1160,6 +1414,15 @@ def main(argv=None):
                 )
             if a.lambda_quat_reg > 0:
                 rec["quaternion_tether"] = float(quat_reg.detach())
+            if a.lambda_surface_spread_regression > 0:
+                rec["surface_spread_regression"] = (
+                    surface_spread_tail_record(
+                        spread_metrics, a.surface_spread_unit, a.surface_spread_tail_fraction
+                    )
+                    | dict(reference_low_alpha_count=train_spread_references[i]["low_alpha_count"])
+                    if spread_metrics is not None
+                    else None
+                )
             log.append(rec)
             ssim_text = f"{rec['ssim']:.3f}" if rec["ssim"] is not None else "unknown (0 windows)"
             print(
@@ -1233,6 +1496,27 @@ def main(argv=None):
             stats["quaternion_tether_mean"] = float(
                 quaternion_tether(model.quats[vis], model.init["quats"][vis]).mean()
             )
+        if a.lambda_surface_spread_regression > 0:
+            stats["heldout_surface_spread_regression"] = eval_spread
+            stats["surface_spread_reference"] = spread_reference_provenance
+            stats["surface_spread_reference_support"] = {
+                role: {
+                    str(frame): {key: value for key, value in reference.items() if key != "spread"}
+                    for frame, reference in references.items()
+                }
+                for role, references in (
+                    ("training", train_spread_references),
+                    ("heldout", heldout_spread_references),
+                )
+            }
+            stats["surface_spread_regression_metric_units"] = {
+                "tail_mean": "mean worst ceil(fraction*count) positive per-pixel smoothed spread increases, in explicit ruler units; null without support",
+                "count": "fixed supported non-person pixels, independent of candidate or initial alpha",
+                "tail_count": "ceil(tail_fraction*count), including zero increases",
+                "unit_native": "explicit native units per ruler unit; never derived from metres",
+                "reference_low_alpha_count": "fixed selected initial pixels with alpha <= 1e-6; not observed surfaces",
+                "smoothing": "sqrt(max(m2/max(alpha,1e-6)-(m1/max(alpha,1e-6))^2,0)+1e-6)-0.001; moments of z/unit",
+            }
     json.dump(stats, open(a.out / "stats.json", "w"), indent=1)
     np.savez(
         a.out / "finetuned.npz",
