@@ -1,0 +1,21 @@
+scripts/run_clip.py
+  s_34dfd539a098ce::t_2cebe7b1f0cb97 384-390,402-404,2907,2910,2917
+scripts/tests/test_scale_fit_evidence.py
+  s_34dfd539a098ce::t_6aac92f559c0b1 163-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6d309e771a37cd8561452b9001d85cf7609a1cb",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
