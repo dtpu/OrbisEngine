@@ -1,0 +1,19 @@
+docs/known-limits.md
+  s_34dfd539a098ce::t_030ea9832e37d3 17-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57199fe4e3360e3b92232ea004e029260f8c89b3",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
