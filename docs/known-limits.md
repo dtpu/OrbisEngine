@@ -3,6 +3,17 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- The forest scale gate fails on distant background, not on the route. Replaying the run's own
+  scale diagnostic (unchanged inputs, scale0 0.7414, whole-frame p10 0.842–0.848) split by each
+  frame's source-depth quartiles: rays within about 4 body-heights mostly stay inside the unchanged
+  0.9–1.1 band (one marginal p90 of 1.102), while the median falls steadily with distance from
+  about 1.04 to 0.88 beyond about 7.5 body-heights. A distance-dependent disagreement between the
+  generated world and Pi3X cannot be fixed by any single scale, and fitting the world to the far
+  Pi3X depth is what moved the road in the rejected refinements. This does not establish which
+  depth is physically right and does not pass the gate; `scale-fit.json` now records these
+  `distanceBands` and the failure message quotes them. Evidence:
+  `.context/evidence/scale-distance-bands-20261112/`.
+
 - More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
   Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
   accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the

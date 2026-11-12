@@ -119,3 +119,44 @@ def test_missing_or_empty_figure_cannot_produce_a_dangling_evidence_reference(
     assert "_scale" not in stages
     assert not (p.ctx / "scale-fit.json").exists()
     assert (p.ctx / "diag-given.log").is_file()
+
+
+def test_distance_bands_are_reported_without_changing_the_gate(pipeline, monkeypatch):
+    p = pipeline
+    p.a.scale0 = 1.0
+    bands = [
+        {
+            "frame": f,
+            "bands": [
+                {"band": 0, "p10": 0.98, "median": 1.0, "p90": 1.05},
+                {"band": 3, "p10": 0.7, "median": 0.86, "p90": 1.0},
+            ],
+        }
+        for f in (0, 1)
+    ]
+
+    def invoke(command, log, **kwargs):
+        lines = ["(ratio 1.000), p10 0.840 p90 1.060"] * 2
+        lines += ["depth-ratio-bands " + json.dumps(frame) for frame in bands]
+        log.write_text("\n".join(lines))
+        tag = command[command.index("--tag") + 1]
+        (Path(command[command.index("--share") + 1]) / f"{tag}-depth-ratio.png").write_bytes(b"x")
+
+    monkeypatch.setattr(run_clip, "run", invoke)
+    assert p.go() == 1
+    stages = json.loads(p.state.path.read_text())["stages"]
+    report = json.loads((p.ctx / "scale-fit.json").read_text())
+    assert report["distanceBands"] == bands
+    assert report["spreadOk"] is False and report["gateOk"] is False
+    assert (
+        "nearest-quarter p10/median/p90 [(0.98, 1.0, 1.05), (0.98, 1.0, 1.05)]"
+        in (stages["scale_fit"]["error"])
+    )
+    assert "farthest-quarter [(0.7, 0.86, 1.0), (0.7, 0.86, 1.0)]" in stages["scale_fit"]["error"]
+
+
+def test_logs_without_complete_bands_keep_the_old_report():
+    assert run_clip.distance_bands("(ratio 1.000), p10 0.9 p90 1.1", 1) is None
+    one = 'depth-ratio-bands {"frame": 0, "bands": []}'
+    assert run_clip.distance_bands(one, 2) is None
+    assert run_clip.band_summary(None) == ""

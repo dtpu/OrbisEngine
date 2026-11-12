@@ -376,6 +376,37 @@ def body_stats(ply: Path) -> tuple[float, float]:
     return hi - lo, lo
 
 
+def distance_bands(log_text: str, frames: int):
+    """Per-frame source-depth quartile ratios from a diagnostic log, or None if incomplete.
+
+    Descriptive evidence only: the gate still reads the whole-frame p10/median/p90.
+    """
+    found = [
+        json.loads(m)
+        for m in re.findall(r"^depth-ratio-bands (\{.*\})$", log_text, flags=re.MULTILINE)
+    ]
+    return found if found and len(found) == frames else None
+
+
+def band_summary(bands) -> str:
+    """One sentence contrasting the nearest and farthest source-depth quarters per frame."""
+    if not bands:
+        return ""
+
+    def pick(frame, last):
+        rows = frame["bands"]
+        row = rows[-1] if last else rows[0]
+        return (round(row["p10"], 2), round(row["median"], 2), round(row["p90"], 2))
+
+    near = [pick(frame, False) for frame in bands]
+    far = [pick(frame, True) for frame in bands]
+    return (
+        f" By each frame's source-depth quartiles (descriptive, not a gate), "
+        f"nearest-quarter p10/median/p90 {near}; farthest-quarter {far}; see distanceBands "
+        f"in scale-fit.json."
+    )
+
+
 class Pipeline:
     def __init__(
         self, a, clip: Path | None = None, name: str | None = None, shot: dict | None = None
@@ -2879,7 +2910,7 @@ class Pipeline:
         figure = SHARE / f"{tag}-depth-ratio.png"
         if not figure.is_file() or figure.stat().st_size == 0:
             raise RuntimeError(f"the depth-ratio diagnostic produced no figure; see {log}")
-        return rows, figure
+        return rows, figure, distance_bands(log.read_text(), len(rows))
 
     def person_ply(self) -> Path:
         p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
@@ -2898,7 +2929,7 @@ class Pipeline:
         if s is None:
             s = self.placement().get("floorMatchedScale") or 1.0
             for i in range(self.a.scale_probes):
-                rows, fig = self.diag(s, i)
+                rows, fig, bands = self.diag(s, i)
                 ratios = [r for r, _, _ in rows]
                 gm = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
                 probes.append((s, gm))
@@ -2916,7 +2947,7 @@ class Pipeline:
                     f"--scale0 by hand or raise --scale-probes"
                 )
         else:
-            rows, fig = self.diag(s, "given")
+            rows, fig, bands = self.diag(s, "given")
             ratios = [r for r, _, _ in rows]
             gm = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
         p10, p90 = [lo for _, lo, _ in rows], [hi for _, _, hi in rows]
@@ -2937,6 +2968,7 @@ class Pipeline:
             medianOk=not spread,
             spreadOk=not wide,
             figure=str(fig),
+            distanceBands=bands,
         )
         # Keep the measurements available to the orchestrator even when a quality gate fails.
         (self.ctx / "scale-fit.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -2950,7 +2982,7 @@ class Pipeline:
                 f"depth ratios exceed the required spread: per-frame p10/p90 {wide} at scale0 {s:.4f} "
                 f"(want both inside {SCALE_SPREAD_BAND[0]}-{SCALE_SPREAD_BAND[1]}; medians "
                 f"{[round(r, 3) for r in ratios]}). A fitted median near 1 does not establish "
-                f"consistent depth across the visible surfaces. Read {fig}, check "
+                f"consistent depth across the visible surfaces.{band_summary(bands)} Read {fig}, check "
                 f"{self.ctx / 'frame_align.log'} and the world's geometry before passing "
                 f"--allow-scale-spread."
             )
