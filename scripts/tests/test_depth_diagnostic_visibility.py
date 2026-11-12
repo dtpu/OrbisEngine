@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bake_video_colours import diagnostic_depth_ratios
+from bake_video_colours import depth_ratio_distance_bands, diagnostic_depth_ratios
 from run_clip import SCALE_RATIO_BAND, SCALE_SPREAD_BAND
 
 
@@ -115,3 +115,38 @@ def test_report_counts_expose_partial_overlap_without_inventing_a_coverage_thres
 def test_frozen_acceptance_bands_are_unchanged():
     assert SCALE_RATIO_BAND == (0.95, 1.05)
     assert SCALE_SPREAD_BAND == (0.9, 1.1)
+
+
+def test_compared_source_depths_align_with_front_ratios():
+    source = np.array([2.0, 4.0, 6.0, 8.0])
+    ratios, _, _, compared = diagnostic_depth_ratios(
+        np.array([0, 1, 2, 3, 1]),
+        np.array([2.0, 2.0, 6.0, 9.0, 5.0]),
+        source,
+        np.array([True, True, False, True]),
+        np.ones(5, dtype=bool),
+        with_source=True,
+    )
+    np.testing.assert_array_equal(compared, [2.0, 4.0, 8.0])
+    np.testing.assert_array_equal(ratios, [1.0, 0.5, 9.0 / 8.0])
+
+
+def test_distance_bands_locate_far_compression_without_changing_whole_frame_ratios():
+    source = np.linspace(1.0, 20.0, 400)
+    # Agreement up close, a growing compression with distance: the global p10 fails.
+    ratios = np.where(source < 10, 1.0, 1.0 - 0.02 * (source - 10))
+    bands = depth_ratio_distance_bands(ratios, source)
+    assert [b["band"] for b in bands] == [0, 1, 2, 3]
+    assert sum(b["count"] for b in bands) == 400
+    assert bands[0]["sourceDepthMax"] < bands[-1]["sourceDepthMin"]
+    assert bands[0]["p10"] == bands[0]["p90"] == 1.0
+    assert bands[-1]["median"] < SCALE_SPREAD_BAND[0]
+    assert np.percentile(ratios, 10) < SCALE_SPREAD_BAND[0]
+
+
+def test_distance_bands_omit_empty_tied_quartiles_and_reject_bad_inputs():
+    bands = depth_ratio_distance_bands(np.ones(8), np.full(8, 3.0))
+    assert [(b["band"], b["count"]) for b in bands] == [(3, 8)]
+    for ratios, source in [([1.0], [1.0, 2.0]), ([], []), ([0.0], [1.0]), ([1.0], [np.nan])]:
+        with pytest.raises(ValueError):
+            depth_ratio_distance_bands(np.asarray(ratios), np.asarray(source))
