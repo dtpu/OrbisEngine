@@ -3,6 +3,17 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- Local color completion alone did not remove the forest's static person remnant. Transferring
+  nearby visible points' color adjustments preserved the defective texture. Replacing the
+  unobserved core with nearby donors' weighted-median colors reduced that core, but the outline
+  and leg-shaped remnant remained. Both local probes preserved every non-color SPZ byte;
+  depth still passed 0/5 and fixed foot contact 47/90. Seven same-CPU RGB comparisons were
+  effectively unchanged; they are not new CUDA trainer acceptance. These inferred colors are
+  not source-observed background. Neither probe is promoted or enabled in the pipeline.
+  Separately, two raised-support contributors lose all mask-clear potential footprint exposure
+  at the saved endpoint, while a supervised control still fails height; preserving visibility
+  alone is not a validated repair. See [the diagnosis](forest-observation-diagnostics.md).
+
 - Penalizing per-pixel depth-spread increases from frozen initialization improved the forest's
   spread checks from 0/5 to 5/5 and coverage from 4/5 to 5/5, but depth-ratio checks regressed
   from 5/5 to 0/5. Foot contact improved from 31/90 to 47/90, still below the original world's
