@@ -1,0 +1,22 @@
+docs/forest-observation-diagnostics.md
+  s_20f6c0bf8c5b2c::t_765fc0f20f2c17 1-10,17-109
+  s_20f6c0bf8c5b2c::t_8a533c850a49d4 11-16
+docs/known-limits.md
+  s_20f6c0bf8c5b2c::t_765fc0f20f2c17 6-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad0b1556eaf7645196f064ed3207e601ea810fb9",
+  "prompts": {},
+  "sessions": {
+    "s_20f6c0bf8c5b2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad2a-a255-7af1-a240-61b6085373f5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
