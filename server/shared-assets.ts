@@ -73,13 +73,22 @@ export function sharedAssets(
   const stallMs = dependencies.stallMs ?? 30000;
   let pinned: Promise<PinnedCatalog> | null | undefined;
   const downloads = new Map<string, Promise<string>>();
+  // Without credentials the SDK's default provider chain can wait indefinitely; a request
+  // that never settles is worse than the 503 below, so the catalog shares the download watchdog.
+  function bounded<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Shared catalog request stalled')), stallMs);
+    });
+    return Promise.race([work, stalled]).finally(() => clearTimeout(timer));
+  }
   async function catalog(): Promise<PinnedCatalog> {
     if (!pinned)
       pinned = (async () => {
-        const pointer = (await getJSON<CatalogPointer>(s3, config.catalogKey)).value;
+        const pointer = (await bounded(getJSON<CatalogPointer>(s3, config.catalogKey))).value;
         if (!/^viewer\/snapshots\/[A-Za-z0-9.-]+\.json$/.test(pointer.snapshot))
           throw new Error('Invalid snapshot pointer');
-        const value = (await getJSON<AssetCatalog>(s3, pointer.snapshot)).value;
+        const value = (await bounded(getJSON<AssetCatalog>(s3, pointer.snapshot))).value;
         if (value.schema !== 'wander.shared/1') throw new Error('Unknown shared catalog schema');
         for (const f of Object.values(value.files)) {
           if (
@@ -236,7 +245,8 @@ export function sharedAssets(
       res.statusCode = 503;
       res.setHeader('Content-Type', 'text/plain');
       res.end(
-        'Shared assets unavailable. Set the teammate credentials in .env.local and restart Vite. See docs/shared-assets.md.',
+        'Shared assets unavailable. Set the teammate credentials in .env.local and restart Vite, ' +
+          'or use WANDER_ASSETS_MODE=local for unpublished local work. See docs/shared-assets.md.',
       );
       console.error(
         `[shared-assets] ${(e as Error).name || 'Error'}; asset request failed (credentials are never logged).`,
