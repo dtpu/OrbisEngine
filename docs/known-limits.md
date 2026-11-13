@@ -40,6 +40,23 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   Tighter `--tol`/`--front` (0.1) or full-resolution decoding did not fix the canopy smear. Evidence:
   `.context/evidence/forest-colour-bake-20261113/`.
 
+- The forest canopy smear comes from depth disagreement, not decoding or splat size. Canopy
+  splats sit at about 0.83× the source depth (p10 0.56), while the ground agrees (median 1.04). A
+  splat off the source surface slides across the image as the camera moves, so averaging all 90
+  frames paints bright strokes onto it. Its colour still looks consistent (std median 0.033).
+  `--tol`/`--front` cannot fix this: they reweight each splat's frames similarly, and the weights
+  cancel in its average. The opt-in `--depth-agreement 0.1` bakes only splats whose weighted mean
+  |log depth ratio| is within the scale gate's ±10%; the rest keep the generated colour
+  (`depthGated` in `-bake.npz`). With it, 82,819 splats keep their generated colour, and the canopy
+  matches the generated world in the viewer (detail 2.48 vs 2.63 left, 4.48 vs 4.56 right; the
+  ungated bake measured 3.24 and 6.01). The verges keep the source tan. Trade-offs:
+  - a rock pile and the far roadside near the crest keep their generated bluish and lime
+    speckles, because their depth disagrees too;
+  - baked ground still has less fine texture than the generated one;
+  - geometry, depth and contact are unchanged.
+
+  Evidence: `.context/evidence/forest-canopy-20261113/`.
+
 - More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
   Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
   accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the
