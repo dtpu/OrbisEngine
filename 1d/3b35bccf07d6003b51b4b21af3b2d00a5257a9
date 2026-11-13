@@ -1,0 +1,23 @@
+docs/known-limits.md
+  s_34dfd539a098ce::t_b2d8dc4df28bf9 43-59
+scripts/bake_video_colours.py
+  s_34dfd539a098ce::t_04e037a8c41a70 390-415,878-884,985-987,1111-1113,1160-1170,1214-1216
+scripts/tests/test_bake_colour_shift.py
+  s_34dfd539a098ce::t_eca16e5bb427de 79-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d3b35bccf07d6003b51b4b21af3b2d00a5257a9",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
