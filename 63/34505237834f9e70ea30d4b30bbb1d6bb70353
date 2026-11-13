@@ -1,0 +1,22 @@
+scripts/test-shared-assets.ts
+  s_34dfd539a098ce::t_8e46cdcc1120d4 154-183
+server/shared-assets.ts
+  s_34dfd539a098ce::t_f68be86f7e4272 248-249
+  s_34dfd539a098ce::t_c31ce9d46d9017 76-84,88,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6334505237834f9e70ea30d4b30bbb1d6bb70353",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
