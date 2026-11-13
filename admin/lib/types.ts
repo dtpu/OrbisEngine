@@ -151,6 +151,7 @@ export interface GraphOptions {
   all_people: boolean;
   objects: boolean;
   finetune: boolean;
+  bake?: boolean;
   hands_off?: boolean;
 }
 

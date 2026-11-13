@@ -144,9 +144,10 @@ def inspect_inputs(root: Path, summary: dict) -> dict:
     if (
         not (options.get("all_people") or options.get("people", 1) > 1)
         or options.get("finetune")
+        or options.get("bake")
         or options.get("marble", "video") not in WORLD_SUFFIXES
     ):
-        raise ValueError("requires tracked people, an enabled world, and skip-finetune")
+        raise ValueError("requires tracked people, an enabled world, no fine-tune and no bake")
     if (
         summary.get("recordedStatus", summary["status"])
         not in {"paused", "succeeded", "failed", "canceled"}
