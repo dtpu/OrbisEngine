@@ -20,6 +20,7 @@ from orchestrator.api.viewer import (
     register_viewer_routes,
     run_name,
     scene_manifest,
+    world_suffix,
 )
 from orchestrator.worker_presence import worker_status
 
@@ -224,8 +225,7 @@ def world_preview_path(root: Path, run_id: str) -> str | None:
         mode = options.get("marble", "video")
         if mode not in WORLD_SUFFIXES:
             return None
-        suffix = "finetuned" if options.get("finetune") else WORLD_SUFFIXES[mode]
-        relative = f"marble-{run_name(root)}-{suffix}.spz"
+        relative = f"marble-{run_name(root)}-{world_suffix(options)}.spz"
         world = asset_path(root, relative)
         if world.stat().st_size == 0:
             return None

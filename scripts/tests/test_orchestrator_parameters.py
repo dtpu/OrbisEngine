@@ -131,11 +131,15 @@ class CatalogueTests(unittest.TestCase):
 
         known = set()
         for mode in MARBLE_MODES:
-            for stages, deps in (single_graph(mode), multiperson_graph(2, mode)):
-                known.update(base_step(stage) for stage in stages)
-                self.assertEqual(set(stages), set(deps))
-                for stage, required in deps.items():
-                    self.assertTrue(set(required) <= set(stages), stage)
+            for bake in (False, True):
+                for stages, deps in (
+                    single_graph(mode, bake=bake),
+                    multiperson_graph(2, mode, bake=bake),
+                ):
+                    known.update(base_step(stage) for stage in stages)
+                    self.assertEqual(set(stages), set(deps))
+                    for stage, required in deps.items():
+                        self.assertTrue(set(required) <= set(stages), stage)
         self.assertEqual(set(STEPS), known)
 
     def test_the_order_is_advice_that_at_least_holds_together(self):

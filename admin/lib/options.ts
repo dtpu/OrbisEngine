@@ -11,7 +11,10 @@ const LABELS: Record<string, string> = {
   all_people: 'Use tracked-person reconstruction',
   objects: 'Detect thrown objects',
   finetune: 'Fine-tune the generated world',
+  bake: 'Recolour the world from the video',
 };
+/** Newer options an older API may not describe; the form simply omits them there. */
+const OPTIONAL = new Set(['bake']);
 
 /** Only offer choices that this API supports, including its bounds and descriptions. */
 export function optionFields(schema: OptionsSchema): OptionField[] {
@@ -33,7 +36,7 @@ export function optionsFromSchema(schema: OptionsSchema): GraphOptions {
   });
   const defaults = Object.fromEntries(entries);
   for (const name of Object.keys(LABELS)) {
-    if (!(name in defaults))
+    if (!(name in defaults) && !OPTIONAL.has(name))
       throw new Error(`The API does not describe the ${LABELS[name]} option.`);
   }
   return defaults as unknown as GraphOptions;

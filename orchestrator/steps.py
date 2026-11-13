@@ -313,6 +313,10 @@ class RunOptions(BaseModel):
         description="Detect thrown objects. Reconstructing them in 3D requires tracked-person mode (all_people or people > 1).",
     )
     finetune: bool = False
+    bake: bool = Field(
+        default=False,
+        description="Recolour the generated world from the source video where its depth agrees; inferred colours are recorded and the static-world review still applies.",
+    )
     hands_off: bool = Field(
         default=False,
         description="Process without operator questions or automatic paid retries; preserve an unaccepted preview when checks cannot pass.",
@@ -598,6 +602,16 @@ STEPS: dict[str, Step] = {
             caution="Needs a configured fine-tune host (WANDER_GPU_BOX); there may not be one.",
         ),
         Step(
+            name="bake",
+            summary="Recolour the final world from the source video (opt-in)",
+            writes="public/marble-<name>-baked.spz and its -bake.npz receipt",
+            after=("scale_fit",),
+            caution=(
+                "Changes only colours. Splats whose depth disagrees with the source keep their "
+                "generated detail; the result still needs the static-world review."
+            ),
+        ),
+        Step(
             name="verify",
             summary="Render the static world and compare it against the source",
             writes="the review record in state.json",
@@ -632,8 +646,9 @@ def stage_graph(options: "RunOptions | dict | None" = None, people: int | None =
             options.marble,
             options.objects,
             options.finetune,
+            options.bake,
         )
-    return single_graph(options.marble, options.objects, options.finetune)
+    return single_graph(options.marble, options.objects, options.finetune, options.bake)
 
 
 def planned_steps(options: "RunOptions | dict | None" = None) -> list[str]:
