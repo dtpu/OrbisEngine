@@ -1,0 +1,50 @@
+scripts/tests/test_bake_stage.py
+  s_34dfd539a098ce::t_004d3fa231d015 1-229
+  s_34dfd539a098ce::t_a7196d2bef0075 230-245
+docs/DEVELOPING.md
+  s_34dfd539a098ce::t_5f2a7ab820c0ae 195-206
+admin/lib/format.ts
+  s_34dfd539a098ce::t_0c94910c79d25c 161
+admin/lib/options.ts
+  s_34dfd539a098ce::t_c0e4dbe61c0ec8 14,16-17,39
+admin/lib/types.ts
+  s_34dfd539a098ce::t_a02518f92ed2d9 154
+admin/tests/options.test.ts
+  s_34dfd539a098ce::t_57aad72d88843c 39-46
+orchestrator/api/progress.py
+  s_34dfd539a098ce::t_b7827c23e62764 23,228
+orchestrator/api/viewer.py
+  s_34dfd539a098ce::t_9f56e6bff6c2a2 81-89,125,213
+orchestrator/cli.py
+  s_34dfd539a098ce::t_addf67d1953f56 140-141
+orchestrator/pipeline.py
+  s_34dfd539a098ce::t_ad6a1ec9c800df 53,60-65,77,93,96-98,124
+orchestrator/retained_inputs.py
+  s_34dfd539a098ce::t_e855b533529e35 147,150
+orchestrator/run_policy.py
+  s_34dfd539a098ce::t_09f8716331dfd9 93
+orchestrator/steps.py
+  s_34dfd539a098ce::t_8c288987069d12 316-319,604-613,649,651
+scripts/bake_video_colours.py
+  s_34dfd539a098ce::t_e0c6600a3c31b5 112-117,539-588,601,611,637-638,887-903,1020-1021,1060-1062,1341-1342,1359-1364
+scripts/run_clip.py
+  s_34dfd539a098ce::t_016b352dc2f508 84-88,460,462-464,466,2651-2662,2938-3051,3170,4211-4216
+scripts/tests/test_orchestrator_parameters.py
+  s_34dfd539a098ce::t_19ce8abe696247 134-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea4417d8a433e43fe9cd525a4f9200b4f5d2e65a",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
