@@ -82,13 +82,69 @@ def tracked_masks_path(clip: str, explicit: Path | None = None) -> Path:
     return resolve_runs_root(os.environ.get("WANDER_RUNS_DIR")) / clip / "tracks" / "masks.npz"
 
 
+PERSON_M = 1.70
+HANDHELD_BAND_M = (1.15, 1.85)
+CEILING_BAND_M = (2.10, 3.60)
+MAX_CAMERA_DRIFT_M = 0.20
+SIZE_RULE = (
+    "with the person taken as 1.70 m, a handheld source camera must sit 1.15-1.85 m above the "
+    "fitted floor; outside that band the size passes only when the footage itself measures the "
+    "camera there (scripts/camera_gravity.py); floor-to-ceiling corroborates"
+)
+
+
+def judge_size(size_check: dict) -> dict:
+    """Set the size verdict from the camera height and, when measured, the footage geometry.
+
+    The handheld band is a prior about the shot. After the silhouette fit, the camera height it
+    tests is fixed by the camera's tilt against the floor and the walker's silhouette, so a
+    camera outside the band passes only when gravity from the frames' own vertical lines confirms
+    that tilt and the fitted placement shows the same height (camera_gravity.footage_verdict).
+    """
+    from camera_gravity import footage_verdict
+
+    lo, hi = HANDHELD_BAND_M
+    in_band = lo <= size_check["cameraHeightM"] <= hi
+    size_check["ceilingPlausible"] = (
+        CEILING_BAND_M[0] <= size_check["floorToCeilingM"] <= CEILING_BAND_M[1]
+    )
+    footage = size_check.get("footageGeometry")
+    measured = False
+    if footage is not None:
+        footage["verdict"] = footage_verdict(footage, size_check["cameraHeightM"] / PERSON_M)
+        measured = footage["verdict"]["verified"]
+    size_check["pass_"] = bool(in_band or measured)
+    size_check["basis"] = "measured from footage" if measured and not in_band else "handheld band"
+    size_check["rule"] = SIZE_RULE
+    trace = size_check.get("cameraHeightTrace")
+    if trace is not None:
+        trace["drifted"] = abs(trace["endToEndSlopeM"]) > MAX_CAMERA_DRIFT_M
+        trace["verdict"] = (
+            "drift"
+            if trace["drifted"]
+            else "flat in band"
+            if in_band
+            else "flat, measured from footage"
+            if measured
+            else "flat out of band"
+        )
+    return size_check
+
+
 def require_valid_size(size_check: dict, enabled: bool) -> None:
     """Gate the final body scale, including changes made by the silhouette fit."""
     if enabled and not size_check["pass_"]:
+        footage = (size_check.get("footageGeometry") or {}).get("verdict")
+        reason = (
+            " The footage did not establish that height either: " + "; ".join(footage["why"]) + "."
+            if footage
+            else ""
+        )
         raise SystemExit(
             "SIZE CHECK FAILED after placement: assuming a 1.70 m person, the source camera "
-            f"is {size_check['cameraHeightM']:.2f} m above the floor (expected 1.15–1.85). "
-            "Inspect the saved placement report and verify the world scale before continuing."
+            f"is {size_check['cameraHeightM']:.2f} m above the floor (expected 1.15–1.85)."
+            f"{reason} Inspect the saved placement report and verify the world scale before "
+            "continuing."
         )
 
 
@@ -573,6 +629,7 @@ def silhouette_fit(
         else:
             motion, samples = None, {}
         cropped_top = cropped_bottom = 0
+        footage_rows = []
         data = []
         for fi, (fr, src) in enumerate(zip(frames, seq["sourceIndices"])):
             cam = by_src.get(src)
@@ -593,6 +650,18 @@ def silhouette_fit(
             if mr is None or (mr["croppedTop"] and mr["croppedBottom"]):
                 data.append(None)
                 continue
+            if not mr["croppedTop"] and not mr["croppedBottom"]:
+                # Whole silhouettes, in source pixels, for camera_gravity.py's footage measurement.
+                columns = np.nonzero(np.asarray(mask).any(0))[0]
+                footage_rows.append(
+                    dict(
+                        sourceIndex=int(src),
+                        top=mr["top"],
+                        bottom=mr["bottom"],
+                        left=float(columns[0] / ms),
+                        right=float((columns[-1] + 1) / ms),
+                    )
+                )
             R, C, K = cam_matrices(cam, scale, [0, 0, 0])
             P = fr[0] * scale + pos0 + tr
             foot = rows_per_track[pi][fi]
@@ -752,6 +821,7 @@ def silhouette_fit(
             heightRatioMedian=float(np.median(heights)) if heights else None,
             contactResidualUnits=contacts,
             edgeResidualsPx=edge_errors,
+            footageRows=footage_rows,
             sigmaPx=sigma_px,
         )
     return result
@@ -805,6 +875,13 @@ def main():
     ap.add_argument(
         "--single-person-masks", type=Path, help="source-indexed undilated single-person archive"
     )
+    ap.add_argument(
+        "--video",
+        type=Path,
+        default=None,
+        help="the source video; lets the size check measure the camera height from the footage "
+        "(scripts/camera_gravity.py) when the camera is outside the handheld band",
+    )
     ap.add_argument("--measure-only", action="store_true")
     ap.add_argument("--scale", type=float, default=None, help="override the registration scale")
     ap.add_argument("--floor", type=float, default=None)
@@ -813,6 +890,8 @@ def main():
         ap.error("--single-person-masks requires --person and excludes --people/--masks")
     if a.single_person_masks and not a.single_person_masks.is_file():
         ap.error(f"single-person masks are missing: {a.single_person_masks}")
+    if a.video and not a.video.is_file():
+        ap.error(f"source video is missing: {a.video}")
     masks_path = tracked_masks_path(a.clip, a.masks)
     if a.world:
         # Explicit run/output roots may be outside this checkout. ROOT / an absolute path
@@ -990,32 +1069,28 @@ def main():
     # the camera-height ruler is the gate: a handheld phone is 1.15-1.85 m above the floor, it is
     # independent of the avatar entirely, and it catches every size error on record. Floor-to-ceiling
     # corroborates but does not gate, because the strongest y layer above the floor can be a soffit,
-    # a mezzanine or the top of a mirror rather than the ceiling.
-    size_ok = 1.15 <= camM <= 1.85
-    ceil_ok = 2.10 <= f2c <= 3.60
-    drifted = abs(slope_m) > 0.20
-    meta["sizeCheck"] = dict(
-        statureUnits=stature,
-        metresPerWorldUnit=mpu,
-        cameraHeightM=camM,
-        floorToCeilingM=f2c,
-        pass_=bool(size_ok),
-        ceilingPlausible=bool(ceil_ok),
-        rule="with the person taken as 1.70 m, a handheld source camera must sit 1.15-1.85 m "
-        "above the fitted floor; floor-to-ceiling corroborates",
-        cameraHeightTrace=dict(
-            metres=[round(float(x), 4) for x in trace],
-            medianM=camM,
-            p10M=float(np.percentile(trace, 10)),
-            p90M=float(np.percentile(trace, 90)),
-            endToEndSlopeM=slope_m,
-            drifted=bool(drifted),
-            verdict=("drift" if drifted else "flat in band" if size_ok else "flat out of band"),
-            note="in AVATAR metres unless scripts/world_ruler.py has adopted a "
-            "world ruler for this clip; a flat trace outside the band is a "
-            "scale error, a sloped one is solve drift",
-        ),
+    # a mezzanine or the top of a mirror rather than the ceiling. The footage can only set the band
+    # aside after the silhouette fit (judge_size), so this initial verdict is the band alone.
+    meta["sizeCheck"] = judge_size(
+        dict(
+            statureUnits=stature,
+            metresPerWorldUnit=mpu,
+            cameraHeightM=camM,
+            floorToCeilingM=f2c,
+            cameraHeightTrace=dict(
+                metres=[round(float(x), 4) for x in trace],
+                medianM=camM,
+                p10M=float(np.percentile(trace, 10)),
+                p90M=float(np.percentile(trace, 90)),
+                endToEndSlopeM=slope_m,
+                note="in AVATAR metres unless scripts/world_ruler.py has adopted a "
+                "world ruler for this clip; a flat trace outside the band is a scale error "
+                "unless the footage measures the camera there, a sloped one is solve drift",
+            ),
+        )
     )
+    size_ok = meta["sizeCheck"]["pass_"]
+    ceil_ok = meta["sizeCheck"]["ceilingPlausible"]
     print(
         f"  INITIAL SIZE CHECK: source camera {camM:.2f} m above the floor (want 1.15-1.85), "
         f"room {f2c:.2f} m floor to ceiling ({'plausible' if ceil_ok else 'IMPLAUSIBLE'}) "
@@ -1248,7 +1323,7 @@ def main():
                 {
                     k: v
                     for k, v in fit_person.items()
-                    if k not in ("contactResidualUnits", "edgeResidualsPx")
+                    if k not in ("contactResidualUnits", "edgeResidualsPx", "footageRows")
                 }
             )
             entry["solvedCm"] = 0.0
@@ -1298,12 +1373,29 @@ def main():
             ct["metres"] = [v * factor for v in ct["metres"]]
             for key in ("medianM", "p10M", "p90M", "endToEndSlopeM"):
                 ct[key] *= factor
-            sc["pass_"] = 1.15 <= sc["cameraHeightM"] <= 1.85
-            sc["ceilingPlausible"] = 2.10 <= sc["floorToCeilingM"] <= 3.60
-            ct["drifted"] = abs(ct["endToEndSlopeM"]) > 0.20
-            ct["verdict"] = (
-                "drift" if ct["drifted"] else "flat in band" if sc["pass_"] else "flat out of band"
-            )
+            # Measured only to rescue a camera outside the band; an in-band clip never decodes.
+            rows = fits.get(feats[0][0], {}).get("footageRows")
+            lo, hi = HANDHELD_BAND_M
+            if a.video and rows and not lo <= sc["cameraHeightM"] <= hi:
+                from camera_gravity import measure_footage
+
+                sc["footageGeometry"] = measure_footage(a.video, rows, cams, normal)
+            judge_size(sc)
+            footage = sc.get("footageGeometry")
+            if footage:
+                fmt = lambda value, digits: "n/a" if value is None else f"{value:.{digits}f}"  # noqa: E731
+                print(
+                    f"  FOOTAGE CAMERA HEIGHT: registration "
+                    f"{fmt(footage['registration']['bodyHeightsMedian'], 3)} body-heights, image "
+                    f"gravity {fmt(footage['image']['bodyHeightsMedian'], 3)} "
+                    f"({footage['image']['inliers'] or 0} vertical segments from "
+                    f"{footage['image']['framesSupporting']} frames, "
+                    f"{fmt(footage['image']['tiltFromFloorNormalDeg'], 2)} deg from the floor "
+                    f"normal) -> {'measured' if footage['verdict']['verified'] else 'not measured'}",
+                    flush=True,
+                )
+                for why in footage["verdict"]["why"]:
+                    print(f"    - {why}", flush=True)
             doc["silhouetteFit"]["rulerNote"] = (
                 "Metres assume the fitted primary body is 1.70 m; quote body-heights without an independent ruler."
             )
@@ -1314,8 +1406,8 @@ def main():
         json.dump(doc, open(a.report, "w"), indent=1)
     sc = doc["surface"]["sizeCheck"]
     print(
-        f"  FINAL SIZE CHECK: {'PASS' if sc['pass_'] else 'FAIL'}; source camera "
-        f"{sc['cameraHeightM'] / 1.70:.3f} body-heights above the floor; "
+        f"  FINAL SIZE CHECK: {'PASS' if sc['pass_'] else 'FAIL'} ({sc['basis']}); source camera "
+        f"{sc['cameraHeightM'] / PERSON_M:.3f} body-heights above the floor; "
         "independent world scale and visual quality still require anchor checks",
         flush=True,
     )

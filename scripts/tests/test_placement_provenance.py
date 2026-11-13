@@ -44,10 +44,14 @@ def input_path(p, kind):
         "frame": wd / "person/frame_000.ply",
         "masks": p.ctx / "tracks/masks.npz",
         "motion": p.ctx / "tracks/track_00/motion.json",
+        # The size check measures the camera's tilt from the source frames (camera_gravity.py).
+        "video": p.clip,
     }[kind]
 
 
-@pytest.mark.parametrize("kind", ["cameras", "people", "sequence", "frame", "masks", "motion"])
+@pytest.mark.parametrize(
+    "kind", ["cameras", "people", "sequence", "frame", "masks", "motion", "video"]
+)
 @pytest.mark.parametrize("change", ["mutated", "missing"])
 def test_changed_or_missing_placement_inputs_invalidate_placement_and_anchor_acceptance(
     accepted, kind, change
@@ -88,16 +92,12 @@ def test_adding_legacy_motion_metadata_invalidates_mask_only_interpretation(acce
     assert not p.anchors_are_current(p.world_spz())
 
 
-@pytest.mark.parametrize(
-    "kind", ["video", "ruler-tolerance", "ruler-model", "anchor-report", "sidecar"]
-)
+@pytest.mark.parametrize("kind", ["ruler-tolerance", "ruler-model", "anchor-report", "sidecar"])
 def test_anchor_specific_inputs_and_outputs_invalidate_only_anchor_acceptance(
     accepted, monkeypatch, kind
 ):
     p = accepted
-    if kind == "video":
-        p.clip.write_bytes(b"changed source video")
-    elif kind == "ruler-tolerance":
+    if kind == "ruler-tolerance":
         p.a.ruler_tol = 0.1
     elif kind == "ruler-model":
         monkeypatch.setenv("WANDER_METRIC_DEPTH", "another-metric-model")

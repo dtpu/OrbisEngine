@@ -14,14 +14,33 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   `distanceBands` and the failure message quotes them. Evidence:
   `.context/evidence/scale-distance-bands-20261112/`.
 
-- The forest clip's camera is elevated, so its handheld camera-height checks fail without a scale
-  error. With operator overrides (`--allow-scale-spread`, `--allow-bad-size`,
-  `--allow-weak-anchor`) on a copy of the run, place_fit cut contact from 28.8 to 2.8 cm RMS
-  (in-sample) and put the source camera 1.30 body-heights above the road. The independent
-  metric-depth ruler agrees (2.07 m against 2.21 m under the avatar assumption), and the source
-  frame's road vanishing point sits well above the walker's head. Do not widen the handheld band
-  or move the floor to pass this clip: the prior, not the scale, is wrong for it. Verify then
-  stops at its required manual static-world review. Evidence:
+- The forest clip's camera is elevated: 1.30 body-heights above the road, so the handheld band
+  fails without a scale error. place_fit cuts contact from 28.8 to 2.8 cm RMS (in-sample). The size
+  check now passes on a measurement of the footage instead of `--allow-bad-size`
+  (`scripts/camera_gravity.py`). Gravity from the frames' own tree trunks, pooled over 12 frames
+  (80 inlier segments), sits 0.60° from the fitted floor normal. It gives 1.278 body-heights
+  against the registration's 1.303. Dead ends measured on the way:
+  - The metric-depth ruler is not evidence here. DepthPro's own field of view implies a focal
+    length 1.20× the solve's, and correcting it moves the camera from 2.07 m to about 1.72 m and the
+    fitted walker to about 1.32 m. The earlier "agrees" was not a measurement.
+  - A horizon test from the registration's tilt alone reproduces the fitted 1.303 exactly. The
+    silhouette fit already enforces that geometry, so only an independent tilt adds evidence.
+  - Single-frame vanishing points on the forest are too noisy: 0.80–1.76 body-heights from 14–26
+    segments. Pooled in the track frame, they agree with the registration within 2%.
+  - On the lobby and elevator clips, the same estimator found the 9.6° and 8.0° track tilts that
+    `frame_align.py` corrects (9.8° and 7.6°). It agreed with the frame-aligned tracks within 0.6°,
+    so it does catch a wrong tilt.
+
+  Metres still assume a 1.70 m walker. Do not widen the handheld band or move the floor: a camera
+  outside the band passes only when the footage measures it there. With `--allow-scale-spread`
+  and `--allow-weak-anchor`, place_fit, anchors and verify pass on a copy of the run. Anchors still
+  records four failures:
+  - ruler: only one point anchor;
+  - silhouette area;
+  - contact noise floor;
+  - observation mask.
+
+  Evidence: `.context/evidence/forest-size-check-20261113/` and
   `.context/evidence/forest-operator-e2e-20261112/`.
 
 - Baking source-video colours onto the forest world (`bake_video_colours.py` without `--diag`)
