@@ -1,0 +1,60 @@
+scripts/camera_gravity.py
+  s_34dfd539a098ce::t_b63dc4724e877c 35,40
+  s_34dfd539a098ce::t_ba660e39cd1635 1-15,21-25,30-34,36-39,41-45,48-50,55-59,61-62,65,72-117,120-123,127-131,146-153,155-156,158-159,161,165,167-175,177,188,190,192-196,202-204,207-208,222,244,247,259,264,275-279,281-287,289-291,293,296,302,304-305,309-324,327-344,346
+  s_34dfd539a098ce::t_e7cca010d4c63b 16-20,26-29,46-47,51-54,60,63-64,66-71,118-119,124-126,132-145,154,157,160,162-164,166,176,178-187,189,191,197-201,205-206,209-221,223-243,245-246,248-258,260-263,265-274,280,288,292,294-295,297-301,303,306-308,345
+  s_34dfd539a098ce::t_08f013f41ccba9 325-326
+  s_34dfd539a098ce::t_c0737bc97dd505 347-360
+docs/DEVELOPING.md
+  s_34dfd539a098ce::t_0f5f533557f1c3 207-214
+scripts/anchor_checks.py
+  s_34dfd539a098ce::t_f8afe7d3202b11 354-355,357-358,360-365
+scripts/tests/test_placement_run_inputs.py
+  s_34dfd539a098ce::t_0254de7edeb978 86
+  s_34dfd539a098ce::t_31d56fcf69cc36 57-58,346-347
+  s_34dfd539a098ce::t_22bd42fbcaae2d 100-103
+  s_34dfd539a098ce::t_3dd5f0ca8880db 232-239
+  s_34dfd539a098ce::t_ae4c3cdcbdc00f 97-99
+  s_34dfd539a098ce::t_8c91976c4b4d31 104
+  s_34dfd539a098ce::t_091f4fe3e695b3 231
+  s_34dfd539a098ce::t_eb8433a0ba7caf 15,91-96,107,109-110,162,166-189,191-192,216
+scripts/run_clip.py
+  s_34dfd539a098ce::t_9d1e9111b4f7be 3223
+  s_34dfd539a098ce::t_9d900944eb79d9 2749-2750,2752-2753,2755,2759
+  s_34dfd539a098ce::t_8c07c122cc48b0 3182-3183
+scripts/place_solve.py
+  s_34dfd539a098ce::t_0ab7cc7951785c 1326
+  s_34dfd539a098ce::t_658c448d896038 1377,1380-1385,1387-1388,1395-1398
+  s_34dfd539a098ce::t_75a9786162d543 1386,1389-1394
+  s_34dfd539a098ce::t_2f9b7cca99f2cd 1376,1378-1379
+  s_34dfd539a098ce::t_afcbc227e03c05 653-664
+  s_34dfd539a098ce::t_2b2a6af7f63f8d 1409-1410
+  s_34dfd539a098ce::t_809b042edcf2cd 632
+  s_34dfd539a098ce::t_218cf14bf228c5 85-133,137-142,145-147
+  s_34dfd539a098ce::t_43b31dd4f6a262 878-884
+  s_34dfd539a098ce::t_c5decf467f6cfc 893-894
+  s_34dfd539a098ce::t_6d350b8f7a395b 1072-1090,1092-1093
+  s_34dfd539a098ce::t_bd089b75f7e80c 824
+docs/known-limits.md
+  s_34dfd539a098ce::t_8ec9b1bfdcbf04 17-43
+scripts/tests/test_camera_gravity.py
+  s_34dfd539a098ce::t_25211740065a8d 1-217
+  s_34dfd539a098ce::t_48188519a43a81 218-226
+scripts/tests/test_placement_provenance.py
+  s_34dfd539a098ce::t_855f136052c566 47-48,52-54,95,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5fb1aa1afe4cd495aeed646ef4e54c3724b6ec6",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
