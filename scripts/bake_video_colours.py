@@ -387,6 +387,32 @@ def anchor_cloud_cache(anchors: Path, cameras: Path, anchor_samples: str) -> Pat
     return anchors.with_name(f"static-scene-{key}.npy")
 
 
+def depth_agreement_gate(observed, sum_lr, sum_w_supported, tolerance):
+    """Keep baking only splats whose depth agrees with the source; returns (observed, gated, mean).
+
+    `sum_lr` and `sum_w_supported` accumulate weight * log(splat depth / source depth) and weight
+    over frames where the source depth is supported. A splat away from the source surface slides
+    across the image as the camera moves, so averaging every frame smears it. With a positive
+    `tolerance`, an observed splat whose weighted mean |log ratio| exceeds it, or that has no
+    supported depth, is gated out and keeps its generated colour. 0 disables the gate.
+    """
+    observed = np.asarray(observed, dtype=bool)
+    sum_lr = np.asarray(sum_lr, dtype=np.float64)
+    sum_w_supported = np.asarray(sum_w_supported, dtype=np.float64)
+    if not observed.shape == sum_lr.shape == sum_w_supported.shape:
+        raise ValueError("Depth-agreement inputs must describe the same splats")
+    if not np.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("Depth-agreement tolerance must be zero (off) or positive")
+    supported = sum_w_supported > 1e-3
+    mean_lr = np.full(observed.shape, np.nan, dtype=np.float32)
+    mean_lr[supported] = sum_lr[supported] / sum_w_supported[supported]
+    if tolerance == 0:
+        return observed.copy(), np.zeros_like(observed), mean_lr
+    agrees = supported & (np.abs(np.nan_to_num(mean_lr, nan=np.inf)) <= tolerance)
+    gated = observed & ~agrees
+    return observed & ~gated, gated, mean_lr
+
+
 def propagate_colour_shift(xyz, base_rgb, baked_rgb, observed, eligible, radius, neighbors=16):
     """Carry nearby observed colour shifts onto unobserved splats so a bake has no frustum seam.
 
@@ -850,6 +876,13 @@ def main():
     )
     ap.add_argument("--min-count", type=int, default=3)
     ap.add_argument(
+        "--depth-agreement",
+        type=float,
+        default=0.0,
+        help="bake only splats whose weighted mean |log(splat depth / source depth)| is at most "
+        "this (0 = off); others keep the generated colour, recorded as depthGated in -bake.npz",
+    )
+    ap.add_argument(
         "--shift-radius-body-heights",
         type=float,
         default=0.0,
@@ -949,6 +982,9 @@ def main():
     sum_rgb2 = torch.zeros(n, 3, device=dev)
     sum_w = torch.zeros(n, device=dev)
     count = torch.zeros(n, device=dev, dtype=torch.int32)
+    # Weighted log(splat depth / source depth) over frames where the source depth is supported.
+    sum_lr = torch.zeros(n, device=dev)
+    sum_w_supported = torch.zeros(n, device=dev)
     ratio_log = []
     legacy_ratio_log = []
     if a.diag:
@@ -1072,6 +1108,9 @@ def main():
         sum_rgb.index_add_(0, idx, pix * w[:, None])
         sum_rgb2.index_add_(0, idx, pix * pix * w[:, None])
         sum_w.index_add_(0, idx, w)
+        supported_w = w * sp.float()
+        sum_lr.index_add_(0, idx, supported_w * torch.log(torch.clamp(r, 1e-4)))
+        sum_w_supported.index_add_(0, idx, supported_w)
         count.index_add_(0, idx, (w > 0.02).int())
         if frames.index(f) % 50 == 0:
             print(
@@ -1118,6 +1157,17 @@ def main():
     sum_w = sum_w.cpu().numpy()
     count = count.cpu().numpy()
     observed = (count >= a.min_count) & (sum_w > 1e-3)
+    sum_lr = sum_lr.cpu().numpy()
+    sum_w_supported = sum_w_supported.cpu().numpy()
+    observed, depth_gated, mean_lr = depth_agreement_gate(
+        observed, sum_lr, sum_w_supported, a.depth_agreement
+    )
+    if a.depth_agreement > 0:
+        print(
+            f"depth agreement: {depth_gated.sum()} seen splats keep generated colour (mean "
+            f"|log depth ratio| > {a.depth_agreement:g} or no supported source depth)",
+            flush=True,
+        )
     marble_rgb = np.clip(0.5 + SH_C0 * spz["f_dc"], 0, 1)
     baked = marble_rgb.copy()
     baked[observed] = np.clip(sum_rgb[observed] / sum_w[observed, None], 0, 1)
@@ -1161,6 +1211,9 @@ def main():
         sum_w=sum_w.astype(np.float32),
         count=count.astype(np.int16),
         inferredShift=shifted,
+        colourStd=std.astype(np.float16),
+        meanLogDepthRatio=mean_lr.astype(np.float16),
+        depthGated=depth_gated,
         scale0=scale0,
         origin_frame=a.origin_frame,
     )
