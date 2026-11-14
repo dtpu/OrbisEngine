@@ -1,0 +1,34 @@
+scripts/motion_silhouette.py
+  s_34dfd539a098ce::t_b06b3a54d97c5a 67-150
+  s_34dfd539a098ce::t_e4f9fcce86445c 204,219
+docs/known-limits.md
+  s_34dfd539a098ce::t_d2b1785f4943db 37,41-54
+scripts/anchor_checks.py
+  s_34dfd539a098ce::t_7beb392b800d84 14-15,48-51,173,182,210,229,248,297,319
+scripts/motion_audit.py
+  s_34dfd539a098ce::t_931f409235b0a3 47,67
+scripts/tests/test_anchor_run_inputs.py
+  s_34dfd539a098ce::t_2b1fc07b2d2282 117,121,153-154,183-184,228-229,418,422
+scripts/tests/test_motion_silhouette.py
+  s_34dfd539a098ce::t_827a4f43ec9efd 110,214-278
+scripts/tests/test_silhouette_cropping.py
+  s_34dfd539a098ce::t_2da09727dafcf7 293-294
+scripts/tests/test_single_person_masks.py
+  s_34dfd539a098ce::t_6a69984f4b2015 238,243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5f4680c542119d6f81f7edb3b89f3857f8cf275",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
