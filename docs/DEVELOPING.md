@@ -214,6 +214,13 @@ must agree with the registration's within 10%. The fitted placement must show th
 `world_ruler.py` then bands that camera by the stature band times the measured ratio, not the
 handheld prior.
 
+The silhouette fit matches the edge the viewer draws to the mask's edge, not splat centres.
+- **What is drawn.** `motion_silhouette.splat_coverage` reproduces Spark's footprint. It matched the
+  live viewer at IoU 0.987 with the contact shadow hidden.
+- **How the fit uses it.** `silhouette_rows.drawn_rows` measures each frame's overhang past the
+  centre rows. place_solve fits the widened rows and records `perPerson.drawnOverhang`.
+- **Body height.** The 1.70 m body-height is the drawn body: `drawnStatureRatio` scales the stature.
+
 Two anchor checks read evidence the fit did not produce itself:
 - **Noise floor.** The silhouette fit's contact residual is in-sample; its own contact term pulls it
   down. So place_solve refits with each contiguous fifth of the clip's contact withheld, records
