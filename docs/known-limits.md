@@ -33,14 +33,36 @@ Do not retry one without a new idea, and add a line here when you measure a new 
 
   Metres still assume a 1.70 m walker. Do not widen the handheld band or move the floor: a camera
   outside the band passes only when the footage measures it there. With `--allow-scale-spread`
-  and `--allow-weak-anchor`, place_fit, anchors and verify pass on a copy of the run. Anchors still
-  records four failures:
-  - ruler: only one point anchor;
-  - silhouette area;
-  - contact noise floor;
-  - observation mask.
+  and `--allow-weak-anchor`, place_fit, anchors and verify pass on a copy of the run. Anchors
+  records two failures, both real:
+  - **Ruler: only one point anchor.** A forest road has no standard object for the VLM anchor and
+    nothing falls, so there is no second metre. Its camera band now follows the footage
+    measurement: 1.30 walker heights times the stature band.
+  - **Silhouette area: 1.168 against 0.85–1.15.** The live viewer, rendering the placed avatar from
+    source cameras 0, 98 and 162 with the world hidden, gives area ratios of 1.16, 1.22 and 1.26
+    against the source masks, so the check under-states it. Overlays show the drawn avatar
+    extends about 5% above and below the walker's mask, and wider at the shoulders. The silhouette
+    fit matches splat centres (0.5/99.5 percentile rows) to the mask's edges, so the drawn
+    footprint overhangs.
+  - **A Gaussian-coverage CPU render is not what the viewer draws.** With Spark's pre-blur and
+    cutoff it drew 5% less area than the viewer, and a model of Spark's packed-alpha path drew
+    6–9% more. The current dilation approximation is closest, at 2–5% under. Do not replace the
+    audit with either model; measure in the viewer, after Spark has re-sorted for the new camera.
+    A capture taken before the re-sort read 5% low.
 
-  Evidence: `.context/evidence/forest-size-check-20261113/` and
+  The other two checks pass on what they are named for:
+  - **Contact noise floor:** tested on the held-out contact, at 3.07 cm against a 3.03 cm floor.
+    That is at the floor, not comfortably above it: three folds give 3.20 cm, ten give 2.97 cm and
+    per-frame hold-outs 2.85 cm, as smaller blocks let the motion prior carry neighbours' contact
+    in. In-sample, the fit's own contact term pulls it to 2.79 cm.
+  - **Observation mask: the walker's never-seen shadow scores 0.00.** Gated over all mask pixels,
+    the old mean read 0.68 because it projected the avatar without its placement. Using the run's
+    own source masks, it reads 0.47: 52% of masked pixels show road a later frame saw once the
+    walker had passed. The never-seen share rises from 28% to 73% along the clip, as a follow shot
+    predicts.
+
+  Evidence: `.context/evidence/forest-anchors-20261114/`,
+  `.context/evidence/forest-size-check-20261113/` and
   `.context/evidence/forest-operator-e2e-20261112/`.
 
 - Baking source-video colours onto the forest world (`bake_video_colours.py` without `--diag`)

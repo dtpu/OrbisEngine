@@ -211,6 +211,17 @@ up to 12 frames. It needs at least 30 supporting segments from five frames, and 
 must agree with the registration's within 10%. The fitted placement must show the same height.
 `placement.json` records the measurement under `sizeCheck.footageGeometry` and the outcome under
 `sizeCheck.basis`. The height is measured in body-heights; metres still assume the 1.70 m walker.
+`world_ruler.py` then bands that camera by the stature band times the measured ratio, not the
+handheld prior.
+
+Two anchor checks read evidence the fit did not produce itself:
+- **Noise floor.** The silhouette fit's contact residual is in-sample; its own contact term pulls it
+  down. So place_solve refits with each contiguous fifth of the clip's contact withheld, records
+  that residual as `residualCm.heldOut`, and applies the noise-floor rule to it.
+- **Observation mask.** The check recounts, from the run's own source masks, which splats any frame
+  saw clear of the walker. Its `inMask` threshold applies only to the never-seen shadow. Road a
+  later frame saw is reported as `reObserved`, not gated. Untracked runs now pass their
+  single-person masks to every anchor check, the ruler included.
 
 Optional fine-tuning requires an explicitly configured GPU host (`--gpu-box` or `WANDER_GPU_BOX`)
 and an optional SSH identity (`--gpu-key` or `WANDER_GPU_KEY`); the remote host must already have

@@ -183,6 +183,23 @@ def test_exporter_accepts_all_known_source_masks(tmp_path):
     assert list(exporter.load_source_masks(path, world, cameras)) == [10, 40, 90]
 
 
+def test_ruler_and_anchor_checks_read_the_single_person_archive(tmp_path):
+    import world_ruler
+
+    path, seq, cameras, *_ = archive_fixture(tmp_path)
+    world = tmp_path / "world"
+    (world / "person").mkdir(parents=True)
+    (world / "person/sequence.json").write_text(json.dumps(seq))
+    (world / "cameras.json").write_text(json.dumps({"cameras": cameras}))
+    exact = world_ruler.person_masks_for("fixture", masks=path, world_dir=world, dilate=False)
+    assert list(exact) == [10, 40, 90]
+    assert all(exact[i].sum() == mask(top=40 + k * 10).sum() for k, i in enumerate([10, 40, 90]))
+    dilated = world_ruler.person_masks_for("fixture", masks=path, world_dir=world)
+    assert all(dilated[i].sum() > exact[i].sum() for i in exact)
+    with pytest.raises(ValueError, match="need the packaged world directory"):
+        world_ruler.person_masks_for("fixture", masks=path)
+
+
 def test_explicit_person_has_viewer_id_and_legacy_presets_keep_ids():
     cfg = {"seq": ["public/worlds/legacy-4d/person/sequence.json"]}
     assert place_solve.load_tracks(cfg)[0][0] == "legacy-4d"

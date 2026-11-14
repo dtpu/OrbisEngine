@@ -87,27 +87,10 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
     assert "--fail-on-size" in command
 
 
-@pytest.mark.parametrize(
-    "floor,size_factor,footage,accepted",
-    [
-        (-1.0, 0.7, None, True),
-        (-1.4, 2.0, None, False),
-        (-1.4, 1.0, None, True),
-        # A camera 1.18 body-heights up: outside the handheld band unless the footage measures it.
-        (-1.4, 0.7, None, False),
-        (-1.4, 0.7, "agrees", True),
-        (-1.4, 0.7, "disagrees", False),
-        # In band: the footage is never decoded.
-        (-1.4, 1.0, "agrees", True),
-        # The footage's height does not describe this fitted placement (0.41 body-heights).
-        (-1.4, 2.0, "agrees", False),
-    ],
-)
-def test_cli_gates_final_fit_and_preserves_report(
-    tmp_path, monkeypatch, floor, size_factor, footage, accepted
-):
-    """Exercise the real CLI/geometry solve; inject only a controlled silhouette fit result
-    and, where given, a controlled footage measurement (scripts/camera_gravity.py)."""
+def stub_placement_cli(tmp_path, monkeypatch, floor, size_factor, footage, held_out=0.03):
+    """The real CLI/geometry solve with only a controlled silhouette fit result and, where given,
+    a controlled footage measurement (scripts/camera_gravity.py). `held_out` is the fit's contact
+    residual, in world units, with each fold's contact withheld."""
     world = tmp_path / "external-world"
     world.mkdir()
     cameras = world / "cameras.json"
@@ -158,6 +141,7 @@ def test_cli_gates_final_fit_and_preserves_report(
                 "heightRatioMedian": 1.0,
                 "offsetUnits": [[0, 0, 0]] * 8,
                 "contactResidualUnits": [0.03] * 8,
+                "contactHeldOutUnits": [held_out] * 8,
                 "edgeResidualsPx": [1.0] * 8,
                 "footageRows": footage_rows,
             }
@@ -216,6 +200,38 @@ def test_cli_gates_final_fit_and_preserves_report(
             *(["--video", str(video)] if footage else []),
         ],
     )
+    return SimpleNamespace(
+        report=report,
+        fits=fits,
+        measured=measured,
+        masks=masks,
+        video=video,
+        footage_rows=footage_rows,
+    )
+
+
+@pytest.mark.parametrize(
+    "floor,size_factor,footage,accepted",
+    [
+        (-1.0, 0.7, None, True),
+        (-1.4, 2.0, None, False),
+        (-1.4, 1.0, None, True),
+        # A camera 1.18 body-heights up: outside the handheld band unless the footage measures it.
+        (-1.4, 0.7, None, False),
+        (-1.4, 0.7, "agrees", True),
+        (-1.4, 0.7, "disagrees", False),
+        # In band: the footage is never decoded.
+        (-1.4, 1.0, "agrees", True),
+        # The footage's height does not describe this fitted placement (0.41 body-heights).
+        (-1.4, 2.0, "agrees", False),
+    ],
+)
+def test_cli_gates_final_fit_and_preserves_report(
+    tmp_path, monkeypatch, floor, size_factor, footage, accepted
+):
+    cli = stub_placement_cli(tmp_path, monkeypatch, floor, size_factor, footage)
+    report, fits, measured, masks = cli.report, cli.fits, cli.measured, cli.masks
+    video, footage_rows = cli.video, cli.footage_rows
     if accepted:
         place_solve.main()
     else:
@@ -239,8 +255,33 @@ def test_cli_gates_final_fit_and_preserves_report(
         assert size["basis"] == "handheld band"
 
 
-@pytest.mark.parametrize("tracked", [False, True])
-def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch, tracked):
+@pytest.mark.parametrize("held_out_m,ok", [(0.05, True), (0.01, False)])
+def test_noise_floor_tests_the_held_out_contact_not_the_fit_residual(
+    tmp_path, monkeypatch, held_out_m, ok
+):
+    # The stub's in-sample residual (0.03 units, about 3 cm) is above the 2.5 cm floor in both
+    # cases. The verdict follows the residual with each fold's contact withheld instead.
+    cli = stub_placement_cli(tmp_path, monkeypatch, -1.0, 0.7, None, held_out=held_out_m)
+    place_solve.main()
+    result = json.loads(cli.report.read_text())
+    floor = result["noiseFloor"]
+    held = result["residualCm"]["heldOut"]["person"]["rms"]
+    assert held == pytest.approx(result["residualCm"]["after"]["person"]["rms"] * held_out_m / 0.03)
+    assert (held >= floor["contactCm"]) is ok
+    assert floor["ok"] is ok
+    assert floor["refusals"] == (
+        []
+        if ok
+        else [
+            "person: with each fifth's contact held out, the fitted feet still sit closer to the "
+            "floor than the contact noise floor can measure"
+        ]
+    )
+    assert "contactHeldOutUnits" not in result["perPerson"]["person"]
+
+
+@pytest.mark.parametrize("tracked,single", [(False, False), (False, True), (True, False)])
+def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch, tracked, single):
     public = tmp_path / "external-public"
     world = public / "worlds/example-4d"
     world.mkdir(parents=True)
@@ -254,6 +295,8 @@ def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch,
     pipeline.ctx = tmp_path / "separate-runs/example"
     pipeline.ctx.mkdir(parents=True)
     package_inputs(world, pipeline.ctx, tracked=tracked)
+    if single:
+        (pipeline.ctx / "single-person-masks.npz").write_bytes(b"exact source masks")
     pipeline.clip.write_bytes(b"source video")
     pipeline.state = run_clip.State(pipeline.ctx / "state.json")
     pipeline.a = SimpleNamespace(
@@ -299,6 +342,9 @@ def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch,
     }
     if tracked:
         expected["--masks"] = pipeline.ctx / "tracks/masks.npz"
+    elif single:
+        # The checks see the same exact source masks as the placement fit and the sidecar.
+        expected["--masks"] = pipeline.ctx / "single-person-masks.npz"
     else:
         assert "--masks" not in command
     for flag, path in expected.items():
@@ -308,9 +354,10 @@ def test_runner_anchor_failure_records_current_run_inputs(tmp_path, monkeypatch,
     assert exported[exported.index("--scale") + 1] == "2.5"
     assert Path(exported[exported.index("--out") + 1]) == public / "retained-world-obs.bin"
     assert Path(command[command.index("--obs-sidecar") + 1]) == public / "retained-world-obs.bin"
-    for flag in ("--world-dir", "--world", "--cameras", *(["--masks"] if tracked else [])):
+    masked = tracked or single
+    for flag in ("--world-dir", "--world", "--cameras", *(["--masks"] if masked else [])):
         assert Path(exported[exported.index(flag) + 1]) == expected[flag]
-    if not tracked:
+    if not masked:
         assert "--masks" not in exported
     assert "--no-gate" not in command
     assert pipeline.state.data["stages"]["_anchors"]["failed"] == ["ruler"]

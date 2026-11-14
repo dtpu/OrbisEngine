@@ -341,6 +341,50 @@ def test_observation_mask_uses_exact_world_placement_camera_and_masks(
     assert result["outMask"] == 1
 
 
+@pytest.mark.parametrize("maskless", [False, True])
+def test_observation_gate_reads_the_never_seen_shadow_not_road_a_later_frame_saw(
+    inputs, tmp_path, monkeypatch, maskless
+):
+    import export_observation_confidence as observation
+
+    # One fixed camera, two frames, a 2 x 2 confidence grid. The walker covers the top row in
+    # frame 7 and the left column in frame 8, so only the top-left splat is never seen clear.
+    camera = {
+        "source_image_size": [8, 8],
+        "camera_to_world": np.eye(4).tolist(),
+        "source_intrinsics": [[4, 0, 0], [0, 4, 0], [0, 0, 1]],
+    }
+    write_json(inputs["cameras"], {"cameras": [dict(camera, sourceIndex=i) for i in (7, 8)]})
+    write_json(inputs["placement"], {"registrationScale": 1})
+    mask = np.zeros((2, 8, 8), bool)
+    mask[0, :4, :] = True
+    mask[1, :, :4] = True
+    np.savez_compressed(
+        inputs["masks"], shape=mask.shape, masks=np.packbits(mask, axis=-1), indices=[7, 8]
+    )
+    splats = np.asarray([[0.5, 0.5, 1], [1.5, 0.5, 1], [0.5, 1.5, 1], [1.5, 1.5, 1]], np.float32)
+    monkeypatch.setattr(observation, "read_spz_xyz", lambda path: splats)
+    seen, _ = observation.observe(
+        splats,
+        json.loads(inputs["cameras"].read_text())["cameras"],
+        1,
+        person_masks={7: mask[0], 8: mask[1]},
+    )
+    assert seen.tolist() == [0, 1, 1, 2]
+    sidecar = tmp_path / "sidecar.bin"
+    # Built without masks, every front surface counts as seen, the walker's shadow included.
+    sidecar.write_bytes(bytes([255, 255, 255, 255] if maskless else [0, 255, 255, 255]))
+    result = anchor_checks.check_obs_mask(
+        "gym", sidecar, 2, **{k: v for k, v in inputs.items() if k != "video"}
+    )
+    assert result["inMaskAll"] == (1.0 if maskless else 0.5)
+    assert result["reObserved"] == 0.5 and result["outMask"] == 1
+    assert result["inMask"] == (1.0 if maskless else 0.0)
+    assert result["ok"] is not maskless
+    if maskless:
+        assert "occlusion shadow" in result["why"][0]
+
+
 def test_tracked_silhouette_uses_supplied_fit_and_masks_instead_of_embedded_paths(
     inputs, tmp_path, monkeypatch
 ):

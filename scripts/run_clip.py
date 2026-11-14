@@ -3251,6 +3251,9 @@ class Pipeline:
         cameras = wdir / "cameras.json"
         placement = wdir / "placement.json"
         masks = self.ctx / "tracks" / "masks.npz" if (wdir / "people.json").exists() else None
+        if masks is None and (self.ctx / "single-person-masks.npz").is_file():
+            # The same exact source masks the placement fit and the observation sidecar used.
+            masks = self.ctx / "single-person-masks.npz"
         observation = world.with_name(world.stem + "-obs.bin")
         # The observation gate needs a sidecar from these cameras and this registration.
         # Always rebuild this local measurement rather than accepting a stale shipped sidecar.
@@ -3269,10 +3272,8 @@ class Pipeline:
             str(observation),
         ]
         if masks is not None:
-            export += ["--masks", str(masks)]
-        elif (self.ctx / "single-person-masks.npz").is_file():
             # The exporter rejects unavailable selected masks; never call them background.
-            export += ["--masks", str(self.ctx / "single-person-masks.npz")]
+            export += ["--masks", str(masks)]
         run(export, self.ctx / "observation.log", attempts=1)
         cmd = [
             PY,
