@@ -235,12 +235,12 @@ def test_fitted_single_anchor_applies_person_placement_and_cannot_pass_unknowns(
     )
     import motion_silhouette
 
-    def silhouette(xyz, opacity, sizes, camera, hw, subsample):
+    def silhouette(vertex, xyz, sizes, camera, hw):
         np.testing.assert_allclose(xyz, [[1.5, 1, 1.5]])
         np.testing.assert_allclose(sizes, np.log(1.5))
         return mask(top=40 + camera["sourceIndex"] * 10)
 
-    monkeypatch.setattr(motion_silhouette, "splat_silhouette", silhouette)
+    monkeypatch.setattr(motion_silhouette, "drawn_silhouette", silhouette)
     result = anchor_checks.check_silhouette("fixture", world_dir=world)
     assert result["ok"] is True
     assert result["n"] == 8

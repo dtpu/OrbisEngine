@@ -11,7 +11,8 @@ them warns. What they replace, in order:
               1.70 m becomes a 1.5-1.9 m band that can be outvoted.
   silhouette  (§4D) IoU >= 0.75 and area ratio 0.85-1.15 against Mask R-CNN, on >= 8 frames. This is
               what "in-frame 1.00" could never be: a 1.83x avatar centred on the man scores 1.00
-              in-frame and fails the area ratio outright.
+              in-frame and fails the area ratio outright. The avatar side is the silhouette the
+              viewer draws (motion_silhouette.splat_coverage), not dilated splat centres.
   cameraTrace (§4E) the source camera's height above the fitted floor as a per-frame trace. Flat in
               1.15-1.85 m passes; flat outside it is a scale error; sloped by > 20 cm is solve drift
               and must be reported as drift, not absorbed by the placement table.
@@ -44,6 +45,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 PY = sys.executable
 
 IOU_MIN, AREA_LO, AREA_HI, MIN_FRAMES = 0.75, 0.85, 1.15, 8
+# The avatar side of IoU and area ratio is the silhouette the viewer draws, not dilated centres.
+DRAWN = (
+    "drawn silhouette: Gaussian coverage > 0.5 as Spark draws it (motion_silhouette.splat_coverage)"
+)
 OBS_IN_MASK_MAX, OBS_TEXTURED_MIN = 0.20, 0.80
 
 WORLD_DIR = {
@@ -165,7 +170,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
         gt = np.asarray(
             Image.fromarray(ground[index]).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
         )
-        pred = ms.splat_silhouette(xyz, v["opacity"], sizes, cam, hw, 30000)
+        pred = ms.drawn_silhouette(v, xyz, sizes, cam, hw)
         if gt.sum() > 500:
             rows.append(dict(iou=ms.iou(pred, gt), predPx=int(pred.sum()), gtPx=int(gt.sum())))
     return rows
@@ -174,7 +179,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
 def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
     """Audit the applied single-person transform against known exact-source observations."""
     from single_person_masks import load_archive
-    from motion_silhouette import splat_silhouette, iou
+    from motion_silhouette import drawn_silhouette, iou
     from place_solve import read_ply
 
     seq = json.loads((wd / "person" / "sequence.json").read_text())
@@ -202,9 +207,7 @@ def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
             xyz * size
             + (np.array(placement["pos0"]) + person["constantUnits"] + np.array(offset)) / scale
         )
-        predicted = splat_silhouette(
-            xyz, vertex["opacity"], sizes + np.log(size), cam, mask.shape, 30000
-        )
+        predicted = drawn_silhouette(vertex, xyz, sizes + np.log(size), cam, mask.shape)
         ratios.append(float(predicted.sum() / mask.sum()))
         overlaps.append(iou(predicted, mask))
     area = float(np.mean(ratios)) if ratios else None
@@ -223,7 +226,7 @@ def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
         areaRatio=area,
         why=why,
         inSample=True,
-        method="single person, applied placement; known source masks; CPU splat approximation; verify in live viewer",
+        method=f"single person, applied placement; known source masks; {DRAWN}",
     )
 
 
@@ -242,7 +245,7 @@ def check_silhouette(
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
         from silhouette_rows import load_track_masks, load_track_motion
-        from motion_silhouette import splat_silhouette, iou as mask_iou
+        from motion_silhouette import drawn_silhouette, iou as mask_iou
         from place_solve import read_ply
         from PIL import Image
 
@@ -291,7 +294,7 @@ def check_silhouette(
                     xyz * size
                     + (np.array(place["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
                 )
-                pred |= splat_silhouette(xyz, v["opacity"], sizes + np.log(size), cam, hw, 30000)
+                pred |= drawn_silhouette(v, xyz, sizes + np.log(size), cam, hw)
                 gt |= np.array(
                     Image.fromarray(mask).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
                 )
@@ -313,7 +316,7 @@ def check_silhouette(
             areaRatio=area,
             why=why,
             inSample=True,
-            method="all tracked people, applied placement; CPU splat approximation; verify in live viewer",
+            method=f"all tracked people, applied placement; {DRAWN}",
         )
     seq = json.loads((wd / "person" / "sequence.json").read_text())
     src = video or seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")

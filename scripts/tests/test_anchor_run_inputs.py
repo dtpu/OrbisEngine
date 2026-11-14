@@ -114,11 +114,11 @@ def test_single_person_uses_exact_cameras_masks_and_sequence(inputs, monkeypatch
 
     seen = []
 
-    def silhouette(xyz, opacity, sizes, camera, hw, subsample):
+    def silhouette(vertex, xyz, sizes, camera, hw):
         seen.append(camera)
         return np.ones(hw, bool)
 
-    monkeypatch.setattr(motion_silhouette, "splat_silhouette", silhouette)
+    monkeypatch.setattr(motion_silhouette, "drawn_silhouette", silhouette)
     result = anchor_checks.check_silhouette(
         "gym", **{k: v for k, v in inputs.items() if k != "world"}
     )
@@ -150,8 +150,8 @@ def test_single_person_rejects_missing_or_ambiguous_source_poses(
     # An image-space match must not certify geometry from a different source frame.
     monkeypatch.setattr(
         motion_silhouette,
-        "splat_silhouette",
-        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+        "drawn_silhouette",
+        lambda vertex, xyz, sizes, camera, hw: np.ones(hw, bool),
     )
     kwargs = {k: v for k, v in inputs.items() if k != "world"}
     if not supplied_masks:
@@ -180,8 +180,8 @@ def test_single_person_reordered_sequence_reads_exact_source_poses(inputs, monke
     monkeypatch.setattr(place_solve, "read_ply", read)
     monkeypatch.setattr(
         motion_silhouette,
-        "splat_silhouette",
-        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+        "drawn_silhouette",
+        lambda vertex, xyz, sizes, camera, hw: np.ones(hw, bool),
     )
     result = anchor_checks.check_silhouette(
         "gym", **{k: v for k, v in inputs.items() if k != "world"}
@@ -225,8 +225,8 @@ def test_single_person_caches_masks_for_the_explicit_source(
     )
     monkeypatch.setattr(
         motion_silhouette,
-        "splat_silhouette",
-        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+        "drawn_silhouette",
+        lambda vertex, xyz, sizes, camera, hw: np.ones(hw, bool),
     )
     kwargs = {k: v for k, v in inputs.items() if k not in {"world", "masks"}}
     assert anchor_checks.check_silhouette("gym", **kwargs)["ok"] is True
@@ -415,11 +415,11 @@ def test_tracked_silhouette_uses_supplied_fit_and_masks_instead_of_embedded_path
     write_json(inputs["placement"], place)
     seen = []
 
-    def silhouette(xyz, opacity, sizes, camera, hw, subsample):
+    def silhouette(vertex, xyz, sizes, camera, hw):
         seen.append((xyz, camera))
         return np.ones(hw, bool)
 
-    monkeypatch.setattr(motion_silhouette, "splat_silhouette", silhouette)
+    monkeypatch.setattr(motion_silhouette, "drawn_silhouette", silhouette)
     kwargs = {k: v for k, v in inputs.items() if k != "world"}
     kwargs["masks"] = tracked
     result = anchor_checks.check_silhouette("gym", **kwargs)
