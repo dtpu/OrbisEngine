@@ -1,0 +1,37 @@
+docs/DEVELOPING.md
+  s_34dfd539a098ce::t_205a5574fa0d77 214-224
+docs/known-limits.md
+  s_34dfd539a098ce::t_ed4e331e36b02e 36-51,53-65
+scripts/anchor_checks.py
+  s_34dfd539a098ce::t_e64cf9236b1f25 19-26,380-386,402,404-413,437-442,444,485,488-489,491-497,503-504,508-510,517-526
+scripts/place_solve.py
+  s_34dfd539a098ce::t_daa27c6d81667d 87-89,703-710,712-713,715-727,729-793,812-818,841,1345-1351,1356-1358,1361-1363,1380-1383,1385-1388,1390
+scripts/run_clip.py
+  s_34dfd539a098ce::t_f98f416e6e2beb 3254-3256,3276
+scripts/tests/test_anchor_run_inputs.py
+  s_34dfd539a098ce::t_338f89c5458bfa 344-387
+scripts/tests/test_camera_gravity.py
+  s_34dfd539a098ce::t_d8924e02fdd98d 15,223-245
+scripts/tests/test_placement_run_inputs.py
+  s_34dfd539a098ce::t_835b198fe21c4c 90-93,144,203-234,258-284,298-299,345-347,357-358,360
+scripts/tests/test_single_person_masks.py
+  s_34dfd539a098ce::t_915a9a05f7e8c9 186-202
+scripts/world_ruler.py
+  s_34dfd539a098ce::t_881a509d397986 30-31,847-871,936-951,1143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35e43115b23cd637f17daf4d6d409c5373cfbc10",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
