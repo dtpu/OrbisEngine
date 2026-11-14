@@ -314,6 +314,8 @@ def test_runner_prepares_masks_before_receipt_and_solve_and_tracks_source_change
     )
     decoder = ROOT / "worker/wander_worker/source_timing.py"
     assert receipt["files"][str(decoder.resolve())] == spm.sha256(decoder)
+    renderer = ROOT / "scripts/motion_silhouette.py"  # the fit matches the drawn silhouette
+    assert receipt["files"][str(renderer.resolve())] == spm.sha256(renderer)
     assert receipt == pipeline.placement_inputs(world_file)
     pipeline.clip.write_bytes(b"different source")
     assert receipt != pipeline.placement_inputs(world_file)

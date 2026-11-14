@@ -146,6 +146,36 @@ def project(P, R, C, K):
     return u, v, z, ok
 
 
+def drawn_rows(P, opacity, log_scales, quats, R, C, K):
+    """mask_rows of the silhouette the viewer draws (motion_silhouette.splat_coverage > 0.5).
+
+    Rendered on a canvas that follows the projected splats, so the image border never clips it:
+    these are the rows the drawn body would occupy, comparable with an uncropped mask edge.
+    Returns None when no splat is in front of the camera.
+    """
+    from motion_silhouette import MAX_FOOTPRINT_PX, splat_coverage
+
+    u, v, _z, ok = project(P, R, C, K)
+    if not ok.any():
+        return None
+    pad = MAX_FOOTPRINT_PX + 2
+    u0, v0 = int(np.floor(u[ok].min())) - pad, int(np.floor(v[ok].min())) - pad
+    width = int(np.ceil(u[ok].max())) + pad - u0
+    height = int(np.ceil(v[ok].max())) + pad - v0
+    shifted = np.array(K, float)
+    shifted[0, 2] -= u0
+    shifted[1, 2] -= v0
+    camera = dict(
+        camera_to_world=np.vstack([np.column_stack([R, C]), [0, 0, 0, 1]]).tolist(),
+        source_intrinsics=shifted.tolist(),
+    )
+    cover = splat_coverage(P, opacity, log_scales, quats, camera, (height, width))
+    rows = mask_rows(cover > 0.5, 1.0, height)
+    if rows is None:
+        return None
+    return dict(top=rows["top"] + v0, bottom=rows["bottom"] + v0)
+
+
 def avatar_rows(P, R, C, K):
     _u, v, z, ok = project(P, R, C, K)
     if ok.sum() < 50:

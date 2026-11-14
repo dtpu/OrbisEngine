@@ -180,6 +180,23 @@ def person_frames(seq_json: Path):
         yield np.stack([P["x"][m], P["y"][m], P["z"][m]], 1), np.stack([P["x"], P["y"], P["z"]], 1)
 
 
+def splat_footprints(seq_json: Path):
+    """frame index -> the splats the viewer draws for that sequence frame, read on demand."""
+    seq = json.load(open(seq_json))
+    base = Path(seq_json).parent
+
+    def load(index):
+        P = read_ply(base / seq["frames"][index])
+        return dict(
+            xyz=np.stack([P["x"], P["y"], P["z"]], 1).astype(float),
+            logScales=np.stack([P["scale_0"], P["scale_1"], P["scale_2"]], 1).astype(float),
+            quats=np.stack([P[f"rot_{i}"] for i in range(4)], 1).astype(float),
+            opacity=np.asarray(P["opacity"], float),
+        )
+
+    return load
+
+
 # ---------------------------------------------------------------- surfaces
 def fit_plane(R, y0_pct=12, band=0.055, iters=12, seed=None):
     """y = c0 x + c1 z + c2 through the dominant low surface (share/elevator-status.md section 3).
@@ -562,6 +579,7 @@ def silhouette_fit(
     stature,
     size_prior,
     single_person_masks=None,
+    footprints=None,
 ):
     """Fit each person's ray depth from observed silhouette height, without changing articulation.
 
@@ -569,6 +587,11 @@ def silhouette_fit(
     A normal-plane translation permits vertical registration; contact remains a measured residual,
     not an exact constraint. Missing/cropped measurements do not invent a complete body height.
     Tables follow each sequence's sourceIndices (including gaps), never its manifest offset.
+
+    `footprints[i]`, when given, returns person i's splats for a sequence frame (splat_footprints).
+    The mask is the walker's visible edge, so the avatar is fitted by the edge the viewer DRAWS:
+    its splat-centre rows widened by each frame's measured overhang, a fraction of the body's
+    height that is re-measured where the fit puts the body. Without footprints, centre rows.
     """
     from silhouette_rows import (
         load_track_masks,
@@ -576,6 +599,7 @@ def silhouette_fit(
         mask_rows,
         cam_matrices,
         avatar_rows,
+        drawn_rows,
     )
 
     single_masks = None
@@ -621,6 +645,15 @@ def silhouette_fit(
                     f"{context}: invalid silhouette projection (nonfinite/unordered rows or depth)"
                 )
             return rows
+
+        def fitted_rows(points, data, phase):
+            """The rows the viewer draws: centre rows widened by this frame's measured overhang."""
+            rows = measured_rows(points, data, phase)
+            top, bottom = data.get("overhang", (0.0, 0.0))
+            height = rows["bottom"] - rows["top"]
+            return dict(
+                rows, top=rows["top"] - top * height, bottom=rows["bottom"] + bottom * height
+            )
 
         man = tracks[pi][3]
         if not man and single_masks is None:
@@ -687,6 +720,7 @@ def silhouette_fit(
                     contact=foot["res"],
                     depth=depth,
                     sourceIndex=src,
+                    frame=fi,
                 )
             )
         if sum(d is not None for d in data) < 3:
@@ -699,6 +733,37 @@ def silhouette_fit(
         # Missing samples borrow a basis, but receive no fabricated silhouette observation.
         have = [i for i, d in enumerate(data) if d is not None]
         basis = [data[i] or data[min(have, key=lambda k: abs(k - i))] for i in range(nf)]
+        footprint = footprints[pi] if footprints else None
+
+        def measure_overhang(size, shifts):
+            """Per frame, how far the drawn body extends past its centre rows, as fractions of
+            the centre-row height, with the body at this size and these shifts."""
+            for i, d in enumerate(data):
+                if d is None:
+                    continue
+                splats = footprint(d["frame"])
+                body = splats["xyz"] * scale + pos0 + tr
+                drawn = drawn_rows(
+                    d["F"] + (body - d["F"]) * size + shifts[i],
+                    splats["opacity"],
+                    splats["logScales"] + np.log(scale * size),
+                    splats["quats"],
+                    d["R"],
+                    d["C"],
+                    d["K"],
+                )
+                if drawn is None:
+                    raise ValueError(
+                        f"track {tid}, sourceIndex {d['sourceIndex']}: no drawn silhouette"
+                    )
+                centre = measured_rows(
+                    d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "drawn overhang"
+                )
+                height = centre["bottom"] - centre["top"]
+                d["overhang"] = (
+                    (centre["top"] - drawn["top"]) / height,
+                    (drawn["bottom"] - centre["bottom"]) / height,
+                )
 
         def solve(held_out=frozenset()):
             """Gauss-Newton on every row; frames in `held_out` keep their silhouette but not
@@ -719,15 +784,15 @@ def silhouette_fit(
                         continue
                     D = x[2 * i] * d["u"] + x[2 * i + 1] * d["w"]
                     body = (d["P"] - d["F"]) * np.exp(x[-1])
-                    ar = measured_rows(d["F"] + body + D, d, "base")
+                    ar = fitted_rows(d["F"] + body + D, d, "base")
                     eps = max(1e-5, d["depth"] * 0.001)
                     jac = []
                     for name, direction in (("u", d["u"]), ("w", d["w"])):
-                        other = measured_rows(
+                        other = fitted_rows(
                             d["F"] + body + D + eps * direction, d, f"{name} perturbation"
                         )
                         jac.append([(other[k] - ar[k]) / eps for k in ("top", "bottom")])
-                    other = measured_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
+                    other = fitted_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
                     jac.append([(other[k] - ar[k]) / 0.001 for k in ("top", "bottom")])
                     jac = np.array(jac).T
                     mr = d["mask"]
@@ -790,9 +855,22 @@ def silhouette_fit(
                     break
             return x
 
+        def shifts_of(x):
+            return np.array(
+                [x[2 * i] * d["u"] + x[2 * i + 1] * d["w"] for i, d in enumerate(basis)]
+            )
+
+        if footprint is not None:
+            measure_overhang(1.0, np.zeros((nf, 3)))
         x = solve()
-        shifts = np.array([x[2 * i] * d["u"] + x[2 * i + 1] * d["w"] for i, d in enumerate(basis)])
-        size = float(np.exp(x[-1]))
+        shifts, size = shifts_of(x), float(np.exp(x[-1]))
+        if footprint is not None:
+            # The overhang scales with the body's apparent size: re-measure it where the first
+            # pass put the body, refit, and measure once more so every reported edge is drawn.
+            measure_overhang(size, shifts)
+            x = solve()
+            shifts, size = shifts_of(x), float(np.exp(x[-1]))
+            measure_overhang(size, shifts)
         # Group scaling is about the origin; compensate so this fit scales about each foot.
         feet = np.array([[r["x"], r["y"], r["z"]] for r in rows_per_track[pi]])
         offsets = shifts + (1 - size) * (feet - pos0 - tr)
@@ -800,7 +878,7 @@ def silhouette_fit(
         for i, d in enumerate(data):
             if d is None:
                 continue
-            ar = measured_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "final")
+            ar = fitted_rows(d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "final")
             if not d["mask"]["croppedTop"] and not d["mask"]["croppedBottom"]:
                 heights.append(
                     (ar["bottom"] - ar["top"]) / (d["mask"]["bottom"] - d["mask"]["top"])
@@ -837,6 +915,22 @@ def silhouette_fit(
                 else "mask boundary only (legacy motion metadata absent)",
             ),
             heightRatioMedian=float(np.median(heights)) if heights else None,
+            **(
+                dict(
+                    rowsFitted="drawn",
+                    drawnOverhang=dict(
+                        topMedian=float(np.median([data[i]["overhang"][0] for i in have])),
+                        bottomMedian=float(np.median([data[i]["overhang"][1] for i in have])),
+                        unit="fraction of the splat-centre row height",
+                    ),
+                    # The drawn body, not its splat centres, is what the mask's edges measure.
+                    drawnStatureRatio=float(
+                        np.median([1 + sum(data[i]["overhang"]) for i in have])
+                    ),
+                )
+                if footprint is not None
+                else dict(rowsFitted="splat centres")
+            ),
             contactResidualUnits=contacts,
             contactHeldOutUnits=[held_out[i] for i in have],
             edgeResidualsPx=edge_errors,
@@ -1334,6 +1428,7 @@ def main():
             stature,
             a.silhouette_size_prior,
             **({"single_person_masks": a.single_person_masks} if a.single_person_masks else {}),
+            footprints=[splat_footprints(seq) for _tid, seq, _tr, _man in tracks],
         )
         for tid, fit_person in fits.items():
             entry = doc["perPerson"][tid]
@@ -1390,8 +1485,10 @@ def main():
                 if held.get(tid, res)["rms"] < a.sigma_contact_cm
             ]
             doc["noiseFloor"]["ok"] = not doc["noiseFloor"]["refusals"]
-            # Keep the stated ruler: the fitted primary body is assumed to be 1.70 m.
-            primary_size = fits.get(feats[0][0], {}).get("sizeScale", 1.0)
+            # Keep the stated ruler: the fitted primary body, as the viewer draws it -- the body
+            # whose edges the masks measure -- is assumed to be 1.70 m.
+            primary = fits.get(feats[0][0], {})
+            primary_size = primary.get("sizeScale", 1.0) * primary.get("drawnStatureRatio", 1.0)
             factor = 1 / primary_size
             doc["metresPerWorldUnit"] *= factor
             doc["sigmaContactCm"] *= factor
@@ -1433,7 +1530,7 @@ def main():
                 for why in footage["verdict"]["why"]:
                     print(f"    - {why}", flush=True)
             doc["silhouetteFit"]["rulerNote"] = (
-                "Metres assume the fitted primary body is 1.70 m; quote body-heights without an independent ruler."
+                "Metres assume the fitted primary body, as drawn, is 1.70 m; quote body-heights without an independent ruler."
             )
     out.parent.mkdir(parents=True, exist_ok=True)
     json.dump(doc, open(out, "w"), indent=1)
