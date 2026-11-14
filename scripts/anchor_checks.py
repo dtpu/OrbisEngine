@@ -11,15 +11,20 @@ them warns. What they replace, in order:
               1.70 m becomes a 1.5-1.9 m band that can be outvoted.
   silhouette  (§4D) IoU >= 0.75 and area ratio 0.85-1.15 against Mask R-CNN, on >= 8 frames. This is
               what "in-frame 1.00" could never be: a 1.83x avatar centred on the man scores 1.00
-              in-frame and fails the area ratio outright.
+              in-frame and fails the area ratio outright. The avatar side is the silhouette the
+              viewer draws (motion_silhouette.splat_coverage), not dilated splat centres.
   cameraTrace (§4E) the source camera's height above the fitted floor as a per-frame trace. Flat in
               1.15-1.85 m passes; flat outside it is a scale error; sloped by > 20 cm is solve drift
               and must be reported as drift, not absorbed by the placement table.
   noiseFloor  (§4J) GUARDRAILS' rule in code: a solve whose residual sits below its own measurement
-              noise, or whose "after" equals its "before", refuses instead of reporting.
-  obsMask     (§4F) the observation sidecar must be ~0 inside the walker's mask and ~1 on textured
-              non-person pixels. The old sidecar was neither: with no person mask, the walker's
-              occlusion shadow was the front surface of the cloud and scored fully observed.
+              noise, or whose "after" equals its "before", refuses instead of reporting. For the
+              silhouette fit the residual tested is held out (place_solve.py's
+              residualCm.heldOut): each fifth of the clip refit without its contact term, so the
+              contact term cannot pull its own residual under the floor.
+  obsMask     (§4F) the observation sidecar must be ~0 on the walker's occlusion shadow -- mask pixels
+              no source frame saw clear of him -- and ~1 on textured non-person pixels. The old
+              sidecar was neither: with no person mask, the walker's occlusion shadow was the front
+              surface of the cloud and scored fully observed.
 """
 
 from __future__ import annotations
@@ -40,6 +45,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 PY = sys.executable
 
 IOU_MIN, AREA_LO, AREA_HI, MIN_FRAMES = 0.75, 0.85, 1.15, 8
+# The avatar side of IoU and area ratio is the silhouette the viewer draws, not dilated centres.
+DRAWN = (
+    "drawn silhouette: Gaussian coverage > 0.5 as Spark draws it (motion_silhouette.splat_coverage)"
+)
 OBS_IN_MASK_MAX, OBS_TEXTURED_MIN = 0.20, 0.80
 
 WORLD_DIR = {
@@ -161,7 +170,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
         gt = np.asarray(
             Image.fromarray(ground[index]).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
         )
-        pred = ms.splat_silhouette(xyz, v["opacity"], sizes, cam, hw, 30000)
+        pred = ms.drawn_silhouette(v, xyz, sizes, cam, hw)
         if gt.sum() > 500:
             rows.append(dict(iou=ms.iou(pred, gt), predPx=int(pred.sum()), gtPx=int(gt.sum())))
     return rows
@@ -170,7 +179,7 @@ def single_silhouette_rows(wd, cameras, video, masks, n):
 def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
     """Audit the applied single-person transform against known exact-source observations."""
     from single_person_masks import load_archive
-    from motion_silhouette import splat_silhouette, iou
+    from motion_silhouette import drawn_silhouette, iou
     from place_solve import read_ply
 
     seq = json.loads((wd / "person" / "sequence.json").read_text())
@@ -198,9 +207,7 @@ def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
             xyz * size
             + (np.array(placement["pos0"]) + person["constantUnits"] + np.array(offset)) / scale
         )
-        predicted = splat_silhouette(
-            xyz, vertex["opacity"], sizes + np.log(size), cam, mask.shape, 30000
-        )
+        predicted = drawn_silhouette(vertex, xyz, sizes + np.log(size), cam, mask.shape)
         ratios.append(float(predicted.sum() / mask.sum()))
         overlaps.append(iou(predicted, mask))
     area = float(np.mean(ratios)) if ratios else None
@@ -219,7 +226,7 @@ def fitted_single_silhouette(wd, cameras, placement, n, masks=None):
         areaRatio=area,
         why=why,
         inSample=True,
-        method="single person, applied placement; known source masks; CPU splat approximation; verify in live viewer",
+        method=f"single person, applied placement; known source masks; {DRAWN}",
     )
 
 
@@ -238,7 +245,7 @@ def check_silhouette(
         # Audit what the viewer now draws, including every track and its fitted rigid transform.
         # These are the fitting masks: an in-sample consistency check, not held-out validation.
         from silhouette_rows import load_track_masks, load_track_motion
-        from motion_silhouette import splat_silhouette, iou as mask_iou
+        from motion_silhouette import drawn_silhouette, iou as mask_iou
         from place_solve import read_ply
         from PIL import Image
 
@@ -287,7 +294,7 @@ def check_silhouette(
                     xyz * size
                     + (np.array(place["pos0"]) + pp["constantUnits"] + np.array(offset)) / scale
                 )
-                pred |= splat_silhouette(xyz, v["opacity"], sizes + np.log(size), cam, hw, 30000)
+                pred |= drawn_silhouette(v, xyz, sizes + np.log(size), cam, hw)
                 gt |= np.array(
                     Image.fromarray(mask).resize((hw[1], hw[0]), Image.Resampling.NEAREST)
                 )
@@ -309,7 +316,7 @@ def check_silhouette(
             areaRatio=area,
             why=why,
             inSample=True,
-            method="all tracked people, applied placement; CPU splat approximation; verify in live viewer",
+            method=f"all tracked people, applied placement; {DRAWN}",
         )
     seq = json.loads((wd / "person" / "sequence.json").read_text())
     src = video or seq.get("sourceClip") or str(ROOT / "public" / "clips" / f"{clip}.mp4")
@@ -373,7 +380,13 @@ def check_noise_floor(place: dict) -> dict:
         return dict(
             ok=False, why=["placement.json predates the noise-floor rule; re-run place_solve.py"]
         )
-    return dict(ok=bool(nf["ok"]), why=list(nf["refusals"]), contactCm=nf["contactCm"])
+    held = (place.get("residualCm") or {}).get("heldOut") or {}
+    return dict(
+        ok=bool(nf["ok"]),
+        why=list(nf["refusals"]),
+        contactCm=nf["contactCm"],
+        **({"heldOutRmsCm": {k: v["rms"] for k, v in held.items()}} if held else {}),
+    )
 
 
 def check_obs_mask(
@@ -389,13 +402,18 @@ def check_obs_mask(
 ) -> dict:
     """§4F: the confidence must be ~0 where the walker stood and ~1 on real textured surface.
 
-    Read the two numbers together. `inMask` is high for a good reason as well as a bad one: where the
+    A pixel inside the walker's mask is high for a good reason as well as a bad one: where the
     walker moves across a room, the wall he covered at frame f is in plain view at frame f+k, and
-    that wall is genuinely observed. The threshold bites on the case the review is about -- a walker
-    who covers the same patch for the whole clip, so nothing ever saw behind him. Measured on lobby,
-    turning the person mask on moved 0.95 % of splats and dropped those by 0.27 on average, while
-    `inMask` stayed at 0.99: on that clip the shadow really is re-observed. A clip where `inMask`
-    stays near 1 AND the mask changes nothing is the one to distrust.
+    that wall is genuinely observed. Measured on lobby, turning the person mask on moved 0.95 % of
+    splats and dropped those by 0.27 on average, while the in-mask mean stayed at 0.99: on that
+    clip the shadow really is re-observed. A follow shot is the same at every frame -- the road
+    behind the walker comes into view once he has passed it.
+
+    So the threshold bites on the walker's occlusion SHADOW: mask pixels whose front splat no
+    source frame saw clear of the walker, recounted here from the run's own masks and cameras
+    (`inMask`). A sidecar built without masks, or from other masks, cameras or scale, scores those
+    splats as observed and fails. Pixels a later frame did see are reported, not gated:
+    `reObserved` is their share of the mask and `inMaskAll` the old mean over every mask pixel.
     """
     import export_observation_confidence as eo
 
@@ -419,13 +437,14 @@ def check_obs_mask(
             why=[f"{sidecar.name} has {len(conf):,} entries, {world.name} has {len(xyz):,} splats"],
         )
     cams = json.loads((cameras or wd / "cameras.json").read_text())["cameras"]
-    ground = None
-    if masks is not None:
-        from world_ruler import person_masks_for
-
-        ground = person_masks_for(clip, masks=masks, world_dir=wd, dilate=False)
+    ground = None if masks is None else eo.load_source_masks(Path(masks), wd, cams)
+    # Which splats did any source frame see clear of the walker? The exporter's own definition,
+    # recounted from this run's masks rather than read back from the sidecar under test.
+    seen, _ = eo.observe(
+        xyz, cams, scale0, world_dir=wd if ground is None else None, person_masks=ground
+    )
     pick = [cams[i] for i in np.linspace(0, len(cams) - 1, frames).round().astype(int)]
-    ins, outs = [], []
+    shadows, ins, outs, reobserved = [], [], [], []
     for c in pick:
         W, H = c["source_image_size"]
         ds = 4
@@ -466,30 +485,48 @@ def check_obs_mask(
         zb = np.full(gw * gh, np.inf)
         np.minimum.at(zb, flat, z[ok])
         img = np.full(gw * gh, np.nan, np.float32)
+        splat = np.full(gw * gh, -1)
         front = z[ok] <= zb[flat] * 1.01
         img[flat[front]] = conf[np.nonzero(ok)[0][front]]
-        img = img.reshape(gh, gw)
+        splat[flat[front]] = np.nonzero(ok)[0][front]
+        img, splat = img.reshape(gh, gw), splat.reshape(gh, gw)
         good = np.isfinite(img)
-        if pm.any() and (good & pm).any():
-            ins.append(float(np.nanmean(img[good & pm])))
+        covered = good & pm
+        if covered.any():
+            shadow = covered & (seen[splat] == 0)
+            ins.append(float(np.mean(img[covered])))
+            reobserved.append(float(1 - shadow.sum() / covered.sum()))
+            if shadow.any():
+                shadows.append(float(np.mean(img[shadow])))
         bg = good & ~pm
         if bg.any():
             outs.append(float(np.nanmean(img[bg])))
     if not ins:
         return dict(ok=False, why=["no frame had both a walker mask and rendered confidence"])
-    a, b = float(np.mean(ins)), float(np.mean(outs))
+    a = float(np.mean(shadows)) if shadows else 0.0
+    b = float(np.mean(outs))
     why = []
     if a > OBS_IN_MASK_MAX:
         why.append(
-            f"mean confidence inside the walker's mask is {a:.2f} (want < {OBS_IN_MASK_MAX}): "
-            f"his occlusion shadow is being sold to the viewer as observed geometry"
+            f"mean confidence on the walker's occlusion shadow (mask pixels no source frame saw "
+            f"clear of him) is {a:.2f} (want < {OBS_IN_MASK_MAX}): that shadow is being sold to "
+            f"the viewer as observed geometry"
         )
     if b < OBS_TEXTURED_MIN:
         why.append(
             f"mean confidence on non-person pixels is {b:.2f} (want > {OBS_TEXTURED_MIN}): "
             f"the sidecar is fading geometry the cameras did see"
         )
-    return dict(ok=not why, inMask=round(a, 3), outMask=round(b, 3), frames=len(ins), why=why)
+    return dict(
+        ok=not why,
+        inMask=round(a, 3),
+        outMask=round(b, 3),
+        frames=len(ins),
+        shadowFrames=len(shadows),
+        reObserved=round(float(np.mean(reobserved)), 3),
+        inMaskAll=round(float(np.mean(ins)), 3),
+        why=why,
+    )
 
 
 def main():

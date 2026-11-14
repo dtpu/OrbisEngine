@@ -84,6 +84,9 @@ def tracked_masks_path(clip: str, explicit: Path | None = None) -> Path:
 
 PERSON_M = 1.70
 HANDHELD_BAND_M = (1.15, 1.85)
+# The silhouette fit's contact residual is in-sample. Each contiguous fifth of the clip is refit
+# without its contact term to measure where the masks and motion alone put those feet.
+CONTACT_FOLDS = 5
 CEILING_BAND_M = (2.10, 3.60)
 MAX_CAMERA_DRIFT_M = 0.20
 SIZE_RULE = (
@@ -696,90 +699,98 @@ def silhouette_fit(
         # Missing samples borrow a basis, but receive no fabricated silhouette observation.
         have = [i for i, d in enumerate(data) if d is not None]
         basis = [data[i] or data[min(have, key=lambda k: abs(k - i))] for i in range(nf)]
-        x = np.zeros(2 * nf + 1)  # last: one log body-size correction shared over the track
-        for _iteration in range(12):
-            equations, targets = [], []
 
-            def add(i, jac, residual, sigma):
-                row = np.zeros(len(x))
-                row[2 * i : 2 * i + 2] = np.asarray(jac[:2]) / sigma
-                row[-1] = jac[2] / sigma
-                equations.append(row)
-                targets.append(-residual / sigma)
+        def solve(held_out=frozenset()):
+            """Gauss-Newton on every row; frames in `held_out` keep their silhouette but not
+            their contact, so their feet are placed by the masks and the motion alone."""
+            x = np.zeros(2 * nf + 1)  # last: one log body-size correction shared over the track
+            for _iteration in range(12):
+                equations, targets = [], []
 
-            for i, d in enumerate(data):
-                if d is None:
-                    continue
-                D = x[2 * i] * d["u"] + x[2 * i + 1] * d["w"]
-                body = (d["P"] - d["F"]) * np.exp(x[-1])
-                ar = measured_rows(d["F"] + body + D, d, "base")
-                eps = max(1e-5, d["depth"] * 0.001)
-                jac = []
-                for name, direction in (("u", d["u"]), ("w", d["w"])):
-                    other = measured_rows(
-                        d["F"] + body + D + eps * direction, d, f"{name} perturbation"
-                    )
-                    jac.append([(other[k] - ar[k]) / eps for k in ("top", "bottom")])
-                other = measured_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
-                jac.append([(other[k] - ar[k]) / 0.001 for k in ("top", "bottom")])
-                jac = np.array(jac).T
-                mr = d["mask"]
-                if not mr["croppedTop"] and not mr["croppedBottom"]:
-                    # Explicit height term constrains depth; centre constrains registration.
-                    add(
-                        i,
-                        jac[1] - jac[0],
-                        (ar["bottom"] - ar["top"]) - (mr["bottom"] - mr["top"]),
-                        sigma_px * np.sqrt(2),
-                    )
-                    add(
-                        i,
-                        (jac[0] + jac[1]) / 2,
-                        (ar["top"] + ar["bottom"] - mr["top"] - mr["bottom"]) / 2,
-                        sigma_px / np.sqrt(2),
-                    )
-                else:
-                    k = "bottom" if mr["croppedTop"] else "top"
-                    add(i, jac[1 if k == "bottom" else 0], ar[k] - mr[k], sigma_px)
-                add(
-                    i,
-                    [normal.dot(d["u"]), normal.dot(d["w"]), 0],
-                    d["contact"] + normal.dot(D),
-                    sigma_contact,
-                )
-            for i in range(nf):
-                for axis in range(2):
+                def add(i, jac, residual, sigma):
                     row = np.zeros(len(x))
-                    row[2 * i + axis] = 1 / (4 * stature)
+                    row[2 * i : 2 * i + 2] = np.asarray(jac[:2]) / sigma
+                    row[-1] = jac[2] / sigma
                     equations.append(row)
-                    targets.append(-row.dot(x))
-            row = np.zeros(len(x))
-            row[-1] = 1 / max(size_prior, 1e-6)
-            equations.append(row)
-            targets.append(-row.dot(x))
-            # World-space acceleration, so a turning ray cannot itself introduce jitter.
-            for i in range(1, nf - 1):
-                for axis in range(3):
-                    row = np.zeros(len(x))
-                    for j, c in ((i - 1, 1), (i, -2), (i + 1, 1)):
-                        row[2 * j : 2 * j + 2] = (
-                            c * np.array([basis[j]["u"][axis], basis[j]["w"][axis]]) / jerk
+                    targets.append(-residual / sigma)
+
+                for i, d in enumerate(data):
+                    if d is None:
+                        continue
+                    D = x[2 * i] * d["u"] + x[2 * i + 1] * d["w"]
+                    body = (d["P"] - d["F"]) * np.exp(x[-1])
+                    ar = measured_rows(d["F"] + body + D, d, "base")
+                    eps = max(1e-5, d["depth"] * 0.001)
+                    jac = []
+                    for name, direction in (("u", d["u"]), ("w", d["w"])):
+                        other = measured_rows(
+                            d["F"] + body + D + eps * direction, d, f"{name} perturbation"
                         )
-                    equations.append(row)
-                    targets.append(-row.dot(x))
-            matrix, residuals = np.array(equations), np.array(targets)
-            context = f"track {tid}, sourceIndices {seq['sourceIndices']}"
-            if not np.isfinite(matrix).all() or not np.isfinite(residuals).all():
-                raise ValueError(f"{context}: nonfinite silhouette fit equations")
-            step, *_ = np.linalg.lstsq(matrix, residuals, rcond=None)
-            if not np.isfinite(step).all():
-                raise ValueError(f"{context}: nonfinite silhouette fit step")
-            # Trust region: never cross the camera in a single linearisation.
-            cap = min(d["depth"] for d in basis) * 0.2
-            step *= min(1.0, cap / max(np.abs(step).max(), 1e-9))
-            x += step
-            if np.abs(step).max() < 1e-5:
-                break
+                        jac.append([(other[k] - ar[k]) / eps for k in ("top", "bottom")])
+                    other = measured_rows(d["F"] + body * np.exp(0.001) + D, d, "size perturbation")
+                    jac.append([(other[k] - ar[k]) / 0.001 for k in ("top", "bottom")])
+                    jac = np.array(jac).T
+                    mr = d["mask"]
+                    if not mr["croppedTop"] and not mr["croppedBottom"]:
+                        # Explicit height term constrains depth; centre constrains registration.
+                        add(
+                            i,
+                            jac[1] - jac[0],
+                            (ar["bottom"] - ar["top"]) - (mr["bottom"] - mr["top"]),
+                            sigma_px * np.sqrt(2),
+                        )
+                        add(
+                            i,
+                            (jac[0] + jac[1]) / 2,
+                            (ar["top"] + ar["bottom"] - mr["top"] - mr["bottom"]) / 2,
+                            sigma_px / np.sqrt(2),
+                        )
+                    else:
+                        k = "bottom" if mr["croppedTop"] else "top"
+                        add(i, jac[1 if k == "bottom" else 0], ar[k] - mr[k], sigma_px)
+                    if i not in held_out:
+                        add(
+                            i,
+                            [normal.dot(d["u"]), normal.dot(d["w"]), 0],
+                            d["contact"] + normal.dot(D),
+                            sigma_contact,
+                        )
+                for i in range(nf):
+                    for axis in range(2):
+                        row = np.zeros(len(x))
+                        row[2 * i + axis] = 1 / (4 * stature)
+                        equations.append(row)
+                        targets.append(-row.dot(x))
+                row = np.zeros(len(x))
+                row[-1] = 1 / max(size_prior, 1e-6)
+                equations.append(row)
+                targets.append(-row.dot(x))
+                # World-space acceleration, so a turning ray cannot itself introduce jitter.
+                for i in range(1, nf - 1):
+                    for axis in range(3):
+                        row = np.zeros(len(x))
+                        for j, c in ((i - 1, 1), (i, -2), (i + 1, 1)):
+                            row[2 * j : 2 * j + 2] = (
+                                c * np.array([basis[j]["u"][axis], basis[j]["w"][axis]]) / jerk
+                            )
+                        equations.append(row)
+                        targets.append(-row.dot(x))
+                matrix, residuals = np.array(equations), np.array(targets)
+                context = f"track {tid}, sourceIndices {seq['sourceIndices']}"
+                if not np.isfinite(matrix).all() or not np.isfinite(residuals).all():
+                    raise ValueError(f"{context}: nonfinite silhouette fit equations")
+                step, *_ = np.linalg.lstsq(matrix, residuals, rcond=None)
+                if not np.isfinite(step).all():
+                    raise ValueError(f"{context}: nonfinite silhouette fit step")
+                # Trust region: never cross the camera in a single linearisation.
+                cap = min(d["depth"] for d in basis) * 0.2
+                step *= min(1.0, cap / max(np.abs(step).max(), 1e-9))
+                x += step
+                if np.abs(step).max() < 1e-5:
+                    break
+            return x
+
+        x = solve()
         shifts = np.array([x[2 * i] * d["u"] + x[2 * i + 1] * d["w"] for i, d in enumerate(basis)])
         size = float(np.exp(x[-1]))
         # Group scaling is about the origin; compensate so this fit scales about each foot.
@@ -798,6 +809,13 @@ def silhouette_fit(
                 if not d["mask"][cropped]:
                     edge_errors.append(abs(ar[edge] - d["mask"][edge]))
             contacts.append(d["contact"] + normal.dot(shifts[i]))
+        held_out = {}
+        for block in np.array_split(np.asarray(have), min(CONTACT_FOLDS, len(have))):
+            fold = solve(frozenset(block.tolist()))
+            for i in block:
+                d = data[i]
+                shift = fold[2 * i] * d["u"] + fold[2 * i + 1] * d["w"]
+                held_out[int(i)] = d["contact"] + normal.dot(shift)
         result[tid] = dict(
             offsetUnits=offsets.tolist(),
             sizeScale=size,
@@ -820,6 +838,7 @@ def silhouette_fit(
             ),
             heightRatioMedian=float(np.median(heights)) if heights else None,
             contactResidualUnits=contacts,
+            contactHeldOutUnits=[held_out[i] for i in have],
             edgeResidualsPx=edge_errors,
             footageRows=footage_rows,
             sigmaPx=sigma_px,
@@ -1323,14 +1342,25 @@ def main():
                 {
                     k: v
                     for k, v in fit_person.items()
-                    if k not in ("contactResidualUnits", "edgeResidualsPx", "footageRows")
+                    if k
+                    not in (
+                        "contactResidualUnits",
+                        "contactHeldOutUnits",
+                        "edgeResidualsPx",
+                        "footageRows",
+                    )
                 }
             )
             entry["solvedCm"] = 0.0
             doc["residualCm"]["after"][tid] = stats_cm(fit_person["contactResidualUnits"], mpu)
+            doc["residualCm"].setdefault("heldOut", {})[tid] = stats_cm(
+                fit_person["contactHeldOutUnits"], mpu
+            )
             print(
                 f"  SILHOUETTE {tid}: height {fit_person['heightRatioMedian']}, contact RMS "
-                f"{doc['residualCm']['after'][tid]['rms']:.2f} cm (fit residual, not held-out)",
+                f"{doc['residualCm']['after'][tid]['rms']:.2f} cm (fit residual), "
+                f"{doc['residualCm']['heldOut'][tid]['rms']:.2f} cm with each fifth's contact "
+                f"held out",
                 flush=True,
             )
         if fits:
@@ -1347,11 +1377,17 @@ def main():
                 ),
                 note="Per-person offsetUnits replace the shared table; indexed by each sequence frame. In-sample mask fit, not independent validation.",
             )
-            # Recompute the noise-floor refusal against the correction actually shipped.
+            # Recompute the noise-floor refusal against the correction actually shipped. The
+            # in-sample residual includes the contact term reproducing its own input, so the floor
+            # is tested on the held-out residual: where the masks and motion alone put the feet.
+            held = doc["residualCm"].get("heldOut", {})
             doc["noiseFloor"]["refusals"] = [
-                f"{tid}: fitted contact is below the contact noise floor"
+                f"{tid}: with each fifth's contact held out, the fitted feet still sit closer to "
+                "the floor than the contact noise floor can measure"
+                if tid in held
+                else f"{tid}: fitted contact is below the contact noise floor"
                 for tid, res in doc["residualCm"]["after"].items()
-                if res["rms"] < a.sigma_contact_cm
+                if held.get(tid, res)["rms"] < a.sigma_contact_cm
             ]
             doc["noiseFloor"]["ok"] = not doc["noiseFloor"]["refusals"]
             # Keep the stated ruler: the fitted primary body is assumed to be 1.70 m.

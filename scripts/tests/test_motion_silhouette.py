@@ -107,6 +107,7 @@ def audit_fixture(tmp_path, monkeypatch):
     raster = Mock(return_value=masks[0])
     monkeypatch.setattr(motion_silhouette.PlyData, "read", read)
     monkeypatch.setattr(motion_silhouette, "splat_silhouette", raster)
+    monkeypatch.setattr(motion_silhouette, "drawn_silhouette", raster)
 
     def write(source_indices, frames, camera_indices=(40, 42)):
         (person / "sequence.json").write_text(
@@ -210,3 +211,68 @@ def test_seed_boxes_route_reordered_sequence_to_exact_source_pose(audit_fixture)
         "pose-40.ply",
         "pose-42.ply",
     ]
+
+
+CAMERA = {
+    "camera_to_world": np.eye(4).tolist(),
+    "source_intrinsics": [[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]],
+}
+HW = (480, 640)
+IDENTITY = [[1.0, 0.0, 0.0, 0.0]]
+
+
+def test_coverage_matches_the_analytic_footprint_of_one_gaussian():
+    from motion_silhouette import VIEWER_PRE_BLUR, splat_coverage
+
+    # 0.3 world units at 10 in front of a 500 px focal: a 15 px standard deviation.
+    cover = splat_coverage([[0, 0, -10]], [10.0], [[np.log(0.3)] * 3], IDENTITY, CAMERA, HW)
+    variance = 15.0**2 + VIEWER_PRE_BLUR
+    # Alpha is capped at 0.99, so coverage > 0.5 is the disc 0.99 exp(-d²/2v) > 0.5.
+    expected = np.pi * 2 * variance * np.log(2 * 0.99)
+    assert (cover > 0.5).sum() == pytest.approx(expected, rel=0.02)
+    assert cover.max() == pytest.approx(0.99, abs=1e-6)
+    ys, xs = np.nonzero(cover > 0.5)
+    assert (ys.mean(), xs.mean()) == pytest.approx((240, 320), abs=1e-6)
+
+
+def test_coverage_follows_the_splat_rotation():
+    from motion_silhouette import splat_coverage
+
+    scales = [[np.log(0.2), np.log(0.01), np.log(0.01)]]
+    quarter_turn = [[np.cos(np.pi / 4), 0.0, 0.0, np.sin(np.pi / 4)]]  # about the view axis
+    for quats, wide in ((IDENTITY, True), (quarter_turn, False)):
+        ys, xs = np.nonzero(splat_coverage([[0, 0, -10]], [10.0], scales, quats, CAMERA, HW) > 0.5)
+        width, height = np.ptp(xs) + 1, np.ptp(ys) + 1
+        assert (width > 4 * height) if wide else (height > 4 * width)
+
+
+def test_coverage_composites_alpha_rather_than_marking_splat_centres():
+    from motion_silhouette import splat_coverage
+
+    one = splat_coverage(
+        [[0, 0, -10]], [np.log(0.4 / 0.6)], [[np.log(0.1)] * 3], IDENTITY, CAMERA, HW
+    )
+    assert one.max() == pytest.approx(0.4) and not (one > 0.5).any()
+    two = splat_coverage(
+        [[0, 0, -10]] * 2,
+        [np.log(0.4 / 0.6)] * 2,
+        [[np.log(0.1)] * 3] * 2,
+        IDENTITY * 2,
+        CAMERA,
+        HW,
+    )
+    assert two.max() == pytest.approx(1 - 0.6**2) and (two > 0.5).any()
+
+
+def test_drawn_silhouette_of_a_dense_body_is_its_outline_not_a_dilated_one():
+    from motion_silhouette import splat_coverage, splat_silhouette
+
+    # A 0.4 x 1.6 slab of small opaque splats: 20 x 80 px, 21 x 81 pixel centres at this distance.
+    xs, ys = np.meshgrid(np.arange(-0.2, 0.2, 0.01) + 0.005, np.arange(-0.8, 0.8, 0.01) + 0.005)
+    xyz = np.column_stack([xs.ravel(), ys.ravel(), np.full(xs.size, -10.0)])
+    scales = np.full((len(xyz), 3), np.log(0.006))
+    opacity = np.full(len(xyz), 10.0)
+    drawn = splat_coverage(xyz, opacity, scales, IDENTITY * len(xyz), CAMERA, HW) > 0.5
+    assert drawn.sum() == pytest.approx(21 * 81, rel=0.02)
+    # The old approximation dilates centres by 1.5 median radii and closes with a 9 px disc.
+    assert splat_silhouette(xyz, opacity, scales, CAMERA, HW).sum() > 1.08 * drawn.sum()

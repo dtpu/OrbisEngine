@@ -27,6 +27,8 @@ trusted alone; where two or more are available they must agree, and the run says
                 the old ruler used as a single number.
   cameraBand    a handheld source camera sits 1.15-1.85 m above the floor. Also an interval; this is
                 place_solve.py's existing size check, restated as a constraint rather than a gate.
+                Where place_solve.py measured the camera's height from the footage in walker
+                heights, the band is the stature band times that ratio instead.
 
 Verdict: the adopted metre is the median of the point anchors. Two point anchors that differ by more
 than --tol fail the run and name themselves. A clip with no point anchor at all is reported as
@@ -842,6 +844,31 @@ def camera_height_units(cams, fa: dict, scale0: float):
 
 
 # ---------------------------------------------------------------- the stack
+def interval_bands(size_check: dict, stature, cam_units, *, rotated=False) -> dict:
+    """(lo, hi, world units, unit) per band; the adopted metre must put each value inside.
+
+    When place_solve.py measured the source camera's height from the footage itself
+    (scripts/camera_gravity.py), the camera sits that many walker heights above the floor, so its
+    band is the stature band times that ratio instead of the handheld prior. That measurement was
+    made in the placement's own frame, so a --rotfix run keeps the handheld band.
+    """
+    bands = {}
+    if stature:
+        bands["statureBand"] = (STATURE_BAND[0], STATURE_BAND[1], stature, "m tall")
+    if cam_units:
+        footage = ((size_check.get("footageGeometry") or {}).get("verdict")) or {}
+        lo, hi = CAMERA_BAND
+        if (
+            not rotated
+            and size_check.get("basis") == "measured from footage"
+            and footage.get("verified")
+        ):
+            ratio = footage["fittedBodyHeights"]
+            lo, hi = STATURE_BAND[0] * ratio, STATURE_BAND[1] * ratio
+        bands["cameraBand"] = (lo, hi, cam_units, "m above the floor")
+    return bands
+
+
 def combine(anchors: dict, bands: dict, tol: float) -> dict:
     pts = {k: v["mpu"] for k, v in anchors.items() if v.get("available") and v.get("mpu")}
     out = dict(pointAnchors=pts, tolerance=tol)
@@ -906,6 +933,22 @@ def person_masks_for(clip_name: str, ds_shape=None, *, masks=None, world_dir=Non
             return out
         return None
     z = np.load(p)
+    if "packedMasks" in z.files:
+        # An untracked run's exact source masks; their contract is the packaged sequence and the
+        # cameras they were extracted for.
+        if world_dir is None:
+            raise ValueError(f"single-person masks need the packaged world directory: {p}")
+        from single_person_masks import load_archive
+
+        sequence = json.loads((Path(world_dir) / "person" / "sequence.json").read_text())
+        cameras = json.loads((Path(world_dir) / "cameras.json").read_text())["cameras"]
+        out, _ = load_archive(p, sequence, cameras)
+        return {
+            k: cv2.dilate(v.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+            if dilate
+            else v
+            for k, v in out.items()
+        }
     if "masks" in z.files:
         if "indices" not in z.files:
             raise ValueError(f"person masks require source-frame indices: {p}")
@@ -1097,11 +1140,7 @@ def main():
     cam_span = None
     if fa is not None:
         cam_units, cam_span = camera_height_units(cams, fa, scale0)
-    bands = {}
-    if stature:
-        bands["statureBand"] = (STATURE_BAND[0], STATURE_BAND[1], stature, "m tall")
-    if cam_units:
-        bands["cameraBand"] = (CAMERA_BAND[0], CAMERA_BAND[1], cam_units, "m above the floor")
+    bands = interval_bands(sc, stature, cam_units, rotated=fa is not None)
 
     verdict = combine(anchors, bands, a.tol)
     doc = dict(

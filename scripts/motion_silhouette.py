@@ -64,6 +64,90 @@ def splat_silhouette(xyz, opa, scales, cam, hw, subsample=None):
     return img.astype(bool)
 
 
+# The viewer's Spark settings (src/fourd-runtime.js): 0.3 px² of uncompensated pre-blur added to
+# every projected covariance, and a footprint cut off at sqrt(5) standard deviations. Spark blends
+# in display-encoded colour, so coverage is alpha itself.
+VIEWER_PRE_BLUR, VIEWER_MAX_STD2 = 0.3, 5.0
+MAX_FOOTPRINT_PX = 64
+
+
+def quaternion_matrices(q):
+    """Rotation matrices for (w, x, y, z) quaternions, the 3DGS PLY `rot_0..rot_3` order."""
+    q = np.asarray(q, float)
+    w, x, y, z = (q / np.linalg.norm(q, axis=1, keepdims=True)).T
+    return np.stack(
+        [
+            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], -1),
+            np.stack([2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], -1),
+            np.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], -1),
+        ],
+        1,
+    )
+
+
+def splat_coverage(
+    xyz, opa, scales, quats, cam, hw, pre_blur=VIEWER_PRE_BLUR, max_std2=VIEWER_MAX_STD2
+):
+    """Accumulated alpha of the projected Gaussians at the source resolution.
+
+    Each splat is the viewer's footprint: its 3D covariance projected through the pinhole
+    Jacobian, plus `pre_blur`, cut at `max_std2` squared standard deviations, alpha capped at
+    0.99 and dropped below 1/255. Coverage is 1 - prod(1 - alpha), which does not depend on draw
+    order, so thresholding it at 0.5 is the silhouette the viewer draws over any background.
+    `scales` are log scales and `opa` opacity logits, as stored in the PLY. Checked against the
+    live viewer (fourd.html, contact shadow hidden) on the forest walk: IoU 0.987-0.988, area
+    within 0.1%, on three source frames.
+    """
+    H, W = hw
+    m = np.array(cam["camera_to_world"], float)
+    u, _, vt = np.linalg.svd(m[:3, :3])
+    Rw = u @ vt
+    K = np.array(cam["source_intrinsics"], float)
+    loc = (np.asarray(xyz, float) - m[:3, 3]) @ Rw @ FLIP
+    z = loc[:, 2]
+    front = z > 1e-6
+    loc, z = loc[front], z[front]
+    alpha = 1 / (1 + np.exp(-np.asarray(opa, float)[front]))
+    basis = (
+        quaternion_matrices(np.asarray(quats, float)[front])
+        * np.exp(np.asarray(scales, float)[front])[:, None, :]
+    )
+    view = FLIP @ Rw.T
+    cov = view @ (basis @ basis.transpose(0, 2, 1)) @ view.T
+    jac = np.zeros((len(z), 2, 3))
+    jac[:, 0, 0] = K[0, 0] / z
+    jac[:, 0, 2] = -K[0, 0] * loc[:, 0] / z**2
+    jac[:, 1, 1] = K[1, 1] / z
+    jac[:, 1, 2] = -K[1, 1] * loc[:, 1] / z**2
+    cov2 = jac @ cov @ jac.transpose(0, 2, 1)
+    a, b, c = cov2[:, 0, 0] + pre_blur, cov2[:, 0, 1], cov2[:, 1, 1] + pre_blur
+    det = a * c - b * b
+    inv_a, inv_b, inv_c = c / det, -b / det, a / det
+    centre = (loc @ K.T)[:, :2] / z[:, None]
+    largest = 0.5 * (a + c) + np.sqrt(0.25 * (a - c) ** 2 + b * b)
+    radius = np.clip(np.ceil(np.sqrt(max_std2 * largest)).astype(int), 1, MAX_FOOTPRINT_PX)
+    log_clear = np.zeros(H * W)
+    for r in np.unique(radius):
+        pick = np.nonzero(radius == r)[0]
+        dy, dx = (offset.ravel() for offset in np.mgrid[-r : r + 1, -r : r + 1])
+        px = np.round(centre[pick, 0]).astype(int)[:, None] + dx
+        py = np.round(centre[pick, 1]).astype(int)[:, None] + dy
+        ex, ey = px - centre[pick, 0][:, None], py - centre[pick, 1][:, None]
+        d2 = inv_a[pick, None] * ex**2 + 2 * inv_b[pick, None] * ex * ey + inv_c[pick, None] * ey**2
+        value = np.minimum(0.99, alpha[pick, None] * np.exp(-0.5 * d2))
+        keep = (d2 <= max_std2) & (value >= 1 / 255) & (px >= 0) & (px < W) & (py >= 0) & (py < H)
+        log_clear += np.bincount(
+            (py * W + px)[keep], weights=np.log1p(-value[keep]), minlength=H * W
+        )
+    return 1 - np.exp(log_clear.reshape(H, W))
+
+
+def drawn_silhouette(vertex, xyz, log_scales, cam, hw):
+    """Where the viewer draws a PLY person at least half opaque: coverage > 0.5."""
+    quats = np.column_stack([vertex[f"rot_{i}"] for i in range(4)])
+    return splat_coverage(xyz, vertex["opacity"], log_scales, quats, cam, hw) > 0.5
+
+
 def iou(a, b):
     u = (a | b).sum()
     return float((a & b).sum() / u) if u else 0.0
@@ -117,7 +201,7 @@ def source_frame_paths(seq, selected_indices):
     return frame_by_source
 
 
-def audit(world, masks_path, limit=None, subsample=30000):
+def audit(world, masks_path, limit=None):
     world = Path(world)
     cams = json.loads((world / "cameras.json").read_text())["cameras"]
     seq = json.loads((world / "person" / "sequence.json").read_text())
@@ -132,7 +216,7 @@ def audit(world, masks_path, limit=None, subsample=30000):
         v = PlyData.read(world / "person" / frame_by_source[fi])["vertex"].data
         xyz = np.column_stack([v["x"], v["y"], v["z"]])
         sc = np.column_stack([v["scale_0"], v["scale_1"], v["scale_2"]])
-        pred = splat_silhouette(xyz, np.asarray(v["opacity"]), sc, c, hw, subsample)
+        pred = drawn_silhouette(v, xyz, sc, c, hw)
         g = gt[fi]
         a, sh = best_shift_iou(pred, g)
         rows.append(
