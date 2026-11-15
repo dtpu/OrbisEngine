@@ -90,7 +90,7 @@ def failed_preview_prerequisite(context, journal: Journal, *, paid: bool) -> str
     _, _, world = world_half(options.marble)
     required, pending = set(), [package]
     if world:
-        pending.append("finetune" if options.finetune else world)
+        pending.append("bake" if options.bake else "finetune" if options.finetune else world)
     while pending:
         name = pending.pop()
         if name not in required:

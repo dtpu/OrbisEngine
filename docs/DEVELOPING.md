@@ -192,6 +192,18 @@ calibration limits; static-world review alone does not certify people, motion or
 Paid Modal stages retain their outputs and share a local execution ledger. See
 [paid stage accounting and recovery](paid-recovery.md) before retrying an interrupted run.
 
+The optional local colour bake (`--bake-colours`, or the `bake` run option) runs after
+`scale_fit`. It recolours the final world from the source video and writes
+`marble-<name>-baked.spz` plus a `-bake.npz` receipt; placement, anchors, verify and the viewer then
+use that world, and the viewer never falls back to the unbaked one.
+
+The bake changes colour only, never geometry. Splats whose depth agrees with the source within
+about 10% take the observed colour. Other observed splats keep their generated brightness and borrow
+only the observed hue, and nearby unobserved splats take a fading colour shift. The receipt records
+both inferred kinds. Output bytes are reproducible, so a static-world review of one bake carries to
+an identical rerun. The bake still needs that review, and it does not fix geometry, depth or contact.
+See [known limits](known-limits.md) for the forest measurements behind this recipe.
+
 Optional fine-tuning requires an explicitly configured GPU host (`--gpu-box` or `WANDER_GPU_BOX`)
 and an optional SSH identity (`--gpu-key` or `WANDER_GPU_KEY`); the remote host must already have
 its trainer dependencies and `~/venv/bin/python`. No command here provisions a GPU host.

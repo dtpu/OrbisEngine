@@ -50,14 +50,19 @@ def world_half(marble: str):
     return stages, deps, world
 
 
-def _finish_world(stages, deps, world, package, objects, finetune):
+def _finish_world(stages, deps, world, package, objects, finetune, bake=False):
     if world:
         tail = {
             "scale_fit": ["pi3x", "frame_align", package, world],
         }
         if finetune:
             tail["finetune"] = ["scale_fit"]
-        tail["place_fit"] = ["scale_fit"] + (["finetune"] if finetune else [])
+        if bake:
+            # Opt-in colour bake of the final geometry; placement and review use its output.
+            tail["bake"] = ["scale_fit"] + (["finetune"] if finetune else [])
+        tail["place_fit"] = (
+            ["scale_fit"] + (["finetune"] if finetune else []) + (["bake"] if bake else [])
+        )
         tail["anchors"] = ["place_fit"]
         tail["verify"] = (
             ["anchors"] + (["objects"] if objects else []) + (["finetune"] if finetune else [])
@@ -69,7 +74,7 @@ def _finish_world(stages, deps, world, package, objects, finetune):
     return stages, deps
 
 
-def single_graph(marble: str, objects: bool = True, finetune: bool = True):
+def single_graph(marble: str, objects: bool = True, finetune: bool = True, bake: bool = False):
     stages, deps, world = world_half(marble)
     stages += ["pi3x", "frame_align", "person_prep", "lhm_frozen", "lhm_motion", "package"]
     deps.update(
@@ -85,10 +90,12 @@ def single_graph(marble: str, objects: bool = True, finetune: bool = True):
     if objects:
         stages += ["objects"]
         deps["objects"] = ["package"]
-    return _finish_world(stages, deps, world, "package", objects, finetune)
+    return _finish_world(stages, deps, world, "package", objects, finetune, bake)
 
 
-def multiperson_graph(limit: int, marble: str, objects: bool = True, finetune: bool = True):
+def multiperson_graph(
+    limit: int, marble: str, objects: bool = True, finetune: bool = True, bake: bool = False
+):
     """Stage list and dependencies for up to `limit` people.
 
     The real track count is only known once `tracks` has run, so the graph is built for `limit`
@@ -114,4 +121,4 @@ def multiperson_graph(limit: int, marble: str, objects: bool = True, finetune: b
     if objects:
         stages += ["objects"]
         deps["objects"] = ["package_people", "tracks"]
-    return _finish_world(stages, deps, world, "package_people", objects, finetune)
+    return _finish_world(stages, deps, world, "package_people", objects, finetune, bake)

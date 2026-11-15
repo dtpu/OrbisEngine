@@ -158,6 +158,7 @@ export function describeOptions(options: GraphOptions): string {
   );
   if (options.objects) parts.push('objects');
   if (options.finetune) parts.push('fine-tune');
+  if (options.bake) parts.push('colour bake');
   return parts.join(', ');
 }
 

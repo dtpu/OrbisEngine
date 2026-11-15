@@ -78,6 +78,15 @@ def valid_presentation_value(key: str, value: str) -> bool:
     return True
 
 
+def world_suffix(options: dict) -> str:
+    """The run's selected world. Like a fine-tuned world, a requested bake never falls back."""
+    if options.get("bake"):
+        return "baked"
+    return (
+        "finetuned" if options.get("finetune") else WORLD_SUFFIXES[options.get("marble", "video")]
+    )
+
+
 def read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text())
@@ -113,7 +122,7 @@ def asset_path(root: Path, relative: str, *, require_file: bool = True) -> Path:
     source = Path(read_json(root / "run.json").get("source") or "missing")
     source_relative = f"clips/{name}/source{source.suffix.lower()}"
     world_files = {
-        f"marble-{name}-{suffix}.spz" for suffix in {*WORLD_SUFFIXES.values(), "finetuned"}
+        f"marble-{name}-{suffix}.spz" for suffix in {*WORLD_SUFFIXES.values(), "finetuned", "baked"}
     }
     allowed = (
         relative == source_relative
@@ -201,7 +210,7 @@ def scene_manifest(root: Path) -> dict | None:
         mode = options.get("marble", "video")
         world = "none"
         if mode != "none":
-            suffix = "finetuned" if options.get("finetune") else WORLD_SUFFIXES[mode]
+            suffix = world_suffix(options)
             world = asset_url(run_id, f"marble-{name}-{suffix}.spz")
             asset_path(root, f"marble-{name}-{suffix}.spz")
         params = {

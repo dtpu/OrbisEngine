@@ -36,6 +36,14 @@ test('submission follows API defaults and only offers published world modes and 
   assert.equal(controls.find((field) => field.name === 'people')?.maximum, 8);
 });
 
+test('the colour bake is offered when the API describes it and omitted otherwise', () => {
+  const description = schema();
+  assert.equal('bake' in optionsFromSchema(description), false);
+  description.properties.bake = { type: 'boolean', default: false };
+  assert.equal(optionsFromSchema(description).bake, false);
+  assert.ok(optionFields(description).some((field) => field.name === 'bake'));
+});
+
 test('unsupported historical audio fields cannot be sent by the form', () => {
   const description = schema();
   description.properties.reviewed_audio = { type: 'boolean', default: false };

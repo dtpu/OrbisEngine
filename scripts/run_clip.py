@@ -81,6 +81,11 @@ def public_dir() -> Path:
 # and no mass at 1.0 (share/ADVERSARIAL-LOG.md R11)
 SCALE_RATIO_BAND = (0.95, 1.05)
 SCALE_SPREAD_BAND = (0.90, 1.10)
+# The reviewed opt-in colour bake (docs/known-limits.md, forest 2026-11-13): recolour a splat from
+# the source only where its depth agrees within about the spread band above, borrow only hue where
+# it does not, and fade observed colour shifts onto unobserved splats over one body-height.
+BAKE_DEPTH_AGREEMENT = 0.1
+BAKE_SHIFT_RADIUS_BODY_HEIGHTS = 1.0
 WORLD_SUFFIXES = {"video": "clean", "both": "clean", "image": "image", "multi": "multi"}
 
 
@@ -452,10 +457,13 @@ class Pipeline:
         self.marble = "none" if a.skip_marble else a.marble
         self.object_specs = [parse_object_spec(v) for v in (a.object or [])]
         want_objects = bool(self.object_specs) or not a.no_objects
+        bake = bool(getattr(a, "bake_colours", False))
         self.stages, self.deps = (
-            multiperson_graph(self.people_limit, self.marble, want_objects, not a.skip_finetune)
+            multiperson_graph(
+                self.people_limit, self.marble, want_objects, not a.skip_finetune, bake
+            )
             if self.multi
-            else single_graph(self.marble, want_objects, not a.skip_finetune)
+            else single_graph(self.marble, want_objects, not a.skip_finetune, bake)
         )
         self.certs = subprocess.run(
             [PY, "-m", "certifi"], check=True, stdout=subprocess.PIPE, text=True
@@ -2640,7 +2648,18 @@ class Pipeline:
         return path
 
     def world_spz(self) -> Path:
-        """Use the same final geometry for placement, acceptance and the viewer."""
+        """Use the same final world for placement, acceptance and the viewer."""
+        if "bake" not in self.stages:
+            return self.unbaked_world_spz()
+        if not self.state.done("bake"):
+            raise RuntimeError("the colour bake has not completed; final-world checks must wait")
+        path = self.review_path(self.review_public_dir() / f"marble-{self.name}-baked.spz")
+        if not path.is_file():
+            raise RuntimeError(f"colour-bake output is missing: {path}")
+        return path
+
+    def unbaked_world_spz(self) -> Path:
+        """The final geometry before the optional colour bake: fine-tuned or provider output."""
         if "finetune" not in self.stages:
             return self.base_world_spz()
         if not self.state.done("finetune"):
@@ -2916,6 +2935,120 @@ class Pipeline:
             raise RuntimeError(f"the depth-ratio diagnostic produced no figure; see {log}")
         return rows, figure, distance_bands(text, len(rows))
 
+    def single_person_masks(self) -> Path:
+        """Source-indexed masks of the one packaged person (scripts/single_person_masks.py)."""
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
+        out = self.ctx / "single-person-masks.npz"
+        run(
+            [
+                PY,
+                "scripts/single_person_masks.py",
+                "--source",
+                str(self.clip),
+                "--sequence",
+                str(wdir / "person" / "sequence.json"),
+                "--cameras",
+                str(wdir / "cameras.json"),
+                "--out",
+                str(out),
+            ],
+            self.ctx / "single-person-masks.log",
+            attempts=1,
+        )
+        return out
+
+    def bake(self):
+        """Opt-in: recolour the final geometry from the source video (scripts/bake_video_colours.py).
+
+        Uses the Pi3X cameras beside the anchors (the frame the anchor cloud lives in; the packaged
+        cameras lack framealign.json and map splats into the wrong frame) and every person mask.
+        Colours are baked only where splat depth agrees with the source; elsewhere a splat keeps
+        its generated luminance and borrows only observed hue, and unobserved splats near observed
+        ones take a fading colour shift. Geometry is untouched. Inferred colours are recorded in
+        the -bake.npz receipt; this is an appearance change that still needs the static-world review.
+        """
+        s = (self.state.data["stages"].get("_scale") or {}).get("scale0")
+        if s is None:
+            raise RuntimeError("no fitted scale0: run the scale_fit stage first")
+        world = self.unbaked_world_spz()
+        wdir = public_dir() / "worlds" / f"{self.name}-4d"
+        masks = (
+            self.ctx / "tracks" / "masks.npz"
+            if (wdir / "people.json").exists()
+            else self.single_person_masks()
+        )
+        if not masks.is_file():
+            raise RuntimeError(f"the colour bake needs person masks: {masks} is missing")
+        out = public_dir() / f"marble-{self.name}-baked"
+        run(
+            [
+                PY,
+                "scripts/bake_video_colours.py",
+                "--world",
+                str(world),
+                "--cameras",
+                str(self.cameras()),
+                "--clip",
+                str(self.clip),
+                "--anchors",
+                str(self.ctx / "pi3x" / "anchors.npz"),
+                "--anchor-samples",
+                self.anchor_samples(),
+                "--person",
+                str(self.person_ply()),
+                "--scale0",
+                f"{s:.6f}",
+                "--person-masks",
+                str(masks),
+                "--depth-agreement",
+                str(BAKE_DEPTH_AGREEMENT),
+                "--gated-chroma",
+                "--shift-radius-body-heights",
+                str(BAKE_SHIFT_RADIUS_BODY_HEIGHTS),
+                "--no-ply",
+                "--out",
+                str(out),
+                "--tag",
+                f"{self.name}-bake",
+                "--share",
+                str(SHARE),
+            ],
+            self.ctx / "bake.log",
+            attempts=1,
+        )
+        baked = out.with_suffix(".spz")
+        receipt = Path(f"{out}-bake.npz")
+        if not baked.is_file() or not receipt.is_file():
+            raise RuntimeError(
+                f"the colour bake wrote no world or receipt; see {self.ctx / 'bake.log'}"
+            )
+        import numpy as np
+
+        with np.load(receipt, allow_pickle=False) as r:
+            counts = {
+                key: int(np.count_nonzero(r[key]))
+                for key in ("depthGated", "gatedChroma", "inferredShift")
+                if key in r.files
+            }
+        self.state.record(
+            "_bake",
+            input=str(world.resolve()),
+            inputSha256=file_sha256(world),
+            out=str(baked),
+            outSha256=file_sha256(baked),
+            receipt=str(receipt),
+            masks=str(masks),
+            scale0=s,
+            depthAgreement=BAKE_DEPTH_AGREEMENT,
+            shiftRadiusBodyHeights=BAKE_SHIFT_RADIUS_BODY_HEIGHTS,
+            **counts,
+        )
+        say(
+            f"   baked {baked.name}: {counts.get('depthGated', 0)} splats depth-gated "
+            f"({counts.get('gatedChroma', 0)} took observed hue), "
+            f"{counts.get('inferredShift', 0)} unobserved splats took an inferred shift"
+        )
+
     def person_ply(self) -> Path:
         p = public_dir() / "worlds" / f"{self.name}-4d" / "person" / "frame_000.ply"
         if not p.exists():
@@ -3034,22 +3167,7 @@ class Pipeline:
         people = wdir / "people.json"
         single_masks = self.ctx / "single-person-masks.npz"
         if not people.exists():
-            run(
-                [
-                    PY,
-                    "scripts/single_person_masks.py",
-                    "--source",
-                    str(self.clip),
-                    "--sequence",
-                    str(wdir / "person" / "sequence.json"),
-                    "--cameras",
-                    str(wdir / "cameras.json"),
-                    "--out",
-                    str(single_masks),
-                ],
-                self.ctx / "single-person-masks.log",
-                attempts=1,
-            )
+            self.single_person_masks()
         inputs = self.placement_inputs(world)
         cmd = [
             PY,
@@ -4090,6 +4208,12 @@ def main():
     )
     ap.add_argument("--ft-iters", type=int, default=4000)
     ap.add_argument("--skip-finetune", action="store_true")
+    ap.add_argument(
+        "--bake-colours",
+        action="store_true",
+        help="opt-in: recolour the final world from the source video after scale_fit; placement, "
+        "anchors, verify and the viewer then use marble-<name>-baked.spz (docs/known-limits.md)",
+    )
     ap.add_argument(
         "--pi3x-anchor-lock",
         action="store_true",

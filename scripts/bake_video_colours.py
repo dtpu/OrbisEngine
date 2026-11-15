@@ -109,7 +109,12 @@ def write_spz_recolour(spz, rgb01: np.ndarray, out: Path):
         + spz["scale_b"].tobytes()
         + spz["rot_b"].tobytes()
     )
-    with gzip.open(out, "wb", compresslevel=6) as f:
+    # No file name or timestamp in the gzip header: the same bake must hash the same, because
+    # the static-world review binds the exact world bytes.
+    with (
+        open(out, "wb") as raw,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as f,
+    ):
         f.write(body)
 
 
@@ -531,6 +536,56 @@ def depth_ratio_distance_bands(ratios, source_depths):
     return bands
 
 
+class PersonMasks:
+    """Person masks from a pipeline mask archive, looked up by source frame index.
+
+    Reads the bit-packed archives the runner writes: `single-person-masks.npz` (`packedMasks`,
+    `sourceIndices`, optional per-frame `status`) and tracked `masks.npz` (`masks`,
+    `source_indices`). Each mask is dilated by `dilate_fraction` of the frame height so clothing
+    edges never colour the background. A frame without a known mask comes back fully masked, so it
+    contributes nothing rather than being treated as person-free.
+    """
+
+    def __init__(self, path: Path, dilate_fraction: float = 0.015):
+        archive = np.load(path, allow_pickle=False)
+        if "packedMasks" in archive.files:
+            packed, index = archive["packedMasks"], archive["sourceIndices"]
+        elif "masks" in archive.files:
+            packed, index = archive["masks"], archive["source_indices"]
+        else:
+            raise ValueError(f"{path} is not a pipeline person-mask archive")
+        frames, height, width = (int(x) for x in archive["shape"])
+        if (
+            packed.dtype != np.uint8
+            or packed.shape != (frames, height, (width + 7) // 8)
+            or len(index) != frames
+            or len(set(int(i) for i in index)) != frames
+        ):
+            raise ValueError(f"{path} has inconsistent mask shapes or source indices")
+        if not np.isfinite(dilate_fraction) or dilate_fraction < 0:
+            raise ValueError("Mask dilation must be a nonnegative fraction of frame height")
+        known = (
+            archive["status"] == "known"
+            if "status" in archive.files
+            else np.ones(frames, dtype=bool)
+        )
+        self.packed, self.height, self.width = packed, height, width
+        self.by_source = {int(s): i for i, s in enumerate(index) if known[i]}
+        self.grow = int(round(dilate_fraction * height))
+
+    def get(self, source_index: int) -> np.ndarray:
+        from scipy import ndimage
+
+        i = self.by_source.get(int(source_index))
+        if i is None:
+            return np.ones((self.height, self.width), dtype=np.float32)
+        m = np.unpackbits(self.packed[i], axis=-1)[:, : self.width].astype(bool)
+        if self.grow:
+            cross = ndimage.generate_binary_structure(2, 1)
+            m = ndimage.binary_dilation(m, cross, iterations=self.grow)
+        return m.astype(np.float32)
+
+
 class JsonSource:
     def __init__(
         self,
@@ -543,6 +598,7 @@ class JsonSource:
         scene_points=None,
         depth_dir=None,
         mask_dir=None,
+        person_masks=None,
     ):
         cj = json.load(open(cameras))
         self.cams = cj["cameras"]
@@ -552,6 +608,7 @@ class JsonSource:
         self.scene = scene_points
         self.depth_dir = depth_dir
         self.mask_dir = mask_dir
+        self.person_masks = person_masks
         self.frames_dir, self.pattern = frames_dir, frames_pattern
         self.read = clip_frame_reader(clip, *size) if clip else None
         self.vsize = size
@@ -577,6 +634,8 @@ class JsonSource:
         return zbuffer_depth(self.scene, c2w, K, size, self.depth_res)
 
     def mask(self, f):
+        if self.person_masks is not None:
+            return self.person_masks.get(f)
         if not self.mask_dir:
             return None
         from PIL import Image
@@ -826,6 +885,23 @@ def main():
         help="{sample} = camera index in cameras.json, {idx} = sourceIndex",
     )
     ap.add_argument(
+        "--person-masks",
+        default=None,
+        type=Path,
+        help="pipeline person-mask archive (single-person-masks.npz or tracks masks.npz), by source index",
+    )
+    ap.add_argument(
+        "--mask-dilate-fraction",
+        type=float,
+        default=0.015,
+        help="with --person-masks, grow each mask by this fraction of the frame height",
+    )
+    ap.add_argument(
+        "--no-ply",
+        action="store_true",
+        help="skip the large Gaussian .ply copy; write only the .spz, weights and receipt",
+    )
+    ap.add_argument(
         "--mask-dir",
         default=None,
         type=Path,
@@ -941,6 +1017,8 @@ def main():
     ap.add_argument("--diag", action="store_true", help="depth-ratio diagnostic only")
     ap.add_argument("--device", default="mps" if _torch().backends.mps.is_available() else "cpu")
     a = ap.parse_args()
+    if a.person_masks and a.mask_dir:
+        sys.exit("use --person-masks or --mask-dir, not both")
     t0 = time.time()
     torch = _torch()
     dev = torch.device(a.device)
@@ -979,6 +1057,9 @@ def main():
             scene_points=scene,
             depth_dir=a.depth_dir,
             mask_dir=a.mask_dir,
+            person_masks=PersonMasks(a.person_masks, a.mask_dilate_fraction)
+            if a.person_masks
+            else None,
         )
     else:
         src = WvpSource(
@@ -1257,7 +1338,8 @@ def main():
     )
 
     out = a.out
-    write_gaussian_ply(spz, baked, out.with_suffix(".ply"))
+    if not a.no_ply:
+        write_gaussian_ply(spz, baked, out.with_suffix(".ply"))
     write_spz_recolour(spz, baked, out.with_suffix(".spz"))
     conf.tofile(str(out) + "-weights.bin")
     np.savez_compressed(
@@ -1274,7 +1356,12 @@ def main():
         origin_frame=a.origin_frame,
     )
     print(
-        f"wrote {out.with_suffix('.ply')} ({out.with_suffix('.ply').stat().st_size / 1e6:.0f} MB), {out.with_suffix('.spz')} ({out.with_suffix('.spz').stat().st_size / 1e6:.0f} MB), {str(out) + '-weights.bin'}",
+        (
+            ""
+            if a.no_ply
+            else f"wrote {out.with_suffix('.ply')} ({out.with_suffix('.ply').stat().st_size / 1e6:.0f} MB), "
+        )
+        + f"wrote {out.with_suffix('.spz')} ({out.with_suffix('.spz').stat().st_size / 1e6:.0f} MB), {str(out) + '-weights.bin'}",
         flush=True,
     )
 

@@ -137,6 +137,8 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
         command.append("--no-objects")
     if not options.finetune:
         command.append("--skip-finetune")
+    if options.bake:
+        command.append("--bake-colours")
     if options.hands_off:
         command.append("--no-gate")
     if getattr(context, "retained_delivery", None) is not None:
