@@ -133,7 +133,9 @@ def stub_placement_cli(tmp_path, monkeypatch, floor, size_factor, footage, held_
     monkeypatch.setattr(place_solve, "world_splats", lambda _: np.concatenate([ground, ceiling]))
     fits = []
 
-    def silhouette(*args):
+    def silhouette(*args, footprints=None, **kwargs):
+        # The real CLI hands the fit each person's drawn splats, read on demand.
+        assert len(footprints) == 1 and callable(footprints[0])
         fits.append(args)
         return {
             "person": {

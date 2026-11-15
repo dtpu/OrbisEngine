@@ -2748,9 +2748,15 @@ class Pipeline:
             include(motion)
         # The size check reads the source frames' vertical lines (scripts/camera_gravity.py).
         include(self.clip)
+        # The fit matches the silhouette the viewer draws (motion_silhouette.splat_coverage).
         code_paths = [
             ROOT / "scripts" / script
-            for script in ("place_solve.py", "silhouette_rows.py", "camera_gravity.py")
+            for script in (
+                "place_solve.py",
+                "silhouette_rows.py",
+                "motion_silhouette.py",
+                "camera_gravity.py",
+            )
         ]
         code_paths.append(ROOT / "worker/wander_worker/source_timing.py")
         if not people.is_file():

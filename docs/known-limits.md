@@ -48,23 +48,34 @@ Do not retry one without a new idea, and add a line here when you measure a new 
     of area under the feet until it was hidden per frame. A capture taken before Spark re-sorted for
     the new camera also read low. Spark blends in display-encoded colour, so read alpha from encoded
     values.
-  - **Result.** The area ratio drops from 1.168 to 1.137, against a limit of 1.15. That passes, but
-    the drawn avatar still overhangs the walker: about 5% above the head and below the feet, and
-    wider at the shoulders. The silhouette fit matches splat-centre rows (0.5/99.5 percentiles) to the
-    mask's edges, so the drawn footprint overhangs.
+  - **Result.** The area ratio dropped from 1.168 to 1.137, against a limit of 1.15. The drawn avatar
+    still overhung the walker, by about 5% above the head and below the feet, because the silhouette
+    fit matched splat-centre rows (0.5/99.5 percentiles) to the mask's edges.
+  - **The fit now matches the drawn edge.** `place_solve.py` measures, per frame, how far the
+    drawn body extends past its centre rows: 2.1% of the body's height above the head and 3.3% below
+    the feet, median. It fits the widened rows to the mask, re-measuring where the fit puts the body.
+    - Over all 90 frames, IoU rises from 0.850 to 0.895 and the area ratio falls from 1.146 to 1.031.
+    - The live viewer on frames 0, 98 and 162 gives 1.01, 1.02 and 1.05.
+    - The body-height unit becomes the drawn body, the one the masks and the footage measure. The
+      fitted camera then sits 1.273 body-heights up, against 1.278 from the footage.
+    - The fit takes about 2 minutes instead of 20 seconds.
+    - The avatar is still slightly wide at the shoulders, and its foot pose differs from the
+      walker's on some frames.
 
   The other two checks pass on what they are named for:
-  - **Contact noise floor:** tested on the held-out contact, at 3.07 cm against a 3.03 cm floor.
-    That is at the floor, not comfortably above it: three folds give 3.20 cm, ten give 2.97 cm and
-    per-frame hold-outs 2.85 cm, as smaller blocks let the motion prior carry neighbours' contact
-    in. In-sample, the fit's own contact term pulls it to 2.79 cm.
+  - **Contact noise floor:** tested on the held-out contact, at 3.05 cm against a 2.96 cm floor,
+    with the drawn-row fit. That is at the floor, not comfortably above it. On the earlier
+    centre-row fit, three folds gave 3.20 cm, ten 2.97 cm and per-frame hold-outs 2.85 cm, against
+    3.03 cm; smaller blocks let the motion prior carry neighbours' contact in. In-sample, the fit's
+    own contact term pulls the residual below the held-out figure.
   - **Observation mask: the walker's never-seen shadow scores 0.00.** Gated over all mask pixels,
     the old mean read 0.68 because it projected the avatar without its placement. Using the run's
     own source masks, it reads 0.47: 52% of masked pixels show road a later frame saw once the
     walker had passed. The never-seen share rises from 28% to 73% along the clip, as a follow shot
     predicts.
 
-  Evidence: `.context/evidence/forest-anchors-20261114/`,
+  Evidence: `.context/evidence/forest-drawn-fit-20261114/`,
+  `.context/evidence/forest-anchors-20261114/`,
   `.context/evidence/forest-size-check-20261113/` and
   `.context/evidence/forest-operator-e2e-20261112/`.
 
