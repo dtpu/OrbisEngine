@@ -17,6 +17,7 @@ from orchestrator.journal import Journal
 from orchestrator.run_policy import (
     admission_problem,
     delivery_metadata,
+    unaccepted_scale_problem,
     unpaid_prerequisite_problem,
 )
 from orchestrator.session import RunSession
@@ -103,9 +104,12 @@ def test_legacy_default_and_persisted_run_control_only_clean_human_pause(run):
     assert RunOptions.model_validate({"hands_off": True}).model_dump()["hands_off"] is True
     command = cli.run_clip_command(run, "review", [])
     assert "--no-gate" in command
+    assert "--scale-spread-unaccepted" in command
     assert "--gate-pass" not in command
     run.options.pop("hands_off")
-    assert "--no-gate" not in cli.run_clip_command(run, "review", [])
+    manual = cli.run_clip_command(run, "review", [])
+    assert "--no-gate" not in manual
+    assert "--scale-spread-unaccepted" not in manual
 
 
 def test_question_becomes_durable_terminal_failure_and_no_more_stages(run, monkeypatch):
@@ -258,6 +262,78 @@ def test_failed_unpaid_prerequisite_holds_paid_work_until_it_succeeds(
     assert unpaid_prerequisite_problem(run, prerequisite, journal) is None
     journal.append("step.finished", step=prerequisite, attempt="two", status="succeeded")
     assert unpaid_prerequisite_problem(run, "lhm_frozen", journal) is None
+
+
+SPREAD_ONLY = {
+    "scale0": 0.8,
+    "gateOk": False,
+    "medianOk": True,
+    "spreadOk": False,
+    "gateError": "depth ratios exceed the required spread",
+}
+
+
+AFTER_SCALE = {"place_fit", "anchors", "objects", "finetune", "bake", "verify"}
+
+
+def unaccepted_scale(context, *, finished=True, **options):
+    context = configure_run(context, marble="video", **options)
+    (context.run_dir / "public/marble-example-clean.spz").parent.mkdir(exist_ok=True)
+    (context.run_dir / "public/marble-example-clean.spz").write_bytes(b"world fixture")
+    stages = {
+        name: {"status": "ok" if finished or name not in AFTER_SCALE else "pending"}
+        for name in cli.plan_for(context)
+    }
+    stages["_scale"] = dict(SPREAD_ONLY)
+    (context.run_dir / "state.json").write_text(json.dumps({"stages": stages}))
+    return context
+
+
+@pytest.mark.parametrize("objects", [False, True])
+def test_unaccepted_scale_holds_only_paid_work_built_on_it(run, monkeypatch, objects):
+    run = unaccepted_scale(run, finished=False, objects=objects, finetune=True, bake=True)
+    # Unpaid steps, and anchors at the defaults a hands-off run is held to, still run.
+    for step in ("place_fit", "anchors", "bake", "verify"):
+        assert unaccepted_scale_problem(run, step) is None
+    # Paid work upstream of the fit is not judged by it.
+    assert unaccepted_scale_problem(run, "lhm_frozen") is None
+    held = ["finetune"] + (["objects"] if objects else [])
+    for step in held:
+        assert "failed its depth-ratio gate" in unaccepted_scale_problem(run, step)
+    popen = Mock(side_effect=AssertionError("paid work launched on an unaccepted scale fit"))
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+    assert cli.main(["step", "--wait", "finetune"]) == 2
+    # Held, not finished: unpaid steps may still improve the preview.
+    assert Journal(run.run_dir).finished() is None
+    popen.assert_not_called()
+
+
+def test_scale_hold_needs_a_failed_gate_and_a_hands_off_run(run):
+    run = unaccepted_scale(run, finished=False, finetune=True)
+    state = json.loads((run.run_dir / "state.json").read_text())
+    state["stages"]["_scale"]["gateOk"] = True
+    (run.run_dir / "state.json").write_text(json.dumps(state))
+    assert unaccepted_scale_problem(run, "finetune") is None
+    state["stages"]["_scale"]["gateOk"] = False
+    (run.run_dir / "state.json").write_text(json.dumps(state))
+    assert unaccepted_scale_problem(run, "finetune")
+    run.options.pop("hands_off")
+    assert unaccepted_scale_problem(run, "finetune") is None
+
+
+def test_unaccepted_scale_delivers_failed_quality_and_never_succeeds(run):
+    package(run)
+    run = unaccepted_scale(run)
+    assert cli.completion_problem(run, run.journal()) == (
+        f"the scale fit failed acceptance: {SPREAD_ONLY['gateError']}"
+    )
+    assert cli.main(["finish", "succeeded", "Every stage ran"]) == 1
+    assert cli.main(["finish", "preview_ready", "Placed preview; scale spread failed"]) == 0
+    result = run.journal().entries()[-1].data
+    assert result["status"] == "failed"
+    assert result["delivery"]["status"] == "preview_ready"
+    assert result["delivery"]["qualityStatus"] == "failed"
+    assert result["delivery"]["failedStages"] == {"scale_fit": SPREAD_ONLY["gateError"]}
 
 
 def test_existing_detached_attempt_can_claim_execution_once(run):

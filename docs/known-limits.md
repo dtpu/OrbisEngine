@@ -15,6 +15,10 @@ Do not retry one without a new idea, and add a line here when you measure a new 
 
 - **On the forest road, Pi3X's depth is right and the generated world compresses distance.** The
   scale-spread gate is reporting a real world-geometry defect, so do not relax it.
+  - **Hands-off uploads.** A spread-only failure, with every median inside 0.95–1.05, keeps the
+    fitted scale so placement and its checks still run, and the preview is delivered with failed
+    quality. See
+    [automatic uploads](automatic-uploads.md). The gate's bands and verdict are unchanged.
   - **Arbiter.** Flat-ground geometry is independent of both depths. Gravity comes from the frames'
     own tree trunks (80 segments); the road is the bright gravel strip, with the walker excluded.
     Each depth's scale is fitted on the near road.

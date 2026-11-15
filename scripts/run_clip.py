@@ -3097,6 +3097,26 @@ class Pipeline:
             for _, lo, hi in rows
             if not (SCALE_SPREAD_BAND[0] <= lo and hi <= SCALE_SPREAD_BAND[1])
         ]
+        median_problem = spread_problem = None
+        if spread:
+            median_problem = (
+                f"depth ratios {[round(r, 3) for r in ratios]} are not all inside "
+                f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]} at any single scale (geomean fit {s:.4f} "
+                f"gives {gm:.4f}). That is Marble geometry error or SfM drift, not a scale error -- it "
+                f"means the avatar reads ~{abs(1 - min(ratios)) * 100:.0f}% wrong at one end of the "
+                f"clip. Read {fig}, then either re-trim the clip to "
+                f"the window that fits or pass --allow-scale-spread to ship the geometric-mean fit "
+                f"with that caveat (gym, atrium and selfie did)."
+            )
+        if wide:
+            spread_problem = (
+                f"depth ratios exceed the required spread: per-frame p10/p90 {wide} at scale0 {s:.4f} "
+                f"(want both inside {SCALE_SPREAD_BAND[0]}-{SCALE_SPREAD_BAND[1]}; medians "
+                f"{[round(r, 3) for r in ratios]}). A fitted median near 1 does not establish "
+                f"consistent depth across the visible surfaces.{band_summary(bands)} Read {fig}, check "
+                f"{self.ctx / 'frame_align.log'} and the world's geometry before passing "
+                f"--allow-scale-spread."
+            )
         report = dict(
             scale0=s,
             geomean=gm,
@@ -3107,6 +3127,7 @@ class Pipeline:
             gateOk=not spread and not wide,
             medianOk=not spread,
             spreadOk=not wide,
+            gateError=spread_problem or median_problem,
             figure=str(fig),
             distanceBands=bands,
         )
@@ -3117,31 +3138,27 @@ class Pipeline:
             f"   fitted scale0 {s:.4f}, ratios {[round(r, 3) for r in ratios]}, geomean {gm:.4f}, "
             f"p10 {min(p10):.3f}-{max(p10):.3f} p90 {min(p90):.3f}-{max(p90):.3f}"
         )
-        if wide and not self.a.allow_scale_spread:
-            raise RuntimeError(
-                f"depth ratios exceed the required spread: per-frame p10/p90 {wide} at scale0 {s:.4f} "
-                f"(want both inside {SCALE_SPREAD_BAND[0]}-{SCALE_SPREAD_BAND[1]}; medians "
-                f"{[round(r, 3) for r in ratios]}). A fitted median near 1 does not establish "
-                f"consistent depth across the visible surfaces.{band_summary(bands)} Read {fig}, check "
-                f"{self.ctx / 'frame_align.log'} and the world's geometry before passing "
-                f"--allow-scale-spread."
-            )
-        if spread and not self.a.allow_scale_spread:
-            raise RuntimeError(
-                f"depth ratios {[round(r, 3) for r in ratios]} are not all inside "
-                f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]} at any single scale (geomean fit {s:.4f} "
-                f"gives {gm:.4f}). That is Marble geometry error or SfM drift, not a scale error -- it "
-                f"means the avatar reads ~{abs(1 - min(ratios)) * 100:.0f}% wrong at one end of the "
-                f"clip. Read {fig}, then either re-trim the clip to "
-                f"the window that fits or pass --allow-scale-spread to ship the geometric-mean fit "
-                f"with that caveat (gym, atrium and selfie did)."
-            )
-        if spread or wide:
-            say(
-                f"   !! --allow-scale-spread: shipping the geomean fit; medians "
-                f"{(max(ratios) - 1) * 100:+.0f}% / {(min(ratios) - 1) * 100:+.0f}%, p10/p90 "
-                f"{min(p10):.2f}/{max(p90):.2f} across the clip"
-            )
+        if self.a.allow_scale_spread:
+            if spread or wide:
+                say(
+                    f"   !! --allow-scale-spread: shipping the geomean fit; medians "
+                    f"{(max(ratios) - 1) * 100:+.0f}% / {(min(ratios) - 1) * 100:+.0f}%, p10/p90 "
+                    f"{min(p10):.2f}/{max(p90):.2f} across the clip"
+                )
+        elif getattr(self.a, "scale_spread_unaccepted", False):
+            # One scale fits every evaluated frame, so placement near the subject still holds;
+            # the spread is the world's own depth error and fails acceptance, not placement.
+            if median_problem:
+                raise RuntimeError(median_problem)
+            if spread_problem:
+                say(
+                    f"   !! depth spread outside {SCALE_SPREAD_BAND[0]}-{SCALE_SPREAD_BAND[1]} "
+                    f"(p10/p90 {min(p10):.2f}/{max(p90):.2f}) with every median inside "
+                    f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]}: keeping scale0 {s:.4f} for "
+                    f"placement and review; this run cannot be accepted"
+                )
+        elif spread_problem or median_problem:
+            raise RuntimeError(spread_problem or median_problem)
 
     def place_fit(self):
         """Size check + per-sample placement solve (scripts/place_solve.py, share/PLACEMENT.md).
@@ -4205,6 +4222,13 @@ def main():
         action="store_true",
         help="ship the geometric-mean fit when no single scale puts every sampled depth "
         "ratio inside 0.95-1.05 (gym, atrium and selfie needed this)",
+    )
+    ap.add_argument(
+        "--scale-spread-unaccepted",
+        action="store_true",
+        help="when every depth-ratio median is inside 0.95-1.05 but the per-frame p10/p90 "
+        "spread is not, keep the fitted scale so placement and review run, and leave the run "
+        "unacceptable; failing medians still stop (hands-off runs set this)",
     )
     ap.add_argument(
         "--ft-mask-dilate",

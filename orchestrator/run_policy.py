@@ -78,6 +78,42 @@ def unpaid_prerequisite_problem(context, step: str, journal: Journal) -> str | N
     return None
 
 
+def failed_scale_gate(context) -> str | None:
+    """Why the recorded scale fit fails acceptance, or None when its gate passed or is absent."""
+    fit = stage_records(context.run_dir).get("_scale")
+    if not isinstance(fit, dict) or fit.get("gateOk") is not False:
+        return None
+    return fit.get("gateError") or "the scale fit's depth ratios are outside the gate"
+
+
+def unaccepted_scale_problem(context, step: str) -> str | None:
+    """Hold paid work built on a scale fit that kept its scale but failed acceptance.
+
+    A hands-off scale fit whose depth spread alone fails keeps the fitted scale, so unpaid
+    placement and review still put the avatar in the preview. Nothing downstream changes that
+    verdict, so the run cannot be accepted and spending more on it buys nothing.
+    """
+    described = STEPS[base_step(step)]
+    if not hands_off(context.options) or not described.paid or described.paid_with:
+        return None
+    if failed_scale_gate(context) is None:
+        return None
+    _, deps = stage_graph(RunOptions.model_validate(context.options))
+    seen, pending = set(), list(deps.get(step, []))
+    while pending:
+        name = pending.pop()
+        if name not in seen:
+            seen.add(name)
+            pending.extend(deps.get(name, []))
+    if "scale_fit" not in seen:
+        return None
+    return (
+        f"Hands-off paid step {step} was not started: the scale fit failed its depth-ratio "
+        "gate, so this run cannot be accepted and paid work built on that fit is withheld. Run "
+        "the remaining unpaid steps, then finish with the preview."
+    )
+
+
 def failed_preview_prerequisite(context, journal: Journal, *, paid: bool) -> str | None:
     """A paid (or unpaid) prerequisite of the preview whose latest outcome is a failure.
 
@@ -129,6 +165,8 @@ def delivery_metadata(context, journal: Journal, reason: str, quality_status="bl
         and isinstance(record, dict)
         and record.get("status") == "failed"
     }
+    if scale := failed_scale_gate(context):
+        failures.setdefault("scale_fit", scale)
     verification = records.get("_verify")
     if failures or (isinstance(verification, dict) and verification.get("status") == "failed"):
         quality_status = "failed"
