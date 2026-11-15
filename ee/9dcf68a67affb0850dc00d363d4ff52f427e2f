@@ -1,0 +1,29 @@
+docs/known-limits.md
+  s_34dfd539a098ce::t_98e16d2f27e198 86-87
+scripts/motion_silhouette.py
+  s_34dfd539a098ce::t_a284642ddcaa1a 88-89,91,93-95,121-144,147,149-150,152-153,155,157-170
+scripts/place_solve.py
+  s_34dfd539a098ce::t_a6fd0304a91b23 90-92,766,871,873-888,940-942
+scripts/silhouette_rows.py
+  s_34dfd539a098ce::t_9ba1dded51c3d5 152-155,157,161,163-186,188
+scripts/tests/test_drawn_silhouette_fit.py
+  s_34dfd539a098ce::t_13b111a9dde183 110-136
+scripts/tests/test_motion_silhouette.py
+  s_34dfd539a098ce::t_7e67201d796e0b 279-293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee9dcf68a67affb0850dc00d363d4ff52f427e2f",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
