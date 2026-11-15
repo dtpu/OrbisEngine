@@ -87,6 +87,9 @@ HANDHELD_BAND_M = (1.15, 1.85)
 # The silhouette fit's contact residual is in-sample. Each contiguous fifth of the clip is refit
 # without its contact term to measure where the masks and motion alone put those feet.
 CONTACT_FOLDS = 5
+# The drawn-overhang fit is a fixed point: refit while re-measuring the overhang where the body
+# landed moves a drawn edge by more than one row, which is the edges' own resolution.
+OVERHANG_TOLERANCE_PX, OVERHANG_REFITS = 1.0, 2
 CEILING_BAND_M = (2.10, 3.60)
 MAX_CAMERA_DRIFT_M = 0.20
 SIZE_RULE = (
@@ -760,6 +763,7 @@ def silhouette_fit(
                     d["F"] + (d["P"] - d["F"]) * size + shifts[i], d, "drawn overhang"
                 )
                 height = centre["bottom"] - centre["top"]
+                d["centreHeightPx"] = height
                 d["overhang"] = (
                     (centre["top"] - drawn["top"]) / height,
                     (drawn["bottom"] - centre["bottom"]) / height,
@@ -864,13 +868,24 @@ def silhouette_fit(
             measure_overhang(1.0, np.zeros((nf, 3)))
         x = solve()
         shifts, size = shifts_of(x), float(np.exp(x[-1]))
+        refits, change = 0, None
         if footprint is not None:
-            # The overhang scales with the body's apparent size: re-measure it where the first
-            # pass put the body, refit, and measure once more so every reported edge is drawn.
-            measure_overhang(size, shifts)
-            x = solve()
-            shifts, size = shifts_of(x), float(np.exp(x[-1]))
-            measure_overhang(size, shifts)
+            # The overhang scales with the body's apparent size: re-measure it where the fit put
+            # the body, and refit until the rows the fit used are the rows drawn there. The last
+            # measurement is always at the final pose, so every reported edge is drawn.
+            while True:
+                used = [data[i]["overhang"] for i in have]
+                measure_overhang(size, shifts)
+                change = max(
+                    abs(a - b) * data[i]["centreHeightPx"]
+                    for i, old in zip(have, used)
+                    for a, b in zip(old, data[i]["overhang"])
+                )
+                if change <= OVERHANG_TOLERANCE_PX or refits == OVERHANG_REFITS:
+                    break
+                x = solve()
+                shifts, size = shifts_of(x), float(np.exp(x[-1]))
+                refits += 1
         # Group scaling is about the origin; compensate so this fit scales about each foot.
         feet = np.array([[r["x"], r["y"], r["z"]] for r in rows_per_track[pi]])
         offsets = shifts + (1 - size) * (feet - pos0 - tr)
@@ -922,6 +937,9 @@ def silhouette_fit(
                         topMedian=float(np.median([data[i]["overhang"][0] for i in have])),
                         bottomMedian=float(np.median([data[i]["overhang"][1] for i in have])),
                         unit="fraction of the splat-centre row height",
+                        refits=refits,
+                        # Source px between the edges the final fit used and those drawn there.
+                        lastChangePx=change,
                     ),
                     # The drawn body, not its splat centres, is what the mask's edges measure.
                     drawnStatureRatio=float(

@@ -149,31 +149,43 @@ def project(P, R, C, K):
 def drawn_rows(P, opacity, log_scales, quats, R, C, K):
     """mask_rows of the silhouette the viewer draws (motion_silhouette.splat_coverage > 0.5).
 
-    Rendered on a canvas that follows the projected splats, so the image border never clips it:
-    these are the rows the drawn body would occupy, comparable with an uncropped mask edge.
-    Returns None when no splat is in front of the camera.
+    Unclipped by the image border: these are the rows the drawn body would occupy, comparable
+    with an uncropped mask edge. Only the head and feet bands are rendered, each with every splat
+    whose footprint reaches it, so the rows are those of the full render. Returns None when no
+    splat is in front of the camera.
     """
-    from motion_silhouette import MAX_FOOTPRINT_PX, splat_coverage
+    from motion_silhouette import footprint_coverage, splat_footprints
 
-    u, v, _z, ok = project(P, R, C, K)
-    if not ok.any():
-        return None
-    pad = MAX_FOOTPRINT_PX + 2
-    u0, v0 = int(np.floor(u[ok].min())) - pad, int(np.floor(v[ok].min())) - pad
-    width = int(np.ceil(u[ok].max())) + pad - u0
-    height = int(np.ceil(v[ok].max())) + pad - v0
-    shifted = np.array(K, float)
-    shifted[0, 2] -= u0
-    shifted[1, 2] -= v0
     camera = dict(
         camera_to_world=np.vstack([np.column_stack([R, C]), [0, 0, 0, 1]]).tolist(),
-        source_intrinsics=shifted.tolist(),
+        source_intrinsics=np.asarray(K, float).tolist(),
     )
-    cover = splat_coverage(P, opacity, log_scales, quats, camera, (height, width))
-    rows = mask_rows(cover > 0.5, 1.0, height)
-    if rows is None:
+    footprints = splat_footprints(P, opacity, log_scales, quats, camera)
+    if not len(footprints["alpha"]):
         return None
-    return dict(top=rows["top"] + v0, bottom=rows["bottom"] + v0)
+    centre, radius = footprints["centre"], footprints["radius"]
+    # Shift the canvas onto the footprints so nothing is clipped at the image border.
+    u0 = int(np.floor((centre[:, 0] - radius).min())) - 1
+    v0 = int(np.floor((centre[:, 1] - radius).min())) - 1
+    footprints["centre"] = centre - [u0, v0]
+    width = int(np.ceil((footprints["centre"][:, 0] + radius).max())) + 2
+    height = int(np.ceil((footprints["centre"][:, 1] + radius).max())) + 2
+    # The first qualifying row lies within a couple of the widest footprints of the extreme one.
+    band = 2 * int(radius.max()) + 16
+
+    def qualifying(rows):
+        cover = footprint_coverage(footprints, (height, width), rows)
+        return np.nonzero((cover > 0.5).sum(1) >= MIN_ROW_PX)[0] + rows[0]
+
+    top = bottom = None
+    for size in (band, height):  # a band first; the whole canvas if the band holds no edge
+        if top is None and len(found := qualifying((0, min(size, height)))):
+            top = int(found[0])
+        if bottom is None and len(found := qualifying((max(0, height - size), height))):
+            bottom = int(found[-1]) + 1
+    if top is None or bottom is None:
+        return None
+    return dict(top=float(top + v0), bottom=float(bottom + v0))
 
 
 def avatar_rows(P, R, C, K):

@@ -107,3 +107,30 @@ def test_fitting_splat_centres_to_the_mask_draws_the_avatar_too_tall(tmp_path):
     assert person["rowsFitted"] == "splat centres" and "drawnStatureRatio" not in person
     # Centre rows were stretched to the mask's edges, so the drawn footprint overhangs them.
     assert (after["bottom"] - after["top"]) - (target["bottom"] - target["top"]) >= 4
+
+
+@pytest.mark.parametrize("veil", [False, True])
+def test_drawn_rows_are_the_rows_of_the_full_render(veil):
+    xyz, opacity = POINTS.copy(), SPLATS["opacity"].copy()
+    if veil:
+        # A faint column above the head: drawn, but under half covered for longer than the
+        # head band, so the edge must come from the fallback over the whole canvas.
+        faint = np.column_stack([np.zeros(60), np.linspace(0.85, 2.0, 60), np.full(60, -4.0)])
+        xyz, opacity = np.vstack([xyz, faint]), np.r_[opacity, np.full(60, -3.0)]
+    scales = np.full((len(xyz), 3), np.log(0.03))
+    quats = np.tile([1.0, 0.0, 0.0, 0.0], (len(xyz), 1))
+    tall = (400, SIZE[0])  # room above the body for the veil
+    camera = dict(CAMERA, source_intrinsics=[[400.0, 0.0, 50.0], [0.0, 400.0, 300.0], [0, 0, 1]])
+    full = silhouette_rows.mask_rows(
+        splat_coverage(xyz, opacity, scales, quats, camera, tall) > 0.5, 1.0, tall[0]
+    )
+    rows = silhouette_rows.drawn_rows(
+        xyz, opacity, scales, quats, np.eye(3), np.zeros(3), np.array(camera["source_intrinsics"])
+    )
+    assert (rows["top"], rows["bottom"]) == (full["top"], full["bottom"])
+
+
+def test_the_drawn_fit_stops_once_its_edges_are_the_drawn_edges(tmp_path):
+    overhang = fit(tmp_path, [lambda _frame: SPLATS])["drawnOverhang"]
+    assert overhang["lastChangePx"] <= place_solve.OVERHANG_TOLERANCE_PX
+    assert 0 <= overhang["refits"] <= place_solve.OVERHANG_REFITS
