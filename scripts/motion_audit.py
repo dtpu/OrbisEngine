@@ -44,7 +44,7 @@ def seed_boxes(world, cams, seq, hw):
     return out
 
 
-def audit_world(world, clip, n=16, subsample=30000):
+def audit_world(world, clip, n=16):
     world = Path(world)
     cams = json.loads((world / "cameras.json").read_text())["cameras"]
     seq = json.loads((world / "person" / "sequence.json").read_text())
@@ -64,7 +64,7 @@ def audit_world(world, clip, n=16, subsample=30000):
         np.savez_compressed(
             mp, masks=np.packbits(m, axis=-1), shape=np.array(m.shape), indices=np.array(idx)
         )
-    rows = ms.audit(world, mp, limit=None, subsample=subsample)
+    rows = ms.audit(world, mp, limit=None)
     rows = [r for r in rows if r["gtPx"] > 500]
     return rows
 

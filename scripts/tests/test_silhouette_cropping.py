@@ -290,8 +290,8 @@ def test_fitted_anchor_gate_uses_original_samples_after_subsetting(tmp_path, mon
     )
     monkeypatch.setattr(
         motion_silhouette,
-        "splat_silhouette",
-        lambda xyz, opacity, sizes, camera, hw, subsample: np.ones(hw, bool),
+        "drawn_silhouette",
+        lambda vertex, xyz, sizes, camera, hw: np.ones(hw, bool),
     )
     result = anchor_checks.check_silhouette("fixture", world_dir=wd)
     assert result["ok"] is True

@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 import anchor_checks  # noqa: E402
 import camera_gravity as cg  # noqa: E402
 import place_solve  # noqa: E402
+import world_ruler  # noqa: E402
 
 K = np.array([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]])
 SIZE = (640, 480)
@@ -217,6 +218,29 @@ def test_footage_that_does_not_measure_the_height_keeps_the_failure(footage, rea
     assert reason in str(raised.value)
     trace = anchor_checks.check_camera_trace({"surface": {"sizeCheck": sc}})
     assert not trace["ok"] and "does not measure the camera there" in trace["why"][0]
+
+
+def test_the_ruler_bands_a_measured_camera_by_stature_not_the_handheld_prior():
+    stature, camera = 0.5, 0.65  # world units: the camera sits 1.3 walker heights up
+    measured = size_check(2.21, geometry(1.303, 1.278))
+    verdict = measured["footageGeometry"]["verdict"]
+    bands = world_ruler.interval_bands(measured, stature, camera)
+    lo, hi = bands["cameraBand"][:2]
+    assert (lo, hi) == pytest.approx(
+        (1.5 * verdict["fittedBodyHeights"], 1.9 * verdict["fittedBodyHeights"])
+    )
+    # A metre that makes the walker 1.60 m puts the camera at 2.08 m: inside both bands.
+    mpu = 1.60 / stature
+    verdict = world_ruler.combine({"metricDepth": dict(available=True, mpu=mpu)}, bands, 0.15)
+    assert verdict["bandViolations"] == [] and verdict["weaklyAnchored"]
+    # Without the footage measurement, or in a frame-aligned rerun, the handheld prior decides.
+    for sc, rotated in ((size_check(2.21), False), (measured, True)):
+        bands = world_ruler.interval_bands(sc, stature, camera, rotated=rotated)
+        assert bands["cameraBand"][:2] == world_ruler.CAMERA_BAND
+        violations = world_ruler.combine(
+            {"metricDepth": dict(available=True, mpu=mpu)}, bands, 0.15
+        )["bandViolations"]
+        assert [v["band"] for v in violations] == ["cameraBand"]
 
 
 def test_sampling_spreads_frames_across_the_clip():
