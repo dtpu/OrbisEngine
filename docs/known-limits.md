@@ -9,10 +9,35 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   0.9–1.1 band (one marginal p90 of 1.102), while the median falls steadily with distance from
   about 1.04 to 0.88 beyond about 7.5 body-heights. A distance-dependent disagreement between the
   generated world and Pi3X cannot be fixed by any single scale, and fitting the world to the far
-  Pi3X depth is what moved the road in the rejected refinements. This does not establish which
-  depth is physically right and does not pass the gate; `scale-fit.json` now records these
-  `distanceBands` and the failure message quotes them. Evidence:
+  Pi3X depth is what moved the road in the rejected refinements. `scale-fit.json` now records
+  these `distanceBands` and the failure message quotes them. Evidence:
   `.context/evidence/scale-distance-bands-20261112/`.
+
+- **On the forest road, Pi3X's depth is right and the generated world compresses distance.** The
+  scale-spread gate is reporting a real world-geometry defect, so do not relax it.
+  - **Arbiter.** Flat-ground geometry is independent of both depths. Gravity comes from the frames'
+    own tree trunks (80 segments); the road is the bright gravel strip, with the walker excluded.
+    Each depth's scale is fitted on the near road.
+  - **Result.** Pi3X stays within 3% of flat ground out to about 10 source units, and 3–7% short
+    beyond. The world falls to 0.92 at 4–6 units, 0.86 at 6–10 and 0.74 at 10–21, on all five
+    diagnostic frames.
+  - **Effect on the walker.** Within about 3 units, where the walker is, the two depths agree within
+    5%, so the compression does not misplace the avatar. It does make the far scene approach at the
+    wrong rate as the viewer moves.
+  - **Measured dead end: one radial correction.** The ratio of Pi3X to world distance from camera 0
+    agrees across frames 0–177 within 1–2% per distance bin, even though the camera moves 1.4 units.
+    A power law `(r/3.455)^0.098` was fitted on 1.5–17 units and held constant beyond. It stretched
+    a copy of the world's positions and covariances about camera 0.
+    - At the unchanged scale0, every distance quartile's median lands within 3% of Pi3X (it was
+      0.87–1.05), and p10 rises from 0.84 to 0.92.
+    - But p90 grows from 1.05–1.10 to 1.105–1.125, so the gate still fails.
+    - The road stays 13–17% short at 10–21 units while the verges overshoot. The compression is
+      surface-specific: the generated road is squashed more than the trees.
+    - Tree trunks still read farther at the base and nearer at the top than Pi3X. That would need a
+      tilt of about 20°, so it is local generated geometry, not a frame rotation.
+    - A correction would have to fit the ground surface itself, not one function of distance.
+  - **Evidence.** `.context/evidence/forest-scale-spread-20261114/`: ratio maps before and after,
+    `ground-arbiter*.json`, `radial-fit.json`, the warped world and the scripts.
 
 - The forest clip's camera is elevated: 1.30 body-heights above the road, so the handheld band
   fails without a scale error. place_fit cuts contact from 28.8 to 2.8 cm RMS (in-sample). The size
