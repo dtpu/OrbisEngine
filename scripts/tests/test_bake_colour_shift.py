@@ -76,3 +76,32 @@ def test_anchor_cloud_cache_is_shared_only_beside_the_anchors(tmp_path):
     assert bake.anchor_cloud_cache(anchors, packaged, "0,2") != keyed
     packaged.write_text('{"cameras": [2]}')
     assert bake.anchor_cloud_cache(anchors, packaged, "0,1") != keyed
+
+
+def test_depth_gate_keeps_only_splats_on_the_source_surface():
+    observed = np.array([True, True, True, True, False])
+    weight = np.array([2.0, 2.0, 2.0, 0.0, 2.0])
+    log_ratio = np.array([0.05, -0.3, 0.12, 0.0, 0.0])
+    kept, gated, mean = bake.depth_agreement_gate(observed, weight * log_ratio, weight, 0.1)
+    assert kept.tolist() == [True, False, False, False, False]
+    # Too near, too far and no supported source depth are all gated; unobserved stays unobserved.
+    assert gated.tolist() == [False, True, True, True, False]
+    np.testing.assert_allclose(mean[:3], log_ratio[:3], rtol=1e-6)
+    assert np.isnan(mean[3])
+
+
+def test_depth_gate_off_changes_nothing():
+    observed = np.array([True, False, True])
+    kept, gated, _ = bake.depth_agreement_gate(observed, np.array([5.0, 0, -5]), np.ones(3), 0.0)
+    assert kept.tolist() == observed.tolist() and not gated.any()
+
+
+@pytest.mark.parametrize("tolerance", [-0.1, float("nan")])
+def test_depth_gate_refuses_invalid_tolerance(tolerance):
+    with pytest.raises(ValueError):
+        bake.depth_agreement_gate(np.ones(2, bool), np.zeros(2), np.ones(2), tolerance)
+
+
+def test_depth_gate_refuses_mismatched_inputs():
+    with pytest.raises(ValueError):
+        bake.depth_agreement_gate(np.ones(2, bool), np.zeros(3), np.ones(2), 0.1)
