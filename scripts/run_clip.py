@@ -2746,20 +2746,17 @@ class Pipeline:
         # crop interpretation even when all previously recorded files remain identical.
         for motion in sorted(masks.parent.glob("track_*/motion.json")):
             include(motion)
+        # The size check reads the source frames' vertical lines (scripts/camera_gravity.py).
+        include(self.clip)
         code_paths = [
-            ROOT / "scripts" / script for script in ("place_solve.py", "silhouette_rows.py")
+            ROOT / "scripts" / script
+            for script in ("place_solve.py", "silhouette_rows.py", "camera_gravity.py")
         ]
+        code_paths.append(ROOT / "worker/wander_worker/source_timing.py")
         if not people.is_file():
             single_masks = self.ctx / "single-person-masks.npz"
             include(single_masks, required=False)
-            if single_masks.is_file():
-                include(self.clip)
-            code_paths.extend(
-                [
-                    ROOT / "worker/wander_worker/source_timing.py",
-                    ROOT / "scripts/single_person_masks.py",
-                ]
-            )
+            code_paths.append(ROOT / "scripts/single_person_masks.py")
         # These are trusted repository code, not run media. Retained reviews confine
         # review_path to the run root; do not send code paths through that resolver.
         for path in code_paths:
@@ -3182,6 +3179,8 @@ class Pipeline:
             f"{s:.6f}",
             "--floor",
             f"{floor:.6f}",
+            "--video",
+            str(self.clip),
             "--out",
             str(out),
         ]
@@ -3221,6 +3220,7 @@ class Pipeline:
             f"   1 u = {doc['metresPerWorldUnit']:.3f} m; source camera "
             f"{sc['cameraHeightM']:.2f} m above the floor, room {sc['floorToCeilingM']:.2f} m "
             f"floor to ceiling -> size {'PASS' if sc['pass_'] else 'FAIL'}"
+            + (f" ({sc['basis']})" if sc.get("basis") else "")
         )
         for pid in res["before"]:
             say(

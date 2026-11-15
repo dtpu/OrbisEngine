@@ -351,11 +351,18 @@ def check_camera_trace(place: dict) -> dict:
         )
     elif t["verdict"] == "flat out of band":
         why.append(
-            f"the trace is flat at {t['medianM']:.2f} m, outside 1.15-1.85 m: a scale error, "
-            f"not drift"
+            f"the trace is flat at {t['medianM']:.2f} m, outside 1.15-1.85 m, and the footage does "
+            f"not measure the camera there: a scale error, not drift"
         )
+    # "flat, measured from footage": outside the handheld band, but place_solve.py confirmed the
+    # camera's tilt from the frames' own vertical lines (scripts/camera_gravity.py).
     return dict(
-        ok=not why, verdict=t["verdict"], medianM=t["medianM"], slopeM=t["endToEndSlopeM"], why=why
+        ok=not why,
+        verdict=t["verdict"],
+        medianM=t["medianM"],
+        slopeM=t["endToEndSlopeM"],
+        basis=((place.get("surface") or {}).get("sizeCheck") or {}).get("basis", "handheld band"),
+        why=why,
     )
 
 

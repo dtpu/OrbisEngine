@@ -204,6 +204,14 @@ both inferred kinds. Output bytes are reproducible, so a static-world review of 
 an identical rerun. The bake still needs that review, and it does not fix geometry, depth or contact.
 See [known limits](known-limits.md) for the forest measurements behind this recipe.
 
+Placement's size check takes the walker as 1.70 m and expects a handheld camera 1.15–1.85 m above
+the floor. A camera outside that band passes only when the footage measures it there.
+`scripts/camera_gravity.py` reads gravity from the source frames' own vertical lines, pooled across
+up to 12 frames. It needs at least 30 supporting segments from five frames, and the height it gives
+must agree with the registration's within 10%. The fitted placement must show the same height.
+`placement.json` records the measurement under `sizeCheck.footageGeometry` and the outcome under
+`sizeCheck.basis`. The height is measured in body-heights; metres still assume the 1.70 m walker.
+
 Optional fine-tuning requires an explicitly configured GPU host (`--gpu-box` or `WANDER_GPU_BOX`)
 and an optional SSH identity (`--gpu-key` or `WANDER_GPU_KEY`); the remote host must already have
 its trainer dependencies and `~/venv/bin/python`. No command here provisions a GPU host.

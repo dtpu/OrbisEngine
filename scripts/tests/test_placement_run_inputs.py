@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
 
+import camera_gravity
 import place_solve
 import run_clip
 
@@ -53,6 +54,8 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
     pipeline = object.__new__(run_clip.Pipeline)
     pipeline.name = "example"
     pipeline.ctx = tmp_path / "separate-runs/example"
+    pipeline.clip = tmp_path / "source.mp4"
+    pipeline.clip.write_bytes(b"source video")
     package_inputs(world, pipeline.ctx, tracked=True)
     pipeline.state = SimpleNamespace(data={"stages": {"_scale": {"scale0": 1.0}}}, record=Mock())
     pipeline.a = SimpleNamespace(allow_bad_size=False)
@@ -80,16 +83,31 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
     pipeline.place_fit()
     command = commands[0]
     assert Path(command[command.index("--masks") + 1]) == pipeline.ctx / "tracks/masks.npz"
+    assert Path(command[command.index("--video") + 1]) == pipeline.clip
     assert "--fail-on-size" in command
 
 
 @pytest.mark.parametrize(
-    "floor,size_factor,accepted", [(-1.0, 0.7, True), (-1.4, 2.0, False), (-1.4, 1.0, True)]
+    "floor,size_factor,footage,accepted",
+    [
+        (-1.0, 0.7, None, True),
+        (-1.4, 2.0, None, False),
+        (-1.4, 1.0, None, True),
+        # A camera 1.18 body-heights up: outside the handheld band unless the footage measures it.
+        (-1.4, 0.7, None, False),
+        (-1.4, 0.7, "agrees", True),
+        (-1.4, 0.7, "disagrees", False),
+        # In band: the footage is never decoded.
+        (-1.4, 1.0, "agrees", True),
+        # The footage's height does not describe this fitted placement (0.41 body-heights).
+        (-1.4, 2.0, "agrees", False),
+    ],
 )
 def test_cli_gates_final_fit_and_preserves_report(
-    tmp_path, monkeypatch, floor, size_factor, accepted
+    tmp_path, monkeypatch, floor, size_factor, footage, accepted
 ):
-    """Exercise the real CLI/geometry solve; inject only a controlled silhouette fit result."""
+    """Exercise the real CLI/geometry solve; inject only a controlled silhouette fit result
+    and, where given, a controlled footage measurement (scripts/camera_gravity.py)."""
     world = tmp_path / "external-world"
     world.mkdir()
     cameras = world / "cameras.json"
@@ -141,10 +159,37 @@ def test_cli_gates_final_fit_and_preserves_report(
                 "offsetUnits": [[0, 0, 0]] * 8,
                 "contactResidualUnits": [0.03] * 8,
                 "edgeResidualsPx": [1.0] * 8,
+                "footageRows": footage_rows,
             }
         }
 
+    footage_rows = [
+        dict(sourceIndex=i, top=200.0, bottom=330.0, left=310.0, right=330.0) for i in range(8)
+    ]
+    measured = []
+
+    def measure_footage(video, rows, cams, normal):
+        measured.append((video, rows, len(cams), list(normal)))
+        image = 1.4 / 1.19 * (1.0 if footage == "agrees" else 0.8)
+        return dict(
+            registration=dict(bodyHeightsMedian=1.4 / 1.19),
+            image=dict(
+                bodyHeightsMedian=image,
+                inliers=80,
+                framesSupporting=8,
+                framesSampled=8,
+                segments=200,
+                tiltFromFloorNormalDeg=0.4,
+            ),
+            tolerance=camera_gravity.TOLERANCE,
+            minFrames=camera_gravity.MIN_FRAMES,
+            minInliers=camera_gravity.MIN_INLIERS,
+        )
+
+    monkeypatch.setattr(camera_gravity, "measure_footage", measure_footage)
     monkeypatch.setattr(place_solve, "silhouette_fit", silhouette)
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture: frames are read only by the measurement stub")
     report = tmp_path / "placement.json"
     monkeypatch.setattr(
         sys,
@@ -168,6 +213,7 @@ def test_cli_gates_final_fit_and_preserves_report(
             "--out",
             str(report),
             "--fail-on-size",
+            *(["--video", str(video)] if footage else []),
         ],
     )
     if accepted:
@@ -182,6 +228,15 @@ def test_cli_gates_final_fit_and_preserves_report(
     assert size["ceilingPlausible"] is (2.10 <= size["floorToCeilingM"] <= 3.60)
     assert result["perPerson"]["person"]["sizeScale"] == size_factor
     assert result["silhouetteFit"]["masks"] == str(masks)
+    assert "footageRows" not in result["perPerson"]["person"]
+    in_band = 1.15 <= size["cameraHeightM"] <= 1.85
+    if footage and not in_band:
+        assert measured == [(video, footage_rows, 8, pytest.approx([0.0, 1.0, 0.0]))]
+        assert size["footageGeometry"]["verdict"]["verified"] is accepted
+        assert size["basis"] == ("measured from footage" if accepted else "handheld band")
+    else:
+        assert measured == [] and "footageGeometry" not in size
+        assert size["basis"] == "handheld band"
 
 
 @pytest.mark.parametrize("tracked", [False, True])
@@ -288,6 +343,8 @@ def test_summary_links_to_the_accepted_placement(
     pipeline.info = {"duration": 1, "frames": 30, "fps": 30}
     pipeline.a = SimpleNamespace(fps=12, allow_bad_size=False)
     pipeline.ctx = tmp_path / "run"
+    pipeline.clip = tmp_path / "source.mp4"
+    pipeline.clip.write_bytes(b"source video")
     package_inputs(world, pipeline.ctx)
     pipeline.stages = ["place_fit"]
     pipeline.video_url = "/clips/example.mp4"
