@@ -413,6 +413,37 @@ def depth_agreement_gate(observed, sum_lr, sum_w_supported, tolerance):
     return observed & ~gated, gated, mean_lr
 
 
+LUMA = np.array([0.299, 0.587, 0.114])
+# An observed average this much brighter or darker than the generated splat is taken to come from
+# another surface (sky through a canopy gap, a trunk behind leaves), so its hue is not borrowed.
+CHROMA_LUMA_RATIO = 2.0
+
+
+def transfer_chroma(base_rgb, raw_rgb):
+    """Keep each splat's generated luminance and take the observed chromaticity.
+
+    The observed colour is scaled to the generated luminance, so its hue and saturation ratio
+    carry over while brightness, which holds the generated detail, does not. Scaling rather than
+    adding a chroma offset keeps a bright near-neutral sample (sky behind a canopy splat) near
+    neutral when darkened. For depth-gated splats, whose baked detail smears but whose average hue
+    is still observed, this removes a generated hue bias such as lime or blue. Splats with no
+    observed luminance, or whose observed luminance differs from the generated one by more than
+    CHROMA_LUMA_RATIO either way, keep their generated colour. Returns (colours, changed).
+    Inferred, not observed.
+    """
+    base_rgb = np.asarray(base_rgb, dtype=np.float64)
+    raw_rgb = np.asarray(raw_rgb, dtype=np.float64)
+    if base_rgb.shape != raw_rgb.shape or base_rgb.ndim != 2 or base_rgb.shape[1] != 3:
+        raise ValueError("Chroma transfer needs matching (N, 3) colours")
+    raw_luma = raw_rgb @ LUMA
+    base_luma = base_rgb @ LUMA
+    ratio = raw_luma / np.maximum(base_luma, 1e-6)
+    same = (raw_luma > 1e-3) & (ratio <= CHROMA_LUMA_RATIO) & (ratio >= 1 / CHROMA_LUMA_RATIO)
+    out = base_rgb.copy()
+    out[same] = raw_rgb[same] * (base_luma[same] / raw_luma[same])[:, None]
+    return np.clip(out, 0, 1), same
+
+
 def propagate_colour_shift(xyz, base_rgb, baked_rgb, observed, eligible, radius, neighbors=16):
     """Carry nearby observed colour shifts onto unobserved splats so a bake has no frustum seam.
 
@@ -883,6 +914,12 @@ def main():
         "this (0 = off); others keep the generated colour, recorded as depthGated in -bake.npz",
     )
     ap.add_argument(
+        "--gated-chroma",
+        action="store_true",
+        help="give depth-gated splats the observed chroma while keeping their generated luminance; "
+        "recorded as gatedChroma in -bake.npz",
+    )
+    ap.add_argument(
         "--shift-radius-body-heights",
         type=float,
         default=0.0,
@@ -1179,11 +1216,29 @@ def main():
     conf = np.where(
         observed, np.clip(count / a.count_sat, 0, 1) * np.clip(1 - std / a.std_max, 0, 1), 0
     ).astype(np.float32)
+    gated_chroma = np.zeros(n, dtype=bool)
+    if a.gated_chroma and depth_gated.any():
+        raw = np.clip(sum_rgb / np.maximum(sum_w, 1e-6)[:, None], 0, 1)
+        index = np.flatnonzero(depth_gated)
+        colours, same = transfer_chroma(marble_rgb[index], raw[index])
+        gated_chroma[index[same]] = True
+        baked[index] = colours
+        print(
+            f"gated chroma: {gated_chroma.sum()} of {depth_gated.sum()} depth-gated splats keep "
+            "generated luminance and take the observed chroma; the rest saw a surface more than "
+            f"{CHROMA_LUMA_RATIO:g}x brighter or darker and keep generated colour (inferred)",
+            flush=True,
+        )
     shifted = np.zeros(n, dtype=bool)
     if a.shift_radius_body_heights > 0:
         radius = a.shift_radius_body_heights * bodyH * scale0
         baked, shifted = propagate_colour_shift(
-            spz["xyz"], marble_rgb, baked, observed, spz["alpha"] > a.min_alpha, radius
+            spz["xyz"],
+            marble_rgb,
+            baked,
+            observed | gated_chroma,
+            (spz["alpha"] > a.min_alpha) & ~gated_chroma,
+            radius,
         )
         print(
             f"inferred colour shift: {shifted.sum()} unobserved splats within "
@@ -1214,6 +1269,7 @@ def main():
         colourStd=std.astype(np.float16),
         meanLogDepthRatio=mean_lr.astype(np.float16),
         depthGated=depth_gated,
+        gatedChroma=gated_chroma,
         scale0=scale0,
         origin_frame=a.origin_frame,
     )

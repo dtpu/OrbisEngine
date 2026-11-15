@@ -57,6 +57,26 @@ Do not retry one without a new idea, and add a line here when you measure a new 
 
   Evidence: `.context/evidence/forest-canopy-20261113/`.
 
+- The forest's leftover lime roadside and bluish rocks are depth-gated splats whose hue is
+  wrong, while their brightness and detail are fine. Two neighbourhood tints failed:
+  - averaging the observed colour shift over 1 body-height moved the rocks toward more blue;
+  - restricting it to depth-agreeing splats of similar generated colour doubled dark-canopy
+    brightness (0.13 to 0.28), because "dark generated" mixes canopy with bright gravel.
+
+  Local source contrast did not separate canopy from rocks or roadside (median 0.031–0.033), so
+  it cannot decide which drift is safe. The opt-in `--gated-chroma` keeps each gated splat's
+  generated luminance and scales its observed colour to it, borrowing only chromaticity. With
+  `--depth-agreement 0.1 --shift-radius-body-heights 1`, 92% of gated lime splats (4,612 of 5,036)
+  and 62% of gated bluish ones (817 of 1,315) lose that hue. The crest and rocks read grey-olive
+  and grey at the source pose. Two guards matter:
+  - Adding a chroma offset, rather than scaling, tinted dark canopy-top splats purple, because
+    they mostly see magenta overcast sky (viewer purple index +0.06–0.07 against −0.02).
+  - Splats whose observed luminance differs by more than 2× from the generated luminance now keep
+    their colour (22,420 of 82,819 gated). That returns the canopy top to −0.008.
+
+  About 14,000 lime splats the source never observes keep their generated colour. Geometry,
+  depth and contact are unchanged. Evidence: `.context/evidence/forest-gated-tint-20261113/`.
+
 - More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
   Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
   accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the

@@ -105,3 +105,27 @@ def test_depth_gate_refuses_invalid_tolerance(tolerance):
 def test_depth_gate_refuses_mismatched_inputs():
     with pytest.raises(ValueError):
         bake.depth_agreement_gate(np.ones(2, bool), np.zeros(3), np.ones(2), 0.1)
+
+
+def test_chroma_transfer_keeps_generated_luminance_and_takes_observed_hue():
+    base = np.array([[0.35, 0.53, 0.22], [0.26, 0.31, 0.38]])  # lime, bluish
+    raw = np.array([[0.43, 0.43, 0.39], [0.45, 0.45, 0.41]])  # grey-olive, grey
+    out, changed = bake.transfer_chroma(base, raw)
+    assert changed.all()
+    np.testing.assert_allclose(out @ bake.LUMA, base @ bake.LUMA, atol=1e-9)
+    # Chromaticity follows the observation: channel ratios match the observed colour.
+    np.testing.assert_allclose(out / out.sum(1, keepdims=True), raw / raw.sum(1, keepdims=True))
+
+
+def test_chroma_transfer_ignores_observations_of_another_surface():
+    dark_leaf = np.array([[0.13, 0.14, 0.11]])
+    sky = np.array([[0.85, 0.80, 0.88]])
+    unlit = np.array([[0.0, 0.0, 0.0]])
+    out, changed = bake.transfer_chroma(np.vstack([dark_leaf, dark_leaf]), np.vstack([sky, unlit]))
+    assert not changed.any()
+    np.testing.assert_array_equal(out, np.vstack([dark_leaf, dark_leaf]))
+
+
+def test_chroma_transfer_refuses_mismatched_colours():
+    with pytest.raises(ValueError):
+        bake.transfer_chroma(np.zeros((2, 3)), np.zeros((3, 3)))
