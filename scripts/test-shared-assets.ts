@@ -151,6 +151,36 @@ test('failed S3 auth never falls back to local media or exposes the error detail
     );
   }
 });
+test('a stalled catalog request answers 503 instead of hanging, then retries', async () => {
+  let calls = 0;
+  const s3 = {
+    send: () => {
+      calls++;
+      return new Promise<never>(() => {});
+    },
+    destroy() {},
+  };
+  const plugin = sharedAssets({}, { s3, stallMs: 50 });
+  const server = createServer((req, res) =>
+    plugin.middleware(req, res, () => {
+      throw new Error('unexpected local fallback');
+    }),
+  );
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/worlds/a.json`;
+    for (const expected of [1, 2]) {
+      const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      assert.equal(r.status, 503);
+      assert.match(await r.text(), /WANDER_ASSETS_MODE=local/);
+      assert.equal(calls, expected);
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
 test('a stalled blob download is abandoned and fetched again', async () => {
   const data = Buffer.from('0123456789');
   const sha = createHash('sha256').update(data).digest('hex');
