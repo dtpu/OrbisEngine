@@ -3,6 +3,27 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- The forest scale gate fails on distant background, not on the route. Replaying the run's own
+  scale diagnostic (unchanged inputs, scale0 0.7414, whole-frame p10 0.842–0.848) split by each
+  frame's source-depth quartiles: rays within about 4 body-heights mostly stay inside the unchanged
+  0.9–1.1 band (one marginal p90 of 1.102), while the median falls steadily with distance from
+  about 1.04 to 0.88 beyond about 7.5 body-heights. A distance-dependent disagreement between the
+  generated world and Pi3X cannot be fixed by any single scale, and fitting the world to the far
+  Pi3X depth is what moved the road in the rejected refinements. This does not establish which
+  depth is physically right and does not pass the gate; `scale-fit.json` now records these
+  `distanceBands` and the failure message quotes them. Evidence:
+  `.context/evidence/scale-distance-bands-20261112/`.
+
+- The forest clip's camera is elevated, so its handheld camera-height checks fail without a scale
+  error. With operator overrides (`--allow-scale-spread`, `--allow-bad-size`,
+  `--allow-weak-anchor`) on a copy of the run, place_fit cut contact from 28.8 to 2.8 cm RMS
+  (in-sample) and put the source camera 1.30 body-heights above the road. The independent
+  metric-depth ruler agrees (2.07 m against 2.21 m under the avatar assumption), and the source
+  frame's road vanishing point sits well above the walker's head. Do not widen the handheld band
+  or move the floor to pass this clip: the prior, not the scale, is wrong for it. Verify then
+  stops at its required manual static-world review. Evidence:
+  `.context/evidence/forest-operator-e2e-20261112/`.
+
 - More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
   Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
   accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the

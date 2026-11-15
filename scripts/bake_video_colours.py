@@ -315,7 +315,9 @@ def zbuffer_depth(points: np.ndarray, c2w: np.ndarray, K: np.ndarray, size, res,
     return d.astype(np.float32), sup
 
 
-def diagnostic_depth_ratios(pixel_indices, depths, source_depth, source_support, unmasked):
+def diagnostic_depth_ratios(
+    pixel_indices, depths, source_depth, source_support, unmasked, *, with_source=False
+):
     """Compare one generated front-center depth per supported source texel.
 
     Inputs are live, in-frustum generated centers projected into the source depth grid.
@@ -323,6 +325,7 @@ def diagnostic_depth_ratios(pixel_indices, depths, source_depth, source_support,
     This is a nearest-center z-buffer approximation, not Gaussian opacity rendering: it
     does not account for projected splat extent, transparency or subpixel coverage.
     Retain the old all-center ratios separately so changed measurements are explainable.
+    with_source also returns each compared ray's source depth, aligned with the ratios.
     """
     pixels = np.asarray(pixel_indices)
     depths = np.asarray(depths)
@@ -363,7 +366,48 @@ def diagnostic_depth_ratios(pixel_indices, depths, source_depth, source_support,
         "comparedPixels": int(compared.sum()),
         "legacySplats": int(legacy_samples.sum()),
     }
+    if with_source:
+        return ratios, legacy_ratios, counts, source[compared].astype(np.float64)
     return ratios, legacy_ratios, counts
+
+
+DISTANCE_BAND_PERCENTILES = (25, 50, 75)
+
+
+def depth_ratio_distance_bands(ratios, source_depths):
+    """Describe one frame's compared depth ratios by source-depth quartile.
+
+    Bands are this frame's own source-depth quartiles, so no body height or metric scale is
+    assumed. They locate where a spread failure lives (for example a near route that agrees
+    while distant background is compressed); they are descriptive only and never decide a gate.
+    Ties at an edge go to the farther band, so a band can be empty and is then omitted.
+    """
+    ratios = np.asarray(ratios, dtype=np.float64)
+    source = np.asarray(source_depths, dtype=np.float64)
+    if ratios.ndim != 1 or ratios.shape != source.shape or not ratios.size:
+        raise ValueError("Distance bands need one source depth per compared ratio")
+    if np.any(~np.isfinite(ratios) | (ratios <= 0)) or np.any(~np.isfinite(source) | (source <= 0)):
+        raise ValueError("Nonfinite or nonpositive values in distance bands")
+    edges = np.percentile(source, DISTANCE_BAND_PERCENTILES)
+    which = np.searchsorted(edges, source, side="right")
+    bands = []
+    for band in range(len(edges) + 1):
+        selected = which == band
+        if not selected.any():
+            continue
+        lr = np.log(ratios[selected])
+        bands.append(
+            {
+                "band": band,
+                "sourceDepthMin": float(source[selected].min()),
+                "sourceDepthMax": float(source[selected].max()),
+                "count": int(selected.sum()),
+                "median": float(np.exp(np.median(lr))),
+                "p10": float(np.exp(np.percentile(lr, 10))),
+                "p90": float(np.exp(np.percentile(lr, 90))),
+            }
+        )
+    return bands
 
 
 class JsonSource:
@@ -896,12 +940,13 @@ def main():
             ]
         r = zz / torch.clamp(md, 1e-4)
         if a.diag:
-            rr, legacy, coverage = diagnostic_depth_ratios(
+            rr, legacy, coverage, compared_source = diagnostic_depth_ratios(
                 flat.cpu().numpy(),
                 zz.cpu().numpy(),
                 dmap,
                 dsup,
                 (mk < 0.5).cpu().numpy(),
+                with_source=True,
             )
             lr = np.log(rr)
             ratio_log.append((f, lr))
@@ -915,6 +960,11 @@ def main():
                 f"log(front-center/source depth) median {np.median(lr):+.3f} "
                 f"(ratio {np.exp(np.median(lr)):.3f}), "
                 f"p10 {np.exp(np.percentile(lr, 10)):.3f} p90 {np.exp(np.percentile(lr, 90)):.3f}",
+                flush=True,
+            )
+            bands = depth_ratio_distance_bands(rr, compared_source)
+            print(
+                "depth-ratio-bands " + json.dumps({"frame": int(f), "bands": bands}),
                 flush=True,
             )
             print(
