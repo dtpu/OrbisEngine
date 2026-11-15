@@ -1,0 +1,42 @@
+scripts/run_clip.py
+  s_34dfd539a098ce::t_2bda5de35ba14c 4227-4232
+  s_34dfd539a098ce::t_96507050d50e1f 4226
+  s_34dfd539a098ce::t_0bd07a0d5942d2 3100-3119,3130,3141-3161
+orchestrator/cli.py
+  s_34dfd539a098ce::t_ce1cf5f82fe91a 145-147
+  s_34dfd539a098ce::t_1603aa2bfc9d03 32,35,168-173,177-178,312-317,362,887-888
+docs/automatic-uploads.md
+  s_34dfd539a098ce::t_87abef6b9c8b7f 112-131
+docs/known-limits.md
+  s_34dfd539a098ce::t_3241419383f8ae 18-21
+orchestrator/doctor.py
+  s_34dfd539a098ce::t_55e94e59a7ad02 389,391
+orchestrator/run_policy.py
+  s_34dfd539a098ce::t_95afc54fa7ad56 81-116,168-169
+orchestrator/steps.py
+  s_34dfd539a098ce::t_c8633282e2026d 353-355,592
+scripts/tests/test_hands_off_runs.py
+  s_34dfd539a098ce::t_740db6bc74f42b 20,107,110-112,267-338
+scripts/tests/test_orchestrator_journal.py
+  s_34dfd539a098ce::t_430cf96df1065d 421-434
+scripts/tests/test_scale_fit_evidence.py
+  s_34dfd539a098ce::t_ef0858dd2dc695 28,107-145
+scripts/tests/test_step_admission.py
+  s_34dfd539a098ce::t_47e7fe52f1c067 199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce61cfea3b4321760b3d8ff9bbdf31a4498abd76",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
