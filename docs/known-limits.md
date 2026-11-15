@@ -24,6 +24,22 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   stops at its required manual static-world review. Evidence:
   `.context/evidence/forest-operator-e2e-20261112/`.
 
+- Baking source-video colours onto the forest world (`bake_video_colours.py` without `--diag`)
+  replaces the generated lime-green verges with the source's dry olive grass. It recolours 27% of
+  splats, whose colour std across frames has median 0.023. Pass the Pi3X `cameras.json` beside the
+  anchors, not the packaged one: the packaged file lacks `framealign.json`, so splats map into the
+  wrong frame and only 5–8% are observed. On its own the bake leaves a hard straight edge where
+  the source frustum ends. The opt-in `--shift-radius-body-heights 1` carries nearby observed
+  colour shifts onto unobserved splats, fading to zero at one body-height (inferred, recorded as
+  `inferredShift` in `-bake.npz`), and removes that edge. Neither run is enabled in the pipeline,
+  and both leave real defects:
+  - mid-distance canopy smears;
+  - a generated berm on the far verge now reads as a tan mound;
+  - geometry, depth and contact are unchanged.
+
+  Tighter `--tol`/`--front` (0.1) or full-resolution decoding did not fix the canopy smear. Evidence:
+  `.context/evidence/forest-colour-bake-20261113/`.
+
 - More accurate CPU depth-moment arithmetic does not explain the retained forest failures.
   Fifteen original/trial03/trial04 replays preserve the old arrays exactly; parallel float64
   accumulation and normalization change spread p90 by at most 0.0001432 body-heights on the

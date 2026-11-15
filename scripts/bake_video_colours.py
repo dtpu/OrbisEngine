@@ -32,6 +32,7 @@ Usage:
 
 import argparse
 import gzip
+import hashlib
 import json
 import struct
 import subprocess
@@ -369,6 +370,69 @@ def diagnostic_depth_ratios(
     if with_source:
         return ratios, legacy_ratios, counts, source[compared].astype(np.float64)
     return ratios, legacy_ratios, counts
+
+
+def anchor_cloud_cache(anchors: Path, cameras: Path, anchor_samples: str) -> Path:
+    """Where the static point cloud built from `anchors` in `cameras`' frame is cached.
+
+    The cloud lives in the frame of the cameras that unprojected it. `static-scene.npy` beside
+    the anchors is the shared cache for the Pi3X cameras in that directory (frame_align.py writes
+    it too). Any other cameras file, such as a packaged, re-originated cameras.json, gets its own
+    cache keyed by its bytes and the anchor samples, so a cloud is never reused in another frame.
+    """
+    anchors, cameras = Path(anchors), Path(cameras)
+    if cameras.resolve().parent == anchors.resolve().parent:
+        return anchors.with_name("static-scene.npy")
+    key = hashlib.sha256(cameras.read_bytes() + b"\0" + anchor_samples.encode()).hexdigest()[:16]
+    return anchors.with_name(f"static-scene-{key}.npy")
+
+
+def propagate_colour_shift(xyz, base_rgb, baked_rgb, observed, eligible, radius, neighbors=16):
+    """Carry nearby observed colour shifts onto unobserved splats so a bake has no frustum seam.
+
+    Each eligible, unobserved splat whose nearest observed splat lies within `radius` (world
+    units) receives the Gaussian-weighted (sigma radius/2) mean of its observed neighbours'
+    `baked - base` shifts, faded linearly to zero at `radius`. Observed splats and everything
+    farther away keep their colours exactly. Returned colours are inferred, not observed: the
+    mask says which splats were changed so callers can label them.
+    """
+    from scipy.spatial import cKDTree
+
+    xyz = np.asarray(xyz, dtype=np.float64)
+    base_rgb = np.asarray(base_rgb, dtype=np.float64)
+    baked_rgb = np.asarray(baked_rgb, dtype=np.float64)
+    observed = np.asarray(observed, dtype=bool)
+    eligible = np.asarray(eligible, dtype=bool)
+    n = len(xyz)
+    if not (
+        xyz.shape == (n, 3)
+        and base_rgb.shape == baked_rgb.shape == (n, 3)
+        and observed.shape == eligible.shape == (n,)
+    ):
+        raise ValueError("Colour-shift inputs must describe the same splats")
+    if not np.isfinite(radius) or radius <= 0 or neighbors < 1:
+        raise ValueError("Colour-shift radius and neighbour count must be positive")
+    out = baked_rgb.copy()
+    changed = np.zeros(n, dtype=bool)
+    targets = np.flatnonzero(eligible & ~observed)
+    donors = np.flatnonzero(observed)
+    if not len(targets) or not len(donors):
+        return out, changed
+    k = min(neighbors, len(donors))
+    dist, near = cKDTree(xyz[donors]).query(xyz[targets], k=k, distance_upper_bound=radius)
+    dist, near = dist.reshape(len(targets), k), near.reshape(len(targets), k)
+    found = np.isfinite(dist)
+    reach = found[:, 0]
+    if not reach.any():
+        return out, changed
+    dist, near, found, targets = dist[reach], near[reach], found[reach], targets[reach]
+    weight = np.where(found, np.exp(-0.5 * (np.where(found, dist, 0) / (radius / 2)) ** 2), 0)
+    shift = (baked_rgb - base_rgb)[donors[np.where(found, near, 0)]]
+    mean_shift = (weight[..., None] * shift).sum(1) / weight.sum(1)[:, None]
+    fade = 1 - dist[:, 0] / radius
+    out[targets] = np.clip(base_rgb[targets] + fade[:, None] * mean_shift, 0, 1)
+    changed[targets] = True
+    return out, changed
 
 
 DISTANCE_BAND_PERCENTILES = (25, 50, 75)
@@ -786,6 +850,13 @@ def main():
     )
     ap.add_argument("--min-count", type=int, default=3)
     ap.add_argument(
+        "--shift-radius-body-heights",
+        type=float,
+        default=0.0,
+        help="carry observed colour shifts onto unobserved splats within this many body-heights, "
+        "fading to zero (0 = off); the shifted colours are inferred and recorded in -bake.npz",
+    )
+    ap.add_argument(
         "--out", default=ROOT / "public/marble-corridor-baked", type=Path, help="output stem"
     )
     ap.add_argument(
@@ -818,7 +889,7 @@ def main():
             if a.scene_points:
                 scene = np.load(a.scene_points)
             elif a.anchors:
-                cache = a.anchors.with_name("static-scene.npy")
+                cache = anchor_cloud_cache(a.anchors, a.cameras, a.anchor_samples)
                 if cache.exists():
                     scene = np.load(cache)
                 else:
@@ -1058,6 +1129,18 @@ def main():
     conf = np.where(
         observed, np.clip(count / a.count_sat, 0, 1) * np.clip(1 - std / a.std_max, 0, 1), 0
     ).astype(np.float32)
+    shifted = np.zeros(n, dtype=bool)
+    if a.shift_radius_body_heights > 0:
+        radius = a.shift_radius_body_heights * bodyH * scale0
+        baked, shifted = propagate_colour_shift(
+            spz["xyz"], marble_rgb, baked, observed, spz["alpha"] > a.min_alpha, radius
+        )
+        print(
+            f"inferred colour shift: {shifted.sum()} unobserved splats within "
+            f"{a.shift_radius_body_heights:g} body-heights of observed ones; "
+            "their colours are inferred, not observed",
+            flush=True,
+        )
     frac = observed.mean()
     print(
         f"colour std across frames, observed splats: median {np.median(std[observed]):.3f}, p90 {np.percentile(std[observed], 90):.3f}; {100 * (std[observed] < 0.1).mean():.0f}% under 0.1",
@@ -1077,6 +1160,7 @@ def main():
         sum_rgb=sum_rgb.astype(np.float32),
         sum_w=sum_w.astype(np.float32),
         count=count.astype(np.int16),
+        inferredShift=shifted,
         scale0=scale0,
         origin_frame=a.origin_frame,
     )
