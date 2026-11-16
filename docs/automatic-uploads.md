@@ -112,9 +112,8 @@ fully visible person, repeats and the run ends without spending on generation.
 A scale fit whose depth-ratio medians all pass but whose per-frame p10/p90 spread fails does not
 stop a hands-off run. The runner keeps the fitted scale (`--scale-spread-unaccepted`), so
 `place_fit`, `anchors` and `verify` still run and the run keeps a placement and its checks. The
-run preview still leaves placement disabled, as every run preview does
-([pipeline validation](pipeline-validation.md)); the placement shows with the viewer's
-`?place=1`. The gate's verdict is unchanged:
+run preview applies that placement while its receipt is current
+([pipeline validation](pipeline-validation.md)). The gate's verdict is unchanged:
 
 - `scale-fit.json` records `gateOk: false` and the reason in `gateError`.
 - The delivered `qualityStatus` is `failed`, with that reason under `failedStages.scale_fit`, and

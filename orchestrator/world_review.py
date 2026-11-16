@@ -173,6 +173,24 @@ def read_state(root: Path) -> dict:
     return state
 
 
+def current_placement(root: Path, run_id: str) -> bool:
+    """Whether the run's placement still measures its delivered scene.
+
+    This is the runner's own test for printing `place=1`: place_fit succeeded with a passing
+    size check, and its receipt still matches the final world, report and every input it read.
+    It hashes those inputs, so call it once per preview, not per progress poll.
+    """
+    try:
+        runner = RetainedReviewPipeline(read_run_context(root, run_id), read_state(root))
+        solve = runner.state.data["stages"].get("_placement_solve") or {}
+        return (
+            runner.placement_is_current(runner.world_spz())
+            and (solve.get("sizeCheck") or {}).get("pass_") is True
+        )
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def read_diagnostic(root: Path, state: dict, *, check_images=True) -> Diagnostic:
     verification = state["stages"].get("_verify") or {}
     pointer = verification.get("diagnosticReport")
