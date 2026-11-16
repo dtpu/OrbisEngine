@@ -1,0 +1,33 @@
+scripts/tests/test_pipeline_viewer.py
+  s_34dfd539a098ce::t_a502463d8a167f 353-457,459-463
+  s_34dfd539a098ce::t_0e4208426f5a57 458
+orchestrator/world_review.py
+  s_34dfd539a098ce::t_2045030b29076b 176-189,191-193
+  s_34dfd539a098ce::t_7ae47e5d0543f7 190
+orchestrator/api/viewer.py
+  s_34dfd539a098ce::t_55669aa64c1ab0 177-189
+  s_34dfd539a098ce::t_fb8c9594201cb4 331
+  s_34dfd539a098ce::t_955dabeb7e5b3c 304-307
+  s_34dfd539a098ce::t_6f39596fe31395 244-246
+  s_34dfd539a098ce::t_99c0ab2320e4b3 255,258-259,267,271
+docs/automatic-uploads.md
+  s_34dfd539a098ce::t_da4b6633bd77ee 115-116
+docs/pipeline-validation.md
+  s_34dfd539a098ce::t_771a1cc76e6553 124-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb7db07e81250234ea2b090ddd47c6087a308833",
+  "prompts": {},
+  "sessions": {
+    "s_34dfd539a098ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a45a656d-ab8f-4b27-99bc-54b9e757c469",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
