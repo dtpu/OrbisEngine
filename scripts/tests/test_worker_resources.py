@@ -15,7 +15,8 @@ from worker.stages.worker_resources import TIMEOUT_ENV, inference_resources
 
 
 @pytest.mark.parametrize(
-    "timeout,memory,containers", [(3600, 32768, 2), (1500, 32768, 1), (1800, 65536, 1)]
+    "timeout,memory,containers",
+    [(3600, 32768, 2), (1500, 32768, 1), (1800, 65536, 1), (3600, 65536, 1)],
 )
 def test_absent_limit_preserves_existing_defaults(timeout, memory, containers):
     with patch.dict(os.environ, {}, clear=True):
@@ -61,7 +62,9 @@ def test_invalid_limits_fail_closed(value):
             inference_resources(timeout=1500, memory=32768)
 
 
-@pytest.mark.parametrize("name,maximum", [("clean_video", 3600), ("motion", 1500), ("lhm", 1800)])
+@pytest.mark.parametrize(
+    "name,maximum", [("clean_video", 3600), ("motion", 1500), ("lhm", 1800), ("multiperson", 3600)]
+)
 def test_invalid_worker_setting_precedes_image_or_volume_setup(name, maximum):
     import modal
 
@@ -103,29 +106,35 @@ def add_file(self, local_path, remote_path, **kwargs):
     packaged.append((Path(local_path), remote_path))
     return original_file(self, local_path, remote_path, **kwargs)
 
-with patch.object(modal.App, "function", register), patch.object(modal.Image, "add_local_file", add_file), patch.object(modal, "is_local", return_value=REMOTE):
-    for name, maximum, memory, containers in [("clean_video",3600,32768,2),("motion",1500,32768,1),("lhm",1800,65536,1)]:
+with patch.object(modal.App, "function", register), patch.object(modal.Image, "add_local_file", add_file), patch.object(modal, "is_local", return_value=not REMOTE):
+    for name, maximum, memory, containers in [("clean_video",3600,32768,2),("motion",1500,32768,1),("lhm",1800,65536,1),("multiperson",3600,65536,1)]:
+        start = len(registered)
         namespace = runpy.run_path(str(root / f"worker/modal_{name}.py"))
-        options = registered[-1]
-        assert options["timeout"] == (600 if BOUNDED else maximum)
-        assert options["cpu"] == ((4,4) if BOUNDED else 4)
-        assert options["memory"] == ((memory,memory) if BOUNDED else memory)
-        assert options["max_containers"] == (1 if BOUNDED else containers)
-        assert options["retries"] == 0 and options["scaledown_window"] == 2
-        assert options["gpu"] == (GPU if name == "lhm" else "L4")
-        expected_env = {"WANDER_LHM_GPU":GPU} if name == "lhm" else {}
-        if BOUNDED:
-            assert options["startup_timeout"] == 600
-            expected_env["WANDER_WORKER_TIMEOUT_SECONDS"] = "600"
-        else:
-            assert "startup_timeout" not in options
-        if expected_env:
-            assert options["env"] == expected_env
-        else:
-            assert "env" not in options
+        options_list = registered[start:]
+        assert len(options_list) == (2 if name == "multiperson" else 1)
+        if name == "multiperson":
+            assert namespace["track"].get_raw_f().__name__ == "track"
+            assert namespace["animate_track"].get_raw_f().__name__ == "animate_track"
+        for options in options_list:
+            assert options["timeout"] == (600 if BOUNDED else maximum)
+            assert options["cpu"] == ((4,4) if BOUNDED else 4)
+            assert options["memory"] == ((memory,memory) if BOUNDED else memory)
+            assert options["max_containers"] == (1 if BOUNDED else containers)
+            assert options["retries"] == 0 and options["scaledown_window"] == 2
+            assert options["gpu"] == (GPU if name == "lhm" else "L4")
+            expected_env = {"WANDER_LHM_GPU":GPU} if name == "lhm" else {}
+            if BOUNDED:
+                assert options["startup_timeout"] == 600
+                expected_env["WANDER_WORKER_TIMEOUT_SECONDS"] = "600"
+            else:
+                assert "startup_timeout" not in options
+            if expected_env:
+                assert options["env"] == expected_env
+            else:
+                assert "env" not in options
         assert packaged[-1] == (root / "worker/stages/worker_resources.py", "/root/worker_resources.py")
-assert len(registered) == 3
-print("registered three workers without provider calls")
+assert len(registered) == 5
+print("registered five functions without provider calls")
 """
     env = os.environ.copy()
     env.pop(TIMEOUT_ENV, None)
@@ -147,7 +156,7 @@ print("registered three workers without provider calls")
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert "registered three workers" in result.stdout
+    assert "registered five functions" in result.stdout
 
 
 @pytest.mark.parametrize("gpu", ["L4", "L40S"])
@@ -242,3 +251,118 @@ def test_lhm_gpu_explicit_environment_and_rates_ignore_process_secrets():
     assert lhm_compute_rate("L40S") == pytest.approx(0.00073648)
     with pytest.raises(ValueError, match=LHM_GPU_ENV):
         lhm_compute_rate("A10")
+
+
+@pytest.mark.parametrize("execution_timeout", [0, 300, 600, 1200])
+def test_tracked_animation_override_and_receipt_respect_outer_ceiling(tmp_path, execution_timeout):
+    import json
+    from unittest.mock import Mock
+
+    from worker import modal_multiperson
+    from worker.stages import lhm_recovery
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    for name in (
+        "source.mp4",
+        "canonical-state.pt",
+        "result.json",
+        "cameras.json",
+        "frame_000.ply",
+        "source-poses.pt",
+        "motion.json",
+    ):
+        (inputs / name).write_bytes(b"{}")
+    function = Mock()
+    submitted = function.with_options.return_value if execution_timeout else function
+    submitted.spawn.side_effect = OSError("offline submission sentinel")
+    with (
+        patch.object(modal_multiperson, "INFERENCE_RESOURCES", {"timeout": 600}),
+        patch.object(modal_multiperson, "animate_track", function),
+        patch("builtins.print"),
+        pytest.raises(OSError, match="offline submission sentinel"),
+    ):
+        modal_multiperson.animate(
+            video=str(inputs / "source.mp4"),
+            canonical=str(inputs),
+            cameras=str(inputs / "cameras.json"),
+            track_dir=str(inputs),
+            out=str(tmp_path / "output"),
+            execution_timeout=execution_timeout,
+        )
+    expected = min(execution_timeout or 3600, 600)
+    if execution_timeout:
+        function.with_options.assert_called_once_with(
+            timeout=expected, cpu=(4, 4), memory=(65536, 65536), retries=0, max_containers=1
+        )
+    else:
+        function.with_options.assert_not_called()
+    submitted.spawn.assert_called_once()
+    assert submitted.spawn.call_args.kwargs["execution_timeout"] == execution_timeout
+    receipt = json.loads((tmp_path / "output" / lhm_recovery.RECEIPT_NAME).read_text())
+    assert receipt["execution"]["timeoutSeconds"] == expected
+    assert receipt["execution"]["inferenceTimeoutSeconds"] == execution_timeout
+
+
+def test_tracked_worker_reports_outer_deadline_without_changing_inference_recovery(tmp_path):
+    import json
+    import types
+    import uuid
+    from unittest.mock import Mock
+
+    sys.path.insert(0, str(ROOT / "worker"))
+    from stages import lhm_execution, lhm_recovery
+    from worker import modal_multiperson
+
+    real_start = lhm_recovery.start_checkpoint
+    recovery_id = uuid.uuid4().hex
+    commits = []
+
+    def commit():
+        manifest = tmp_path / lhm_recovery.remote_root(recovery_id) / "manifest.json"
+        commits.append(json.loads(manifest.read_text())["status"])
+
+    def timeout(command, log_path, **kwargs):
+        assert kwargs["execution_timeout"] == 1200
+        log_path.write_text("partial inference log\n")
+        (log_path.parent / "partial.ply").write_bytes(b"partial output")
+        raise subprocess.TimeoutExpired(command, 1140)
+
+    inputs = {
+        name: b"{}"
+        for name in (
+            "source.mp4",
+            "canonical-state.pt",
+            "reference.json",
+            "cameras.json",
+            "depth-reference.ply",
+            "seed-poses.pt",
+            "seed-motion.json",
+        )
+    }
+    hub = types.SimpleNamespace(snapshot_download=Mock(return_value="/cache/model"))
+    with (
+        patch.dict(sys.modules, {"huggingface_hub": hub}),
+        patch.object(modal_multiperson, "INFERENCE_RESOURCES", {"timeout": 600}),
+        patch.object(modal_multiperson, "cache", types.SimpleNamespace(commit=commit)),
+        patch.object(lhm_execution, "link_model_caches", return_value=[]),
+        patch.object(
+            lhm_recovery,
+            "start_checkpoint",
+            side_effect=lambda _, ident, mode: real_start(tmp_path, ident, mode),
+        ),
+        patch.object(lhm_execution, "run_logged_inference", side_effect=timeout) as inference,
+        patch("builtins.print"),
+        pytest.warns(UserWarning, match="executing locally"),
+    ):
+        result = modal_multiperson.animate_track.local(
+            inputs, [], recovery_id=recovery_id, execution_timeout=1200
+        )
+    assert commits == ["running", "failed"]
+    assert result["status"] == "failed"
+    assert result["report"]["timeoutSeconds"] == 600
+    assert result["report"]["inferenceTimeoutSeconds"] == 1200
+    inference.assert_called_once()
+    assert (
+        tmp_path / lhm_recovery.remote_root(recovery_id) / "output/partial.ply"
+    ).read_bytes() == b"partial output"

@@ -99,14 +99,16 @@ must supply a callback that cancels only its owned call and records that request
 not establish ownership, submit work, retry a generation, or settle the paid ledger. Retain and
 recover outputs and provider state before reconciling an interrupted attempt.
 
-## Optional single-person worker resource ceilings
+## Optional worker resource ceilings
 
 Set `WANDER_WORKER_TIMEOUT_SECONDS=600` in the launching process to limit the GPU functions
-`modal_clean_video.py::clean`, `modal_motion.py::reconstruct`, and `modal_lhm.py::frozen`
-(including its canonical animation mode). This is a registration-time setting: use a fresh Modal
-invocation after changing it. It must be a positive integer no greater than that function's
-existing maximum: 3600 seconds for cleaning, 1500 for camera/motion reconstruction, and 1800 for
-LHM frozen or animated inference. A shared value for all three must therefore be at most 1500.
+`modal_clean_video.py::clean`, `modal_motion.py::reconstruct`, `modal_lhm.py::frozen`
+(including its canonical animation mode), and `modal_multiperson.py::track` and `animate_track`.
+This is a registration-time setting: use a fresh Modal invocation after changing it. It must be a
+positive integer no greater than that function's
+existing maximum: 3600 seconds for cleaning, 1500 for camera/motion reconstruction, 1800 for
+LHM frozen or animated inference, and 3600 for both tracked multiperson functions. A shared
+value for all these functions must therefore be at most 1500.
 Empty, malformed, zero, negative, or excessive values fail before image or volume setup.
 Omitting the variable preserves the existing resource requests, concurrency and timeouts.
 The direct runner records the effective resource policy in each new paid claim, including
@@ -115,13 +117,25 @@ environment values and credentials are excluded. Earlier claims remain unchanged
 
 When configured, the function decorator sets both execution and startup timeouts to that value,
 CPU request/limit to `(4, 4)`, memory request/limit to `(32768, 32768)` MiB for cleaning and motion
-or `(65536, 65536)` MiB for LHM, one maximum container, no automatic retries, and a two-second
-scaledown window. The small nonsecret timeout setting is forwarded to containers so their module
+or `(65536, 65536)` MiB for LHM and tracked multiperson functions, one maximum container,
+no automatic retries, and a two-second scaledown window. The small nonsecret timeout setting is
+forwarded to containers so their module
 reimport uses the same policy. Startup and execution are separate deadlines; the setting does
 not bound their combined wall time, image builds, finalization, or unrelated workers. It is not
 a universal dollar cap and does not replace the paid ledger or provider spending controls.
 The model, precision, input sampling, inference arguments and output-quality requirements stay
-unchanged. CPU staging functions and tracked multiperson workers retain their existing policy.
+unchanged. CPU staging functions retain their existing policy.
+
+Tracked animation retains its separate `--execution-timeout` logged-subprocess recovery deadline
+and finalization behavior. An explicit animation timeout can shorten the outer function deadline
+but cannot widen the environment ceiling. `timeoutSeconds` in tracking reports and animation
+reports/receipts records the effective outer deadline; animation `inferenceTimeoutSeconds` records
+the unchanged internal setting (zero means no internal deadline). The resource setting does not
+shorten that internal deadline or reserve
+finalization time; an earlier outer provider timeout can interrupt recovery. Paid claim resource
+receipts record the outer function timeout separately from that internal option, and both tracked
+entrypoints fingerprint the resource helper. Tracking has no durable-output checkpoint. Inspect
+existing provider state and retained outputs after a timeout before authorizing another attempt.
 
 Bounded single-person LHM uses the existing logged-subprocess deadline guard to stop its own
 inference child before the provider deadline, reserving up to 60 seconds (10% for short limits)
@@ -133,7 +147,8 @@ return artifacts. Inspect provider status and the existing attempt before author
 
 Offline checks in `scripts/tests/test_worker_resources.py` cover default preservation, invalid
 settings before worker setup, actual registration against the locked Modal SDK, packaged helper
-imports, and failed-checkpoint preservation for both bounded LHM modes. They do not build cloud
+imports, tracked animation override/receipt consistency, and failed-checkpoint preservation for
+bounded LHM and tracked animation. They do not build cloud
 images or establish runtime cost or inference quality.
 
 ## Explicit one-run operator authorization

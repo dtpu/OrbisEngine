@@ -518,6 +518,8 @@ class CommandIdentityTests(unittest.TestCase):
             ("worker/modal_clean_video.py", 3600, 32768, 2),
             ("worker/modal_motion.py", 1500, 32768, 1),
             ("worker/modal_lhm.py", 1800, 65536, 1),
+            ("worker/modal_multiperson.py::main", 3600, 65536, 1),
+            ("worker/modal_multiperson.py::animate", 3600, 65536, 1),
         ):
             with self.subTest(worker=worker):
                 command = ["modal", "run", worker]
@@ -555,6 +557,31 @@ class CommandIdentityTests(unittest.TestCase):
                 self.assertNotEqual(low, high)
                 self.assertEqual(low, normalized)
                 self.assertNotIn("secret", json.dumps(normalized))
+
+    def test_tracked_outer_resource_deadline_is_separate_from_internal_recovery_deadline(self):
+        for internal in (0, 300, 600, 1200):
+            with self.subTest(internal=internal):
+                command = [
+                    "modal",
+                    "run",
+                    "worker/modal_multiperson.py::animate",
+                    "--execution-timeout",
+                    str(internal),
+                ]
+                default, _, _ = command_identity(command, self.root, environment={})
+                bounded, _, _ = command_identity(
+                    command, self.root, environment={"WANDER_WORKER_TIMEOUT_SECONDS": "600"}
+                )
+                self.assertEqual(default["resources"]["timeout"], internal or 3600)
+                self.assertEqual(bounded["resources"]["timeout"], min(internal or 3600, 600))
+                self.assertEqual(bounded["resources"]["startup_timeout"], 600)
+                self.assertEqual(default["resources"]["cpu"], [4, 4] if internal else 4)
+                self.assertEqual(
+                    default["resources"]["memory"], [65536, 65536] if internal else 65536
+                )
+                self.assertEqual(default["options"]["--execution-timeout"], internal)
+                self.assertEqual(default["options"], bounded["options"])
+                self.assertNotEqual(digest(default), digest(bounded))
 
     def test_lhm_gpu_identity_pins_default_and_changed_request(self):
         command = ["modal", "run", "worker/modal_lhm.py"]
@@ -614,6 +641,8 @@ class CommandIdentityTests(unittest.TestCase):
             "worker/modal_clean_video.py",
             "worker/modal_motion.py",
             "worker/modal_lhm.py",
+            "worker/modal_multiperson.py::main",
+            "worker/modal_multiperson.py::animate",
         ):
             with self.subTest(worker=worker):
                 command = ["modal", "run", worker]
@@ -987,6 +1016,55 @@ class PaidRunIntegrationTests(unittest.TestCase):
             self.pipeline.paid_run("pi3x", self.command(self.root / "output"), self.root / "log")
         claim.assert_not_called()
         provider.assert_not_called()
+        self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
+
+    def test_tracked_resource_receipts_preserve_outer_and_internal_deadlines(self):
+        for entry, operation, extra in (
+            ("main", "tracks", []),
+            ("animate", "animate_track_0", ["--execution-timeout", "1200"]),
+        ):
+            for value, expected in ((None, 3600), ("600", 600)):
+                with self.subTest(entry=entry, value=value):
+                    ledger = self.root / f"{entry}-{value}-ledger.json"
+                    self.pipeline.a.stage_ledger = str(ledger)
+                    command = ["modal", "run", f"worker/modal_multiperson.py::{entry}", *extra]
+                    environment = {} if value is None else {"WANDER_WORKER_TIMEOUT_SECONDS": value}
+                    with (
+                        patch.dict(os.environ, environment, clear=True),
+                        patch.object(run_clip, "run") as provider,
+                    ):
+                        self.pipeline.paid_run(operation, command, self.root / "tracked.log")
+                    provider.assert_called_once()
+                    claim = json.loads(ledger.read_text())["attempts"][0]["claim"]
+                    parameters = claim["parameters"]
+                    self.assertEqual(
+                        parameters["resources"]["timeout"],
+                        min(expected, 1200) if extra else expected,
+                    )
+                    if extra:
+                        self.assertEqual(parameters["options"]["--execution-timeout"], 1200)
+                    self.assertIn("worker/stages/worker_resources.py", claim["codeVersion"])
+                    self.assertEqual(
+                        claim["fingerprint"],
+                        digest({"parameters": parameters, "code": claim["codeVersion"]}),
+                    )
+
+    def test_invalid_tracked_resources_block_before_claim_or_provider(self):
+        for entry, operation in (("main", "tracks"), ("animate", "animate_track_0")):
+            with (
+                self.subTest(entry=entry),
+                patch.dict(os.environ, {"WANDER_WORKER_TIMEOUT_SECONDS": "3601"}),
+                patch.object(StageAttempts, "begin") as claim,
+                patch.object(run_clip, "run") as provider,
+                self.assertRaisesRegex(run_clip.QualityStop, "WANDER_WORKER_TIMEOUT_SECONDS"),
+            ):
+                self.pipeline.paid_run(
+                    operation,
+                    ["modal", "run", f"worker/modal_multiperson.py::{entry}"],
+                    self.root / "log",
+                )
+            claim.assert_not_called()
+            provider.assert_not_called()
         self.assertFalse(Path(self.pipeline.a.stage_ledger).exists())
 
     def test_pending_claim_blocks_before_provider_call(self):

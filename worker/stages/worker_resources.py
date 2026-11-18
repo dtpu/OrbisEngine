@@ -1,4 +1,4 @@
-"""Opt-in resource ceilings for the single-person inference workers, not a spend cap."""
+"""Opt-in resource ceilings for the inference workers, not a spend cap."""
 
 import os
 import re

@@ -64,7 +64,8 @@ log that and stop.
 3. Record the commit, private S3 snapshot, active viewer mode, free disk, clip inventory, and
    current provider usage in the log. Keep manifests and measurements under `.context/evidence/`.
 4. Run local checks before paying for a baseline with a known code failure: `bun run build`,
-   `bun run format:check`, `bun run test:pull-assets`, `bun run test:marble`, plus the audio,
+   `bun run format:check`, `bun run test:pull-assets`,
+   `uv run --locked --group dev --group inference pytest scripts/tests/test_marble_world.py`, plus the audio,
    object and viewer checks described in their docs.
 5. Read-only Modal preflight (`MODAL_PROFILE=dtpu`):
 
@@ -162,6 +163,7 @@ Selection and recovery order:
   This is paid. `--reuse-world` only prevents a new Marble generation; cleaning, prompting,
   verification and GPU reconstruction still cost. The final regression must retain each clip's
   recorded settings and stages. Keep `--marble none` for clips on that lane.
+
 - The runner cache is stage-status based and does not fingerprint every stage's code, settings
   or output. A rerun invalidates its descendants; `--only` leaves excluded descendants pending
   and requires its dependencies to be settled. Prefer fresh candidate state when inputs change,
