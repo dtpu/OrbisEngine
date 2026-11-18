@@ -3220,7 +3220,14 @@ class Pipeline:
         )
         if not self.a.allow_bad_size:
             cmd.append("--fail-on-size")
-        run(cmd, self.ctx / "place_fit.log", attempts=1)
+        # Small placement least-squares systems suffer from OpenBLAS thread overhead.
+        # Scope the default to this child and preserve explicit operator settings.
+        run(
+            cmd,
+            self.ctx / "place_fit.log",
+            env_extra={"OPENBLAS_NUM_THREADS": os.environ.get("OPENBLAS_NUM_THREADS", "1")},
+            attempts=1,
+        )
         if self.placement_inputs(world) != inputs:
             raise RuntimeError("placement inputs changed during solve; rerun place_fit")
         doc = json.loads(out.read_text())
