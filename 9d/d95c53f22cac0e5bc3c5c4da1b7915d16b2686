@@ -1,0 +1,48 @@
+worker/modal_multiperson.py
+  s_a3c43d2a2443ce::t_2bd4a04d36d228 15-19,23,133,142,271
+  s_a3c43d2a2443ce::t_c3400774bff69d 222,367-368,415-416,448-449
+docs/unattended-runs.md
+  s_c6018019842afa::t_ddcd9614353950 67-68
+  s_c6018019842afa::t_b818cc7f458237 166
+worker/stages/worker_resources.py
+  s_a3c43d2a2443ce::t_2bd4a04d36d228 1
+docs/paid-recovery.md
+  s_a3c43d2a2443ce::t_c3400774bff69d 130-132
+  s_a3c43d2a2443ce::t_26f53aab7c0976 107-111,120-122,133-138,150-151
+  s_c6018019842afa::t_2d834657a4504e 102,105-106,127-129
+scripts/stage_attempts.py
+  s_a3c43d2a2443ce::t_c3400774bff69d 340-348
+  s_a3c43d2a2443ce::t_2bd4a04d36d228 145-148,150,240-241
+scripts/tests/test_stage_attempts.py
+  s_a3c43d2a2443ce::t_26f53aab7c0976 562-584,1065
+  s_c6018019842afa::t_ae909b0bfb4aab 1040-1043,1047,1050
+  s_a3c43d2a2443ce::t_2bd4a04d36d228 521-522,561,585,644-645
+  s_c6018019842afa::t_50b269661a77f9 1021-1039,1044-1046,1048-1049,1051-1064,1066-1069
+scripts/tests/test_worker_resources.py
+  s_c6018019842afa::t_ae909b0bfb4aab 254-368
+  s_a3c43d2a2443ce::t_a8e15887f57e77 18-19,65-67,109-111,113-134,136-137,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9dd95c53f22cac0e5bc3c5c4da1b7915d16b2686",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
