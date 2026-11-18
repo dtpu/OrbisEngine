@@ -1,0 +1,39 @@
+worker/stages/motion_submission.py
+  s_a3c43d2a2443ce::t_022856943c3977 1-37,39-56
+  s_a3c43d2a2443ce::t_8571381ee73b97 38
+scripts/tests/test_motion_submission.py
+  s_c6018019842afa::t_275f56f7699ee8 1-104,106,108-135,150,170-172,174,176
+  s_a3c43d2a2443ce::t_3a2e0e53ccdc28 105,107,136-149,151-169,173,175,177
+scripts/stage_attempts.py
+  s_a3c43d2a2443ce::t_022856943c3977 131-132
+worker/modal_motion.py
+  s_a3c43d2a2443ce::t_022856943c3977 193-207
+docs/paid-recovery.md
+  s_a3c43d2a2443ce::t_8c28537fa177e6 591-613
+scripts/tests/test_stage_attempts.py
+  s_a3c43d2a2443ce::t_867c01c1a1dbda 672-682
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30ecba8463309a95c2f2002ba0cee2ff81b97532",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
