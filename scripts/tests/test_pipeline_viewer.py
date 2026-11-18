@@ -127,6 +127,47 @@ def test_clean_review_is_a_readable_report_without_exposing_arbitrary_files(pack
     assert case.client.get(review["url"], headers=AUTH).status_code == 404
 
 
+@pytest.mark.parametrize(
+    "filename,label",
+    [
+        ("motion-call.json", "Reconstruction call receipt"),
+        ("modal-run.json", "Reconstruction compute report"),
+    ],
+)
+def test_failed_reconstruction_exposes_only_known_receipts(packaged, filename, label):
+    case, root, world, source = packaged
+    # No package or scene is required to inspect a failed call.
+    shutil.rmtree(root / "public")
+    directory = root / "pi3x"
+    directory.mkdir()
+    report = {"status": "wait_timeout", "functionCallId": "fc-owned", "cancellation": "unknown"}
+    path = directory / filename
+    path.write_text(json.dumps(report))
+    (directory / "private.json").write_text('{"private":true}')
+    (root / "state.json").write_text(json.dumps({"stages": {"pi3x": {"status": "failed"}}}))
+    progress = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    preview = next(item for item in progress["previews"] if item["path"] == f"pi3x/{filename}")
+    assert preview["label"] == label and preview["kind"] == "report"
+    assert not progress.get("viewerPath")
+    response = case.client.get(preview["url"], headers=AUTH)
+    assert response.status_code == 200 and response.json() == report
+    assert response.headers["cache-control"] == "no-store"
+    assert case.client.get(preview["url"]).status_code == 401
+    assert (
+        case.client.get(
+            "/api/pipeline/runs/viewer-run/files/pi3x/private.json", headers=AUTH
+        ).status_code
+        == 404
+    )
+    outside = root.parent / "private-receipt.json"
+    outside.write_text('{"private":true}')
+    path.unlink()
+    path.symlink_to(outside)
+    assert case.client.get(preview["url"], headers=AUTH).status_code == 404
+    updated = case.client.get("/api/pipeline/runs/viewer-run/progress", headers=AUTH).json()
+    assert not any(item["path"] == f"pi3x/{filename}" for item in updated["previews"])
+
+
 @pytest.mark.parametrize("accepted", [False, None])
 def test_rejected_cleanup_review_does_not_encourage_approval_or_release_world_generation(
     packaged, accepted

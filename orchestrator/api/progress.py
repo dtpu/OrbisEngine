@@ -80,6 +80,10 @@ def previews(root: Path) -> list[dict]:
         "scale-fit.json",
     ):
         candidates += [("Output report", p, "report") for p in sorted(root.glob(pattern))]
+    candidates += [
+        ("Reconstruction call receipt", root / "pi3x/motion-call.json", "report"),
+        ("Reconstruction compute report", root / "pi3x/modal-run.json", "report"),
+    ]
     result = []
     for label, path, kind in candidates:
         resolved = path.resolve()
