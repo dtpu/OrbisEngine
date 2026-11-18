@@ -1,0 +1,31 @@
+scripts/run_clip.py
+  s_c6018019842afa::t_7ef1d6cfd0e67a 3223-3230
+scripts/tests/test_placement_run_inputs.py
+  s_c6018019842afa::t_7ef1d6cfd0e67a 4,48-54,72,75-79,97-98
+docs/DEVELOPING.md
+  s_a3c43d2a2443ce::t_5deb4346c61b9b 218,225-229,231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87c703e75ff76862841db23a465e1df752275aa7",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
