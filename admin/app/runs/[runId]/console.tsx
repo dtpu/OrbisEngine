@@ -901,11 +901,19 @@ export default function RunConsole({ runId }: { runId: string }) {
                     <button
                       className={`button${!isGate && canRetry ? ' button--primary' : ''}`}
                       type="button"
-                      disabled={busy}
+                      disabled={busy || Boolean(selected.retryUnavailableReason)}
+                      aria-describedby={
+                        selected.retryUnavailableReason ? 'retry-unavailable' : undefined
+                      }
                       onClick={() => onCommand('retry')}
                     >
                       Retry stage
                     </button>
+                    {selected.retryUnavailableReason ? (
+                      <p id="retry-unavailable" role="status">
+                        {selected.retryUnavailableReason}
+                      </p>
+                    ) : null}
                     <span className="gap" />
                     {isGate || selected.definition.kind === 'human' ? (
                       <button

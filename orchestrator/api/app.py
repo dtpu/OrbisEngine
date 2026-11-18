@@ -43,6 +43,7 @@ from orchestrator.api.questions import apply_question_hold, restore_legacy_quest
 from orchestrator.contracts import BudgetPolicy, Run
 from orchestrator.journal import Journal
 from orchestrator.repository import PipelineRepository, TERMINAL_RUN_STATUSES, live_run_status
+from orchestrator.run_policy import paid_retry_problem
 from orchestrator.steps import STEPS, RunOptions, base_step
 from orchestrator.worker_presence import worker_status
 
@@ -497,6 +498,11 @@ def create_app(
         snapshot = stage_snapshot(journal.run_dir)
         if snapshot is not None and snapshot.run_id == summary["id"]:
             with_stage_snapshot(summary, snapshot)
+        for node in summary["nodes"]:
+            if reason := paid_retry_problem(
+                summary["configuration"].get("options") or {}, node["id"], journal
+            ):
+                node["retryUnavailableReason"] = reason
         summary["live"] = {"source": "journal", "paused": paused}
         # The terminal journal decision survives a failed database projection and late
         # detached-stage completions. Do not turn it back into a request for UI input.
@@ -641,6 +647,12 @@ def create_app(
         # the launch. This endpoint runs in FastAPI's threadpool so waiting on flock does
         # not block unrelated async requests.
         with journal.admission_lock():
+            if command == "retry" and (
+                problem := paid_retry_problem(
+                    summary["configuration"].get("options") or {}, request.node_id, journal
+                )
+            ):
+                raise HTTPException(409, problem)
             repository.append_event(
                 run_id,
                 "approval" if command == "reject" else "run",
