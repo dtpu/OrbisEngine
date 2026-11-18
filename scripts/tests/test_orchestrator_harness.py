@@ -110,6 +110,34 @@ class IdleClockTests(unittest.TestCase):
         self.assertEqual(transcript.read_text(), "existing evidence")
         self.assertFalse((self.root / "transcript-history").exists())
 
+    def test_pipeline_nudge_uses_journal_and_ignores_review_decision(self):
+        from unittest.mock import patch
+
+        prompts = []
+
+        def spawn(argv, workspace, environment, prompt_path, transcript, mode, *args):
+            prompts.append(prompt_path.read_text())
+            with transcript.open(mode) as output:
+                output.write(b'{"type":"thread.started","thread_id":"run-session"}\n')
+            (workspace / DECISION_FILE).write_text(json.dumps(VERDICT))
+            if len(prompts) == 1:
+                raise harness_module.Stalled()
+            return 0
+
+        agent = HarnessAgent(HarnessPolicy(kind="codex", idle_seconds=1, idle_nudges=1))
+        with patch.object(agent, "_spawn", side_effect=spawn):
+            outcome = agent.run(None, self.root, "original run instructions")
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("wander ready", prompts[1])
+        self.assertIn("wander finish blocked", prompts[1])
+        self.assertIn("hands-off runs must not wait", prompts[1])
+        self.assertIn("no extra spending or retries", prompts[1])
+        self.assertNotIn('"tool": "human.ask"', prompts[1])
+        self.assertEqual(outcome.result.status, "completed")
+        self.assertIsNone(outcome.result.response_path)
+        self.assertEqual(outcome.session, "run-session")
+        self.assertEqual((self.root / "transcript.jsonl").read_text().count("thread.started"), 2)
+
     def test_a_silent_agent_is_stopped_and_reported_as_stalled(self):
         agent = self.agent(
             """

@@ -195,3 +195,9 @@ Keep this directory private alongside the run; do not commit agent transcripts.
 
 This preserves evidence needed to diagnose slow or stalled supervisors. It does not by itself
 resolve model latency, provider scheduling, or reconstruction quality.
+
+The idle watchdog resumes upload agents with pipeline guidance: reconcile `wander` status and
+logs, preserve existing paid submissions, record findings in the journal, and finish blocked
+when no permitted work remains. It does not ask an upload agent for a review `decision.json`;
+that file is used only for a review task. Hands-off runs still cannot wait for operator input,
+and watchdog resumes do not extend spending, retry allowances or the run deadline.
