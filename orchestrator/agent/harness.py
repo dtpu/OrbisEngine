@@ -54,6 +54,23 @@ is not: a review that writes nothing blocks the stage anyway, with nothing for t
 """
 
 
+RUN_NUDGE = """You went quiet for {minutes:.0f} minutes, so this pipeline turn was interrupted
+and resumed. Read BRIEF.md and journal.jsonl for the current run, then briefly say what you
+were doing and what you were waiting on.
+
+Use `wander status`, `wander ready`, and the relevant `wander log STEP` to reconcile existing
+work. Do not repeat a submission because its result is missing or delayed. Preserve provider
+IDs, paid claims, spending limits and the original run deadline. Follow the run's concurrency
+and admission rules; this nudge grants no extra spending or retries.
+
+Record useful findings with `wander note`. If existing detached work is still running, leave
+it intact and end your turn when there is no other permitted work. If blocked, use the run's
+ordinary `wander finish blocked "reason"` contract. Use `wander ask` only when the original run
+permits operator questions; hands-off runs must not wait for an operator. Do not write a review
+decision file: pipeline outcomes are recorded through wander in journal.jsonl.
+"""
+
+
 @dataclass(frozen=True)
 class HarnessPolicy:
     """Which harness to run and with what limits.
@@ -331,7 +348,7 @@ class HarnessAgent:
                 quiet = self.policy.idle_seconds / 60
                 # A stall with a decision already written is a finished review whose process
                 # did not exit. There is nothing to ask it, so take the decision.
-                if decision_path.exists():
+                if packet is not None and decision_path.exists():
                     code = 0
                     break
                 resumable = session is not None and (
@@ -339,7 +356,7 @@ class HarnessAgent:
                     or any("{session}" in part for part in self.policy.command)
                 )
                 if resumable and nudges <= self.policy.idle_nudges and budget > POLL_SECONDS:
-                    prompt = NUDGE.format(
+                    prompt = (NUDGE if packet is not None else RUN_NUDGE).format(
                         minutes=quiet,
                         decision=DECISION_FILE,
                         node_id=packet.node_id if packet else "this run",
@@ -366,7 +383,9 @@ class HarnessAgent:
             status=status,
             exit_code=code,
             transcript_path=str(transcript),
-            response_path=str(decision_path) if decision_path.exists() else None,
+            response_path=str(decision_path)
+            if packet is not None and decision_path.exists()
+            else None,
             error=None if status == "completed" else f"agent exited {code}",
         )
         return HarnessOutcome(result, None, None, read_session(transcript) or session)
