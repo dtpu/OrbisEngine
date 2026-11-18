@@ -215,13 +215,20 @@ must agree with the registration's within 10%. The fitted placement must show th
 handheld prior.
 
 The silhouette fit matches the edge the viewer draws to the mask's edge, not splat centres.
+
 - **What is drawn.** `motion_silhouette.splat_coverage` reproduces Spark's footprint. It matched the
   live viewer at IoU 0.987 with the contact shadow hidden.
 - **How the fit uses it.** `silhouette_rows.drawn_rows` measures each frame's overhang past the
   centre rows. place_solve fits the widened rows and records `perPerson.drawnOverhang`.
 - **Body height.** The 1.70 m body-height is the drawn body: `drawnStatureRatio` scales the stature.
 
+The runner defaults only the placement subprocess to `OPENBLAS_NUM_THREADS=1`. Its small
+least-squares systems can spend more time coordinating BLAS threads than solving. An explicit
+operator value is preserved, and other stages and the parent environment are unchanged. This
+changes execution resources, not the objective, held-out folds or acceptance thresholds.
+
 Two anchor checks read evidence the fit did not produce itself:
+
 - **Noise floor.** The silhouette fit's contact residual is in-sample; its own contact term pulls it
   down. So place_solve refits with each contiguous fifth of the clip's contact withheld, records
   that residual as `residualCm.heldOut`, and applies the noise-floor rule to it.

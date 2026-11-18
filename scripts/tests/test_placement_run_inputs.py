@@ -1,6 +1,7 @@
 """Run-specific placement inputs and final, rather than preliminary, size acceptance."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,7 +45,13 @@ def test_masks_follow_configured_run_root_and_explicit_missing_masks_fail(tmp_pa
     assert place_solve.tracked_masks_path("clip", supplied) == supplied
 
 
-def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
+@pytest.mark.parametrize("openblas_threads", [None, "4", ""])
+def test_runner_uses_its_own_tracking_masks_and_blas_env(tmp_path, monkeypatch, openblas_threads):
+    if openblas_threads is None:
+        monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
+    else:
+        monkeypatch.setenv("OPENBLAS_NUM_THREADS", openblas_threads)
+    monkeypatch.setenv("OMP_NUM_THREADS", "3")
     public = tmp_path / "external-public"
     world = public / "worlds/example-4d"
     world.mkdir(parents=True)
@@ -62,8 +69,14 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
     pipeline.placement = Mock(return_value={"floor": -1.0})
     pipeline.world_spz = Mock(return_value=public / "world.spz")
     commands = []
+    parent_env = dict(os.environ)
 
     def invoke(command, *args, **kwargs):
+        assert kwargs["env_extra"] == {
+            "OPENBLAS_NUM_THREADS": "1" if openblas_threads is None else openblas_threads
+        }
+        assert kwargs["attempts"] == 1
+        assert dict(os.environ) == parent_env
         commands.append(command)
         (world / "placement.json").write_text(
             json.dumps(
@@ -81,6 +94,8 @@ def test_runner_uses_its_own_tracking_masks(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_clip, "run", invoke)
     pipeline.place_fit()
+    assert dict(os.environ) == parent_env
+    assert len(commands) == 1
     command = commands[0]
     assert Path(command[command.index("--masks") + 1]) == pipeline.ctx / "tracks/masks.npz"
     assert Path(command[command.index("--video") + 1]) == pipeline.clip
