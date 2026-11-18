@@ -32,6 +32,7 @@ export interface StageDefinition {
 }
 
 export interface RunNode {
+  retryUnavailableReason?: string | null;
   id: string;
   status: StageStatus;
   dependencies: string[];

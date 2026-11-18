@@ -28,6 +28,25 @@ def stage_records(run_dir) -> dict:
         return {}
 
 
+def paid_retry_problem(options, step: str, journal: Journal) -> str | None:
+    """The same existing paid attempt cannot be reopened through the operator API."""
+    described = STEPS.get(base_step(step))
+    if not hands_off(options) or described is None or not described.paid:
+        return None
+    prior = any(
+        entry.kind == "step.started" and entry.data.get("step") == step
+        for entry in journal.entries()
+    )
+    record = stage_records(journal.run_dir).get(step)
+    recorded = isinstance(record, dict) and record.get("status") not in {None, "pending"}
+    if prior or recorded:
+        return (
+            f"Hands-off paid step {step} already has an attempt or retained result. "
+            "Automatic paid retries are disabled; retain its outputs and provider receipt."
+        )
+    return None
+
+
 def admission_problem(context, step: str, extra: list[str], journal: Journal, attempt=None):
     """Limit hands-off commands to the submitted plan and a single paid launch per stage.
 
@@ -43,17 +62,8 @@ def admission_problem(context, step: str, extra: list[str], journal: Journal, at
         return "Hands-off runs use submitted options and fixed stage defaults; extra stage flags are disabled."
     described = STEPS[base_step(step)]
     if described.paid and not attempt:
-        prior = any(
-            entry.kind == "step.started" and entry.data.get("step") == step
-            for entry in journal.entries()
-        )
-        record = stage_records(context.run_dir).get(step)
-        recorded = isinstance(record, dict) and record.get("status") not in {None, "pending"}
-        if prior or recorded:
-            return (
-                f"Hands-off paid step {step} already has an attempt or retained result. "
-                "Automatic paid retries are disabled; retain its outputs and provider receipt."
-            )
+        if problem := paid_retry_problem(context.options, step, journal):
+            return problem
         if lost := failed_preview_prerequisite(context, journal, paid=True):
             return (
                 f"Hands-off paid step {step} was not started: required paid step {lost} cannot "

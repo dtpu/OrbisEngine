@@ -130,3 +130,70 @@ def test_stale_supervisor_selection_cannot_reopen_operator_stopped_run(
     session.assert_not_called()
     summary = api.get("/api/pipeline/runs/operator-test").json()
     assert summary["status"] == {"pause": "paused", "cancel": "canceled"}[action]
+
+
+@pytest.mark.parametrize("evidence", ["journal", "state"])
+def test_hands_off_paid_retry_refused_without_reopening_run(service, evidence):
+    api, restart, root = service
+    response = api.post(
+        "/api/pipeline/runs/upload",
+        data={
+            "requested_id": "hands-off-retry",
+            "options": json.dumps({"marble": "none", "objects": False, "hands_off": True}),
+        },
+        files={"source": ("automatic.mp4", b"different-source", "video/mp4")},
+    )
+    assert response.status_code == 201
+    journal = Journal(root / "automatic")
+    if evidence == "journal":
+        journal.append("step.started", step="pi3x", attempt="attempt-1", number=1)
+    else:
+        (journal.run_dir / "state.json").write_text(
+            json.dumps({"stages": {"pi3x": {"status": "failed"}}})
+        )
+    journal.append("run.finished", status="failed", summary="provider failed")
+    before = (journal.run_dir / "journal.jsonl").read_bytes()
+    prefix = "/api/pipeline/runs/hands-off-retry"
+    summary = api.get(prefix).json()
+    node = next(n for n in summary["nodes"] if n["id"] == "pi3x")
+    assert "paid retries are disabled" in node["retryUnavailableReason"]
+    events_before = api.app.state.repository.events_after("hands-off-retry", 0)
+    response = api.post(prefix + "/retry", json={"node_id": "pi3x", "rationale": "try again"})
+    assert response.status_code == 409
+    assert api.app.state.repository.events_after("hands-off-retry", 0) == events_before
+    assert (journal.run_dir / "journal.jsonl").read_bytes() == before
+    assert journal.finished() == "failed"
+    with restart() as recovered:
+        assert (
+            recovered.post(
+                prefix + "/retry", json={"node_id": "pi3x", "rationale": "operator retry"}
+            ).status_code
+            == 409
+        )
+        assert recovered.get(prefix).json()["status"] == "failed"
+    assert (journal.run_dir / "journal.jsonl").read_bytes() == before
+    # Unpaid correction remains possible under the existing policy.
+    assert (
+        api.post(
+            prefix + "/retry", json={"node_id": "frame_align", "rationale": "local correction"}
+        ).status_code
+        == 202
+    )
+
+
+def test_manual_paid_retry_retains_existing_operator_contract(service):
+    api, _, root = service
+    journal = Journal(root / "clip")
+    journal.append("step.started", step="pi3x", attempt="attempt-1", number=1)
+    journal.append("run.finished", status="failed", summary="provider failed")
+    prefix = "/api/pipeline/runs/operator-test"
+    summary = api.get(prefix).json()
+    assert (
+        next(n for n in summary["nodes"] if n["id"] == "pi3x").get("retryUnavailableReason") is None
+    )
+    assert (
+        api.post(
+            prefix + "/retry", json={"node_id": "pi3x", "rationale": "operator retry"}
+        ).status_code
+        == 202
+    )

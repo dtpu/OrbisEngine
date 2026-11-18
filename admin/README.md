@@ -109,3 +109,9 @@ reserved for status and always accompanies a word. IBM Plex Sans for prose and c
 Mono for identifiers, hashes, sizes and times. Their Latin WOFF2 files come from pinned
 `@fontsource` dependencies through `next/font/local`, so builds do not download Google Fonts.
 Tokens live at the top of `app/globals.css`.
+
+For hands-off runs, a paid stage with an existing attempt or retained result shows **Retry stage**
+disabled with the server's reason. The command API also refuses that retry before recording an
+operator event or reopening the run. Inspect retained outputs/provider receipts instead; this is
+not a new spending approval. Unpaid corrections and manual-run retry controls retain their
+existing behavior and execution-time admission checks.
