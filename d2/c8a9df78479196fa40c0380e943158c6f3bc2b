@@ -1,0 +1,31 @@
+admin/lib/client.ts
+  s_c6018019842afa::t_c92cd9cbf145f8 106-132,162-172
+admin/README.md
+  s_c6018019842afa::t_c92cd9cbf145f8 118-122
+admin/tests/upload-client.test.ts
+  s_a3c43d2a2443ce::t_0d313fb9a65680 16-17,21,30,74-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2c8a9df78479196fa40c0380e943158c6f3bc2b",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
