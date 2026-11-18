@@ -196,7 +196,7 @@ def test_spawn_failure_closes_admission_before_an_explicit_retry(run, monkeypatc
 
 def test_child_missing_credentials_closes_only_its_unlaunched_attempt(run, monkeypatch):
     child = pending_child(run, monkeypatch)
-    monkeypatch.setattr(cli, "missing_credentials", lambda step: ["EXAMPLE_REQUIRED_KEY"])
+    monkeypatch.setattr(cli, "missing_credentials", lambda step, extra=(): ["EXAMPLE_REQUIRED_KEY"])
     spawn = Mock(side_effect=AssertionError("missing credentials must not launch"))
     monkeypatch.setattr(cli.subprocess, "Popen", spawn)
     assert cli.command_step(run.context, child) == 2

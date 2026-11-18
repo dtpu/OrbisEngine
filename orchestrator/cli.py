@@ -29,8 +29,10 @@ from orchestrator.journal import Journal, RunProjection
 from orchestrator.run_policy import (
     admission_problem,
     delivery_metadata,
+    failed_scale_gate,
     finish_hands_off,
     hands_off,
+    unaccepted_scale_problem,
     unpaid_prerequisite_problem,
 )
 from orchestrator.steps import (
@@ -140,7 +142,9 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
     if options.bake:
         command.append("--bake-colours")
     if options.hands_off:
-        command.append("--no-gate")
+        # No operator is waiting: run past the review gate, and let a spread-only scale
+        # failure mark the run unaccepted instead of leaving its avatar unplaced.
+        command += ["--no-gate", "--scale-spread-unaccepted"]
     if getattr(context, "retained_delivery", None) is not None:
         command += ["--retained-scene", str(context.run_dir / "retained/scene.json")]
     return command + extra
@@ -161,10 +165,16 @@ def step_environment(context: RunContext) -> dict[str, str]:
     }
 
 
-def missing_credentials(step: str) -> list[str]:
-    """Environment a step needs that this process does not have."""
+def missing_credentials(step: str, extra: list[str] = ()) -> list[str]:
+    """Environment a step needs that this process does not have.
+
+    A step paid only through a knob (anchors' ruler_vlm) needs its credentials only when one of
+    those knobs is passed, as `doctor` also assumes.
+    """
     described = STEPS.get(base_step(step))
     if described is None:
+        return []
+    if described.paid_with and not set(described.paid_with) & set(parse_flags(list(extra))):
         return []
     return [name for name in described.credentials if not os.environ.get(name)]
 
@@ -299,8 +309,12 @@ def admit_step(
         finish_hands_off(context, journal, problem)
         print(problem, file=sys.stderr)
         return 2
-    if not args.attempt and (held := unpaid_prerequisite_problem(context, args.step, journal)):
-        # Not terminal: the unpaid prerequisite may still succeed when rerun.
+    if not args.attempt and (
+        held := unpaid_prerequisite_problem(context, args.step, journal)
+        or unaccepted_scale_problem(context, args.step)
+    ):
+        # Not terminal: the unpaid prerequisite may still succeed when rerun, and unpaid steps
+        # after an unaccepted scale fit still improve the preview.
         print(held, file=sys.stderr)
         return 2
     if context.retained_delivery is not None:
@@ -345,7 +359,7 @@ def admit_step(
             finish_hands_off(context, journal, problem)
         print(problem, file=sys.stderr)
         return 2
-    absent = missing_credentials(args.step)
+    absent = missing_credentials(args.step, args.rest)
     if absent:
         # Running it anyway spends a turn to be told by the stage itself, and for a paid step
         # an ambiguous failure is worse than none.
@@ -870,6 +884,8 @@ def completion_problem(context: RunContext, journal: Journal) -> str | None:
         return "unresolved stage attempts remain"
     if problem := source_problem(context):
         return problem
+    if hands_off(context.options) and (problem := failed_scale_gate(context)):
+        return f"the scale fit failed acceptance: {problem}"
     plan = set(plan_for(context))
     missing = plan - completed(context)
     if missing:

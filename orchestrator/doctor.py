@@ -386,9 +386,9 @@ def inspect_setup(
         f"Shared runs root: {root}; parent {'is' if writable else 'is not'} writable.",
         "Configure WANDER_RUNS_ROOT to a writable directory." if not writable else "",
     )
-    # anchors only calls OpenAI for its opt-in ruler_vlm knob, absent from RunOptions.
+    # A step paid only through a knob (anchors' ruler_vlm) needs no credential at defaults.
     for credential in sorted(
-        {name for step in plan if step != "anchors" for name in STEPS[step].credentials}
+        {name for step in plan if not STEPS[step].paid_with for name in STEPS[step].credentials}
     ):
         present = bool(os.environ.get(credential, "").strip())
         require(

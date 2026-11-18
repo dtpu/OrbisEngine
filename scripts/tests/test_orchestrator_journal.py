@@ -418,6 +418,20 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(missing_credentials("marble_video"), ["WLT_API_KEY"])
         self.assertEqual(missing_credentials("pi3x"), [], "Modal reads ~/.modal.toml")
 
+    def test_a_step_paid_only_through_a_knob_needs_its_key_only_with_that_knob(self):
+        from orchestrator.cli import missing_credentials
+
+        previous = os.environ.pop("OPENAI_API_KEY", None)
+        self.addCleanup(
+            lambda: (
+                os.environ.__setitem__("OPENAI_API_KEY", previous) if previous is not None else None
+            )
+        )
+        self.assertEqual(missing_credentials("anchors"), [], "no VLM call at defaults")
+        self.assertEqual(missing_credentials("anchors", ["--ruler-tol", "0.2"]), [])
+        self.assertEqual(missing_credentials("anchors", ["--ruler-vlm"]), ["OPENAI_API_KEY"])
+        self.assertEqual(missing_credentials("objects"), ["OPENAI_API_KEY"])
+
     def test_asking_leaves_the_run_waiting_and_finishing_ends_it(self):
         main(["ask", "is this clip truncated?", "--step", "clean"])
         journal = Journal(self.run_dir)

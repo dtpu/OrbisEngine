@@ -25,6 +25,7 @@ def pipeline(tmp_path, monkeypatch):
         scale0=None,
         scale_probes=5,
         allow_scale_spread=False,
+        scale_spread_unaccepted=False,
         only=None,
         force=None,
         skip_finetune=True,
@@ -101,6 +102,45 @@ def test_fitted_measurements_and_figure_survive_quality_verdict(
     assert len(list(figure.parent.glob("*-depth-ratio.png"))) == 2
     if not accepted:
         assert str(figure) in stages["scale_fit"]["error"]
+
+
+@pytest.mark.parametrize(
+    "rows,kept",
+    [
+        ([(1.0, 0.8, 1.2), (1.0, 0.95, 1.05)], True),
+        ([(0.94, 0.92, 1.0), (1.064, 1.0, 1.08)], False),
+        ([(0.889, 0.088, 1.456), (1.125, 0.872, 1.115)], False),
+    ],
+)
+def test_unaccepted_spread_keeps_the_fit_only_when_every_median_holds(
+    pipeline, monkeypatch, rows, kept
+):
+    p = pipeline
+    p.a.scale_spread_unaccepted = True
+    diagnostic_worker(monkeypatch, [[(0.9, 0.85, 1.0)], rows])
+    assert p.go() == (0 if kept else 1)
+    stages = json.loads(p.state.path.read_text())["stages"]
+    assert stages["scale_fit"]["status"] == ("ok" if kept else "failed")
+    report = stages["_scale"]
+    # The verdict is unchanged; only what it stops is.
+    assert report["gateOk"] is False
+    assert report["scale0"] == pytest.approx(0.8 * 0.9)
+    if kept:
+        assert report["medianOk"] is True and report["spreadOk"] is False
+        assert "exceed the required spread" in report["gateError"]
+        assert report["figure"] in report["gateError"]
+    else:
+        assert report["medianOk"] is False
+        assert "are not all inside" in stages["scale_fit"]["error"]
+
+
+def test_passing_gate_records_no_gate_error(pipeline, monkeypatch):
+    p = pipeline
+    p.a.scale0 = 1.0
+    diagnostic_worker(monkeypatch, [[(1.0, 0.95, 1.05), (1.0, 0.98, 1.02)]])
+    assert p.go() == 0
+    report = json.loads((p.ctx / "scale-fit.json").read_text())
+    assert report["gateOk"] is True and report["gateError"] is None
 
 
 @pytest.mark.parametrize("empty", [False, True])

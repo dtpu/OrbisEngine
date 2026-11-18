@@ -350,6 +350,9 @@ class Step:
     after: tuple[str, ...] = ()
     parameters: dict[str, Any] = field(default_factory=dict)
     paid: bool = False
+    # Knobs that make a paid step spend. Without one it makes no paid call, which is how a
+    # hands-off run always runs it: those runs forward no stage flags.
+    paid_with: tuple[str, ...] = ()
     # Environment this step cannot run without. Modal authenticates through ~/.modal.toml, so
     # a Modal step names nothing here; Marble and OpenAI read a key and fail instantly.
     credentials: tuple[str, ...] = ()
@@ -586,6 +589,7 @@ STEPS: dict[str, Step] = {
             after=("place_fit",),
             parameters=ANCHOR_PARAMETERS,
             paid=True,
+            paid_with=("ruler_vlm",),
             caution=(
                 "The tolerance and the bypass flags are an operator's call, not a retry knob. If "
                 "the only way past this is to loosen a guard, ask."

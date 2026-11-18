@@ -109,6 +109,26 @@ rerunning that step is still admitted, and paid work resumes only once it succee
 use the same fixed defaults on a rerun, so a failure caused by the footage itself, such as no
 fully visible person, repeats and the run ends without spending on generation.
 
+A scale fit whose depth-ratio medians all pass but whose per-frame p10/p90 spread fails does not
+stop a hands-off run. The runner keeps the fitted scale (`--scale-spread-unaccepted`), so
+`place_fit`, `anchors` and `verify` still run and the run keeps a placement and its checks. The
+run preview still leaves placement disabled, as every run preview does
+([pipeline validation](pipeline-validation.md)); the placement shows with the viewer's
+`?place=1`. The gate's verdict is unchanged:
+
+- `scale-fit.json` records `gateOk: false` and the reason in `gateError`.
+- The delivered `qualityStatus` is `failed`, with that reason under `failedStages.scale_fit`, and
+  the run cannot finish `succeeded`.
+- Nothing downstream changes the verdict, so paid work built on the fit is held: fine-tuning, and
+  objects in single-person runs. `anchors` is still admitted, because a hands-off run cannot enable
+  its paid VLM ruler; without that knob it no longer needs `OPENAI_API_KEY` either.
+
+Placement waits for fine-tuning, and verification waits for objects. So a run that requested
+fine-tuning still ends without placement, and one that requested objects ends without
+verification. Failing medians still stop the run: no single scale fits the clip, so placement
+would be wrong at one end. Operator runs keep the existing gate, which only
+`--allow-scale-spread` passes.
+
 The dashboard reopens an existing run when an upload has identical source bytes and the same
 processing options. It checks the retained source against its digest and chooses the newest
 matching run whose source is still intact. Renaming the file or requesting a new run name does
