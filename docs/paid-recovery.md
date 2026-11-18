@@ -588,3 +588,26 @@ $0.00041648/s or $0.00073648/s. The estimate excludes container startup, final o
 and volume commit, so it is not an invoice or a universal dollar cap. Execution/startup
 limits do not establish an end-to-end queue-wait deadline. Review scheduling evidence and
 spending authorization separately before any changed-GPU submission.
+
+## Motion result waiting
+
+With `WANDER_WORKER_TIMEOUT_SECONDS` configured, `worker/modal_motion.py` (including Pi3X)
+also bounds result waiting to twice that value: the combined startup and execution allowance.
+This wait includes provider queueing, so queue time consumes the same allowance. The default
+without that variable retains the existing direct call behavior. This is not a dollar cap or a
+whole-command deadline: submission/upload, image setup, cancellation and artifact extraction
+are outside the result wait.
+
+The worker writes `motion-call.json` before submitting and saves the returned function-call ID
+before waiting. A timed-out or interrupted wait requests cancellation of only that call, without
+terminating shared containers. The receipt distinguishes a cancellation request from an unknown
+cancellation outcome; neither proves zero spend. Submission without a returned ID remains
+`submission_uncertain`. Inspect the saved ID/provider history before recovery; an existing receipt
+cannot submit again. The shared paid-stage claim remains consumed. `result_received` means the
+provider returned, not that extraction or visual acceptance passed.
+
+A fresh city-upload trial on Nov18 exposed this gap: the Pi3X call remained queued for ten minutes
+with backlog1, zero runners and zero running inputs, then the operator stopped its owned app.
+No reconstruction or world resulted. The new result-wait behavior is covered by local mocked
+provider tests; it has not been validated by a second paid city submission. Evidence:
+`.context/evidence/fresh-readiness-20261118/` (untracked).

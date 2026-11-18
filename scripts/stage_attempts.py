@@ -128,6 +128,8 @@ CODE_FILES = {
         "worker/stages/worker_resources.py",
     ),
     "worker/modal_motion.py": (
+        "worker/stages/motion_submission.py",
+        "worker/stages/lhm_recovery.py",
         "worker/stages/worker_resources.py",
         "worker/stages/dense_pi3x.py",
         "worker/wander_worker/camera_stitch.py",

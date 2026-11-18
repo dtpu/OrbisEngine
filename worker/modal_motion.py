@@ -190,7 +190,21 @@ def main(
         raise ValueError("--anchor-lock requires --experiment pi3x")
     destination = Path(out)
     destination.mkdir(parents=True, exist_ok=False)
-    result = reconstruct.remote(Path(video).read_bytes(), experiment, batch, anchor_lock)
+    inputs = Path(video).read_bytes()
+    if "startup_timeout" in INFERENCE_RESOURCES:
+        from worker.stages.motion_submission import bounded_motion_result
+
+        result = bounded_motion_result(
+            reconstruct,
+            destination,
+            inputs,
+            timeout=INFERENCE_RESOURCES["startup_timeout"] + INFERENCE_RESOURCES["timeout"],
+            experiment=experiment,
+            batch=batch,
+            anchor_lock=anchor_lock,
+        )
+    else:
+        result = reconstruct.remote(inputs, experiment, batch, anchor_lock)
     archive_path = destination / "artifacts.tar.gz"
     archive_path.write_bytes(result["archive"])
     with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:
