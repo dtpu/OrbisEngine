@@ -471,3 +471,22 @@ def test_missing_bundle_and_nonhuman_review_do_not_replace_verdict(retained):
     write_json(state_path, state)
     assert client.get(ENDPOINT, headers=AUTH).status_code == 404
     assert client.post(ENDPOINT, headers=AUTH, json=payload).status_code == 404
+
+
+@pytest.mark.parametrize("first", ["orchestrator.world_review", "orchestrator.api"])
+def test_review_and_api_import_in_either_order(first):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import {first}; "
+            "from orchestrator.world_review import current_placement; "
+            "from orchestrator.api import create_app; "
+            "assert callable(current_placement) and callable(create_app)",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr

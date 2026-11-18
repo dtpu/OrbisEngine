@@ -156,7 +156,13 @@ class DoctorTests(unittest.TestCase):
 
     def test_builtin_harness_missing_executable_blocks_without_probe(self):
         for kind in ("codex", "claude"):
-            with self.subTest(kind=kind):
+            # A worktree directory may share the missing harness's name.
+            with (
+                self.subTest(kind=kind),
+                patch.object(
+                    doctor.sys, "executable", str(self.root / kind / ".venv" / "bin" / "python")
+                ),
+            ):
                 os.environ["WANDER_REVIEW_AGENT"] = kind
                 self.probes.clear()
                 with patch.object(
@@ -166,7 +172,7 @@ class DoctorTests(unittest.TestCase):
                 ):
                     report = doctor.inspect_setup()
                 self.assertEqual(self.check(report, "tool.harness")["status"], "blocked")
-                self.assertFalse(any(kind in argv[0] for argv, _ in self.probes))
+                self.assertFalse(any(Path(argv[0]).name == kind for argv, _ in self.probes))
 
     def test_builtin_harness_startup_success_leaves_access_unverified(self):
         for kind in ("codex", "claude"):
