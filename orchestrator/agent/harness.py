@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
@@ -393,6 +394,11 @@ class HarnessAgent:
             # a watchdog resume. Serialize admission, artifact reset and spawn only.
             with spawn_guard() if spawn_guard is not None else nullcontext():
                 if mode == "wb":
+                    if transcript.exists():
+                        history = workspace / "transcript-history"
+                        history.mkdir(exist_ok=True)
+                        previous = Path(tempfile.mkdtemp(prefix="turn-", dir=history))
+                        transcript.rename(previous / TRANSCRIPT_FILE)
                     (workspace / DECISION_FILE).unlink(missing_ok=True)
                 with transcript.open(mode) as output:
                     process = subprocess.Popen(

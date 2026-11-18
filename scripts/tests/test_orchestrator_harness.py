@@ -60,6 +60,56 @@ class IdleClockTests(unittest.TestCase):
             )
         )
 
+    def test_next_turn_preserves_history_without_reusing_old_session(self):
+        transcript = self.root / "transcript.jsonl"
+        old = b'{"type":"thread.started","thread_id":"old-session"}\nprevious output\n'
+        transcript.write_bytes(old)
+        agent = self.agent(
+            "print("
+            + repr(json.dumps({"type": "thread.started", "thread_id": "new-session"}))
+            + ")"
+        )
+        outcome = agent.run(None, self.root, "second turn")
+        self.assertEqual(outcome.session, "new-session")
+        archived = list(self.root.glob("transcript-history/*/transcript.jsonl"))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].read_bytes(), old)
+        self.assertNotIn("old-session", transcript.read_text())
+        second = transcript.read_bytes()
+        agent.run(None, self.root, "third turn")
+        self.assertEqual(
+            sorted(p.read_bytes() for p in self.root.glob("transcript-history/*/transcript.jsonl")),
+            sorted([old, second]),
+        )
+
+    def test_history_never_supplies_a_session_to_a_failed_new_turn(self):
+        (self.root / "transcript.jsonl").write_text(
+            '{"type":"thread.started","thread_id":"old-session"}\n'
+        )
+        agent = self.agent("raise SystemExit(1)")
+        outcome = agent.run(None, self.root, "new turn")
+        self.assertIsNone(outcome.session)
+        self.assertEqual(outcome.result.status, "failed")
+        self.assertEqual(len(list(self.root.glob("transcript-history/*/transcript.jsonl"))), 1)
+
+    def test_admission_refusal_does_not_rotate_transcript(self):
+        from contextlib import contextmanager
+
+        transcript = self.root / "transcript.jsonl"
+        transcript.write_text("existing evidence")
+
+        @contextmanager
+        def refuse():
+            raise OSError("paused")
+            yield
+
+        outcome = self.agent("print('must not spawn')").run(
+            None, self.root, "held", spawn_guard=refuse
+        )
+        self.assertEqual(outcome.result.status, "failed")
+        self.assertEqual(transcript.read_text(), "existing evidence")
+        self.assertFalse((self.root / "transcript-history").exists())
+
     def test_a_silent_agent_is_stopped_and_reported_as_stalled(self):
         agent = self.agent(
             """

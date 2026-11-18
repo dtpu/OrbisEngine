@@ -183,3 +183,15 @@ replace provider spending controls or grant additional credit authorization.
 Validation uses the real upload API, SQLite storage, runner and packager with simulated model
 providers, plus tests for terminal outcomes, source identity, missing files, paid retry refusal,
 pause/cancel and restart behavior. It does not establish fresh provider success or visual quality.
+
+## Agent turn evidence
+
+The current agent turn stays in `transcript.jsonl` for the live log and session lookup. Before
+another admitted turn starts, its predecessor is moved intact into a unique directory under
+`transcript-history/`. Watchdog nudges within one turn append to its current transcript.
+Rejected admission leaves both current evidence and history unchanged. Historical transcripts
+are diagnostic evidence only: they cannot supply a stale session ID or decision to a new turn.
+Keep this directory private alongside the run; do not commit agent transcripts.
+
+This preserves evidence needed to diagnose slow or stalled supervisors. It does not by itself
+resolve model latency, provider scheduling, or reconstruction quality.
