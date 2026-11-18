@@ -1,0 +1,24 @@
+orchestrator/agent/harness.py
+  s_a3c43d2a2443ce::t_99afa4a08428e6 16,397-401
+docs/automatic-uploads.md
+  s_a3c43d2a2443ce::t_99afa4a08428e6 186-197
+scripts/tests/test_orchestrator_harness.py
+  s_a3c43d2a2443ce::t_99afa4a08428e6 63-108
+  s_a3c43d2a2443ce::t_019f66e471b6a0 109-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eddc26e4c13f0c6e0b086d211829306d04a880a9",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
