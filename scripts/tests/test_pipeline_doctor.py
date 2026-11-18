@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -46,6 +47,7 @@ class DoctorTests(unittest.TestCase):
             "format": {"duration": "4"},
         }
         self.remote_result = "present"
+        self.marble_result = "positive"
         self.cuts = 0
         self.import_failures = set()
         self.probes = []
@@ -65,6 +67,10 @@ class DoctorTests(unittest.TestCase):
             return json.dumps(
                 {name: name not in self.import_failures for name in doctor.MODULES}
             ), 0
+        if "_marble_credits" in " ".join(argv):
+            if isinstance(self.marble_result, Exception):
+                raise self.marble_result
+            return self.marble_result, 0
         if "_modal_inventory" in " ".join(argv):
             paths = json.loads(argv[-1])
             return json.dumps(
@@ -109,6 +115,60 @@ class DoctorTests(unittest.TestCase):
             self.assertNotIn(os.environ[name], serialized)
         self.assertFalse(any("_modal_inventory" in " ".join(argv) for argv, _ in self.probes))
         self.assertEqual(report["runsRoot"], str((self.root / "runs").resolve()))
+
+    def test_marble_probe_requires_remote_selected_credential_and_present_key(self):
+        for remote, options, key in (
+            (False, {}, "private-world-key"),
+            (True, {"marble": "none", "objects": False}, "private-world-key"),
+            (True, {}, ""),
+            (True, {}, "   "),
+        ):
+            with self.subTest(remote=remote, options=options, present=bool(key.strip())):
+                os.environ["WLT_API_KEY"] = key
+                self.probes.clear()
+                report = doctor.inspect_setup(options, remote=remote)
+                self.assertFalse(any("_marble_credits" in " ".join(a) for a, _ in self.probes))
+                self.assertFalse(any(c["name"] == "marble.credits" for c in report["checks"]))
+
+    def test_marble_balance_status_and_subprocess_contract(self):
+        for result, status in (("positive", "okay"), ("zero", "blocked")):
+            with self.subTest(result=result):
+                self.marble_result = result
+                self.probes.clear()
+                report = doctor.inspect_setup(remote=True)
+                check = self.check(report, "marble.credits")
+                self.assertEqual(check["status"], status)
+                self.assertEqual(self.check(report, "access.WLT_API_KEY")["status"], "unverified")
+                self.assertFalse(report["ready"])
+                if result == "positive":
+                    for limitation in ("planned generation", "permission", "quota", "budget"):
+                        self.assertIn(limitation, check["detail"])
+                else:
+                    self.assertEqual(report["status"], "blocked")
+                probes = [(a, k) for a, k in self.probes if "_marble_credits" in " ".join(a)]
+                self.assertEqual(len(probes), 1)
+                argv, kwargs = probes[0]
+                self.assertEqual(argv[0], sys.executable)
+                self.assertEqual(kwargs["timeout"], doctor.PROBE_TIMEOUT)
+                self.assertEqual(kwargs["env"]["WLT_API_KEY"], "private-world-key")
+                for secret in ("private-world-key", "private-openai-key", "private-modal-secret"):
+                    self.assertNotIn(secret, " ".join(argv))
+                    self.assertNotIn(secret, json.dumps(report))
+
+    def test_marble_failed_or_malformed_child_output_is_unverified_without_leaks(self):
+        for result in (
+            "unverified",
+            "private-world-key provider body",
+            doctor.ProbeError("timeout private-world-key provider error"),
+            doctor.ProbeError("unavailable private-world-key"),
+        ):
+            with self.subTest(result=type(result).__name__):
+                self.marble_result = result
+                report = doctor.inspect_setup(remote=True)
+                self.assertEqual(self.check(report, "marble.credits")["status"], "unverified")
+                self.assertNotIn("private-world-key", json.dumps(report))
+                self.assertNotIn("provider body", json.dumps(report))
+                self.assertNotIn("provider error", json.dumps(report))
 
     def test_missing_inference_dependency_is_actionable_blocker(self):
         self.import_failures = {"torch"}
@@ -383,7 +443,120 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("private-input", output.getvalue())
 
 
+class MarbleCreditsTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"WLT_API_KEY": "private-world-key"}))
+        self.transport = self.enterContext(patch.object(doctor.http.client, "HTTPSConnection"))
+        self.connection = self.transport.return_value
+        self.response = self.connection.getresponse.return_value
+        self.response.status = 200
+        self.response.read.return_value = b'{"remaining_credits": 1}'
+
+    def test_valid_balances_use_one_bounded_authenticated_get(self):
+        for balance, expected in ((0, "zero"), (0.0, "zero"), (1, "positive"), (0.01, "positive")):
+            with self.subTest(balance=balance):
+                self.connection.reset_mock()
+                self.response.read.return_value = json.dumps(
+                    {"remaining_credits": balance}
+                ).encode()
+                self.assertEqual(doctor._marble_credits(), expected)
+                self.connection.request.assert_called_once_with(
+                    "GET", "/marble/v1/credits", headers={"WLT-Api-Key": "private-world-key"}
+                )
+                self.connection.getresponse.assert_called_once_with()
+                self.response.read.assert_called_once_with(doctor.MARBLE_RESPONSE_LIMIT + 1)
+                self.connection.close.assert_called_once_with()
+        self.transport.assert_called_with("api.worldlabs.ai", timeout=doctor.MARBLE_HTTP_TIMEOUT)
+        self.assertGreater(doctor.MARBLE_HTTP_TIMEOUT, 0)
+        self.assertLessEqual(doctor.MARBLE_HTTP_TIMEOUT, doctor.PROBE_TIMEOUT)
+
+    def test_invalid_balances_and_bodies_are_unverified(self):
+        bodies = [
+            b"private-world-key malformed body",
+            b"{}",
+            b"null",
+            b"[]",
+            b'{"remaining_credits": -1}',
+            b'{"remaining_credits": true}',
+            b'{"remaining_credits": false}',
+            b'{"remaining_credits": "1"}',
+            b'{"remaining_credits": null}',
+            b'{"remaining_credits": []}',
+            b'{"remaining_credits": NaN}',
+            b'{"remaining_credits": Infinity}',
+            b'{"remaining_credits": -Infinity}',
+            b'{"remaining_credits": 1e999}',
+            b"\xff",
+            b"[" * 2000,
+            b'{"remaining_credits": 1, "extra": "' + b"x" * doctor.MARBLE_RESPONSE_LIMIT + b'"}',
+        ]
+        for body in bodies:
+            with self.subTest(body_length=len(body)):
+                self.response.read.return_value = body
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    self.assertEqual(doctor._marble_credits(), "unverified")
+                self.assertEqual(output.getvalue(), "")
+
+    def test_http_failures_and_redirects_do_not_read_body_or_retry(self):
+        for status in (204, 301, 302, 307, 308, 401, 403, 404, 429, 500, 503):
+            with self.subTest(status=status):
+                self.connection.reset_mock()
+                self.response.status = status
+                self.assertEqual(doctor._marble_credits(), "unverified")
+                self.connection.request.assert_called_once()
+                self.response.read.assert_not_called()
+                self.connection.close.assert_called_once()
+
+    def test_network_errors_and_read_timeout_never_leak_or_retry(self):
+        for method in ("request", "getresponse", "read"):
+            target = self.response if method == "read" else self.connection
+            with (
+                self.subTest(method=method),
+                patch.object(
+                    target, method, side_effect=TimeoutError("private-world-key provider error")
+                ),
+            ):
+                self.connection.reset_mock()
+                self.connection.request.reset_mock()
+                self.assertEqual(doctor._marble_credits(), "unverified")
+                self.connection.request.assert_called_once()
+                self.connection.close.assert_called_once()
+        self.transport.side_effect = OSError("private-world-key unavailable")
+        self.assertEqual(doctor._marble_credits(), "unverified")
+
+    def test_absent_key_does_not_construct_transport(self):
+        os.environ.pop("WLT_API_KEY")
+        self.assertEqual(doctor._marble_credits(), "unverified")
+        self.transport.assert_not_called()
+
+
 class ProbeTests(unittest.TestCase):
+    def test_marble_total_deadline_kills_child_and_discards_private_output(self):
+        checks = []
+        with (
+            patch.object(doctor.subprocess, "Popen") as popen,
+            patch.object(doctor.os, "killpg") as killpg,
+            patch.dict(os.environ, {"WLT_API_KEY": "private-world-key"}),
+        ):
+            process = popen.return_value
+            process.pid = 12345
+            process.communicate.side_effect = [
+                subprocess.TimeoutExpired("private-world-key", doctor.PROBE_TIMEOUT),
+                ("private-world-key body", None),
+            ]
+            doctor._marble_credit_check(lambda *args: checks.append(args))
+            killpg.assert_called_once_with(12345, doctor.signal.SIGKILL)
+            self.assertEqual(
+                process.communicate.call_args_list[0].kwargs, {"timeout": doctor.PROBE_TIMEOUT}
+            )
+            self.assertEqual(process.communicate.call_count, 2)
+            self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+            self.assertNotIn("private-world-key", str(popen.call_args.args))
+        self.assertEqual(checks[0][0:2], ("marble.credits", "unverified"))
+        self.assertNotIn("private-world-key", str(checks))
+
     def test_subprocess_timeout_is_bounded(self):
         with self.assertRaisesRegex(doctor.ProbeError, "exceeded"):
             doctor._probe([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)

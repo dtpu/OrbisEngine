@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
+import http.client
 import json
 import math
 import os
@@ -24,6 +26,8 @@ from orchestrator.steps import STEPS, RunOptions, planned_steps
 
 PROBE_TIMEOUT = 20
 CLIP_TIMEOUT = 90
+MARBLE_HTTP_TIMEOUT = 10
+MARBLE_RESPONSE_LIMIT = 16 * 1024
 MODULES = (
     "numpy",
     "scipy",
@@ -69,6 +73,72 @@ def _probe(argv: list[str], *, timeout: int = PROBE_TIMEOUT, env=None, accepted=
     if process.returncode not in accepted:
         raise ProbeError(f"probe exited {process.returncode}; inspect configuration privately")
     return output, process.returncode
+
+
+def _marble_credits() -> str:
+    """One read-only request; called only inside the bounded probe subprocess."""
+    key = os.environ.get("WLT_API_KEY", "")
+    if not key.strip():
+        return "unverified"
+    try:
+        # HTTPSConnection neither follows redirects nor retries requests. The parent
+        # deadline also bounds a server that keeps dripping bytes before socket timeout.
+        with contextlib.closing(
+            http.client.HTTPSConnection("api.worldlabs.ai", timeout=MARBLE_HTTP_TIMEOUT)
+        ) as connection:
+            connection.request("GET", "/marble/v1/credits", headers={"WLT-Api-Key": key})
+            response = connection.getresponse()
+            if response.status != 200:
+                return "unverified"
+            body = response.read(MARBLE_RESPONSE_LIMIT + 1)
+            if len(body) > MARBLE_RESPONSE_LIMIT:
+                return "unverified"
+            document = json.loads(body)
+            balance = document.get("remaining_credits") if isinstance(document, dict) else None
+            if type(balance) not in (int, float) or not math.isfinite(balance) or balance < 0:
+                return "unverified"
+            return "positive" if balance > 0 else "zero"
+    except Exception:
+        # Never return provider bodies, headers, credentials, or exception messages.
+        return "unverified"
+
+
+def _marble_credit_check(add):
+    observed = "unverified"
+    try:
+        output, _ = _probe(
+            [
+                sys.executable,
+                "-c",
+                "from orchestrator.doctor import _marble_credits; print(_marble_credits())",
+            ],
+            env=dict(os.environ),
+            timeout=PROBE_TIMEOUT,
+        )
+        observed = output.strip()
+    except ProbeError:
+        pass
+    if observed == "positive":
+        add(
+            "marble.credits",
+            "okay",
+            "Marble reports a positive credit balance; this does not prove capacity for "
+            "planned generation, generation permission, quota, or run budget.",
+        )
+    elif observed == "zero":
+        add(
+            "marble.credits",
+            "blocked",
+            "Marble reports zero remaining API credits.",
+            "Review the Marble account balance and authorized run budget before generation.",
+        )
+    else:
+        add(
+            "marble.credits",
+            "unverified",
+            "Read-only Marble credit balance could not be verified within the probe limits.",
+            "Inspect account credits privately; confirm generation permission, quota and run budget.",
+        )
 
 
 def _module_inventory():
@@ -401,9 +471,16 @@ def inspect_setup(
             add(
                 f"access.{credential}",
                 "unverified",
-                f"{credential} account access, balance and quota are unverified.",
+                (
+                    "WLT_API_KEY generation permission, quota and run budget remain unverified; "
+                    "a balance check does not establish generation access."
+                    if remote and credential == "WLT_API_KEY"
+                    else f"{credential} account access, balance and quota are unverified."
+                ),
                 "Confirm account permissions, credits and run budget before a paid launch.",
             )
+            if remote and credential == "WLT_API_KEY":
+                _marble_credit_check(add)
     configured = _modal_configuration()
     modal = os.environ.get("WANDER_MODAL", str(Path(sys.executable).with_name("modal")))
     modal_available = shutil.which(modal)
@@ -554,7 +631,9 @@ def main(argv=None) -> int:
     parser.add_argument("--clip", type=Path)
     parser.add_argument("--options", default="{}", help="RunOptions as a JSON object")
     parser.add_argument(
-        "--remote", action="store_true", help="Bounded read-only Modal/SSH metadata probes"
+        "--remote",
+        action="store_true",
+        help="Bounded read-only Marble credits and Modal/SSH metadata probes",
     )
     args = parser.parse_args(argv)
     try:
