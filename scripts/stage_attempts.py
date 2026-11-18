@@ -142,8 +142,12 @@ CODE_FILES = {
         "worker/stages/lhm_animate.py",
         "worker/stages/lhm_capacity.py",
     ),
-    "worker/modal_multiperson.py::main": ("worker/stages/track_people.py",),
+    "worker/modal_multiperson.py::main": (
+        "worker/stages/worker_resources.py",
+        "worker/stages/track_people.py",
+    ),
     "worker/modal_multiperson.py::animate": (
+        "worker/stages/worker_resources.py",
         "worker/stages/lhm_execution.py",
         "worker/stages/lhm_recovery.py",
         "worker/stages/lhm_person.py",
@@ -233,6 +237,8 @@ def _resource_identity(entry, root, environment):
         "worker/modal_clean_video.py": (3600, 32768, 2),
         "worker/modal_motion.py": (1500, 32768, 1),
         "worker/modal_lhm.py": (1800, 65536, 1),
+        "worker/modal_multiperson.py::main": (3600, 65536, 1),
+        "worker/modal_multiperson.py::animate": (3600, 65536, 1),
     }
     if entry not in defaults:
         return None
@@ -331,6 +337,15 @@ def command_identity(command, root, source_selection=None, *, environment=None):
     if entry == "worker/modal_lhm.py" and "--cameras" in command:
         cameras = Path(command[command.index("--cameras") + 1])
         parameters["inputs"]["depthReference"] = input_identity(cameras.parent / "frame_000.ply")
+    if entry == "worker/modal_multiperson.py::animate":
+        execution_timeout = parameters["options"].get("--execution-timeout", 0)
+        if execution_timeout:
+            # animation_options also bounds CPU/memory for an explicit internal deadline.
+            resources.update(
+                timeout=min(int(execution_timeout), resources["timeout"]),
+                cpu=[4, 4],
+                memory=[65536, 65536],
+            )
     return parameters, code, outputs
 
 
