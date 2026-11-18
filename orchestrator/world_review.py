@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
-from orchestrator.api.viewer import asset_url, scene_manifest
 from orchestrator.cli import RunContext, completion_problem, plan_for
 from orchestrator.journal import ADMISSION_LOCK_FILE, MANUAL_WORLD_REVIEW, Journal
 from orchestrator.run_policy import delivery_metadata
@@ -286,6 +285,9 @@ def review_hold(journal: Journal, state: dict) -> str | None:
 
 def viewer_binding_problem(context: RunContext, inputs: dict) -> str | None:
     """Check the delivered scene, including presentation overrides, against the review."""
+    # Import after this module initializes: API route registration imports this module.
+    from orchestrator.api.viewer import asset_url, scene_manifest
+
     public = context.run_dir / "public"
     package = public / "worlds" / f"{context.name}-4d"
     run_path(context.run_dir, package / "scene.json")

@@ -71,8 +71,9 @@ WANDER_PIPELINE_API=http://127.0.0.1:8000 WANDER_API_TOKEN=… bunx --bun vite -
 The viewer server attaches the token only to its read-only run-preview proxy; it never sends
 the token to the browser. Assets stay inside the run directory and are neither copied into
 the shared demo nor published. Each link names its run, so several runs can be inspected
-without restarting the viewer. Source seeking uses byte ranges. The preview is explicitly
-unfitted and unverified: it does not enable a placement receipt or change a quality verdict.
+without restarting the viewer. Source seeking uses byte ranges. The preview applies placement only when the successful solve has a passing size check and a
+current receipt matching the delivered inputs. Missing or stale receipts leave placement off.
+Applying placement never changes the quality verdict.
 Recorded global fitted scale/floor can be shown, while unfitted provider units are recomputed
 from the current metric metadata instead of trusting an old printed height.
 

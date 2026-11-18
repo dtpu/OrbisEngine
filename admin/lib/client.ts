@@ -21,7 +21,16 @@ const ROOT = '/api/pipeline';
 
 async function unwrap(response: Response): Promise<unknown> {
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Proxies and unhandled API errors may return text or HTML, not JSON.
+      // Do not echo their body: it may include internal diagnostics.
+      if (response.ok) throw new Error('Pipeline API returned an invalid JSON response.');
+    }
+  }
   if (!response.ok) {
     const detail =
       body && typeof body === 'object' && 'detail' in body

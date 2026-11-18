@@ -118,12 +118,12 @@ entrypoints, builds images, starts containers, downloads weights or stages cache
 Modal probe has a 20-second deadline; unavailable services or permission failures remain
 unverified. Known missing/empty cache paths block. Requirements follow the worker paths:
 
-| Selected work | Required existing volume/assets |
-| --- | --- |
-| Cleaning, including the no-world graph | `wander-clean-video-cache`: LaMa and SegFormer |
-| Camera solve | `wander-overnight-motion-cache`: Pi3X and SegFormer |
+| Selected work                                | Required existing volume/assets                                                                                 |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Cleaning, including the no-world graph       | `wander-clean-video-cache`: LaMa and SegFormer                                                                  |
+| Camera solve                                 | `wander-overnight-motion-cache`: Pi3X and SegFormer                                                             |
 | Person reconstruction/animation and tracking | `wander-overnight-lhm-cache`: LHM model, human priors, tracker/sample/voxel assets, GFPGAN and DINO checkpoints |
-| Object shape/refinement | `wander-image-to-3d-cache`: TRELLIS, SDXL and DINO checkpoint |
+| Object shape/refinement                      | `wander-image-to-3d-cache`: TRELLIS, SDXL and DINO checkpoint                                                   |
 
 Cache checks establish nonempty file presence, not hashes, active model revisions, complete
 sharded snapshots, license access or compatibility with a future image build. Inspect saved
@@ -161,6 +161,16 @@ uv run --locked python scripts/shot_cuts.py --report .context/cuts.json \
 Review the chosen index instead of assuming shot 0 is suitable. Continuity checks do not prove
 parallax, person identity, downstream registration, visual quality or headset behavior. Source
 clips are never uploaded by the doctor, and no paid operation is launched.
+
+## After updating the checkout
+
+Restart the local app and worker processes you own after pulling or switching code. Python API
+processes retain imported stage definitions while later requests may load newer modules from disk;
+a mixed process can fail setup checks even though a fresh doctor process succeeds. For example,
+an API started before conditional paid-step metadata was added raised an `AttributeError` on
+`Step.paid_with` after the checkout changed. Restarting uses one consistent code version; do not
+relax credential checks to accommodate stale processes. Coordinate with another process's owner
+rather than terminating it.
 
 ## Submission and recovery
 
