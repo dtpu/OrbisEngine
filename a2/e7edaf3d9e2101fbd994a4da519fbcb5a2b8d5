@@ -1,0 +1,29 @@
+admin/README.md
+  s_a3c43d2a2443ce::t_f3eb7b47e80286 112-117
+admin/app/runs/[runId]/console.tsx
+  s_a3c43d2a2443ce::t_433d0648604fc2 904-907,912-916
+admin/lib/types.ts
+  s_a3c43d2a2443ce::t_53b6fad45870c8 35
+orchestrator/api/app.py
+  s_a3c43d2a2443ce::t_b0f72ce7d554b9 46,501-505,650-655
+orchestrator/run_policy.py
+  s_a3c43d2a2443ce::t_6d0de5cc1539e5 31-49,65-66
+scripts/tests/test_admin_live_commands.py
+  s_a3c43d2a2443ce::t_49725b40fa61ff 133-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2e7edaf3d9e2101fbd994a4da519fbcb5a2b8d5",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
