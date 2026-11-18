@@ -1,0 +1,23 @@
+docs/automatic-uploads.md
+  s_c6018019842afa::t_cbd771e78ae477 198-203
+orchestrator/agent/harness.py
+  s_c6018019842afa::t_1cc311bff7a102 57-73,351,359,386-388
+scripts/tests/test_orchestrator_harness.py
+  s_c6018019842afa::t_28d8f583771f5d 113-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fd05124c941ebd7a8caac3288af81a1976cd8a2",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
