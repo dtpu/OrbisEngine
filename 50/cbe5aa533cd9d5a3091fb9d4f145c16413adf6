@@ -1,0 +1,43 @@
+orchestrator/world_review.py
+  s_c6018019842afa::t_8bab042913625c 288-290
+admin/lib/client.ts
+  s_c6018019842afa::t_4a8824dbd75c76 24-33
+admin/tests/setup-client.test.ts
+  s_c6018019842afa::t_4a8824dbd75c76 1-28,30,41-45
+  s_c6018019842afa::t_0c3d7a9538ad21 29,31-40
+admin/README.md
+  s_c6018019842afa::t_4a8824dbd75c76 74-76
+docs/pipeline-setup.md
+  s_c6018019842afa::t_220149f941bbd0 121-124,126
+  s_a3c43d2a2443ce::t_01c867a7cb7b2c 165-174
+scripts/tests/test_pipeline_doctor.py
+  s_c6018019842afa::t_a407018dea1f9f 175
+  s_c6018019842afa::t_7f483bc7d7e48b 159,165
+  s_c6018019842afa::t_6502e63a85844c 160-164
+scripts/tests/test_world_review_api.py
+  s_c6018019842afa::t_8bab042913625c 474-492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50cbe5aa533cd9d5a3091fb9d4f145c16413adf6",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
