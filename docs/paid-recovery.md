@@ -611,3 +611,9 @@ with backlog1, zero runners and zero running inputs, then the operator stopped i
 No reconstruction or world resulted. The new result-wait behavior is covered by local mocked
 provider tests; it has not been validated by a second paid city submission. Evidence:
 `.context/evidence/fresh-readiness-20261118/` (untracked).
+
+The authenticated run dashboard includes `pi3x/motion-call.json` and `pi3x/modal-run.json`
+under **Source and outputs**, when present, even if reconstruction failed before packaging.
+The links are read-only and uncached so a current cancellation receipt can be inspected. No
+arbitrary run files or receipts outside the run directory are exposed. Missing historical
+receipts are not synthesized, and a visible receipt does not authorize another paid attempt.
