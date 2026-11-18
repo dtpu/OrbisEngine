@@ -29,9 +29,15 @@ The report uses three statuses:
 
 `ready` is true only if every check is `okay`. Finding credentials in the environment does not
 establish inference readiness. The default report leaves Modal workspace access and remote
-caches unverified. Harness login, OpenAI/World Labs account permissions and credits remain
-unverified even with remote inspection, because the doctor never sends a model request or
-generates a world. Exit status is 1 for a blocker and 0 otherwise; automation must also read
+caches unverified. With `--remote`, a selected World Labs stage also reads the authenticated
+API credit balance using [`GET /marble/v1/credits`](https://docs.worldlabs.ai/api/reference/credits/get). A zero balance blocks setup; a positive
+balance only confirms that credits were visible at that instant. It does not establish that
+they cover the selected model, grant generation permission, or authorize spending. An unavailable
+or malformed response remains unverified. The request is bounded, does not retry or follow
+redirects, and never includes credentials or provider response bodies in the report.
+Harness login, OpenAI access and credits, and World Labs generation permissions and quota remain
+unverified even with remote inspection: the doctor never sends a model request or generates
+a world. Exit status is 1 for a blocker and 0 otherwise; automation must also read
 the report's status and checks, since exit 0 can mean unverified.
 
 The doctor checks FFmpeg, FFprobe, Bun and the configured harness executable; imports local
@@ -105,7 +111,8 @@ The directory runner's paid-stage ledger limits execution count and unresolved s
 not dollars. The provider-agnostic database policy reserves explicit cost budgets only for
 callers using that policy; a setup report does not establish a universal spending ceiling.
 
-Use `--remote` for bounded, read-only inspection of the selected Modal workspace:
+Use `--remote` for bounded, read-only inspection of the selected Modal workspace and, when
+world generation is selected, the Marble API credit balance:
 
 ```sh
 uv run --locked --group inference python -m orchestrator.doctor \
@@ -113,7 +120,7 @@ uv run --locked --group inference python -m orchestrator.doctor \
   --options '{"marble":"video","objects":false,"finetune":false}'
 ```
 
-This only reads volume file metadata with `create_if_missing=False`. It never imports worker
+The Modal check only reads volume file metadata with `create_if_missing=False`. It never imports worker
 entrypoints, builds images, starts containers, downloads weights or stages caches. The entire
 Modal probe has a 20-second deadline; unavailable services or permission failures remain
 unverified. Known missing/empty cache paths block. Requirements follow the worker paths:
