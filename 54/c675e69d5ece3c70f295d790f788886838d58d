@@ -1,0 +1,35 @@
+scripts/tests/test_pipeline_doctor.py
+  s_c6018019842afa::t_05237123efd3aa 50,70-73,119-172,446-531,541
+  s_a3c43d2a2443ce::t_f5a69eb9a8d6cf 7,532-533,535-540,542-559
+docs/pipeline-setup.md
+  s_c6018019842afa::t_4a93148f1ef131 33,114-115,123
+  s_c6018019842afa::t_c1c2c42b4fe6e5 32,34-40
+orchestrator/doctor.py
+  s_c6018019842afa::t_05237123efd3aa 98,634-636
+  s_a3c43d2a2443ce::t_02cd40a6308fb2 6,8,29-30,78-97,99-143,482-483
+  s_c6018019842afa::t_873d3588c52353 474-479
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54c675e69d5ece3c70f295d790f788886838d58d",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
