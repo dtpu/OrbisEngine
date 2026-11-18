@@ -85,20 +85,15 @@ def quaternion_matrices(q):
     )
 
 
-def splat_coverage(
-    xyz, opa, scales, quats, cam, hw, pre_blur=VIEWER_PRE_BLUR, max_std2=VIEWER_MAX_STD2
+def splat_footprints(
+    xyz, opa, scales, quats, cam, pre_blur=VIEWER_PRE_BLUR, max_std2=VIEWER_MAX_STD2
 ):
-    """Accumulated alpha of the projected Gaussians at the source resolution.
+    """Each in-front splat's footprint as the viewer draws it, in source pixels.
 
-    Each splat is the viewer's footprint: its 3D covariance projected through the pinhole
-    Jacobian, plus `pre_blur`, cut at `max_std2` squared standard deviations, alpha capped at
-    0.99 and dropped below 1/255. Coverage is 1 - prod(1 - alpha), which does not depend on draw
-    order, so thresholding it at 0.5 is the silhouette the viewer draws over any background.
-    `scales` are log scales and `opa` opacity logits, as stored in the PLY. Checked against the
-    live viewer (fourd.html, contact shadow hidden) on the forest walk: IoU 0.987-0.988, area
-    within 0.1%, on three source frames.
+    Its 3D covariance projected through the pinhole Jacobian, plus `pre_blur`, cut at `max_std2`
+    squared standard deviations. `scales` are log scales and `opa` opacity logits, as stored in
+    the PLY. Returns centres, inverse covariances, alphas and the integer window radius.
     """
-    H, W = hw
     m = np.array(cam["camera_to_world"], float)
     u, _, vt = np.linalg.svd(m[:3, :3])
     Rw = u @ vt
@@ -122,24 +117,57 @@ def splat_coverage(
     cov2 = jac @ cov @ jac.transpose(0, 2, 1)
     a, b, c = cov2[:, 0, 0] + pre_blur, cov2[:, 0, 1], cov2[:, 1, 1] + pre_blur
     det = a * c - b * b
-    inv_a, inv_b, inv_c = c / det, -b / det, a / det
-    centre = (loc @ K.T)[:, :2] / z[:, None]
     largest = 0.5 * (a + c) + np.sqrt(0.25 * (a - c) ** 2 + b * b)
-    radius = np.clip(np.ceil(np.sqrt(max_std2 * largest)).astype(int), 1, MAX_FOOTPRINT_PX)
-    log_clear = np.zeros(H * W)
-    for r in np.unique(radius):
-        pick = np.nonzero(radius == r)[0]
+    return dict(
+        centre=(loc @ K.T)[:, :2] / z[:, None],
+        inverse=np.stack([c / det, -b / det, a / det], 1),
+        alpha=alpha,
+        radius=np.clip(np.ceil(np.sqrt(max_std2 * largest)).astype(int), 1, MAX_FOOTPRINT_PX),
+        maxStd2=max_std2,
+    )
+
+
+def footprint_coverage(footprints, hw, rows=None):
+    """Accumulated alpha of these footprints on an H x W canvas, or on rows [y0, y1) of it.
+
+    Alpha is capped at 0.99 and dropped below 1/255. Coverage is 1 - prod(1 - alpha), which does
+    not depend on draw order. A row band is exact: every splat whose window reaches it is drawn.
+    """
+    H, W = hw
+    y0, y1 = (0, H) if rows is None else rows
+    centre, inverse, alpha = footprints["centre"], footprints["inverse"], footprints["alpha"]
+    radius, max_std2 = footprints["radius"], footprints["maxStd2"]
+    cy = np.round(centre[:, 1]).astype(int)
+    reach = (cy + radius >= y0) & (cy - radius < y1)
+    log_clear = np.zeros((y1 - y0) * W)
+    for r in np.unique(radius[reach]):
+        pick = np.nonzero(reach & (radius == r))[0]
         dy, dx = (offset.ravel() for offset in np.mgrid[-r : r + 1, -r : r + 1])
         px = np.round(centre[pick, 0]).astype(int)[:, None] + dx
-        py = np.round(centre[pick, 1]).astype(int)[:, None] + dy
+        py = cy[pick][:, None] + dy
         ex, ey = px - centre[pick, 0][:, None], py - centre[pick, 1][:, None]
-        d2 = inv_a[pick, None] * ex**2 + 2 * inv_b[pick, None] * ex * ey + inv_c[pick, None] * ey**2
+        ia, ib, ic = (inverse[pick, k][:, None] for k in range(3))
+        d2 = ia * ex**2 + 2 * ib * ex * ey + ic * ey**2
         value = np.minimum(0.99, alpha[pick, None] * np.exp(-0.5 * d2))
-        keep = (d2 <= max_std2) & (value >= 1 / 255) & (px >= 0) & (px < W) & (py >= 0) & (py < H)
+        keep = (d2 <= max_std2) & (value >= 1 / 255) & (px >= 0) & (px < W)
+        keep &= (py >= y0) & (py < y1)
         log_clear += np.bincount(
-            (py * W + px)[keep], weights=np.log1p(-value[keep]), minlength=H * W
+            ((py - y0) * W + px)[keep], weights=np.log1p(-value[keep]), minlength=(y1 - y0) * W
         )
-    return 1 - np.exp(log_clear.reshape(H, W))
+    return 1 - np.exp(log_clear.reshape(y1 - y0, W))
+
+
+def splat_coverage(
+    xyz, opa, scales, quats, cam, hw, pre_blur=VIEWER_PRE_BLUR, max_std2=VIEWER_MAX_STD2
+):
+    """Accumulated alpha of the projected Gaussians at the source resolution.
+
+    Thresholding it at 0.5 is the silhouette the viewer draws over any background. Checked
+    against the live viewer (fourd.html, contact shadow hidden) on the forest walk: IoU
+    0.987-0.988, area within 0.1%, on three source frames.
+    """
+    footprints = splat_footprints(xyz, opa, scales, quats, cam, pre_blur, max_std2)
+    return footprint_coverage(footprints, hw)
 
 
 def drawn_silhouette(vertex, xyz, log_scales, cam, hw):

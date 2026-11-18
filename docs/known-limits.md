@@ -87,7 +87,8 @@ Do not retry one without a new idea, and add a line here when you measure a new 
     - The live viewer on frames 0, 98 and 162 gives 1.01, 1.02 and 1.05.
     - The body-height unit becomes the drawn body, the one the masks and the footage measure. The
       fitted camera then sits 1.273 body-heights up, against 1.278 from the footage.
-    - The fit takes about 2 minutes instead of 20 seconds.
+    - The fit takes about a minute (it was 20 seconds with centre rows); it renders only the head
+      and feet bands of each drawn silhouette, and refits until the drawn edges move under a row.
     - The avatar is still slightly wide at the shoulders, and its foot pose differs from the
       walker's on some frames.
 

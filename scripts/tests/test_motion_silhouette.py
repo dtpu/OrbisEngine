@@ -276,3 +276,18 @@ def test_drawn_silhouette_of_a_dense_body_is_its_outline_not_a_dilated_one():
     assert drawn.sum() == pytest.approx(21 * 81, rel=0.02)
     # The old approximation dilates centres by 1.5 median radii and closes with a 9 px disc.
     assert splat_silhouette(xyz, opacity, scales, CAMERA, HW).sum() > 1.08 * drawn.sum()
+
+
+def test_a_row_band_of_coverage_is_the_same_rows_of_the_full_render():
+    from motion_silhouette import footprint_coverage, splat_footprints
+
+    rng = np.random.default_rng(3)
+    xyz = np.column_stack(
+        [rng.uniform(-1, 1, 400), rng.uniform(-1.5, 1.5, 400), np.full(400, -10.0)]
+    )
+    scales = np.log(rng.uniform(0.005, 0.2, (400, 3)))
+    quats = rng.normal(size=(400, 4))
+    footprints = splat_footprints(xyz, rng.normal(2, 2, 400), scales, quats, CAMERA)
+    full = footprint_coverage(footprints, HW)
+    for rows in ((0, 40), (150, 260), (300, 480)):
+        np.testing.assert_allclose(footprint_coverage(footprints, HW, rows), full[slice(*rows)])
