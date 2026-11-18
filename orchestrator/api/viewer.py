@@ -174,7 +174,19 @@ def require_sequence(root: Path, relative: str) -> None:
     # back to these authoritative PLYs when its descriptor or payload is unusable.
 
 
-def scene_manifest(root: Path) -> dict | None:
+def placement_applies(root: Path, run_id: str) -> bool:
+    # The runner check lives beside the world review, which builds on this module.
+    from orchestrator.world_review import current_placement
+
+    return current_placement(root, run_id)
+
+
+def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
+    """The run's preview scene, or None while it is incomplete.
+
+    With `placement`, a placement whose receipt still matches the delivered scene is applied.
+    That check hashes the scene's inputs, so availability checks leave it off.
+    """
     described = read_json(root / "run.json")
     try:
         name = run_name(root)
@@ -229,9 +241,9 @@ def scene_manifest(root: Path) -> dict | None:
         params["objects"] = (
             asset_url(run_id, objects) if (root / "public" / objects).is_file() else "0"
         )
-        # A diagnostic preview never promotes a placement or a quality verdict. Preserve
-        # only the runner's reported global scale/floor, without applying its fitted pose.
-        placement = read_json(root / "state.json").get("stages", {}).get("_placement", {})
+        # The runner's reported global scale/floor. A current placement refines them in the
+        # viewer below; a preview never changes the run's quality verdict.
+        fit = read_json(root / "state.json").get("stages", {}).get("_placement", {})
 
         def finite(value):
             return (
@@ -240,11 +252,11 @@ def scene_manifest(root: Path) -> dict | None:
                 and math.isfinite(value)
             )
 
-        scale = placement.get("fittedScale0")
+        scale = fit.get("fittedScale0")
         if finite(scale) and scale > 0:
             params["scale"] = str(scale)
-            if finite(placement.get("floor")):
-                params["floor"] = str(placement["floor"])
+            if finite(fit.get("floor")):
+                params["floor"] = str(fit["floor"])
         else:
             provider = read_json(root / "marble" / f"{name}-{WORLD_SUFFIXES.get(mode)}-world.json")
             metadata = ((provider.get("assets") or {}).get("splats") or {}).get(
@@ -252,11 +264,11 @@ def scene_manifest(root: Path) -> dict | None:
             ) or {}
             factor = metadata.get(
                 "metric_scale_factor",
-                provider.get("metric_scale_factor", placement.get("metricScaleFactor")),
+                provider.get("metric_scale_factor", fit.get("metricScaleFactor")),
             )
             ground = metadata.get(
                 "ground_plane_offset",
-                provider.get("ground_plane_offset", placement.get("groundPlaneOffset")),
+                provider.get("ground_plane_offset", fit.get("groundPlaneOffset")),
             )
             if finite(factor) and factor > 0:
                 params["height"] = str(1.7 / factor)
@@ -289,6 +301,10 @@ def scene_manifest(root: Path) -> dict | None:
             elif "height" in values:
                 params.pop("scale", None)
             params.update(values)
+        elif placement and placement_applies(root, run_id):
+            # A recovered scene's exported defaults above keep their own measured alignment.
+            params["place"] = "1"
+            params["placement"] = asset_url(run_id, base + "placement.json")
         return {"schema": "wander.viewer-scene/1", "params": params}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
@@ -312,7 +328,7 @@ def rewrite_references(value, root: Path, relative: str):
 def register_viewer_routes(app, actor, directory):
     @app.api_route("/api/pipeline/runs/{run_id}/viewer/scene.json", methods=["GET", "HEAD"])
     def scene(run_id: str, request: Request, user: str = Depends(actor)):
-        manifest = scene_manifest(directory(run_id))
+        manifest = scene_manifest(directory(run_id), placement=True)
         if manifest is None:
             raise HTTPException(404, "packaged scene is not ready for preview")
         response = JSONResponse(manifest, headers={"Cache-Control": "no-store"})

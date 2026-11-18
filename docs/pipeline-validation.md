@@ -121,8 +121,16 @@ public directory. The local Vite proxy supplies credentials server-side and stre
 ranges; tests cover authentication, path confinement, selected-world routing and all cast members.
 The packaging integration checks delivered frame bytes against their hashes. Optional compact
 motion remains an acceleration with the existing PLY fallback, not a prerequisite for preview.
-The preview defaults to the packaged camera-0 origin and explicitly leaves placement disabled;
-that navigation default does not establish source/world camera correspondence.
+The preview defaults to the packaged camera-0 origin; that navigation default does not establish
+source/world camera correspondence. It applies the run's placement (`place=1`, with `placement`
+naming the run-scoped `placement.json`) only when the runner would: `place_fit` succeeded with a
+passing size check, and its receipt still matches the final world, the report and every input
+the solve read, including the source, packaged frames, scale, floor and measurement code. The
+check reuses the runner's `placement_is_current`. Any change, a missing receipt, a retained
+delivery or exported presentation defaults leave placement disabled. Only the scene route runs
+the check, because it hashes those inputs; progress polling only asks whether a scene exists.
+Applying a placement never changes the delivered `qualityStatus`: a run that failed acceptance
+still reports it.
 
 Recovered packages can preserve reviewed presentation settings in
 `public/worlds/<run-name>-4d/scene.json`, using `wander.viewer-scene/1` with a string-valued

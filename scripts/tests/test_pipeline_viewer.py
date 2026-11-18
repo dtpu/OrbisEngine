@@ -350,6 +350,117 @@ def test_exported_presentation_defaults_preserve_recovered_scene_alignment(packa
     assert scene_manifest(root) is None
 
 
+PLACED_FRAME = (
+    b"ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\n"
+    b"property float z\nproperty float opacity\nend_header\n0 -1 -2 2\n0 1 -2 2\n"
+)
+
+
+def place_run(root, world):
+    """A finished place_fit whose receipt the runner's own inputs produce."""
+    from orchestrator.cli import plan_for
+    from orchestrator.world_review import RetainedReviewPipeline, read_run_context
+
+    described = json.loads((root / "run.json").read_text())
+    described["options"].update(marble="image", finetune=False, objects=False, hands_off=True)
+    (root / "run.json").write_text(json.dumps(described))
+    spz = root / "public" / f"marble-{described['name']}-image.spz"
+    spz.write_bytes(b"generated-world")
+    (world / "person/frame_000.ply").write_bytes(PLACED_FRAME)
+    report = world / "placement.json"
+    report.write_text(json.dumps({"schema": "wander.placement/1", "registrationScale": 0.8}))
+    context = read_run_context(root, "viewer-run")
+    stages = {name: {"status": "ok"} for name in plan_for(context)}
+    stages["_scale"] = {"scale0": 0.8, "gateOk": False}
+    stages["_placement"] = {"fittedScale0": 0.8, "floor": -0.8}
+    state = {"stages": stages}
+    runner = RetainedReviewPipeline(context, state)
+    stages["_placement_solve"] = {
+        "world": str(spz.resolve()),
+        "worldSha256": runner.input_hash(spz),
+        "reportSha256": runner.input_hash(report),
+        "inputReceipt": runner.placement_inputs(spz),
+        "sizeCheck": {"pass_": True},
+    }
+    (root / "state.json").write_text(json.dumps(state))
+    return spz, report
+
+
+def test_preview_applies_a_current_placement_without_promoting_quality(packaged):
+    case, root, world, source = packaged
+    place_run(root, world)
+    Journal(root).append(
+        "run.finished",
+        status="failed",
+        summary="The scale fit failed acceptance.",
+        delivery={"status": "preview_ready", "qualityStatus": "failed", "reason": "depth"},
+    )
+    url = "/api/pipeline/runs/viewer-run"
+    params = case.client.get(url + "/viewer/scene.json", headers=AUTH).json()["params"]
+    assert params["place"] == "1"
+    assert params["placement"] == f"{url}/viewer/assets/worlds/{world.name}/placement.json"
+    served = case.client.get(params["placement"], headers=AUTH)
+    assert served.status_code == 200 and served.json()["registrationScale"] == 0.8
+    assert params["scale"] == "0.8" and params["floor"] == "-0.8"
+    # Availability checks run on every progress poll and do not hash the scene.
+    assert scene_manifest(root)["params"]["place"] == "0"
+    progress = case.client.get(url + "/progress", headers=AUTH).json()
+    assert progress["viewerPath"]
+    assert progress["result"]["delivery"]["qualityStatus"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "world",
+        "report",
+        "frame",
+        "source",
+        "scale",
+        "place_fit failed",
+        "size check failed",
+        "no receipt",
+        "exported defaults",
+        "retained delivery",
+    ],
+)
+def test_preview_leaves_a_stale_or_unproven_placement_off(packaged, change):
+    case, root, world, source = packaged
+    spz, report = place_run(root, world)
+    state = json.loads((root / "state.json").read_text())
+    stages = state["stages"]
+    if change == "world":
+        spz.write_bytes(b"regenerated-world")
+    elif change == "report":
+        report.write_text(json.dumps({"schema": "wander.placement/1", "registrationScale": 2}))
+    elif change == "frame":
+        (world / "person/frame_000.ply").write_bytes(PLACED_FRAME.replace(b"0 -1 -2", b"0 -2 -2"))
+    elif change == "source":
+        (root / "public/clips" / root.name / source.name).write_bytes(b"another source")
+    elif change == "scale":
+        stages["_scale"]["scale0"] = 0.9
+    elif change == "place_fit failed":
+        stages["place_fit"] = {"status": "failed"}
+    elif change == "size check failed":
+        stages["_placement_solve"]["sizeCheck"] = {"pass_": False}
+    elif change == "no receipt":
+        del stages["_placement_solve"]
+    elif change == "exported defaults":
+        (world / "scene.json").write_text(
+            json.dumps({"schema": "wander.viewer-scene/1", "params": {"scale": "1.08"}})
+        )
+    elif change == "retained delivery":
+        described = json.loads((root / "run.json").read_text())
+        described["retainedDelivery"] = {"source": "earlier-run"}
+        (root / "run.json").write_text(json.dumps(described))
+    (root / "state.json").write_text(json.dumps(state))
+    response = case.client.get("/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH)
+    assert response.status_code == 200
+    params = response.json()["params"]
+    assert params["place"] == "0"
+    assert "placement" not in params
+
+
 @pytest.mark.parametrize(
     "defaults",
     [
