@@ -669,6 +669,17 @@ class CommandIdentityTests(unittest.TestCase):
         self.assertEqual(parameters, after_parameters)
         self.assertNotEqual(before[helper], after[helper])
 
+    def test_motion_submission_and_receipt_changes_are_fingerprinted(self):
+        command = ["modal", "run", "worker/modal_motion.py", "--experiment", "pi3x"]
+        for helper in ("worker/stages/motion_submission.py", "worker/stages/lhm_recovery.py"):
+            with self.subTest(helper=helper):
+                _, before, _ = command_identity(command, self.root)
+                self.assertIn(helper, before)
+                path = self.root / helper
+                path.write_bytes(path.read_bytes() + b"\n# changed submission contract\n")
+                _, after, _ = command_identity(command, self.root)
+                self.assertNotEqual(before[helper], after[helper])
+
     def test_single_person_lhm_deadline_guard_changes_are_fingerprinted(self):
         helper = "worker/stages/lhm_execution.py"
         command = ["modal", "run", "worker/modal_lhm.py"]
