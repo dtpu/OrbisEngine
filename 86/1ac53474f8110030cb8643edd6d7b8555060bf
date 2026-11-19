@@ -1,0 +1,19 @@
+docs/known-limits.md
+  s_c6018019842afa::t_4fb99cc4b918e7 46-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "861ac53474f8110030cb8643edd6d7b8555060bf",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
