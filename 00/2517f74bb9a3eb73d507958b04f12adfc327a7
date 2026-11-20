@@ -1,0 +1,31 @@
+worker/modal_multiperson.py
+  s_c6018019842afa::t_61bc593484e866 231-232,234-242,244-283,302-303
+  s_c6018019842afa::t_e1d28c31b830f5 233,243
+docs/paid-recovery.md
+  s_c6018019842afa::t_bf752a16f1ed21 628-652
+worker/stages/modal_profile.py
+  s_c6018019842afa::t_e1d28c31b830f5 1-23
+worker/modal_motion.py
+  s_c6018019842afa::t_e1d28c31b830f5 16
+scripts/tests/test_tracking_submission.py
+  s_c6018019842afa::t_862fd1c36053d0 19,178-197
+  s_c6018019842afa::t_b6aba33af4b2a8 100-102,138-140
+  s_c6018019842afa::t_046bcfed8c80be 75-76
+  s_c6018019842afa::t_8fc423a7d34bed 1-18,20-74,77-99,103-137,141-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "002517f74bb9a3eb73d507958b04f12adfc327a7",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
