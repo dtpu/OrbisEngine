@@ -9,6 +9,7 @@ persist remotely; downloaded evidence is local and must remain untracked.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import modal
 
@@ -178,6 +179,26 @@ def reconstruct(
     return dict(report=report, archive=buf.getvalue())
 
 
+def _effective_modal_profile() -> str | None:
+    from modal import config as modal_config
+
+    # Modal 1.5.5 updates this selection for CLI --profile before entering main.
+    profile = modal_config._profile
+    if profile not in modal_config.config_profiles():
+        return None
+    # The SDK resolves credential settings from the environment before the profile.
+    credential_overrides = (
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET",
+        "MODAL_OAUTH_REFRESH_TOKEN",
+        "MODAL_OAUTH_CLIENT_ID",
+        "MODAL_OAUTH_CLIENT_SECRET",
+    )
+    if any(name in os.environ for name in credential_overrides):
+        return None
+    return profile
+
+
 @app.local_entrypoint()
 def main(
     video: str, out: str, experiment: str = "vdpm", batch: int = 16, anchor_lock: bool = False
@@ -199,6 +220,8 @@ def main(
             destination,
             inputs,
             timeout=INFERENCE_RESOURCES["startup_timeout"] + INFERENCE_RESOURCES["timeout"],
+            app_id=app.app_id,
+            modal_profile=_effective_modal_profile(),
             experiment=experiment,
             batch=batch,
             anchor_lock=anchor_lock,
