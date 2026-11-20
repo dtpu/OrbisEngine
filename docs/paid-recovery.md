@@ -625,3 +625,28 @@ under **Source and outputs**, when present, even if reconstruction failed before
 The links are read-only and uncached so a current cancellation receipt can be inspected. No
 arbitrary run files or receipts outside the run directory are exposed. Missing historical
 receipts are not synthesized, and a visible receipt does not authorize another paid attempt.
+
+## Tracking result waiting
+
+The tracking entrypoint uses the same arguments as before:
+
+```sh
+WANDER_WORKER_TIMEOUT_SECONDS=600 uv run --locked modal run worker/modal_multiperson.py::main \
+  --video /path/to/clip.mp4 --cameras /path/to/cameras.json --out /path/to/tracks
+```
+
+Tracking writes `tracking-call.json` in `--out` before submitting, with `appId` and the effective
+local `modalProfile` alias under the same rules as the motion receipt. The alias is a local
+recovery hint. Verify the app and call IDs against provider history to establish ownership.
+Tracking adds the returned `functionCallId` before waiting. A submission that does not return
+an ID stays `submission_uncertain`, and any existing tracking call receipt blocks submission to
+that destination. Use retained evidence and the shared paid ledger to reconcile the original
+attempt before considering another execution.
+
+The result wait covers queueing and uses the sum of the registered startup and execution
+timeouts. With the 600-second ceiling, this is 1,200 seconds. With the default registration,
+Modal 1.5.5 uses 3,600 seconds each for startup and execution, giving a 7,200-second wait.
+Submission, cancellation and extraction are outside that wait. A timeout or interrupted wait
+requests cancellation of the owned call and records whether the request outcome is known.
+This receipt tracks the provider call. Tracking outputs still arrive through the returned
+archive, and `result_received` precedes extraction and checks of the tracking report.
