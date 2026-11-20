@@ -103,6 +103,33 @@ export interface UploadRunResult {
   reused: boolean;
 }
 
+const uploadStatuses: Record<RunStatus, true> = {
+  queued: true,
+  running: true,
+  waiting_human: true,
+  paused: true,
+  blocked: true,
+  succeeded: true,
+  failed: true,
+  canceled: true,
+};
+
+function isUploadRunResult(value: unknown): value is UploadRunResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.id === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(result.id) &&
+    typeof result.status === 'string' &&
+    Object.hasOwn(uploadStatuses, result.status) &&
+    typeof result.sourceArtifactId === 'string' &&
+    result.sourceArtifactId.length > 0 &&
+    typeof result.sourceSha256 === 'string' &&
+    /^[0-9a-f]{64}$/.test(result.sourceSha256) &&
+    typeof result.reused === 'boolean'
+  );
+}
+
 export async function uploadRun(input: {
   file: File;
   options: GraphOptions;
@@ -132,7 +159,17 @@ export async function uploadRun(input: {
         body = null;
       }
       if (request.status >= 200 && request.status < 300) {
-        resolve(body as UploadRunResult);
+        if (isUploadRunResult(body)) {
+          resolve(body);
+        } else {
+          // An ambiguous response does not mean the server rejected the upload.
+          // Keep the selected file, but do not navigate or repeat the request.
+          reject(
+            new Error(
+              'The upload response was incomplete or invalid. The run may have been created; check the runs list before uploading again.',
+            ),
+          );
+        }
         return;
       }
       const detail =

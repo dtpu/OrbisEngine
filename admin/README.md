@@ -115,3 +115,8 @@ disabled with the server's reason. The command API also refuses that retry befor
 operator event or reopening the run. Inspect retained outputs/provider receipts instead; this is
 not a new spending approval. Unpaid corrections and manual-run retry controls retain their
 existing behavior and execution-time admission checks.
+
+Upload success responses must include a valid run identifier, status and source receipt before the
+form clears the selected file or opens the run. An incomplete or malformed success response is
+ambiguous: the server may already have queued the run. The form directs the operator to check the
+runs list and never automatically repeats the upload.

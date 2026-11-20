@@ -13,12 +13,12 @@ const options: GraphOptions = {
 };
 const file = new File(['clip bytes'], 'clip.mp4', { type: 'video/mp4' });
 
-function mockUpload(t: TestContext, status: number, body: unknown) {
-  const sent = { method: '', url: '', form: new FormData() };
+function mockUpload(t: TestContext, status: number, body: unknown, raw = false) {
+  const sent = { method: '', url: '', form: new FormData(), submissions: 0 };
   class UploadRequest extends EventTarget {
     readonly upload = new EventTarget();
     readonly status = status;
-    readonly responseText = JSON.stringify(body);
+    readonly responseText = raw ? String(body) : JSON.stringify(body);
 
     open(method: string, url: string) {
       sent.method = method;
@@ -27,6 +27,7 @@ function mockUpload(t: TestContext, status: number, body: unknown) {
 
     send(form: FormData) {
       sent.form = form;
+      sent.submissions += 1;
       this.dispatchEvent(new Event('load'));
     }
   }
@@ -70,3 +71,40 @@ test('upload surfaces the API error detail', async (t) => {
   mockUpload(t, 409, { detail: 'run name already exists' });
   await assert.rejects(uploadRun({ file, options }), /run name already exists/);
 });
+
+const validUpload: UploadRunResult = {
+  id: 'new-run',
+  status: 'queued',
+  sourceArtifactId: 'source-artifact',
+  sourceSha256: 'b'.repeat(64),
+  reused: false,
+};
+
+test('a new upload returns its validated receipt', async (t) => {
+  const sent = mockUpload(t, 201, validUpload);
+  assert.deepEqual(await uploadRun({ file, options }), validUpload);
+  assert.equal(sent.submissions, 1);
+});
+
+for (const [name, body, raw] of [
+  ['HTML', '<html>private proxy diagnostics</html>', true],
+  ['empty body', '', true],
+  ['null', null, false],
+  ['array', [], false],
+  ['missing receipt', {}, false],
+  ['missing ID', { ...validUpload, id: undefined }, false],
+  ['invalid ID', { ...validUpload, id: '../another-run' }, false],
+  ['unknown status', { ...validUpload, status: 'complete' }, false],
+  ['missing artifact', { ...validUpload, sourceArtifactId: '' }, false],
+  ['invalid source hash', { ...validUpload, sourceSha256: 'bad' }, false],
+  ['missing reuse flag', { ...validUpload, reused: undefined }, false],
+] as const) {
+  test(`upload refuses ${name} on success without resubmitting`, async (t) => {
+    const sent = mockUpload(t, 200, body, raw);
+    await assert.rejects(uploadRun({ file, options }), {
+      message:
+        'The upload response was incomplete or invalid. The run may have been created; check the runs list before uploading again.',
+    });
+    assert.equal(sent.submissions, 1);
+  });
+}
