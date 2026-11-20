@@ -1,7 +1,8 @@
 """Explicit CPU-only model cache staging; never performs inference or starts GPU workers.
 
-Run with MODAL_PROFILE=dtpu and an absolute deadline. Each phase runs once, preserves a failure
-receipt, and refuses to restart an incomplete copy/extraction without operator reconciliation.
+Run the local entrypoint with the intended Modal profile and an absolute deadline. Each phase
+runs once, preserves a failure receipt, and refuses to restart an incomplete copy/extraction
+without operator reconciliation.
 Public upstream URLs/revisions are recorded in receipts; source video is never uploaded.
 """
 
@@ -23,10 +24,19 @@ RATE_CEILING = 2 * 0.0000131 + 4 * 0.00000222
 
 image = modal.Image.debian_slim(python_version="3.12").uv_pip_install("huggingface_hub==0.28.1")
 app = modal.App("wander-daniel-overnight-cache-setup")
-source = modal.Volume.from_name("wander-weights")
-clean_cache = modal.Volume.from_name("wander-clean-video-cache", create_if_missing=True)
-motion_cache = modal.Volume.from_name("wander-overnight-motion-cache", create_if_missing=True)
-lhm_cache = modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=True)
+VOLUMES = {
+    "/source": modal.Volume.from_name("wander-weights"),
+    "/clean": modal.Volume.from_name("wander-clean-video-cache", create_if_missing=True),
+    "/motion": modal.Volume.from_name("wander-overnight-motion-cache", create_if_missing=True),
+    "/lhm": modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=True),
+}
+CLEAN_MOTION_PHASES = ("clean-motion", "clean-motion-repair", "clean-motion-repair-v2")
+PHASE_MOUNTS = {
+    **dict.fromkeys(CLEAN_MOTION_PHASES, ("/source", "/clean", "/motion")),
+    "clean-only": ("/clean",),
+    "clean-instance": ("/clean", "/lhm"),
+    **dict.fromkeys(("lhm", "lhm-resume", "dino", "gfpgan"), ("/lhm",)),
+}
 
 
 def digest_file(path):
@@ -218,6 +228,7 @@ def extract_missing_priors(url, destination, expected_bytes):
     }
 
 
+# Modal hydrates static mounts before main executes. Select mounts only on the invoked variant.
 @app.function(
     image=image,
     cpu=(1, 2),
@@ -226,7 +237,6 @@ def extract_missing_priors(url, destination, expected_bytes):
     retries=0,
     max_containers=1,
     scaledown_window=2,
-    volumes={"/source": source, "/clean": clean_cache, "/motion": motion_cache, "/lhm": lhm_cache},
 )
 def stage(phase: str, deadline_epoch: float):
     import json
@@ -237,17 +247,10 @@ def stage(phase: str, deadline_epoch: float):
 
     from huggingface_hub import snapshot_download
 
-    if phase not in (
-        "clean-motion",
-        "clean-motion-repair",
-        "clean-motion-repair-v2",
-        "lhm",
-        "lhm-resume",
-        "dino",
-        "gfpgan",
-        "clean-instance",
-    ):
+    if phase not in PHASE_MOUNTS:
         raise ValueError("unknown staging phase")
+    if not all(Path(mount).is_dir() for mount in PHASE_MOUNTS[phase]):
+        raise RuntimeError("staging phase mounts missing; invoke the main local entrypoint")
     remaining = min(1750, int(deadline_epoch - time.time()))
     if remaining <= 0:
         raise ValueError("setup deadline already exhausted")
@@ -255,8 +258,6 @@ def stage(phase: str, deadline_epoch: float):
     def deadline(*_):
         raise TimeoutError("cache staging deadline exhausted")
 
-    signal.signal(signal.SIGALRM, deadline)
-    signal.alarm(remaining)
     started = time.time()
     report = {
         "phase": phase,
@@ -268,7 +269,8 @@ def stage(phase: str, deadline_epoch: float):
         "functionCallId": modal.current_function_call_id(),
         "steps": [],
     }
-    receipt_root = Path("/clean" if phase.startswith("clean-") else "/lhm") / "setup-receipts"
+    receipt_mount = "/clean" if phase.startswith("clean-") else "/lhm"
+    receipt_root = Path(receipt_mount) / "setup-receipts"
     failure = receipt_root / f"{phase}-attempt.json"
     if failure.exists():
         previous = json.loads(failure.read_text())
@@ -277,22 +279,27 @@ def stage(phase: str, deadline_epoch: float):
                 "prior incomplete attempt requires reconciliation; no automatic retry"
             )
         return previous
+
+    def commit_changes():
+        VOLUMES[receipt_mount].commit()
+        if phase in CLEAN_MOTION_PHASES:
+            VOLUMES["/motion"].commit()
+
+    signal.signal(signal.SIGALRM, deadline)
+    signal.alarm(remaining)
     write_receipt(failure, report)
-    clean_cache.commit()
-    motion_cache.commit()
-    lhm_cache.commit()
+    commit_changes()
 
     def step_done(name, document):
         report["steps"].append({"name": name, **document})
-        write_receipt(receipt_root / f"{name}.json", document)
+        receipt_name = f"clean-only-{name}" if phase == "clean-only" else name
+        write_receipt(receipt_root / f"{receipt_name}.json", document)
         write_receipt(failure, report)
-        clean_cache.commit()
-        motion_cache.commit()
-        lhm_cache.commit()
+        commit_changes()
         print(f"cache step complete: {name}", flush=True)
 
     try:
-        if phase.startswith("clean-motion"):
+        if phase in CLEAN_MOTION_PHASES:
             pi_source = Path("/source/hub/models--yyfz233--Pi3X")
             pi_dest = Path("/motion/huggingface/hub/models--yyfz233--Pi3X")
             pending = pi_dest.with_name(pi_dest.name + ".incomplete")
@@ -349,6 +356,7 @@ def stage(phase: str, deadline_epoch: float):
                 },
             )
 
+        if phase == "clean-only" or phase in CLEAN_MOTION_PHASES:
             snapshot = snapshot_download(
                 "nvidia/segformer-b0-finetuned-ade-512-512",
                 revision=SEGFORMER_REV,
@@ -360,9 +368,10 @@ def stage(phase: str, deadline_epoch: float):
             # The active workers resolve main; pin its local ref to the staged immutable revision.
             (model_dir / "refs").mkdir(exist_ok=True)
             (model_dir / "refs/main").write_text(SEGFORMER_REV)
-            shutil.copytree(
-                model_dir, Path("/motion/huggingface/hub") / model_dir.name, symlinks=True
-            )
+            if phase in CLEAN_MOTION_PHASES:
+                shutil.copytree(
+                    model_dir, Path("/motion/huggingface/hub") / model_dir.name, symlinks=True
+                )
             step_done(
                 "segformer",
                 {
@@ -536,9 +545,7 @@ def stage(phase: str, deadline_epoch: float):
         report["elapsedSeconds"] = time.time() - started
         report["computeUpperEstimateUSD"] = report["elapsedSeconds"] * RATE_CEILING
         write_receipt(failure, report)
-        clean_cache.commit()
-        motion_cache.commit()
-        lhm_cache.commit()
+        commit_changes()
     return report
 
 
@@ -546,7 +553,10 @@ def stage(phase: str, deadline_epoch: float):
 def main(phase: str, deadline_epoch: float, out: str):
     import json
 
-    report = stage.remote(phase, deadline_epoch)
+    if phase not in PHASE_MOUNTS:
+        raise ValueError("unknown staging phase")
+    volumes = {mount: VOLUMES[mount] for mount in PHASE_MOUNTS[phase]}
+    report = stage.with_options(volumes=volumes).remote(phase, deadline_epoch)
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))

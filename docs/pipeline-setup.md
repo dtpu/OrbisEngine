@@ -138,6 +138,51 @@ staging receipts and [paid recovery](paid-recovery.md) before deliberately stagi
 The doctor does not initiate staging or repair. Local reference-frame models may still need
 their separately reviewed Torch/Hugging Face cache preparation before processing a source.
 
+### Stage missing Modal model caches
+
+These commands start one paid CPU staging call per invocation. Select the saved local profile
+alias for the intended workspace and use a fresh absolute Unix deadline in seconds and a unique
+local receipt path for each authorized phase. Run phases serially. Set `STAGING_PROFILE` and
+`STAGING_RECEIPT_DIR`, and set `DEADLINE_EPOCH` immediately before each call. For example,
+`DEADLINE_EPOCH=$(( $(date +%s) + 1800 ))` allows 30 minutes from launch. Defining the function
+below is local and does not start staging.
+
+```sh
+stage_cache() {
+  uv run --locked modal --profile "$STAGING_PROFILE" run worker/modal_stage_weights.py::main \
+    --phase "$1" --deadline-epoch "$2" --out "$STAGING_RECEIPT_DIR/$1.json"
+}
+```
+
+| Phase command | Volume mounts and effect |
+| --- | --- |
+| `stage_cache clean-only "$DEADLINE_EPOCH"` | Cleaning cache only. Stages LaMa and pinned SegFormer in `wander-clean-video-cache`. The motion cache is outside the function's mounts. |
+| `stage_cache lhm "$DEADLINE_EPOCH"` | LHM cache only. Stages LHM priors, model snapshot and Mask R-CNN in `wander-overnight-lhm-cache`. |
+| `stage_cache dino "$DEADLINE_EPOCH"` | LHM cache only. Stages the DINO checkpoint. |
+| `stage_cache gfpgan "$DEADLINE_EPOCH"` | LHM cache only. Stages the GFPGAN checkpoint. |
+| `stage_cache lhm-resume "$DEADLINE_EPOCH"` | LHM cache only. Range recovery requires a matching failed `lhm` receipt and incomplete extraction. |
+| `stage_cache clean-instance "$DEADLINE_EPOCH"` | Cleaning and LHM caches. Copies the checksum-verified Mask R-CNN checkpoint from the LHM cache into the cleaning cache. |
+| `stage_cache clean-motion "$DEADLINE_EPOCH"` | Existing `wander-weights` source, cleaning and motion caches. Copies Pi3X into a fresh motion destination, stages SegFormer in both destination caches and stages LaMa in the cleaning cache. |
+| `stage_cache clean-motion-repair "$DEADLINE_EPOCH"` | Same mounts as `clean-motion`. Repairs the diagnosed legacy Pi3X symlink failure using its receipt and incomplete copy. |
+| `stage_cache clean-motion-repair-v2 "$DEADLINE_EPOCH"` | Same repair checks and mounts, with its own legacy attempt receipt. |
+
+The bare script path also selects `main` in Modal 1.5.5. Use the local entrypoint to select
+mounts. `::stage` is the underlying function and has no static mounts. Only the three combined
+cleaning and motion phases look up `wander-weights`, which must already exist. `clean-only`
+records `clean-only-attempt.json`, `clean-only-segformer.json` and `clean-only-lama.json` under
+the cleaning volume's `setup-receipts/`. Legacy attempt and step receipt paths are preserved.
+An incomplete attempt requires inspection and reconciliation. A complete attempt returns its
+saved report without downloading again, though a new CLI invocation can still launch a container.
+
+Staging is outside the paid-stage ledger. The function requests one CPU and 1 GiB of memory,
+with limits of two CPUs and 4 GiB, one container per function configuration, zero function retries
+and a two-second scaledown window. Modal's execution timeout is 1,800 seconds. On function entry,
+the worker uses the smaller of 1,750 seconds and the remaining time to `--deadline-epoch`,
+rejecting an exhausted deadline. Queueing and startup can consume the absolute time budget before
+the worker enters. Neither timeout bounds total CLI wall time or spend. The receipt's
+`computeUpperEstimateUSD` uses elapsed worker time at the resource limits (about $0.00003508/s).
+Review provider charges for startup, build, transfer and storage separately.
+
 Single-person placement now measures an undilated Mask R-CNN instance at every packaged source
 ordinal, using the cached COCO_V1 checkpoint also used by the default reference-frame preparation.
 This local pass never downloads weights. It records the exact source, decoder, checkpoint and
