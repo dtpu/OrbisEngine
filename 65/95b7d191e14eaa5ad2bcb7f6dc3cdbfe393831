@@ -1,0 +1,37 @@
+worker/modal_motion.py
+  s_c6018019842afa::t_26e73c5e47b39a 12,182-201,223-224
+docs/paid-recovery.md
+  s_c6018019842afa::t_26e73c5e47b39a 601-613
+  s_c6018019842afa::t_443376bc6e0ff7 614-615
+worker/stages/motion_submission.py
+  s_c6018019842afa::t_26e73c5e47b39a 8-10,25-26
+scripts/tests/test_motion_submission.py
+  s_c6018019842afa::t_a16d2437f20efd 102-114,198
+  s_c6018019842afa::t_df54fb0b322264 17-23,32,44-46,58,63,71,81,83-85,92,94,129-130,156-170,182,186-197,201-208
+  s_c6018019842afa::t_31fa0e4f8dc1e1 128,152,171-175
+  s_a3c43d2a2443ce::t_36f1a8cc60f4d2 39,199-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6595b7d191e14eaa5ad2bcb7f6dc3cdbfe393831",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
