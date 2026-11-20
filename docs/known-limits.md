@@ -43,6 +43,30 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   - **Evidence.** `.context/evidence/forest-scale-spread-20261114/`: ratio maps before and after,
     `ground-arbiter*.json`, `radial-fit.json`, the warped world and the scripts.
 
+- **Local source-depth correspondence and a single road plane are insufficient repairs.**
+  Two bounded CPU probes on the retained forest kept the original cameras, source and five
+  evaluation views; neither exported a scene or used providers.
+  - A source-depth correspondence probe used 20 other views, requiring three observations and
+    target-position scatter at most 0.05 body-heights. Attribution of its rejected result shows
+    only 0–26 corrected front-depth pixels outside the 0.9–1.1 band per view. Most residual
+    failures instead belong to untouched points with inconsistent observations (7,672–9,084
+    pixels), rather than points with fewer than three observations (1,868–3,711 pixels).
+    Simply adding observations is not an established remedy for those inconsistent targets.
+  - A separate ground-only probe fitted a road plane to 40,000 source samples from those
+    non-evaluation views (37,505 within 0.05 body-heights). It moved 262,892 repeatedly road-labelled
+    centres onto that plane along camera-zero rays, bounded by the observed road extent.
+    Movements were 0.130 / 0.746 / 5.496 body-heights at p50 / p90 / maximum.
+  - Road median absolute log-depth error improved in all five held-out views, from 0.0275–0.0368
+    to 0.0087–0.0164. But road compared coverage lost 34–67 pixels in four views, one whole-frame
+    median moved slightly farther from unity, and whole-frame p10 remained 0.848–0.855:
+    **all five depth-spread gates still fail**. It failed its predeclared coverage and quantile
+    nonregression checks, so no scene was exported.
+  - These are nearest-centre depth diagnostics, not opacity renders, independent physical depth,
+    covariance-aware scene exports or viewer acceptance. A single plane and road-point motion
+    do not repair the surrounding generated geometry or establish playable floor support.
+  - Evidence: `.context/evidence/surface-attribution-20261118/` and
+    `.context/evidence/ground-plane-probe-20261118/` (briefs, scripts and results).
+
 - The forest clip's camera is elevated: 1.30 body-heights above the road, so the handheld band
   fails without a scale error. place_fit cuts contact from 28.8 to 2.8 cm RMS (in-sample). The size
   check now passes on a measurement of the footage instead of `--allow-bad-size`
