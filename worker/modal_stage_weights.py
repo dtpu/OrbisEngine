@@ -49,11 +49,14 @@ def digest_file(path):
     return digest.hexdigest()
 
 
-def inventory(root):
+def inventory(root, *, skip_git_metadata=False):
     """Hash real files and preserve/validate links without duplicating blob bytes in totals."""
     records = []
     for path in sorted(Path(root).rglob("*")):
-        name = str(path.relative_to(root))
+        relative = path.relative_to(root)
+        if skip_git_metadata and ".git" in relative.parts:
+            continue
+        name = str(relative)
         if path.is_symlink():
             if not path.exists() or not path.resolve().is_relative_to(Path(root).resolve()):
                 raise ValueError("cache has a broken or escaping symlink")
@@ -99,6 +102,7 @@ def extract_priors(response, destination, expected_bytes):
 
     reader = Reader()
     count = 0
+    skipped_git_entries = skipped_git_bytes = 0
     with tarfile.open(fileobj=reader, mode="r|") as archive:
         for member in archive:
             normalized = Path(member.name)
@@ -107,6 +111,10 @@ def extract_priors(response, destination, expected_bytes):
                 continue
             if not parts or parts[0] not in ("pretrained_models", "gfpgan") or ".." in parts:
                 raise ValueError("unexpected prior archive root")
+            if ".git" in parts:
+                skipped_git_entries += 1
+                skipped_git_bytes += member.size
+                continue
             archive.extract(member, path=destination, filter="data")
             count += 1
             if count % 25 == 0:
@@ -121,17 +129,20 @@ def extract_priors(response, destination, expected_bytes):
         "archiveBytes": reader.bytes,
         "archiveSha256": reader.digest.hexdigest(),
         "archiveEntries": count,
+        "skippedGitEntries": skipped_git_entries,
+        "skippedGitBytes": skipped_git_bytes,
     }
 
 
 def extract_missing_priors(url, destination, expected_bytes):
-    """Continue an interrupted uncompressed tar, using pinned ranges to skip intact members.
+    """Continue an interrupted uncompressed tar using pinned ranges for missing runtime files.
 
-    The resumed receipt has no whole-archive digest. Inventory hashes every final file instead.
+    The resumed receipt has no whole-archive digest. Inventory hashes final runtime files instead.
     """
     import tarfile
     import urllib.request
 
+    range_chunk_bytes = 16 * 1024 * 1024
     with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=30) as head:
         etag = head.headers.get("ETag")
         if not etag or int(head.headers["Content-Length"]) != expected_bytes:
@@ -140,8 +151,6 @@ def extract_missing_priors(url, destination, expected_bytes):
     class RangeReader:
         def __init__(self):
             self.position = 0
-            self.buffer_start = 0
-            self.buffer = b""
             self.bytes = 0
             self.requests = 0
 
@@ -162,44 +171,47 @@ def extract_missing_priors(url, destination, expected_bytes):
             chunks = []
             remaining = min(size, expected_bytes - self.position)
             while remaining:
-                offset = self.position - self.buffer_start
-                if not 0 <= offset < len(self.buffer):
-                    count = 65536 if remaining <= 65536 else 16 * 1024 * 1024
-                    end = min(expected_bytes, self.position + count) - 1
-                    request = urllib.request.Request(
-                        url, headers={"Range": f"bytes={self.position}-{end}", "If-Match": etag}
-                    )
-                    with urllib.request.urlopen(request, timeout=45) as response:
-                        expected_range = f"bytes {self.position}-{end}/{expected_bytes}"
-                        if (
-                            response.status != 206
-                            or response.headers.get("Content-Range") != expected_range
-                            or response.headers.get("ETag") != etag
-                        ):
-                            raise ValueError("upstream did not honor pinned byte range")
-                        self.buffer = response.read(end - self.position + 2)
-                    if len(self.buffer) != end - self.position + 1:
-                        raise ValueError("range response length mismatch")
-                    self.buffer_start = self.position
-                    self.bytes += len(self.buffer)
-                    self.requests += 1
-                    offset = 0
-                take = min(remaining, len(self.buffer) - offset)
-                chunks.append(self.buffer[offset : offset + take])
-                self.position += take
-                remaining -= take
+                # A header read must stop before the member payload, which may be skipped.
+                count = min(remaining, range_chunk_bytes)
+                end = self.position + count - 1
+                request = urllib.request.Request(
+                    url, headers={"Range": f"bytes={self.position}-{end}", "If-Match": etag}
+                )
+                with urllib.request.urlopen(request, timeout=45) as response:
+                    expected_range = f"bytes {self.position}-{end}/{expected_bytes}"
+                    if (
+                        response.status != 206
+                        or response.headers.get("Content-Range") != expected_range
+                        or response.headers.get("ETag") != etag
+                    ):
+                        raise ValueError("upstream did not honor pinned byte range")
+                    chunk = response.read(count + 1)
+                if len(chunk) != count:
+                    raise ValueError("range response length mismatch")
+                chunks.append(chunk)
+                self.position += count
+                self.bytes += count
+                self.requests += 1
+                remaining -= count
             return b"".join(chunks)
 
     reader = RangeReader()
     reused = extracted = 0
+    skipped_git_entries = skipped_git_bytes = 0
     with tarfile.open(fileobj=reader, mode="r:") as archive:
-        archive.copybufsize = 4 * 1024 * 1024
+        archive.copybufsize = range_chunk_bytes
         for member in archive:
             parts = Path(member.name).parts
             if not parts and member.isdir():
                 continue
             if not parts or parts[0] not in ("pretrained_models", "gfpgan") or ".." in parts:
                 raise ValueError("unexpected prior archive root during recovery")
+            if ".git" in parts:
+                skipped_git_entries += 1
+                skipped_git_bytes += member.size
+                # TarFile.next otherwise probes the last byte of the skipped member's block.
+                reader.seek(archive.offset)
+                continue
             path = Path(destination) / member.name
             if (
                 member.isfile()
@@ -225,6 +237,8 @@ def extract_missing_priors(url, destination, expected_bytes):
         "rangeRequests": reader.requests,
         "reusedMembers": reused,
         "extractedMembers": extracted,
+        "skippedGitEntries": skipped_git_entries,
+        "skippedGitBytes": skipped_git_bytes,
     }
 
 
@@ -457,7 +471,7 @@ def stage(phase: str, deadline_epoch: float):
             for name in ("human_model_files", "gagatracker", "dense_sample_points", "voxel_grid"):
                 if not (pending / "pretrained_models" / name).exists():
                     raise ValueError("required prior subtree missing")
-            prior_inventory = inventory(pending)
+            prior_inventory = inventory(pending, skip_git_metadata=True)
             pending.rename(destination)
             step_done(
                 "lhm-priors",

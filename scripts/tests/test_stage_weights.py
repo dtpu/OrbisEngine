@@ -221,6 +221,30 @@ def test_clean_only_refuses_an_incomplete_attempt_before_downloading(tmp_path):
     assert receipt.read_text() == previous
 
 
+@pytest.mark.parametrize("status", ["failed", "complete"])
+def test_lhm_resume_preserves_legacy_attempt_receipt(tmp_path, status):
+    receipt = tmp_path / "lhm/setup-receipts/lhm-resume-attempt.json"
+    receipt.parent.mkdir(parents=True)
+    legacy = {"phase": "lhm-resume", "status": status, "steps": []}
+    original = json.dumps(legacy)
+    receipt.write_text(original)
+    raw_stage = synchronizer._translate_in(staging.stage)._raw_f
+    with (
+        patch.object(staging, "Path", side_effect=lambda path: tmp_path / path.lstrip("/")),
+        patch.object(staging.modal, "current_function_call_id", return_value="fc-offline"),
+        patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=Mock())}),
+        patch.object(staging, "extract_missing_priors") as resume,
+    ):
+        deadline = time.time() + 1200
+        if status == "failed":
+            with pytest.raises(RuntimeError, match="prior incomplete attempt"):
+                raw_stage("lhm-resume", deadline)
+        else:
+            assert raw_stage("lhm-resume", deadline) == legacy
+    resume.assert_not_called()
+    assert receipt.read_text() == original
+
+
 class StageWeightsTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -232,13 +256,25 @@ class StageWeightsTest(unittest.TestCase):
         }
         self.tar = archive_bytes(self.files)
 
-    def server(self, *, bad_range=False, bad_etag=False, status=206, truncated=False):
+    def server(
+        self,
+        *,
+        bad_range=False,
+        bad_etag=False,
+        status=206,
+        truncated=False,
+        head_etag='"fixed"',
+        head_length_delta=0,
+    ):
         requests = []
 
         def serve(request, timeout):
             self.assertIn(timeout, (30, 45))
             if request.get_method() == "HEAD":
-                return Response(b"", {"ETag": '"fixed"', "Content-Length": str(len(self.tar))})
+                return Response(
+                    b"",
+                    {"ETag": head_etag, "Content-Length": str(len(self.tar) + head_length_delta)},
+                )
             headers = dict(request.header_items())
             self.assertEqual(headers["If-match"], '"fixed"')
             first, last = map(int, headers["Range"].removeprefix("bytes=").split("-"))
@@ -276,6 +312,30 @@ class StageWeightsTest(unittest.TestCase):
             (self.root / "gfpgan/weights/parsing_parsenet.pth").read_bytes(), b"public model"
         )
 
+    def test_stream_skips_exact_git_components_but_hashes_the_full_archive(self):
+        import hashlib
+
+        runtime = {
+            "pretrained_models/sapiens/model.pt2": b"sapiens",
+            "pretrained_models/.gitkeep": b"keep",
+            "pretrained_models/runtime.git/config": b"runtime",
+            "gfpgan/.github/config": b"config",
+        }
+        metadata = {
+            "./pretrained_models/sapiens/.git/lfs/objects/blob": b"metadata blob",
+            "gfpgan/.git": b"git worktree pointer",
+        }
+        data = archive_bytes(metadata | runtime)
+        report = extract_priors(io.BytesIO(data), self.root, len(data))
+        self.assertEqual(report["archiveBytes"], len(data))
+        self.assertEqual(report["archiveSha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(report["archiveEntries"], len(runtime))
+        self.assertEqual(report["skippedGitEntries"], len(metadata))
+        self.assertEqual(report["skippedGitBytes"], sum(map(len, metadata.values())))
+        for name, contents in runtime.items():
+            self.assertEqual((self.root / name).read_bytes(), contents)
+        self.assertEqual(list(self.root.rglob(".git")), [])
+
     def test_stream_rejects_wrong_length(self):
         with self.assertRaisesRegex(ValueError, "content length mismatch"):
             extract_priors(io.BytesIO(self.tar), self.root, len(self.tar) + 1)
@@ -286,6 +346,7 @@ class StageWeightsTest(unittest.TestCase):
             "/pretrained_models/escape",
             "other/root",
             "pretrained_models/../escape",
+            "pretrained_models/.git/../../escape",
         ):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 data = archive_bytes({name: b"unsafe"})
@@ -323,6 +384,61 @@ class StageWeightsTest(unittest.TestCase):
         for name, contents in self.files.items():
             self.assertEqual((self.root / name).read_bytes(), contents)
 
+    def test_range_never_requests_git_payload_and_extracts_the_runtime_checkpoint(self):
+        model = "pretrained_models/sapiens/checkpoints/sapiens_1b_epoch_173_torchscript.pt2"
+        metadata = "pretrained_models/sapiens/checkpoints/sapiens-pretrain-1b-torchscript/.git/lfs/objects/b5/09/excluded-blob"
+        weights = b"a" * (2 * 1024 * 1024)
+        runtime = {model: weights, "pretrained_models/.gitkeep": b"keep after skipped blob"}
+        self.tar = archive_bytes({model: weights, metadata: weights} | runtime)
+        with tarfile.open(fileobj=io.BytesIO(self.tar), mode="r:") as archive:
+            skipped = archive.getmember(metadata)
+        partial = self.root / metadata
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(b"previous partial data")
+
+        serve, requests = self.server()
+        with patch("urllib.request.urlopen", side_effect=serve):
+            report = extract_missing_priors(
+                "https://example.invalid/models.tar", self.root, len(self.tar)
+            )
+
+        self.assertFalse(
+            any(
+                first < skipped.offset_data + skipped.size and last >= skipped.offset_data
+                for first, last in requests
+            )
+        )
+        self.assertEqual(
+            report["rangeBytesReceived"], sum(last - first + 1 for first, last in requests)
+        )
+        self.assertEqual(report["rangeRequests"], len(requests))
+        self.assertEqual(report["archiveBytes"], len(self.tar))
+        self.assertIsNone(report["archiveSha256"])
+        self.assertEqual(report["sourceETag"], '"fixed"')
+        self.assertEqual(report["skippedGitEntries"], 1)
+        self.assertEqual(report["skippedGitBytes"], skipped.size)
+        self.assertEqual(report["extractedMembers"], len(runtime))
+        self.assertEqual(report["reusedMembers"], 0)
+        for name, contents in runtime.items():
+            self.assertEqual((self.root / name).read_bytes(), contents)
+        self.assertEqual(partial.read_bytes(), b"previous partial data")
+        (partial.parent / "broken").symlink_to("missing")
+        inventory = staging.inventory(self.root, skip_git_metadata=True)
+        self.assertEqual({entry["path"] for entry in inventory["files"]}, set(runtime))
+
+    def test_range_requires_source_etag_and_exact_archive_length(self):
+        for options in ({"head_etag": ""}, {"head_length_delta": 1}):
+            with self.subTest(options=options):
+                serve, requests = self.server(**options)
+                with (
+                    patch("urllib.request.urlopen", side_effect=serve),
+                    self.assertRaisesRegex(ValueError, "known-size object and ETag"),
+                ):
+                    extract_missing_priors(
+                        "https://example.invalid/models.tar", self.root, len(self.tar)
+                    )
+                self.assertEqual(requests, [])
+
     def test_range_fails_closed_on_unpinned_or_truncated_responses(self):
         for options in (
             {"bad_range": True},
@@ -342,10 +458,17 @@ class StageWeightsTest(unittest.TestCase):
                 self.assertEqual(len(requests), 1, "transport failure must not retry")
 
     def test_range_rejects_unsafe_member(self):
-        self.tar = archive_bytes({"pretrained_models/../escape": b"unsafe"})
-        serve, _ = self.server()
-        with patch("urllib.request.urlopen", side_effect=serve), self.assertRaises(ValueError):
-            extract_missing_priors("https://example.invalid/models.tar", self.root, len(self.tar))
+        for name in ("pretrained_models/../escape", "pretrained_models/.git/../../escape"):
+            with self.subTest(name=name):
+                self.tar = archive_bytes({name: b"unsafe"})
+                serve, _ = self.server()
+                with (
+                    patch("urllib.request.urlopen", side_effect=serve),
+                    self.assertRaises(ValueError),
+                ):
+                    extract_missing_priors(
+                        "https://example.invalid/models.tar", self.root, len(self.tar)
+                    )
 
 
 if __name__ == "__main__":
