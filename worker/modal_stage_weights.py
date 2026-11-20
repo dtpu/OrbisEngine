@@ -6,6 +6,9 @@ without operator reconciliation.
 Public upstream URLs/revisions are recorded in receipts; source video is never uploaded.
 """
 
+import hashlib
+import json
+import re
 from pathlib import Path
 
 import modal
@@ -31,17 +34,17 @@ VOLUMES = {
     "/lhm": modal.Volume.from_name("wander-overnight-lhm-cache", create_if_missing=True),
 }
 CLEAN_MOTION_PHASES = ("clean-motion", "clean-motion-repair", "clean-motion-repair-v2")
+RECONCILED_RESUME = "lhm-resume-reconciled"
+LHM_RESUME_PHASES = ("lhm-resume", RECONCILED_RESUME)
 PHASE_MOUNTS = {
     **dict.fromkeys(CLEAN_MOTION_PHASES, ("/source", "/clean", "/motion")),
     "clean-only": ("/clean",),
     "clean-instance": ("/clean", "/lhm"),
-    **dict.fromkeys(("lhm", "lhm-resume", "dino", "gfpgan"), ("/lhm",)),
+    **dict.fromkeys(("lhm", *LHM_RESUME_PHASES, "dino", "gfpgan"), ("/lhm",)),
 }
 
 
 def digest_file(path):
-    import hashlib
-
     digest = hashlib.sha256()
     with Path(path).open("rb") as file:
         for chunk in iter(lambda: file.read(4 * 1024 * 1024), b""):
@@ -73,8 +76,6 @@ def inventory(root, *, skip_git_metadata=False):
 
 
 def write_receipt(path, document):
-    import json
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -82,9 +83,66 @@ def write_receipt(path, document):
     temporary.replace(path)
 
 
+def validate_staging_phase(phase, prior_resume_sha256):
+    if phase not in PHASE_MOUNTS:
+        raise ValueError("unknown staging phase")
+    if phase == RECONCILED_RESUME:
+        if not isinstance(prior_resume_sha256, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", prior_resume_sha256
+        ):
+            raise ValueError("lhm-resume-reconciled requires a valid --prior-resume-sha256")
+        return prior_resume_sha256.lower()
+    if prior_resume_sha256 is not None:
+        raise ValueError("--prior-resume-sha256 is only valid for lhm-resume-reconciled")
+    return None
+
+
+def validate_initial_lhm_resume(receipt_root, pending, destination):
+    previous = json.loads((receipt_root / "lhm-attempt.json").read_text())
+    if (
+        (previous.get("errorType"), previous.get("error"))
+        not in (
+            ("TimeoutError", "cache staging deadline exhausted"),
+            ("ValueError", "unexpected prior archive root"),
+        )
+        or previous.get("steps")
+        or not pending.is_dir()
+        or destination.exists()
+    ):
+        raise RuntimeError("range recovery requires a diagnosed incomplete extraction")
+
+
+def reconciled_resume_metadata(receipt_root, pending, destination, prior_sha256):
+    raw = (receipt_root / "lhm-resume-attempt.json").read_bytes()
+    if hashlib.sha256(raw).hexdigest() != prior_sha256:
+        raise RuntimeError("prior lhm-resume receipt SHA-256 mismatch")
+    previous = json.loads(raw)
+    call_id = previous.get("functionCallId") if isinstance(previous, dict) else None
+    if (
+        not isinstance(call_id, str)
+        or not re.fullmatch(r"fc-[A-Z0-9]{26}", call_id)
+        or previous.get("phase") != "lhm-resume"
+        or previous.get("status") != "failed"
+        or previous.get("errorType") != "TimeoutError"
+        or previous.get("error") != "cache staging deadline exhausted"
+        or previous.get("steps") != []
+    ):
+        raise RuntimeError(
+            "final range recovery requires a failed lhm-resume deadline receipt with no steps"
+        )
+    if pending.is_symlink() or destination.is_symlink():
+        raise RuntimeError("final range recovery requires ordinary prior cache paths")
+    validate_initial_lhm_resume(receipt_root, pending, destination)
+    return {
+        "priorResumeReceiptSha256": prior_sha256,
+        "priorResumeFunctionCallId": call_id,
+        "totalAttempt": 3,
+        "rangeAttempt": 2,
+    }
+
+
 def extract_priors(response, destination, expected_bytes):
     """Hash and extract one streamed public tar with Python3.12's safe data filter."""
-    import hashlib
     import tarfile
 
     class Reader:
@@ -252,8 +310,8 @@ def extract_missing_priors(url, destination, expected_bytes):
     max_containers=1,
     scaledown_window=2,
 )
-def stage(phase: str, deadline_epoch: float):
-    import json
+def stage(phase: str, deadline_epoch: float, prior_resume_sha256: str | None = None):
+    prior_resume_sha256 = validate_staging_phase(phase, prior_resume_sha256)
     import shutil
     import signal
     import time
@@ -261,8 +319,6 @@ def stage(phase: str, deadline_epoch: float):
 
     from huggingface_hub import snapshot_download
 
-    if phase not in PHASE_MOUNTS:
-        raise ValueError("unknown staging phase")
     if not all(Path(mount).is_dir() for mount in PHASE_MOUNTS[phase]):
         raise RuntimeError("staging phase mounts missing; invoke the main local entrypoint")
     remaining = min(1750, int(deadline_epoch - time.time()))
@@ -285,7 +341,13 @@ def stage(phase: str, deadline_epoch: float):
     }
     receipt_mount = "/clean" if phase.startswith("clean-") else "/lhm"
     receipt_root = Path(receipt_mount) / "setup-receipts"
-    failure = receipt_root / f"{phase}-attempt.json"
+    failure = receipt_root / (
+        "lhm-resume-2-attempt.json" if phase == RECONCILED_RESUME else f"{phase}-attempt.json"
+    )
+    if phase == RECONCILED_RESUME and (failure.exists() or failure.is_symlink()):
+        raise RuntimeError(
+            "final range recovery slot already consumed; inspect the existing receipt"
+        )
     if failure.exists():
         previous = json.loads(failure.read_text())
         if previous.get("status") != "complete":
@@ -294,6 +356,14 @@ def stage(phase: str, deadline_epoch: float):
             )
         return previous
 
+    if phase == "lhm" or phase in LHM_RESUME_PHASES:
+        destination = Path("/lhm/data")
+        pending = Path("/lhm/data.incomplete")
+    if phase == RECONCILED_RESUME:
+        report.update(
+            reconciled_resume_metadata(receipt_root, pending, destination, prior_resume_sha256)
+        )
+
     def commit_changes():
         VOLUMES[receipt_mount].commit()
         if phase in CLEAN_MOTION_PHASES:
@@ -301,7 +371,11 @@ def stage(phase: str, deadline_epoch: float):
 
     signal.signal(signal.SIGALRM, deadline)
     signal.alarm(remaining)
-    write_receipt(failure, report)
+    if phase == RECONCILED_RESUME:
+        with failure.open("x") as stream:
+            json.dump(report, stream, indent=2)
+    else:
+        write_receipt(failure, report)
     commit_changes()
 
     def step_done(name, document):
@@ -443,22 +517,10 @@ def stage(phase: str, deadline_epoch: float):
                     "sha256": expected_sha,
                 },
             )
-        elif phase in ("lhm", "lhm-resume"):
-            destination = Path("/lhm/data")
-            pending = Path("/lhm/data.incomplete")
-            if phase == "lhm-resume":
-                previous = json.loads((receipt_root / "lhm-attempt.json").read_text())
-                if (
-                    (previous.get("errorType"), previous.get("error"))
-                    not in (
-                        ("TimeoutError", "cache staging deadline exhausted"),
-                        ("ValueError", "unexpected prior archive root"),
-                    )
-                    or previous.get("steps")
-                    or not pending.is_dir()
-                    or destination.exists()
-                ):
-                    raise RuntimeError("range recovery requires a diagnosed incomplete extraction")
+        elif phase == "lhm" or phase in LHM_RESUME_PHASES:
+            if phase in LHM_RESUME_PHASES:
+                if phase == "lhm-resume":
+                    validate_initial_lhm_resume(receipt_root, pending, destination)
                 receipt = extract_missing_priors(PRIOR_URL, pending, PRIOR_BYTES)
             else:
                 if destination.exists() or pending.exists():
@@ -564,13 +626,13 @@ def stage(phase: str, deadline_epoch: float):
 
 
 @app.local_entrypoint()
-def main(phase: str, deadline_epoch: float, out: str):
-    import json
-
-    if phase not in PHASE_MOUNTS:
-        raise ValueError("unknown staging phase")
+def main(phase: str, deadline_epoch: float, out: str, prior_resume_sha256: str | None = None):
+    prior_resume_sha256 = validate_staging_phase(phase, prior_resume_sha256)
     volumes = {mount: VOLUMES[mount] for mount in PHASE_MOUNTS[phase]}
-    report = stage.with_options(volumes=volumes).remote(phase, deadline_epoch)
+    options = (
+        {"prior_resume_sha256": prior_resume_sha256} if prior_resume_sha256 is not None else {}
+    )
+    report = stage.with_options(volumes=volumes).remote(phase, deadline_epoch, **options)
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))

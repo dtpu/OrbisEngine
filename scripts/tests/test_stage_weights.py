@@ -1,5 +1,6 @@
 """Offline tests for streamed cache extraction and bounded HTTP range recovery."""
 
+import hashlib
 import io
 import json
 import sys
@@ -85,6 +86,40 @@ def test_local_entrypoint_rejects_unknown_phase_without_invoking(tmp_path):
     function.with_options.assert_not_called()
     function.remote.assert_not_called()
     assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "phase, supplied_hash",
+    [
+        ("lhm-resume-reconciled", None),
+        ("lhm-resume-reconciled", ""),
+        ("lhm-resume-reconciled", "a" * 63),
+        ("lhm-resume-reconciled", "z" * 64),
+        ("lhm-resume", "a" * 64),
+        ("clean-only", ""),
+    ],
+)
+def test_reconciliation_hash_args_rejected_at_both_entrypoints(tmp_path, phase, supplied_hash):
+    raw_stage = synchronizer._translate_in(staging.stage)._raw_f
+    deadline = time.time() + 1200
+    with patch.object(staging, "stage") as function:
+        with pytest.raises(ValueError, match="--prior-resume-sha256"):
+            staging.main(phase, deadline, str(tmp_path / "receipt.json"), supplied_hash)
+        function.with_options.assert_not_called()
+    with pytest.raises(ValueError, match="--prior-resume-sha256"):
+        raw_stage(phase, deadline, supplied_hash)
+
+
+def test_reconciled_local_entrypoint_invokes_one_lhm_variant(tmp_path):
+    deadline = time.time() + 1200
+    out = tmp_path / "receipt.json"
+    with patch.object(staging, "stage") as function:
+        remote = function.with_options.return_value.remote
+        remote.return_value = {"status": "complete", "steps": []}
+        staging.main("lhm-resume-reconciled", deadline, str(out), "A" * 64)
+    function.with_options.assert_called_once_with(volumes={"/lhm": staging.VOLUMES["/lhm"]})
+    remote.assert_called_once_with("lhm-resume-reconciled", deadline, prior_resume_sha256="a" * 64)
+    assert json.loads(out.read_text()) == remote.return_value
 
 
 @pytest.mark.parametrize(
@@ -243,6 +278,196 @@ def test_lhm_resume_preserves_legacy_attempt_receipt(tmp_path, status):
             assert raw_stage("lhm-resume", deadline) == legacy
     resume.assert_not_called()
     assert receipt.read_text() == original
+
+
+@pytest.fixture
+def reconciliation(tmp_path, monkeypatch):
+    lhm = tmp_path / "lhm"
+    pending = lhm / "data.incomplete"
+    pending.mkdir(parents=True)
+    receipts = lhm / "setup-receipts"
+    receipts.mkdir()
+    initial = receipts / "lhm-attempt.json"
+    prior = receipts / "lhm-resume-attempt.json"
+    final = receipts / "lhm-resume-2-attempt.json"
+    old = {
+        "phase": "lhm-resume",
+        "functionCallId": "fc-" + "A" * 26,
+        "status": "failed",
+        "errorType": "TimeoutError",
+        "error": "cache staging deadline exhausted",
+        "steps": [],
+        "rangeBytesReceived": 123,
+        "elapsedSeconds": 1750,
+    }
+    initial.write_bytes(json.dumps(old | {"phase": "lhm"}, indent=4).encode() + b"\n")
+    prior.write_bytes(json.dumps(old, indent=4).encode() + b"\n")
+    volume = Mock()
+    snapshot = Mock(side_effect=OSError("offline stop after prior staging"))
+    call_id = "fc-" + "B" * 26
+    raw_stage = synchronizer._translate_in(staging.stage)._raw_f
+
+    def container_path(path):
+        path = Path(path)
+        return tmp_path.joinpath(*path.parts[1:]) if path.parts[:2] == ("/", "lhm") else path
+
+    monkeypatch.setattr(staging, "Path", container_path)
+    monkeypatch.setattr(staging, "VOLUMES", {"/lhm": volume})
+    monkeypatch.setattr(staging.modal, "current_function_call_id", lambda: call_id)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=snapshot))
+    monkeypatch.setattr("signal.signal", Mock())
+    monkeypatch.setattr("signal.alarm", Mock())
+
+    def run(prior_hash=None):
+        digest = (
+            prior_hash if prior_hash is not None else hashlib.sha256(prior.read_bytes()).hexdigest()
+        )
+        return raw_stage("lhm-resume-reconciled", time.time() + 1200, digest)
+
+    return SimpleNamespace(
+        lhm=lhm,
+        pending=pending,
+        initial=initial,
+        prior=prior,
+        final=final,
+        old=old,
+        volume=volume,
+        snapshot=snapshot,
+        call_id=call_id,
+        run=run,
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"phase": "lhm"},
+        {"functionCallId": None},
+        {"functionCallId": "ap-" + "A" * 26},
+        {"status": "started"},
+        {"status": "complete"},
+        {"errorType": "ValueError"},
+        {"error": "cache staging deadline exhausted "},
+        {"steps": [{"name": "lhm-priors"}]},
+        {"steps": None},
+    ],
+)
+def test_reconciliation_requires_the_exact_terminal_receipt(reconciliation, changes):
+    state = reconciliation
+    state.prior.write_text(json.dumps(state.old | changes))
+    with patch.object(staging, "extract_missing_priors") as extract:
+        with pytest.raises(RuntimeError, match="failed lhm-resume deadline receipt"):
+            state.run()
+    extract.assert_not_called()
+    state.volume.commit.assert_not_called()
+    assert not state.final.exists()
+
+
+@pytest.mark.parametrize(
+    "mismatch", ["hash", "initial-error", "initial-steps", "pending", "complete"]
+)
+def test_reconciliation_requires_reviewed_hash_and_eligible_cache_state(reconciliation, mismatch):
+    state = reconciliation
+    digest = None
+    if mismatch == "hash":
+        digest = hashlib.sha256(state.prior.read_bytes()).hexdigest()
+        with state.prior.open("ab") as stream:
+            stream.write(b" ")
+    elif mismatch == "initial-error":
+        state.initial.write_text(json.dumps(state.old | {"error": "other error"}))
+    elif mismatch == "initial-steps":
+        state.initial.write_text(json.dumps(state.old | {"steps": ["lhm-priors"]}))
+    elif mismatch == "pending":
+        state.pending.rmdir()
+    else:
+        (state.lhm / "data").mkdir()
+    with patch.object(staging, "extract_missing_priors") as extract:
+        with pytest.raises(RuntimeError, match="SHA-256 mismatch|diagnosed incomplete extraction"):
+            state.run(digest)
+    extract.assert_not_called()
+    state.volume.commit.assert_not_called()
+    assert not state.final.exists()
+
+
+@pytest.mark.parametrize(
+    "contents", [b"", b'{"status":"started"}', b'{"status":"failed"}', b'{"status":"complete"}']
+)
+def test_final_range_slot_blocks_every_replay(reconciliation, contents):
+    state = reconciliation
+    state.final.write_bytes(contents)
+    with patch.object(staging, "extract_missing_priors") as extract:
+        with pytest.raises(RuntimeError, match="slot already consumed"):
+            state.run()
+    extract.assert_not_called()
+    state.volume.commit.assert_not_called()
+    assert state.final.read_bytes() == contents
+
+
+def test_reconciled_resume_persists_ownership_before_range_work(reconciliation, monkeypatch):
+    state = reconciliation
+    prior_path = "pretrained_models/gagatracker/model.pt2"
+    git_path = "pretrained_models/gagatracker/.git/lfs/objects/blob"
+    data = archive_bytes(
+        {
+            prior_path: b"runtime weights",
+            git_path: b"x" * (1024 * 1024),
+            "pretrained_models/human_model_files/a": b"a",
+            "pretrained_models/dense_sample_points/b": b"b",
+            "pretrained_models/voxel_grid/c": b"c",
+        }
+    )
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        skipped = archive.getmember(git_path)
+    initial_bytes = state.initial.read_bytes()
+    prior_bytes = state.prior.read_bytes()
+    digest = hashlib.sha256(prior_bytes).hexdigest()
+    requests = []
+    seen_at_head = []
+
+    def serve(request, timeout):
+        assert request.full_url == staging.PRIOR_URL
+        if request.get_method() == "HEAD":
+            state.volume.commit.assert_called_once_with()
+            seen_at_head.append(json.loads(state.final.read_text()))
+            return Response(b"", {"ETag": '"pinned"', "Content-Length": str(len(data))})
+        assert request.get_header("If-match") == '"pinned"'
+        first, last = map(int, request.get_header("Range").removeprefix("bytes=").split("-"))
+        requests.append((first, last))
+        return Response(
+            data[first : last + 1],
+            {
+                "ETag": '"pinned"',
+                "Content-Range": f"bytes {first}-{last}/{len(data)}",
+            },
+            206,
+        )
+
+    monkeypatch.setattr(staging, "PRIOR_BYTES", len(data))
+    with patch("urllib.request.urlopen", side_effect=serve):
+        report = state.run(digest)
+        with pytest.raises(RuntimeError, match="slot already consumed"):
+            state.run(digest)
+    assert len(seen_at_head) == 1
+    started = seen_at_head[0]
+    assert started["status"] == "started" and started["steps"] == []
+    assert started["functionCallId"] == state.call_id
+    assert started["priorResumeFunctionCallId"] == state.old["functionCallId"]
+    assert started["priorResumeReceiptSha256"] == digest
+    assert (started["totalAttempt"], started["rangeAttempt"]) == (3, 2)
+    assert requests and not any(
+        first < skipped.offset_data + skipped.size and last >= skipped.offset_data
+        for first, last in requests
+    )
+    assert (state.lhm / "data" / prior_path).read_bytes() == b"runtime weights"
+    assert not (state.lhm / "data" / git_path).exists()
+    assert report["steps"][0]["skippedGitBytes"] == skipped.size
+    assert report["steps"][0]["rangeBytesReceived"] == sum(
+        last - first + 1 for first, last in requests
+    )
+    assert state.initial.read_bytes() == initial_bytes
+    assert state.prior.read_bytes() == prior_bytes
+    assert json.loads(state.final.read_text()) == report
+    state.snapshot.assert_called_once()
 
 
 class StageWeightsTest(unittest.TestCase):
