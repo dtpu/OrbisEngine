@@ -1,0 +1,28 @@
+scripts/tests/test_stage_weights.py
+  s_c6018019842afa::t_4888c8f2f7aa9d 322-324,328-337,366-368,392-394,410-418,436-443,457-460,464-466
+  s_c6018019842afa::t_bf28015008ccaa 3,91-122
+  s_c6018019842afa::t_66aae59d628e55 283-321,325-327,338-365,369-391,395-409,419-435,444-456,461-463,467-472
+  s_c6018019842afa::t_7f91efbfd90d42 123-124
+worker/modal_stage_weights.py
+  s_c6018019842afa::t_9d95fec8a6b8ed 9-11,37-38,43,86-129,133-143,313-314,344-347,359-362,374-378,520-523,629-630,635
+  s_c6018019842afa::t_4888c8f2f7aa9d 130-132,348-350,363-365,632-634
+  s_c6018019842afa::t_edba7682b9449b 366
+docs/pipeline-setup.md
+  s_c6018019842afa::t_d4f159f1b4451e 187-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee750636952497bcb6c6cd07d97ba3420f486176",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
