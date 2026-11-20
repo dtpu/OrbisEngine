@@ -1,0 +1,26 @@
+scripts/tests/test_stage_weights.py
+  s_c6018019842afa::t_a7bd0609dc9afe 259,268,274,277,315-338,349,387-400,404,414-436,440
+  s_c6018019842afa::t_d35d03769f44b8 260-267,275-276,401-403,405-413,437-439,465-471
+  s_c6018019842afa::t_7f26df2708c78e 224-247,461-464
+  s_c6018019842afa::t_ae171310f6d7ed 441
+docs/pipeline-setup.md
+  s_c6018019842afa::t_7f26df2708c78e 177-186
+worker/modal_stage_weights.py
+  s_c6018019842afa::t_f3dcd7893c5ce1 52,56-59,105,114-117,132-133,138,140,145,174-195,200,202,209-214,240-241,474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7bf2d5ad494a476f113c8cdd4ea050fed77d6f0e",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
