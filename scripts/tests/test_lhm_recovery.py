@@ -127,6 +127,220 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "complete")
         function.spawn.assert_called_once()
         call.get.assert_called_once()
+        call.cancel.assert_not_called()
+
+    def test_bounded_wait_ownership_is_durable_before_spawn_and_get(self):
+        function = Mock()
+        call = Mock(object_id="fc-owned")
+        result = {
+            "recoveryId": self.receipt["recoveryId"],
+            "remotePath": self.receipt["remotePath"],
+            "manifestSha256": "a" * 64,
+        }
+
+        def spawn(inputs, **kwargs):
+            receipt = recovery.load_receipt(self.receipt_path)
+            self.assertEqual(receipt["status"], "submitting")
+            self.assertIsNone(receipt["functionCallId"])
+            self.assertEqual(receipt["appId"], "ap-owned")
+            self.assertEqual(receipt["modalProfile"], "test-profile")
+            self.assertEqual(receipt["resultTimeoutSeconds"], 120)
+            self.assertEqual(kwargs, {"recovery_id": self.receipt["recoveryId"], "animate": True})
+            return call
+
+        def get(*, timeout):
+            receipt = recovery.load_receipt(self.receipt_path)
+            self.assertEqual(receipt["functionCallId"], "fc-owned")
+            self.assertEqual(receipt["status"], "waiting")
+            self.assertEqual(timeout, 120)
+            return result
+
+        function.spawn.side_effect = spawn
+        call.get.side_effect = get
+        self.assertEqual(
+            recovery.submit_once(
+                function,
+                self.receipt_path,
+                {},
+                result_timeout_seconds=120,
+                app_id="ap-owned",
+                modal_profile="test-profile",
+                animate=True,
+            ),
+            result,
+        )
+        function.spawn.assert_called_once()
+        call.get.assert_called_once_with(timeout=120)
+        call.cancel.assert_not_called()
+
+    def test_invalid_bounded_timeout_never_spawns(self):
+        function = Mock()
+        for value in (True, False, 0, -1, 1.0, 1.5, "120", float("nan"), float("inf")):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "positive finite integer"),
+            ):
+                recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=value)
+            self.assertEqual(recovery.load_receipt(self.receipt_path)["status"], "prepared")
+        function.spawn.assert_not_called()
+        function.spawn.return_value.cancel.assert_not_called()
+
+    def test_bounded_failure_cancels_only_owned_call_and_preserves_recovery(self):
+        self.write_frozen()
+        self.finish()
+        for i, error in enumerate(
+            (
+                TimeoutError("secret timeout"),
+                KeyboardInterrupt("secret interrupt"),
+                SystemExit("secret exit"),
+                OSError("secret transfer"),
+            )
+        ):
+            with self.subTest(error=type(error).__name__):
+                receipt_path = self.root / "local" / recovery.RECEIPT_NAME
+                # Independent test case, restoring the original prepared receipt only in this fixture.
+                recovery.atomic_json(receipt_path, self.receipt)
+                function = Mock()
+                call = function.spawn.return_value
+                call.object_id = f"fc-owned-{i}"
+                call.get.side_effect = error
+                with self.assertRaises(type(error)):
+                    recovery.submit_once(function, receipt_path, {}, result_timeout_seconds=60)
+                receipt = recovery.load_receipt(receipt_path)
+                self.assertEqual(
+                    receipt["status"],
+                    "wait_timeout" if isinstance(error, TimeoutError) else "wait_interrupted",
+                )
+                self.assertEqual(receipt["cancellation"], "requested")
+                self.assertEqual(receipt["waitErrorType"], type(error).__name__)
+                self.assertNotIn("secret", receipt_path.read_text())
+                call.cancel.assert_called_once_with()
+                call.get.assert_called_once_with(timeout=60)
+                with self.assertRaisesRegex(ValueError, "cannot resubmit"):
+                    recovery.submit_once(function, receipt_path, {}, result_timeout_seconds=60)
+                function.spawn.assert_called_once()
+                self.assertTrue((self.output / "person-posed.ply").exists())
+                self.assertEqual(
+                    recovery.recover_outputs(receipt_path, self.volume)["status"], "complete"
+                )
+
+    def test_cancellation_error_records_class_only_and_keeps_original_exception(self):
+        function = Mock()
+        call = function.spawn.return_value
+        call.object_id = "fc-owned"
+        original = TimeoutError("private wait details")
+        call.get.side_effect = original
+        call.cancel.side_effect = OSError("private cancellation details")
+        with self.assertRaises(TimeoutError) as caught:
+            recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        self.assertIs(caught.exception, original)
+        receipt = recovery.load_receipt(self.receipt_path)
+        self.assertEqual(receipt["status"], "wait_timeout")
+        self.assertEqual(receipt["cancellation"], "error")
+        self.assertEqual(receipt["cancellationErrorType"], "OSError")
+        self.assertNotIn("private wait details", self.receipt_path.read_text())
+        self.assertNotIn("private cancellation details", self.receipt_path.read_text())
+        call.cancel.assert_called_once()
+
+    def test_failure_before_spawn_never_cancels(self):
+        function = Mock()
+        with patch.object(recovery, "atomic_json", side_effect=OSError("storage failure")):
+            with self.assertRaises(OSError):
+                recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        function.spawn.assert_not_called()
+        function.spawn.side_effect = OSError("uncertain spawn")
+        with self.assertRaises(OSError):
+            recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        function.spawn.return_value.cancel.assert_not_called()
+        self.assertEqual(recovery.load_receipt(self.receipt_path)["status"], "submission_uncertain")
+        with self.assertRaisesRegex(ValueError, "cannot resubmit"):
+            recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        function.spawn.assert_called_once()
+
+    def test_post_spawn_receipt_failure_cancels_before_wait_even_without_timeout(self):
+        function = Mock()
+        call = function.spawn.return_value
+        call.object_id = "fc-owned"
+        real_write = recovery.atomic_json
+
+        def write(path, receipt):
+            if receipt["status"] == "waiting":
+                raise OSError("receipt write failed")
+            real_write(path, receipt)
+
+        with patch.object(recovery, "atomic_json", side_effect=write), self.assertRaises(OSError):
+            recovery.submit_once(function, self.receipt_path, {})
+        call.get.assert_not_called()
+        call.cancel.assert_called_once()
+        receipt = recovery.load_receipt(self.receipt_path)
+        self.assertEqual(receipt["status"], "wait_interrupted")
+        self.assertEqual(receipt["functionCallId"], "fc-owned")
+        self.assertEqual(receipt["cancellation"], "requested")
+        with self.assertRaisesRegex(ValueError, "cannot resubmit"):
+            recovery.submit_once(function, self.receipt_path, {})
+
+    def test_persistent_receipt_failure_still_cancels_and_blocks_resubmit(self):
+        function = Mock()
+        call = function.spawn.return_value
+        call.object_id = "fc-owned"
+        real_write = recovery.atomic_json
+
+        def write(path, receipt):
+            if receipt["status"] != "submitting":
+                raise OSError("storage unavailable")
+            real_write(path, receipt)
+
+        with patch.object(recovery, "atomic_json", side_effect=write), self.assertRaises(OSError):
+            recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        call.cancel.assert_called_once()
+        call.get.assert_not_called()
+        self.assertEqual(recovery.load_receipt(self.receipt_path)["status"], "submitting")
+        with self.assertRaisesRegex(ValueError, "cannot resubmit"):
+            recovery.submit_once(function, self.receipt_path, {})
+
+    def test_legacy_success_has_unbounded_get_and_no_new_receipt_fields(self):
+        function = Mock()
+        call = function.spawn.return_value
+        call.object_id = "fc-legacy"
+        call.get.return_value = {
+            "recoveryId": self.receipt["recoveryId"],
+            "remotePath": self.receipt["remotePath"],
+            "manifestSha256": "a" * 64,
+        }
+        recovery.submit_once(function, self.receipt_path, {})
+        call.get.assert_called_once_with()
+        call.cancel.assert_not_called()
+        receipt = recovery.load_receipt(self.receipt_path)
+        for field in ("resultTimeoutSeconds", "appId", "modalProfile", "cancellation"):
+            self.assertNotIn(field, receipt)
+
+    def test_result_receipt_failure_keeps_outputs_and_cancels_owned_call(self):
+        self.write_frozen()
+        self.finish()
+        function = Mock()
+        call = function.spawn.return_value
+        call.object_id = "fc-owned"
+        call.get.return_value = {
+            "recoveryId": self.receipt["recoveryId"],
+            "remotePath": self.receipt["remotePath"],
+            "manifestSha256": recovery.file_hash(self.checkpoint / "manifest.json"),
+        }
+        real_write = recovery.atomic_json
+
+        def write(path, receipt):
+            if receipt["status"] == "checkpoint_available":
+                raise OSError("receipt storage failed")
+            real_write(path, receipt)
+
+        with patch.object(recovery, "atomic_json", side_effect=write), self.assertRaises(OSError):
+            recovery.submit_once(function, self.receipt_path, {}, result_timeout_seconds=60)
+        call.cancel.assert_called_once()
+        call.get.assert_called_once_with(timeout=60)
+        self.assertEqual(recovery.load_receipt(self.receipt_path)["status"], "wait_interrupted")
+        self.assertEqual(
+            recovery.recover_outputs(self.receipt_path, self.volume)["status"], "complete"
+        )
+        function.spawn.assert_called_once()
 
     def test_uncertain_spawn_and_unreadable_receipt_never_retry(self):
         function = Mock()
@@ -401,7 +615,16 @@ class RecoveryTests(unittest.TestCase):
                 "manifestSha256": recovery.file_hash(directory / "manifest.json"),
                 "report": {"error": None},
             }
-            return types.SimpleNamespace(object_id="fc-test", get=lambda: result)
+
+            def get(*, timeout):
+                resources = modal_lhm.INFERENCE_RESOURCES
+                self.assertEqual(
+                    timeout,
+                    resources.get("startup_timeout", resources["timeout"]) + resources["timeout"],
+                )
+                return result
+
+            return types.SimpleNamespace(object_id="fc-test", get=get)
 
         function.spawn.side_effect = spawn
         destination = self.root / "cli-output"

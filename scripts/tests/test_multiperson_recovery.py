@@ -98,7 +98,9 @@ class MultipersonRecoveryTests(unittest.TestCase):
         call = bounded.spawn.return_value
         call.object_id = "fc-retained-track"
 
-        def interrupt():
+        def interrupt(*, timeout):
+            resources = modal_multiperson.INFERENCE_RESOURCES
+            self.assertEqual(timeout, resources.get("startup_timeout", 600) + 600)
             receipt = lhm_recovery.load_receipt(self.destination / lhm_recovery.RECEIPT_NAME)
             self.assertEqual(receipt["status"], "waiting")
             self.assertEqual(receipt["functionCallId"], call.object_id)
@@ -122,6 +124,7 @@ class MultipersonRecoveryTests(unittest.TestCase):
             timeout=600, cpu=(4, 4), memory=(65536, 65536), retries=0, max_containers=1
         )
         bounded.spawn.assert_called_once()
+        call.cancel.assert_called_once_with()
         self.assertEqual(
             bounded.spawn.call_args.kwargs["flags"],
             ["--track-id", "0", "--fixed-world-scale", "1.9"],
@@ -187,7 +190,16 @@ class MultipersonRecoveryTests(unittest.TestCase):
                 "manifestSha256": lhm_recovery.file_hash(directory / "manifest.json"),
                 "report": {"error": None},
             }
-            return types.SimpleNamespace(object_id="fc-partial", get=lambda: result)
+
+            def get(*, timeout):
+                resources = modal_multiperson.INFERENCE_RESOURCES
+                self.assertEqual(
+                    timeout,
+                    resources.get("startup_timeout", resources["timeout"]) + resources["timeout"],
+                )
+                return result
+
+            return types.SimpleNamespace(object_id="fc-partial", get=get)
 
         function.spawn.side_effect = spawn
         with (
