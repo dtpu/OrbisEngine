@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from worker.stages.pose_instances import match_pose_instances
+from worker.stages.pose_instances import match_pose_instances, match_crop_instance
 
 
 def test_lamp_pose_is_not_a_person_instance():
@@ -52,3 +52,16 @@ def test_degenerate_boxes_cannot_supply_support():
 def test_nonfinite_boxes_fail_instead_of_becoming_a_match():
     with pytest.raises(ValueError, match="finite"):
         match_pose_instances([[0, 0, np.nan, 20]], [[0, 0, 10, 20]])
+
+
+def test_crop_cannot_relabel_neighbor_as_missing_person():
+    instances = [[0, 0, 20, 80], [10, 0, 30, 80]]
+    assert match_pose_instances([instances[0]], [instances[1]])  # old target-only false positive
+    assert match_crop_instance([instances[0]], instances, 1) == {}
+    assert match_crop_instance([instances[0], instances[1]], instances, 1) == {1: (1, 1.0)}
+
+
+def test_crop_refuses_ambiguous_support_and_duplicate_recovery():
+    assert match_crop_instance([[0, 0, 20, 80]], [[0, 0, 20, 80]] * 2, 1) == {}
+    assert len(match_crop_instance([[0, 0, 20, 80]] * 2, [[0, 0, 20, 80]], 0)) == 1
+    assert match_crop_instance([], [[0, 0, 20, 80]], 0) == {}

@@ -148,6 +148,7 @@ CODE_FILES = {
         "worker/stages/worker_resources.py",
         "worker/stages/track_people.py",
         "worker/stages/pose_instances.py",
+        "worker/stages/pose_crops.py",
     ),
     "worker/modal_multiperson.py::animate": (
         "worker/stages/worker_resources.py",
@@ -160,6 +161,7 @@ CODE_FILES = {
 }
 OUTPUT_FLAGS = {"--out", "--out-dir", "--frames-out", "--frame0", "--masks", "--report"}
 BOOL_FLAGS = {
+    "--pose-crops",
     "--anchor-lock",
     "--allow-person-gaps",
     "--allow-missing-person-reference",

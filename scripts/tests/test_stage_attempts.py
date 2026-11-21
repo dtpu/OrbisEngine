@@ -690,6 +690,18 @@ class CommandIdentityTests(unittest.TestCase):
         _, after, _ = command_identity(command, self.root)
         self.assertNotEqual(before[helper], after[helper])
 
+    def test_crop_geometry_and_option_change_tracking_attempt_identity(self):
+        command = ["modal", "run", "worker/modal_multiperson.py::main"]
+        params, before, _ = command_identity(command, self.root)
+        changed, _, _ = command_identity(command + ["--pose-crops"], self.root)
+        self.assertNotEqual(params, changed)
+        helper = "worker/stages/pose_crops.py"
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed crop calibration\n")
+        _, after, _ = command_identity(command, self.root)
+        self.assertNotEqual(before[helper], after[helper])
+
     def test_single_person_lhm_deadline_guard_changes_are_fingerprinted(self):
         helper = "worker/stages/lhm_execution.py"
         command = ["modal", "run", "worker/modal_lhm.py"]
