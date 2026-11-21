@@ -147,6 +147,7 @@ CODE_FILES = {
     "worker/modal_multiperson.py::main": (
         "worker/stages/worker_resources.py",
         "worker/stages/track_people.py",
+        "worker/stages/pose_instances.py",
     ),
     "worker/modal_multiperson.py::animate": (
         "worker/stages/worker_resources.py",

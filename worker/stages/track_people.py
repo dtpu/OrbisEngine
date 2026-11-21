@@ -3,12 +3,13 @@
 
 MultiHMR is natively multi-person: `estimator.mhmr_model(...)` already returns every detection
 in the frame, and lhm_animate.py throws all but one away (it keeps `choices[0]`). This script
-keeps them all and links them across samples into identity-stable tracks, then writes, per track,
+keeps independently mask-supported poses and links them across samples into tracks, then writes, per track,
 exactly the `--seed-poses` / `--seed-motion` pair lhm_animate.py already knows how to consume.
 
 Detection: MultiHMR for the poses (one forward pass gives detection + SMPL-X + 3D joints, so a
 second pose model is never needed) plus torchvision Mask R-CNN on the same frame for real
-per-person instance masks, associated to the MultiHMR detections by joint-box IoU. Mask R-CNN is
+per-person instance masks, matched one-to-one to the MultiHMR detections by joint-box IoU.
+Unsupported poses are excluded when instance masks are enabled. Mask R-CNN is
 also the fallback detector: a Mask R-CNN person with no MultiHMR partner is recorded (so the
 quality score knows somebody was there) but cannot be animated.
 
@@ -177,6 +178,7 @@ def main():
     from accelerate import Accelerator
     from engine.pose_estimation.pose_estimator import PoseEstimator
     from scipy.optimize import linear_sum_assignment
+    from pose_instances import match_pose_instances
 
     torch._dynamo.config.disable = True
     torch.set_num_threads(4)
@@ -224,6 +226,8 @@ def main():
     overlay_samples = {0, len(indices) // 2, len(indices) - 1}
     mask_store = {}
     unmatched_rcnn_total = 0
+    unassigned_pose_total = 0
+    detection_audit = []
     w = h = None
 
     for sample, (index, timestamp) in enumerate(zip(indices, times)):
@@ -287,24 +291,45 @@ def main():
                     inst_boxes.append([float(v) for v in r["boxes"][i].cpu().numpy()])
             del x, r
 
+        projected = [
+            (person["j2d"].float().cpu().numpy() - [pl, pt]) / factor - [ow, oh]
+            for person in detected
+        ]
+        boxes = [joints_box(joints, w, h) for joints in projected]
+        matches = match_pose_instances(boxes, inst_boxes) if rcnn is not None else {}
+        used_inst = {pair[0] for pair in matches.values()}
+        rejected = [i for i in range(len(detected)) if rcnn is not None and i not in matches]
+        unassigned_pose_total += len(rejected)
+        detection_audit.append(
+            dict(
+                sample=sample,
+                sourceIndex=int(index),
+                poseBoxes=boxes,
+                poseScores=[float(person["scores"]) for person in detected],
+                instanceBoxes=inst_boxes,
+                matches=[
+                    dict(pose=i, instance=pair[0], iou=pair[1]) for i, pair in matches.items()
+                ],
+                unassignedPoses=rejected,
+                unmatchedInstances=[i for i in range(len(inst_boxes)) if i not in used_inst],
+                maskSupportRequired=rcnn is not None,
+            )
+        )
         observations = []
-        used_inst = set()
         for det_i, person in enumerate(detected):
-            joints = (person["j2d"].float().cpu().numpy() - [pl, pt]) / factor - [ow, oh]
-            box = joints_box(joints, w, h)
+            if rcnn is not None and det_i not in matches:
+                continue
+            joints = projected[det_i]
+            box = boxes[det_i]
             centre = np.median(joints[:22], axis=0) / [w, h]
             j3d = person["j3d"].float().cpu().numpy()
-            # Pick the Mask R-CNN instance that best covers this skeleton.
-            best_inst, best_iou = -1, 0.0
-            for i, ib in enumerate(inst_boxes):
-                v = iou(box, ib)
-                if v > best_iou:
-                    best_inst, best_iou = i, v
-            mask = inst_masks[best_inst] if (best_inst >= 0 and best_iou > 0.2) else None
-            if mask is not None:
-                used_inst.add(best_inst)
+            if rcnn is not None:
+                best_inst, best_iou = matches[det_i]
+                mask = inst_masks[best_inst]
                 mbox = inst_boxes[best_inst]
             else:
+                # Explicit --no-maskrcnn retains its unverified rectangle-mask mode.
+                best_iou = 0.0
                 mbox = box
                 mask = np.zeros((h, w), bool)
                 x0, y0, x1, y1 = [int(max(0, v)) for v in box]
@@ -587,18 +612,33 @@ def main():
         trackCount=len(kept),
         discardedShortTracks=len(tracks) - len(kept),
         maskrcnnDetectionsWithoutPose=unmatched_rcnn_total,
+        unassignedPoseDetections=unassigned_pose_total,
+        maskSupportRequired=not a.no_maskrcnn,
+        instanceAssociation=(
+            "disabled; explicit unverified rectangle-mask mode"
+            if a.no_maskrcnn
+            else "one-to-one maximum supported pairs, then maximum total IoU (>0.2)"
+        ),
         tracks=report,
         method=(
-            "MultiHMR multi-person detections (one forward pass per sample, all persons kept) "
-            "associated by Hungarian assignment on constant-velocity centre prediction, box-height "
-            "ratio, camera-depth ratio and a Mask R-CNN-masked upper/lower-body RGB histogram. "
-            "Mask R-CNN supplies the per-person instance masks; a Mask R-CNN person with no "
-            "MultiHMR partner is counted but not tracked."
+            (
+                "MultiHMR poses without independent mask support "
+                if a.no_maskrcnn
+                else "MultiHMR poses supported one-to-one by independent person instances "
+            )
+            + "associated by Hungarian assignment on constant-velocity centre prediction, box-height "
+            "ratio, camera-depth ratio and an upper/lower-body RGB histogram. "
+            + (
+                "Explicit --no-maskrcnn uses unverified rectangle masks."
+                if a.no_maskrcnn
+                else "Mask R-CNN supplies person instance masks; instances without a pose are counted but not tracked."
+            )
         ),
         seconds=time.time() - start,
         gpu=torch.cuda.get_device_name(),
         torch=torch.__version__,
     )
+    (out / "detection-audit.json").write_text(json.dumps(detection_audit, indent=1))
     (out / "tracks.json").write_text(json.dumps(doc, indent=1))
     print(
         json.dumps(

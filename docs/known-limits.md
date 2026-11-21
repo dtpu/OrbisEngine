@@ -9,7 +9,14 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   pedestrians were missed. The runner formerly marked tracking successful by skipping the failed
   subset, even with `--all-people`. All-person runs now stop on any failed identity audit rather
   than discarding those tracks. This repairs acceptance, not the tracker: no avatar or world was
-  generated from this result. Evidence: `.context/evidence/city-recovery-20261120/`.
+  generated from this result. A subsequent one-to-one instance-support correction retained the
+  main walker as one ID across all 94 samples, with no gaps or duplicate instance assignments;
+  beginning/middle/end overlays no longer tracked lamps. All 240 retained elevator and 75
+  hall-walk associations were unchanged in offline replay. This does not fix all-person recall:
+  202 unmatched instance observations still include real background pedestrians and people
+  pictured on signage. Do not animate every unmatched detection or call the single-track
+  result accepted. Its body projection also remains misaligned with the observed silhouette.
+  Evidence: `.context/evidence/city-recovery-20261120/`.
 
 - The forest scale gate fails on distant background, not on the route. Replaying the run's own
   scale diagnostic (unchanged inputs, scale0 0.7414, whole-frame p10 0.842–0.848) split by each
