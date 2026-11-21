@@ -1,0 +1,40 @@
+worker/stages/track_people.py
+  s_c6018019842afa::t_840889cf0e3f78 6,11-12
+  s_c6018019842afa::t_ab21cbc1901098 616
+  s_a3c43d2a2443ce::t_acb46609ada220 181,229-230,294-317,320-323,326-328,331-332,615,617-621,624-635,641
+worker/stages/pose_instances.py
+  s_a3c43d2a2443ce::t_894d9be422ed12 1-41
+scripts/tests/test_pose_instances.py
+  s_c6018019842afa::t_840889cf0e3f78 3-9
+  s_a3c43d2a2443ce::t_9dc9f9d0c51c59 1-2,10-54
+docs/DEVELOPING.md
+  s_a3c43d2a2443ce::t_919ae62c8bb583 23-34
+scripts/stage_attempts.py
+  s_c6018019842afa::t_680d6903d22756 150
+scripts/tests/test_stage_attempts.py
+  s_a3c43d2a2443ce::t_8d271cea03fa38 683-692
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab2bf69f4ee8c50d80adea78725f87b5711392de",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
