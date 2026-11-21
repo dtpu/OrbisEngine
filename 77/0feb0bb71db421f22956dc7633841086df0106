@@ -1,0 +1,35 @@
+scripts/tests/test_tracks_to_clean_masks.py
+  s_c6018019842afa::t_177976fe73bc8b 321-329,346-366,373-467
+  s_a3c43d2a2443ce::t_d0a083b50b0c4f 330-345,367-372
+  s_c6018019842afa::t_574256bd801f02 17,189
+scripts/run_clip.py
+  s_c6018019842afa::t_574256bd801f02 1103,1144,1160,1167-1182
+docs/paid-recovery.md
+  s_c6018019842afa::t_574256bd801f02 516-522
+scripts/tracks_to_clean_masks.py
+  s_c6018019842afa::t_574256bd801f02 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "770feb0bb71db421f22956dc7633841086df0106",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
