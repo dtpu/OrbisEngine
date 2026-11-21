@@ -1100,7 +1100,7 @@ class Pipeline:
         return flags + (["--moved-mask"] if a.moved_mask else [])
 
     def validate_clean_masks(self, path: Path):
-        """Require packed masks for this source's observed FFmpeg sampling before any Modal call."""
+        """Require masks matching decoded explicit selection or legacy FPS sampling before Modal."""
         import numpy as np
 
         if not path.is_file():
@@ -1126,24 +1126,6 @@ class Pipeline:
                 "--clean-masks masks must be a three-dimensional uint8 packed-bit array"
             )
 
-        expected_shape = (
-            clean_sample_count(self.clip, self.a.fps),
-            expected_height,
-            expected_packed_width,
-        )
-        if tuple(packed.shape) != expected_shape:
-            raise ValueError(
-                "--clean-masks shape "
-                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
-            )
-        if declared is not None and (
-            declared.shape != (3,)
-            or tuple(declared.tolist()) != (expected_shape[0], expected_height, expected_width)
-        ):
-            raise ValueError(
-                "--clean-masks shape metadata does not match the observed sampled frame count "
-                "and source dimensions"
-            )
         if selected:
             from worker.wander_worker.source_timing import select_source_frames
 
@@ -1159,7 +1141,7 @@ class Pipeline:
                 )
             indices, pts = selection["source_indices"], selection["source_pts"]
             if any(
-                value.shape != (expected_shape[0],) or not np.issubdtype(value.dtype, np.integer)
+                value.shape != (packed.shape[0],) or not np.issubdtype(value.dtype, np.integer)
                 for value in (indices, pts)
             ):
                 raise ValueError(
@@ -1175,12 +1157,29 @@ class Pipeline:
             _, provenance = select_source_frames(
                 self.clip, self.a.fps, source_indices=indices.tolist()
             )
+            expected_count = len(provenance["frames"])
             if (
                 selection["source_sha256"].item() != provenance["sourceSha256"]
                 or selection["source_time_base"].item() != provenance["sourceTimeBase"]
                 or pts.tolist() != [frame["sourcePts"] for frame in provenance["frames"]]
             ):
                 raise ValueError("Explicit clean masks do not match the selected source pixels")
+        else:
+            expected_count = clean_sample_count(self.clip, self.a.fps)
+        expected_shape = (expected_count, expected_height, expected_packed_width)
+        if tuple(packed.shape) != expected_shape:
+            raise ValueError(
+                "--clean-masks shape "
+                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
+            )
+        if declared is not None and (
+            declared.shape != (3,)
+            or tuple(declared.tolist()) != (expected_count, expected_height, expected_width)
+        ):
+            raise ValueError(
+                "--clean-masks shape metadata does not match the observed sampled frame count "
+                "and source dimensions"
+            )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
