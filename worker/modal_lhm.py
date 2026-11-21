@@ -441,6 +441,7 @@ def main(
     import tarfile
 
     from worker.stages.lhm_recovery import new_receipt, recover_outputs, submit_once
+    from worker.stages.modal_profile import effective_modal_profile
 
     if not out:
         raise ValueError("LHM output destination is required")
@@ -482,7 +483,17 @@ def main(
     if larger_model and not fixed_inputs:
         raise ValueError("Larger checkpoint comparison requires saved fixed inputs")
     result = submit_once(
-        frozen, receipt_path, inputs, animate=bool(canonical), larger_model=larger_model
+        frozen,
+        receipt_path,
+        inputs,
+        result_timeout_seconds=INFERENCE_RESOURCES.get(
+            "startup_timeout", INFERENCE_RESOURCES["timeout"]
+        )
+        + INFERENCE_RESOURCES["timeout"],
+        app_id=app.app_id,
+        modal_profile=effective_modal_profile(),
+        animate=bool(canonical),
+        larger_model=larger_model,
     )
     manifest = recover_outputs(receipt_path, cache)
     # Preserve the normal archive artifact, without GPU compression or a giant return.

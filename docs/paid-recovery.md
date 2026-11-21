@@ -513,6 +513,13 @@ Keep the original FPS and source clip. This option changes no current pipeline d
 not authorize another paid clean, reset the shared inpainting allowance, or replace a failed
 quality verdict. Inpainting remains subject to the same ledger, approvals and visual review.
 
+Explicit-source clean masks are validated against the decoded frames selected by their recorded
+source indices, with matching source SHA, PTS, timebase and packed shape. Their count need not
+equal the FFmpeg FPS-filter count: a fractional-FPS tracking grid can retain a final source frame
+that the FPS filter omits. Track-mask conversion still requires every declared track/sample mask
+and complete sample coverage. Archives without explicit selection metadata must still match the
+observed FPS-filter count; incomplete or inconsistent explicit metadata fails before paid cleaning.
+
 ## Experimental isolation of inpainting context
 
 The direct runner and clean worker accept `--inpaint-mode isolated`; `legacy` remains the default.
@@ -650,3 +657,16 @@ Submission, cancellation and extraction are outside that wait. A timeout or inte
 requests cancellation of the owned call and records whether the request outcome is known.
 This receipt tracks the provider call. Tracking outputs still arrive through the returned
 archive, and `result_received` precedes extraction and checks of the tracking report.
+
+### Bounded avatar result waits
+
+Frozen and tracked-avatar entrypoints record the owning app/profile and a local result deadline
+before submission. The wait budget is the effective startup timeout plus execution timeout;
+shortened tracked-animation execution deadlines shorten the corresponding wait. This does not
+increase the provider deadline, retry allowance or spending budget.
+
+On timeout or interruption the wrapper requests cancellation of only the call it submitted and
+retains the recovery receipt. A cancellation request does not certify termination or a complete
+checkpoint: inspect provider state and use the existing recovery path. Neither a wait failure
+nor a missing checkpoint authorizes resubmission. The result wait still excludes image builds
+and final output download; retain an overall operator deadline.

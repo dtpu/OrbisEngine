@@ -141,17 +141,78 @@ def receipt_lock(receipt_path):
         yield
 
 
-def submit_once(function, receipt_path, inputs, **kwargs):
+def submit_once(
+    function,
+    receipt_path,
+    inputs,
+    *,
+    result_timeout_seconds=None,
+    app_id=None,
+    modal_profile=None,
+    **kwargs,
+):
     """Persist identity before waiting. An uncertain or interrupted receipt never resubmits."""
     with receipt_lock(receipt_path):
-        return _submit_once(function, receipt_path, inputs, **kwargs)
+        return _submit_once(
+            function,
+            receipt_path,
+            inputs,
+            result_timeout_seconds=result_timeout_seconds,
+            app_id=app_id,
+            modal_profile=modal_profile,
+            **kwargs,
+        )
 
 
-def _submit_once(function, receipt_path, inputs, **kwargs):
+def _record_wait_failure(call, receipt_path, receipt, error, *, cancel, bounded):
+    receipt["status"] = (
+        "wait_timeout" if bounded and isinstance(error, TimeoutError) else "wait_interrupted"
+    )
+    if cancel:
+        receipt["waitErrorType"] = type(error).__name__
+        try:
+            call.cancel()
+            receipt["cancellation"] = "requested"
+        except BaseException as cancellation_error:
+            receipt["cancellation"] = "error"
+            receipt["cancellationErrorType"] = type(cancellation_error).__name__
+    try:
+        atomic_json(receipt_path, receipt)
+    except BaseException:
+        # Keep the original failure. The earlier submitting/waiting receipt still
+        # prevents another submission, even when storage cannot record cleanup.
+        pass
+
+
+def _submit_once(
+    function,
+    receipt_path,
+    inputs,
+    *,
+    result_timeout_seconds=None,
+    app_id=None,
+    modal_profile=None,
+    **kwargs,
+):
+    if result_timeout_seconds is not None and (
+        isinstance(result_timeout_seconds, bool)
+        or not isinstance(result_timeout_seconds, int)
+        or result_timeout_seconds <= 0
+    ):
+        raise ValueError("result_timeout_seconds must be a positive finite integer")
     receipt = load_receipt(receipt_path)
     if receipt.get("status") != "prepared" or receipt.get("functionCallId") is not None:
         raise ValueError("Existing LHM receipt cannot resubmit inference; use recovery")
     receipt["status"] = "submitting"
+    if result_timeout_seconds is not None:
+        receipt.update(
+            resultTimeoutSeconds=result_timeout_seconds, appId=app_id, modalProfile=modal_profile
+        )
+    else:
+        if app_id is not None:
+            receipt["appId"] = app_id
+        if modal_profile is not None:
+            receipt["modalProfile"] = modal_profile
     atomic_json(receipt_path, receipt)
     try:
         call = function.spawn(inputs, recovery_id=receipt["recoveryId"], **kwargs)
@@ -159,14 +220,28 @@ def _submit_once(function, receipt_path, inputs, **kwargs):
         receipt["status"] = "submission_uncertain"
         atomic_json(receipt_path, receipt)
         raise
-    receipt["functionCallId"] = call.object_id
-    receipt["status"] = "waiting"
-    atomic_json(receipt_path, receipt)
     try:
-        result = call.get()
-    except BaseException:
-        receipt["status"] = "wait_interrupted"
+        receipt["functionCallId"] = call.object_id
+        receipt["status"] = "waiting"
         atomic_json(receipt_path, receipt)
+    except BaseException as error:
+        _record_wait_failure(call, receipt_path, receipt, error, cancel=True, bounded=False)
+        raise
+    try:
+        result = (
+            call.get(timeout=result_timeout_seconds)
+            if result_timeout_seconds is not None
+            else call.get()
+        )
+    except BaseException as error:
+        _record_wait_failure(
+            call,
+            receipt_path,
+            receipt,
+            error,
+            cancel=result_timeout_seconds is not None,
+            bounded=result_timeout_seconds is not None,
+        )
         raise
     if (
         not isinstance(result, dict)
@@ -178,7 +253,11 @@ def _submit_once(function, receipt_path, inputs, **kwargs):
     receipt["totalWorkerSeconds"] = result.get("totalWorkerSeconds")
     receipt["manifestSha256"] = result["manifestSha256"]
     receipt["status"] = "checkpoint_available"
-    atomic_json(receipt_path, receipt)
+    try:
+        atomic_json(receipt_path, receipt)
+    except BaseException as error:
+        _record_wait_failure(call, receipt_path, receipt, error, cancel=True, bounded=False)
+        raise
     return result
 
 

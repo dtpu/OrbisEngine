@@ -1100,7 +1100,7 @@ class Pipeline:
         return flags + (["--moved-mask"] if a.moved_mask else [])
 
     def validate_clean_masks(self, path: Path):
-        """Require packed masks for this source's observed FFmpeg sampling before any Modal call."""
+        """Require masks matching decoded explicit selection or legacy FPS sampling before Modal."""
         import numpy as np
 
         if not path.is_file():
@@ -1126,24 +1126,6 @@ class Pipeline:
                 "--clean-masks masks must be a three-dimensional uint8 packed-bit array"
             )
 
-        expected_shape = (
-            clean_sample_count(self.clip, self.a.fps),
-            expected_height,
-            expected_packed_width,
-        )
-        if tuple(packed.shape) != expected_shape:
-            raise ValueError(
-                "--clean-masks shape "
-                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
-            )
-        if declared is not None and (
-            declared.shape != (3,)
-            or tuple(declared.tolist()) != (expected_shape[0], expected_height, expected_width)
-        ):
-            raise ValueError(
-                "--clean-masks shape metadata does not match the observed sampled frame count "
-                "and source dimensions"
-            )
         if selected:
             from worker.wander_worker.source_timing import select_source_frames
 
@@ -1159,7 +1141,7 @@ class Pipeline:
                 )
             indices, pts = selection["source_indices"], selection["source_pts"]
             if any(
-                value.shape != (expected_shape[0],) or not np.issubdtype(value.dtype, np.integer)
+                value.shape != (packed.shape[0],) or not np.issubdtype(value.dtype, np.integer)
                 for value in (indices, pts)
             ):
                 raise ValueError(
@@ -1175,12 +1157,29 @@ class Pipeline:
             _, provenance = select_source_frames(
                 self.clip, self.a.fps, source_indices=indices.tolist()
             )
+            expected_count = len(provenance["frames"])
             if (
                 selection["source_sha256"].item() != provenance["sourceSha256"]
                 or selection["source_time_base"].item() != provenance["sourceTimeBase"]
                 or pts.tolist() != [frame["sourcePts"] for frame in provenance["frames"]]
             ):
                 raise ValueError("Explicit clean masks do not match the selected source pixels")
+        else:
+            expected_count = clean_sample_count(self.clip, self.a.fps)
+        expected_shape = (expected_count, expected_height, expected_packed_width)
+        if tuple(packed.shape) != expected_shape:
+            raise ValueError(
+                "--clean-masks shape "
+                f"{tuple(packed.shape)} does not match observed source sampling {expected_shape}"
+            )
+        if declared is not None and (
+            declared.shape != (3,)
+            or tuple(declared.tolist()) != (expected_count, expected_height, expected_width)
+        ):
+            raise ValueError(
+                "--clean-masks shape metadata does not match the observed sampled frame count "
+                "and source dimensions"
+            )
 
     def review(self):
         """The credit gate. 1600 credits are about to be spent on whatever these frames show."""
@@ -3075,13 +3074,22 @@ class Pipeline:
         depth is ~1/scale0, so scale0 <- scale0 * geomean(ratio) converges in two or three probes.
         """
         s, probes = self.a.scale0, []
+        selected_probe, selection_reason = "given", "explicit_scale"
         if s is None:
+            best_median_probe = None
             s = self.placement().get("floorMatchedScale") or 1.0
             for i in range(self.a.scale_probes):
                 rows, fig, bands = self.diag(s, i)
                 ratios = [r for r, _, _ in rows]
                 gm = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
                 probes.append((s, gm))
+                if all(SCALE_RATIO_BAND[0] <= r <= SCALE_RATIO_BAND[1] for r in ratios) and (
+                    best_median_probe is None
+                    or abs(math.log(gm)) < abs(math.log(best_median_probe[2]))
+                ):
+                    # Keep the measured evidence together. Diagnostic filenames round the
+                    # scale, so a later probe can overwrite the same figure path.
+                    best_median_probe = (i, s, gm, rows, bands, Path(fig).read_bytes())
                 say(
                     f"   probe {i}: scale0 {s:.4f} -> ratios {[round(r, 3) for r in ratios]} "
                     f"(geomean {gm:.4f})"
@@ -3095,6 +3103,15 @@ class Pipeline:
                     f"{[(round(x, 4), round(g, 4)) for x, g in probes]}; pass "
                     f"--scale0 by hand or raise --scale-probes"
                 )
+            selected_probe, selection_reason = i, "converged_final"
+            if best_median_probe is not None and not all(
+                SCALE_RATIO_BAND[0] <= r <= SCALE_RATIO_BAND[1] for r in ratios
+            ):
+                selected_probe, s, gm, rows, bands, figure_bytes = best_median_probe
+                ratios = [r for r, _, _ in rows]
+                fig = self.ctx / f"scale-fit-selected-probe-{selected_probe}.png"
+                fig.write_bytes(figure_bytes)
+                selection_reason = "earlier_median_pass_closest_log_geomean"
         else:
             rows, fig, bands = self.diag(s, "given")
             ratios = [r for r, _, _ in rows]
@@ -3110,9 +3127,9 @@ class Pipeline:
         if spread:
             median_problem = (
                 f"depth ratios {[round(r, 3) for r in ratios]} are not all inside "
-                f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]} at any single scale (geomean fit {s:.4f} "
-                f"gives {gm:.4f}). That is Marble geometry error or SfM drift, not a scale error -- it "
-                f"means the avatar reads ~{abs(1 - min(ratios)) * 100:.0f}% wrong at one end of the "
+                f"{SCALE_RATIO_BAND[0]}-{SCALE_RATIO_BAND[1]} at the evaluated scale {s:.4f} "
+                f"(geomean {gm:.4f}). This measurement alone does not rule out another scale. "
+                f"The depth mismatch is ~{abs(1 - min(ratios)) * 100:.0f}% at one end of the "
                 f"clip. Read {fig}, then either re-trim the clip to "
                 f"the window that fits or pass --allow-scale-spread to ship the geometric-mean fit "
                 f"with that caveat (gym, atrium and selfie did)."
@@ -3133,6 +3150,8 @@ class Pipeline:
             p10=p10,
             p90=p90,
             probes=probes,
+            selectedProbe=selected_probe,
+            selectionReason=selection_reason,
             gateOk=not spread and not wide,
             medianOk=not spread,
             spreadOk=not wide,
