@@ -1,0 +1,46 @@
+worker/modal_multiperson.py
+  s_a3c43d2a2443ce::t_d473e85d707dc6 467,513-518
+scripts/stage_attempts.py
+  s_a3c43d2a2443ce::t_d473e85d707dc6 141-142,155
+worker/modal_lhm.py
+  s_a3c43d2a2443ce::t_d473e85d707dc6 444,486-496
+worker/stages/lhm_recovery.py
+  s_c6018019842afa::t_89e13b37abebf3 144-153,156-164,167-202,207-215,224-225,227,229-244,256-260
+  s_a3c43d2a2443ce::t_9705cfb2ed9d25 228
+scripts/tests/test_lhm_recovery.py
+  s_c6018019842afa::t_b7d01b0a91d6c6 130-159,172-178,183-190,199-209,214-222,226-240,243-305,308-315
+  s_c6018019842afa::t_72c98829d996ac 619-627
+  s_c6018019842afa::t_c8c039e36512a9 241-242,316-339,343
+  s_a3c43d2a2443ce::t_9705cfb2ed9d25 160-171,179-182,191-198,210-213,223-225,306-307,618
+  s_c6018019842afa::t_55a5deb5a5bdf3 340-342
+scripts/tests/test_lhm_wait_entrypoints.py
+  s_a3c43d2a2443ce::t_db76c0d23b78ae 1-55
+scripts/tests/test_multiperson_recovery.py
+  s_a3c43d2a2443ce::t_2b6085e39c3fe9 101-103,127,193-202
+docs/paid-recovery.md
+  s_a3c43d2a2443ce::t_60df523cffefb6 653-665
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0732f7bad47374067c92d36a8ba19514ed8d46c",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
