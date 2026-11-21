@@ -213,3 +213,132 @@ def test_band_summary_keeps_gate_precision_and_flags_collapsed_quartiles():
 
 def test_malformed_band_lines_are_evidence_loss_not_a_crash():
     assert run_clip.distance_bands('depth-ratio-bands {"frame": 0, "bands": [', 1) is None
+
+
+def probe_sequence(pipeline, monkeypatch, rows_by_probe):
+    """Different measured evidence per call; reuse a filename to exercise snapshot ownership."""
+    calls, evidence = [], []
+    figure = pipeline.ctx / "rounded-scale-depth-ratio.png"
+
+    def diag(scale, probe):
+        index = len(calls)
+        rows = rows_by_probe[index]
+        bands = [
+            {"frame": frame, "bands": [{"band": 0, "p10": lo, "median": ratio, "p90": hi}]}
+            for frame, (ratio, lo, hi) in enumerate(rows)
+        ]
+        pixels = f"measured probe {index}".encode()
+        figure.write_bytes(pixels)
+        calls.append((scale, probe))
+        evidence.append((rows, bands, pixels))
+        return rows, figure, bands
+
+    monkeypatch.setattr(pipeline, "diag", diag)
+    return calls, evidence, figure
+
+
+@pytest.mark.parametrize("unaccepted", [False, True])
+def test_retains_closest_passing_probe_with_consistent_evidence_and_failed_spread(
+    pipeline, monkeypatch, unaccepted
+):
+    p = pipeline
+    p.a.scale_spread_unaccepted = unaccepted
+    rows = [
+        [(1.4, 1.2, 1.6)],
+        [(0.98, 0.94, 1.04), (0.98, 0.93, 1.05)],
+        [(1.01, 0.81, 1.21), (1.01, 0.85, 1.16)],
+        [(0.94, 0.92, 1.06), (1.06, 0.95, 1.08)],
+    ]
+    calls, evidence, overwritten = probe_sequence(p, monkeypatch, rows)
+    assert p.go() == (0 if unaccepted else 1)
+    assert len(calls) == 4  # No additional diagnostic or retry.
+    report = json.loads((p.ctx / "scale-fit.json").read_text())
+    assert report == p.state.data["stages"]["_scale"]
+    assert report["selectedProbe"] == 2
+    assert report["selectionReason"] == "earlier_median_pass_closest_log_geomean"
+    assert report["scale0"] == pytest.approx(calls[2][0])
+    assert report["scale0"] == pytest.approx(0.8 * 1.4 * 0.98)
+    assert report["geomean"] == pytest.approx(1.01)
+    assert report["ratios"] == [1.01, 1.01]
+    assert report["p10"] == [0.81, 0.85]
+    assert report["p90"] == [1.21, 1.16]
+    assert report["distanceBands"] == evidence[2][1]
+    assert Path(report["figure"]).read_bytes() == evidence[2][2]
+    assert overwritten.read_bytes() == evidence[3][2]
+    assert report["medianOk"] is True
+    assert report["spreadOk"] is False
+    assert report["gateOk"] is False
+    assert "exceed the required spread" in report["gateError"]
+    assert report["figure"] in report["gateError"]
+    assert len(report["probes"]) == 4
+    assert report["probes"][3][0] == pytest.approx(calls[3][0])
+
+
+def test_median_passing_final_keeps_final_even_if_earlier_spread_was_better(pipeline, monkeypatch):
+    rows = [[(1.01, 0.97, 1.04)], [(1.001, 0.8, 1.2)]]
+    calls, evidence, figure = probe_sequence(pipeline, monkeypatch, rows)
+    assert pipeline.go() == 1
+    report = json.loads((pipeline.ctx / "scale-fit.json").read_text())
+    assert len(calls) == 2
+    assert report["selectedProbe"] == 1
+    assert report["selectionReason"] == "converged_final"
+    assert report["scale0"] == pytest.approx(calls[1][0])
+    assert report["ratios"] == [1.001]
+    assert report["distanceBands"] == evidence[1][1]
+    assert report["figure"] == str(figure)
+    assert report["medianOk"] is True and report["spreadOk"] is False
+    assert not list(pipeline.ctx.glob("scale-fit-selected-probe-*.png"))
+
+
+def test_no_acceptable_probe_keeps_final_failure_and_limits_error_claim(pipeline, monkeypatch):
+    calls, _, figure = probe_sequence(
+        pipeline, monkeypatch, [[(1.2, 1.0, 1.3)], [(0.94, 0.92, 1.08), (1.06, 0.92, 1.08)]]
+    )
+    assert pipeline.go() == 1
+    report = json.loads((pipeline.ctx / "scale-fit.json").read_text())
+    assert len(calls) == 2
+    assert report["selectedProbe"] == 1
+    assert report["scale0"] == pytest.approx(calls[1][0])
+    assert report["figure"] == str(figure)
+    assert report["medianOk"] is False and report["spreadOk"] is True
+    assert "at the evaluated scale" in report["gateError"]
+    assert "at any single scale" not in report["gateError"]
+
+
+def test_acceptable_probe_does_not_bypass_nonconvergence(pipeline, monkeypatch):
+    pipeline.a.scale_probes = 2
+    calls, _, _ = probe_sequence(pipeline, monkeypatch, [[(1.02, 0.97, 1.04)]] * 2)
+    assert pipeline.go() == 1
+    assert len(calls) == 2
+    stages = pipeline.state.data["stages"]
+    assert "did not converge" in stages["scale_fit"]["error"]
+    assert "_scale" not in stages
+    assert not (pipeline.ctx / "scale-fit.json").exists()
+    assert not list(pipeline.ctx.glob("scale-fit-selected-probe-*.png"))
+
+
+@pytest.mark.parametrize("ratio,accepted", [(1.02, True), (1.07, False)])
+def test_explicit_scale_keeps_single_given_measurement(pipeline, monkeypatch, ratio, accepted):
+    pipeline.a.scale0 = 0.726089
+    calls, evidence, figure = probe_sequence(pipeline, monkeypatch, [[(ratio, 0.96, 1.08)]])
+    assert pipeline.go() == (0 if accepted else 1)
+    assert calls == [(0.726089, "given")]
+    report = json.loads((pipeline.ctx / "scale-fit.json").read_text())
+    assert report["scale0"] == 0.726089
+    assert report["selectedProbe"] == "given" and report["selectionReason"] == "explicit_scale"
+    assert report["probes"] == []
+    assert report["figure"] == str(figure)
+    assert report["distanceBands"] == evidence[0][1]
+    assert report["gateOk"] is accepted
+
+
+def test_retained_probe_passes_gate_only_when_its_spread_also_passes(pipeline, monkeypatch):
+    calls, _, _ = probe_sequence(
+        pipeline, monkeypatch, [[(1.02, 0.96, 1.08)], [(0.94, 0.7, 1.3), (1.06, 0.7, 1.3)]]
+    )
+    assert pipeline.go() == 0
+    report = json.loads((pipeline.ctx / "scale-fit.json").read_text())
+    assert len(calls) == 2
+    assert report["selectedProbe"] == 0
+    assert report["scale0"] == 0.8
+    assert report["gateOk"] is True and report["gateError"] is None
