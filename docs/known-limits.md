@@ -16,6 +16,8 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   202 unmatched instance observations still include real background pedestrians and people
   pictured on signage. Do not animate every unmatched detection or call the single-track
   result accepted. Its body projection also remains misaligned with the observed silhouette.
+  Experimental `--pose-crops` adds calibrated inference for unmatched masks, but has no GPU
+  quality result yet and remains off by default; see [person motion](person-motion.md#experimental-tracking-crop-recovery).
   Evidence: `.context/evidence/city-recovery-20261120/`.
 
 - The forest scale gate fails on distant background, not on the route. Replaying the run's own

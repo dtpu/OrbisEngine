@@ -102,3 +102,22 @@ Their original author Claude and co-author Claude Fable 5.1 remain credited in t
 Codex adapted the integration for lossless defaults, format identity, integrity verification and
 safe fallback. Live rendered comparisons and actual network timing remain separate acceptance
 checks; unit tests do not establish visual quality or headset performance.
+
+## Experimental tracking crop recovery
+
+Tracked runs can opt into `--pose-crops` (or the `pose_crops` tracking stage parameter).
+It is off by default and requires source camera calibration for every sampled frame and
+independent person instance masks. Each instance unmatched by the ordinary full-frame pose
+pass gets one additional crop inference. The crop translates the camera principal point,
+then applies the estimator's resize and padding; predicted joints are mapped back to source
+pixels. Existing full-frame matches are preserved. A crop may claim only its target mask
+under the existing IoU threshold.
+
+This adds GPU calls and can increase runtime substantially. It does not automatically retry,
+change the stage retry budget, or distinguish pedestrians from people pictured on signs or
+statues. `detection-audit.json` records crop bounds, detections, recoveries and pose origins;
+track summaries record call counts and motion observations preserve their origin.
+
+The geometry and submission plumbing have CPU tests. Actual model recovery and visual
+quality have not yet been established; do not enable this by default or treat recovered
+detections as an accepted all-people reconstruction.

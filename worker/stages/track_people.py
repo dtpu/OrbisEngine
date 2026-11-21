@@ -167,7 +167,14 @@ def main():
     ap.add_argument("--overlay-every", type=int, default=0, help="0 = only first/middle/last")
     ap.add_argument("--mask-scale", type=float, default=0.5, help="stored mask resolution")
     ap.add_argument("--no-maskrcnn", action="store_true")
+    ap.add_argument(
+        "--pose-crops",
+        action="store_true",
+        help="experimental calibrated crop inference for unmatched person instances",
+    )
     a = ap.parse_args()
+    if a.pose_crops and (a.no_maskrcnn or not a.cameras):
+        ap.error("--pose-crops requires instance masks and source cameras")
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -178,7 +185,8 @@ def main():
     from accelerate import Accelerator
     from engine.pose_estimation.pose_estimator import PoseEstimator
     from scipy.optimize import linear_sum_assignment
-    from pose_instances import match_pose_instances
+    from pose_instances import match_pose_instances, match_crop_instance
+    from pose_crops import crop_bounds, crop_intrinsics, source_joints
 
     torch._dynamo.config.disable = True
     torch.set_num_threads(4)
@@ -209,6 +217,9 @@ def main():
                 flush=True,
             )
 
+    if a.pose_crops and any(int(i) not in camera_by_source for i in indices):
+        raise ValueError("--pose-crops requires source calibration for every sampled frame")
+
     rcnn = None
     if not a.no_maskrcnn:
         from torchvision.models.detection import (
@@ -228,6 +239,8 @@ def main():
     unmatched_rcnn_total = 0
     unassigned_pose_total = 0
     detection_audit = []
+    crop_inference_calls = 0
+    recovered_crop_poses = 0
     w = h = None
 
     for sample, (index, timestamp) in enumerate(zip(indices, times)):
@@ -297,6 +310,86 @@ def main():
         ]
         boxes = [joints_box(joints, w, h) for joints in projected]
         matches = match_pose_instances(boxes, inst_boxes) if rcnn is not None else {}
+        pose_origins = ["full_frame"] * len(detected)
+        crop_audit = []
+        if a.pose_crops:
+            if frame_camera is None:
+                raise RuntimeError(
+                    f"crop inference requires a measured camera at source frame {index}"
+                )
+            original_used = {pair[0] for pair in matches.values()}
+            for instance_i, instance_box in enumerate(inst_boxes):
+                if instance_i in original_used:
+                    continue
+                bounds = crop_bounds(instance_box, w, h)
+                x0, y0, x1, y1 = bounds
+                cropped = raw[y0:y1, x0:x1]
+                padded_crop, crop_ow, crop_oh = estimator.img_center_padding(cropped)
+                crop_tensor, crop_annotation = estimator._preprocess(padded_crop)
+                crop_pl, crop_pt, crop_factor, _, _ = crop_annotation
+                crop_K = crop_intrinsics(source_K, bounds)
+                crop_affine = np.array(
+                    [
+                        [crop_factor, 0, crop_factor * crop_ow + crop_pl],
+                        [0, crop_factor, crop_factor * crop_oh + crop_pt],
+                        [0, 0, 1],
+                    ]
+                )
+                network_K = torch.tensor(crop_affine @ crop_K, dtype=torch.float32, device="cuda")[
+                    None
+                ]
+                with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
+                    crop_people = estimator.mhmr_model(
+                        crop_tensor,
+                        is_training=False,
+                        nms_kernel_size=3,
+                        det_thresh=a.det_thresh,
+                        K=network_K,
+                        idx=None,
+                        max_dist=None,
+                    )
+                crop_inference_calls += 1
+                crop_joints = [
+                    source_joints(
+                        person["j2d"].float().cpu().numpy(),
+                        crop_pl,
+                        crop_pt,
+                        crop_factor,
+                        crop_ow,
+                        crop_oh,
+                        bounds,
+                    )
+                    for person in crop_people
+                ]
+                crop_boxes = [joints_box(joints, w, h) for joints in crop_joints]
+                # A crop cannot replace an established full-frame match or claim another mask.
+                selected = match_crop_instance(crop_boxes, inst_boxes, instance_i)
+                first = len(detected)
+                # Drop meshes and detach retained fields before another crop forward.
+                crop_people = [
+                    {
+                        k: v.detach().float().cpu()
+                        for k, v in person.items()
+                        if k in ("j2d", "j3d", "scores", "rotvec", "shape", "transl_pelvis")
+                    }
+                    for person in crop_people
+                ]
+                detected.extend(crop_people)
+                projected.extend(crop_joints)
+                boxes.extend(crop_boxes)
+                pose_origins.extend([f"instance_crop:{instance_i}"] * len(crop_people))
+                for local_i, (_, overlap) in selected.items():
+                    matches[first + local_i] = (instance_i, overlap)
+                    recovered_crop_poses += 1
+                crop_audit.append(
+                    dict(
+                        instance=instance_i,
+                        bounds=list(bounds),
+                        detections=len(crop_people),
+                        recovered=bool(selected),
+                    )
+                )
+                del crop_tensor, network_K, crop_people
         used_inst = {pair[0] for pair in matches.values()}
         rejected = [i for i in range(len(detected)) if rcnn is not None and i not in matches]
         unassigned_pose_total += len(rejected)
@@ -306,6 +399,8 @@ def main():
                 sourceIndex=int(index),
                 poseBoxes=boxes,
                 poseScores=[float(person["scores"]) for person in detected],
+                poseOrigins=pose_origins,
+                cropPasses=crop_audit,
                 instanceBoxes=inst_boxes,
                 matches=[
                     dict(pose=i, instance=pair[0], iou=pair[1]) for i, pair in matches.items()
@@ -364,6 +459,7 @@ def main():
                     },
                     source_intrinsics=source_K.tolist(),
                     maskIou=best_iou,
+                    poseOrigin=pose_origins[det_i],
                 )
             )
         unmatched_rcnn_total += len(inst_boxes) - len(used_inst)
@@ -506,6 +602,7 @@ def main():
                     box=o["box"],
                     maskBox=o["maskBox"],
                     maskIou=o["maskIou"],
+                    poseOrigin=o["poseOrigin"],
                     occludedFraction=o.get("occludedFraction", 0.0),
                     depth=o["depth"],
                     heightFraction=o["heightFrac"],
@@ -614,6 +711,9 @@ def main():
         maskrcnnDetectionsWithoutPose=unmatched_rcnn_total,
         unassignedPoseDetections=unassigned_pose_total,
         maskSupportRequired=not a.no_maskrcnn,
+        poseCrops=a.pose_crops,
+        cropInferenceCalls=crop_inference_calls,
+        recoveredCropPoses=recovered_crop_poses,
         instanceAssociation=(
             "disabled; explicit unverified rectangle-mask mode"
             if a.no_maskrcnn
