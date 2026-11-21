@@ -27,7 +27,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from worker.wander_worker.source_timing import resample_source, select_source_frames  # noqa: E402
+from worker.wander_worker.source_timing import select_source_frames  # noqa: E402
 
 
 def build_clean_masks(tracks, *, clip, out, width, height, fps, dilate=20, bottom_extra=40):
@@ -56,12 +56,7 @@ def build_clean_masks(tracks, *, clip, out, width, height, fps, dilate=20, botto
         or any(type(index) is not int or index < 0 for index in indices)
     ):
         raise ValueError("Tracking masks require an explicit source frame grid")
-    _, sampled = resample_source(clip, fps)
-    if len(indices) != len(sampled["frames"]):
-        raise ValueError("Tracking mask frame count does not match observed clean source sampling")
     _, provenance = select_source_frames(clip, fps, source_indices=indices)
-    if provenance["sourceSha256"] != sampled["sourceSha256"]:
-        raise ValueError("Source changed while validating tracking mask sampling")
     frames = provenance["frames"]
     n = len(frames)
     if doc.get("sourceSha256") != provenance["sourceSha256"]:

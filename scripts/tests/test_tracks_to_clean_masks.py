@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import run_clip
 import tracks_to_clean_masks
+from worker.wander_worker.source_timing import resample_source
 
 
 def track_fixture(root, clip, samples=5, width=11, height=4):
@@ -55,9 +56,6 @@ def track_fixture(root, clip, samples=5, width=11, height=4):
 def tracking(tmp_path, monkeypatch):
     clip, root, out = tmp_path / "clip.mp4", tmp_path / "tracks", tmp_path / "clean-masks.npz"
     doc, payload, provenance = track_fixture(root, clip)
-    monkeypatch.setattr(
-        tracks_to_clean_masks, "resample_source", lambda *a, **kw: (b"", provenance)
-    )
     monkeypatch.setattr(
         tracks_to_clean_masks, "select_source_frames", lambda *a, **kw: (b"", provenance)
     )
@@ -188,7 +186,7 @@ def test_exact_tracker_grid_is_preserved_when_fps_filter_selects_other_frames(tm
         ],
         check=True,
     )
-    _, sampled = tracks_to_clean_masks.resample_source(clip, 2)
+    _, sampled = resample_source(clip, 2)
     indices = [0, 3]
     _, exact = tracks_to_clean_masks.select_source_frames(clip, 2, source_indices=indices)
     assert [frame["sourceIndex"] for frame in sampled["frames"]] != indices
@@ -320,3 +318,150 @@ def test_exact_source_masks_rejected_before_paid_multi_image_clean(runner, track
     with pytest.raises(ValueError, match="not supported by --marble multi"):
         runner.clean_flags()
     runner.paid_run.assert_not_called()
+
+
+@pytest.fixture(scope="module")
+def fractional_source(tmp_path_factory):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg required for decoded fractional-FPS fixture")
+    root = tmp_path_factory.mktemp("fractional-source")
+    clip = root / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=16x12:rate=24000/1001",
+            "-frames:v",
+            "186",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(clip),
+        ],
+        check=True,
+    )
+    indices = list(range(0, 186, 2)) + [185]
+    _, exact = tracks_to_clean_masks.select_source_frames(clip, 12, source_indices=indices)
+    _, sampled = resample_source(clip, 12)
+    assert len(exact["frames"]) == 94
+    assert len(sampled["frames"]) == 93
+    assert run_clip.clean_sample_count(clip, 12) == 93
+    assert [frame["sourceIndex"] for frame in sampled["frames"]] == indices[:-1]
+    return clip, indices, exact
+
+
+@pytest.fixture
+def fractional_runner(tmp_path, fractional_source):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    clip, indices, exact = fractional_source
+    tracks = tmp_path / "tracks"
+    tracks.mkdir()
+    doc = {
+        "sourceSha256": exact["sourceSha256"],
+        "width": 16,
+        "height": 12,
+        "fps": 12,
+        "samples": 94,
+        "sourceIndices": indices,
+        "timestamps": [frame["sourceRelativeTimeSeconds"] for frame in exact["frames"]],
+        "trackCount": 2,
+        "tracks": [{"track": i, "samples": list(range(94))} for i in range(2)],
+    }
+    (tracks / "tracks.json").write_text(json.dumps(doc))
+    payload = {"shape": np.array([12, 16, 1.0])}
+    for track in range(2):
+        mask = np.zeros((12, 16), bool)
+        mask[1:3, 2 + track] = True
+        for sample in range(94):
+            payload[f"t{track}_s{sample:03d}"] = np.packbits(mask)
+    np.savez_compressed(tracks / "masks.npz", **payload)
+    pipeline = object.__new__(run_clip.Pipeline)
+    pipeline.ctx, pipeline.clip = tmp_path, clip
+    pipeline.clean_mp4 = tmp_path / "clean.mp4"
+    pipeline.multi = True
+    pipeline.info = {"width": 16, "height": 12}
+    pipeline.a = SimpleNamespace(
+        clean_masks=None, moved_mask=False, fps=12, dilate=0, bottom_extra=0, lama_px=960
+    )
+    pipeline.paid_run = Mock()
+    return pipeline, tracks, doc, payload
+
+
+def test_fractional_endpoint_grid_reaches_paid_boundary_without_fps_count_check(
+    fractional_runner, fractional_source
+):
+    pipeline, _, _, _ = fractional_runner
+    _, indices, exact = fractional_source
+    with patch.object(run_clip, "clean_sample_count", side_effect=AssertionError("legacy path")):
+        pipeline.clean()
+    pipeline.paid_run.assert_called_once()
+    command = pipeline.paid_run.call_args.args[1]
+    path = Path(command[command.index("--masks-in") + 1])
+    with np.load(path) as archive:
+        assert archive["shape"].tolist() == [94, 12, 16]
+        assert archive["source_indices"].tolist() == indices
+        assert archive["source_pts"].tolist() == [frame["sourcePts"] for frame in exact["frames"]]
+        assert np.unpackbits(archive["masks"][-1], axis=-1).sum() == 4
+
+
+@pytest.mark.parametrize("invalid", ["hash", "timestamp", "samples", "endpoint-mask"])
+def test_fractional_endpoint_invalid_tracking_stops_before_paid_run(fractional_runner, invalid):
+    pipeline, tracks, doc, payload = fractional_runner
+    if invalid == "hash":
+        doc["sourceSha256"] = "0" * 64
+    elif invalid == "timestamp":
+        doc["timestamps"][-1] += 0.01
+    elif invalid == "samples":
+        doc["samples"] = 93
+    else:
+        # The other track still covers this sample: every declared mask is required.
+        payload.pop("t1_s093")
+        np.savez_compressed(tracks / "masks.npz", **payload)
+    (tracks / "tracks.json").write_text(json.dumps(doc))
+    with pytest.raises(ValueError):
+        pipeline.clean()
+    pipeline.paid_run.assert_not_called()
+    assert not (pipeline.ctx / "track-clean-masks.npz").exists()
+
+
+@pytest.mark.parametrize("invalid", ["pts", "index", "partial", "shape", "legacy-count"])
+def test_fractional_explicit_archive_validation_cannot_fall_back(fractional_runner, invalid):
+    pipeline, tracks, _, _ = fractional_runner
+    path = pipeline.ctx / "reviewed.npz"
+    tracks_to_clean_masks.build_clean_masks(
+        tracks, clip=pipeline.clip, out=path, width=16, height=12, fps=12, dilate=0, bottom_extra=0
+    )
+    with np.load(path) as archive:
+        payload = {key: archive[key] for key in archive.files}
+    if invalid == "pts":
+        payload["source_pts"][-1] += 1
+    elif invalid == "index":
+        payload["source_indices"][-1] = 186
+    elif invalid == "partial":
+        payload.pop("source_pts")
+    elif invalid == "shape":
+        payload["shape"][0] = 93
+    else:
+        for key in ("source_indices", "source_pts", "source_time_base", "source_sha256"):
+            payload.pop(key)
+    np.savez_compressed(path, **payload)
+    pipeline.a.clean_masks = str(path)
+    with pytest.raises(ValueError):
+        pipeline.clean()
+    pipeline.paid_run.assert_not_called()
+
+
+def test_fractional_legacy_archive_still_accepts_exact_fps_filter_count(fractional_runner):
+    pipeline, _, _, _ = fractional_runner
+    path = pipeline.ctx / "legacy.npz"
+    np.savez_compressed(path, masks=np.zeros((93, 12, 2), np.uint8), shape=np.array([93, 12, 16]))
+    pipeline.a.clean_masks = str(path)
+    pipeline.clean()
+    pipeline.paid_run.assert_called_once()

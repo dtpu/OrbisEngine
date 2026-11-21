@@ -513,6 +513,13 @@ Keep the original FPS and source clip. This option changes no current pipeline d
 not authorize another paid clean, reset the shared inpainting allowance, or replace a failed
 quality verdict. Inpainting remains subject to the same ledger, approvals and visual review.
 
+Explicit-source clean masks are validated against the decoded frames selected by their recorded
+source indices, with matching source SHA, PTS, timebase and packed shape. Their count need not
+equal the FFmpeg FPS-filter count: a fractional-FPS tracking grid can retain a final source frame
+that the FPS filter omits. Track-mask conversion still requires every declared track/sample mask
+and complete sample coverage. Archives without explicit selection metadata must still match the
+observed FPS-filter count; incomplete or inconsistent explicit metadata fails before paid cleaning.
+
 ## Experimental isolation of inpainting context
 
 The direct runner and clean worker accept `--inpaint-mode isolated`; `legacy` remains the default.
