@@ -3,6 +3,13 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- Geometric-mean scale convergence can move a previously passing per-frame median outside the
+  fixed band as visible depth support changes. After normal convergence, the automatic fitter
+  retains the earlier median-passing probe closest to unit geometric mean only if the final
+  medians fail, keeping that probe's scale and measured evidence together. Nonconvergence still
+  fails; explicit scales are unchanged. Median retention does not relax the independent depth
+  spread gate or establish acceptable geometry.
+
 - The fresh city tracking baseline assigned person poses to street lamps and split the main
   walker across tracks. Four of five retained tracks failed the source-appearance identity audit;
   202 Mask R-CNN detections lacked a pose partner. These counts do not establish how many real
