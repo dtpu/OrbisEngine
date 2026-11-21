@@ -5,7 +5,9 @@ from pathlib import Path
 from worker.stages.lhm_recovery import atomic_json
 
 
-def bounded_motion_result(function, destination, inputs, *, timeout, **kwargs):
+def bounded_motion_result(
+    function, destination, inputs, *, timeout, app_id=None, modal_profile=None, **kwargs
+):
     """Bound result waiting (including queueing), not upload, cancellation, or billing.
 
     The caller owns a new output directory. An existing receipt is never resubmitted.
@@ -20,6 +22,8 @@ def bounded_motion_result(function, destination, inputs, *, timeout, **kwargs):
     receipt = {
         "schema": "wander.motion-call/1",
         "status": "submitting",
+        "appId": app_id,
+        "modalProfile": modal_profile,
         "functionCallId": None,
         "resultTimeoutSeconds": timeout,
     }

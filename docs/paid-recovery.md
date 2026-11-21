@@ -598,13 +598,21 @@ without that variable retains the existing direct call behavior. This is not a d
 whole-command deadline: submission/upload, image setup, cancellation and artifact extraction
 are outside the result wait.
 
-The worker writes `motion-call.json` before submitting and saves the returned function-call ID
-before waiting. A timed-out or interrupted wait requests cancellation of only that call, without
-terminating shared containers. The receipt distinguishes a cancellation request from an unknown
-cancellation outcome; neither proves zero spend. Submission without a returned ID remains
-`submission_uncertain`. Inspect the saved ID/provider history before recovery; an existing receipt
-cannot submit again. The shared paid-stage claim remains consumed. `result_received` means the
-provider returned, not that extraction or visual acceptance passed.
+The worker writes `motion-call.json` with the Modal application ID (`appId`) and effective local
+credential profile alias (`modalProfile`) before submitting. It adds the returned `functionCallId`
+before waiting and retains the metadata across outcomes. The alias reflects the SDK's selected
+profile, including CLI `--profile` selection. It is `null` if the SDK has no matching configured
+profile or environment variables override credential settings. The alias is local to the launching
+machine and provides no proof of Modal workspace ownership. Historical receipts may lack both
+fields. Verify the app and call IDs against provider history before recovery, and leave the profile
+unknown where evidence is missing.
+
+A timed-out or interrupted wait requests cancellation of only that call, without terminating shared
+containers. The receipt distinguishes a cancellation request from an unknown cancellation outcome;
+neither proves zero spend. Submission without a returned ID remains `submission_uncertain`. An
+existing receipt cannot submit again, and the shared paid-stage claim remains consumed.
+`result_received` records the provider return. Extraction and visual acceptance still require
+verification.
 
 A fresh city-upload trial on Nov18 exposed this gap: the Pi3X call remained queued for ten minutes
 with backlog1, zero runners and zero running inputs, then the operator stopped its owned app.

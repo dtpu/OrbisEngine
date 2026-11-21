@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from worker.stages.motion_submission import bounded_motion_result
 
+OWNER = {"app_id": "ap-owner", "modal_profile": "local-owner"}
+
+
+def assert_owner(receipt):
+    assert receipt["appId"] == OWNER["app_id"]
+    assert receipt["modalProfile"] == OWNER["modal_profile"]
+
 
 def test_identity_is_durable_before_wait_and_success_is_not_cancelled(tmp_path):
     call = Mock(object_id="fc-owned")
@@ -22,18 +29,21 @@ def test_identity_is_durable_before_wait_and_success_is_not_cancelled(tmp_path):
 
     def result(*, timeout):
         receipt = json.loads((tmp_path / "motion-call.json").read_text())
+        assert_owner(receipt)
         assert receipt["functionCallId"] == "fc-owned"
         assert receipt["status"] == "waiting"
         assert timeout == 1200
         return {"archive": b"result"}
 
     call.get.side_effect = result
-    assert bounded_motion_result(function, tmp_path, b"video", timeout=1200, batch=16) == {
+    assert bounded_motion_result(function, tmp_path, b"video", timeout=1200, batch=16, **OWNER) == {
         "archive": b"result"
     }
     function.spawn.assert_called_once_with(b"video", batch=16)
     call.cancel.assert_not_called()
-    assert json.loads((tmp_path / "motion-call.json").read_text())["status"] == "result_received"
+    receipt = json.loads((tmp_path / "motion-call.json").read_text())
+    assert_owner(receipt)
+    assert receipt["status"] == "result_received"
 
 
 @pytest.mark.parametrize("cancel_fails", [False, True])
@@ -45,11 +55,12 @@ def test_queue_timeout_cancels_only_owned_call_and_never_retries(tmp_path, cance
     if cancel_fails:
         call.cancel.side_effect = OSError("sensitive provider response")
     with pytest.raises(RuntimeError, match="do not resubmit"):
-        bounded_motion_result(function, tmp_path, b"video", timeout=1200)
+        bounded_motion_result(function, tmp_path, b"video", timeout=1200, **OWNER)
     function.spawn.assert_called_once()
     call.get.assert_called_once_with(timeout=1200)
     call.cancel.assert_called_once_with()
     receipt = json.loads((tmp_path / "motion-call.json").read_text())
+    assert_owner(receipt)
     assert receipt["functionCallId"] == "fc-owned"
     assert receipt["status"] == "wait_timeout"
     assert receipt["cancellation"] == ("unknown" if cancel_fails else "requested")
@@ -57,6 +68,7 @@ def test_queue_timeout_cancels_only_owned_call_and_never_retries(tmp_path, cance
     with pytest.raises(FileExistsError):
         bounded_motion_result(function, tmp_path, b"video", timeout=1200)
     function.spawn.assert_called_once()
+    assert json.loads((tmp_path / "motion-call.json").read_text()) == receipt
 
 
 @pytest.mark.parametrize("error", [KeyboardInterrupt(), RuntimeError("provider failure")])
@@ -66,22 +78,38 @@ def test_interruption_cancels_without_reclassifying_as_wait_timeout(tmp_path, er
     call.object_id = "fc-owned"
     call.get.side_effect = error
     with pytest.raises(type(error)):
-        bounded_motion_result(function, tmp_path, b"video", timeout=1200)
+        bounded_motion_result(function, tmp_path, b"video", timeout=1200, **OWNER)
     call.cancel.assert_called_once_with()
-    assert json.loads((tmp_path / "motion-call.json").read_text())["status"] == "wait_interrupted"
+    receipt = json.loads((tmp_path / "motion-call.json").read_text())
+    assert_owner(receipt)
+    assert receipt["status"] == "wait_interrupted"
 
 
 def test_unknown_submission_is_preserved_and_cannot_be_repeated(tmp_path):
     function = Mock()
     function.spawn.side_effect = OSError("lost response")
     with pytest.raises(OSError):
-        bounded_motion_result(function, tmp_path, b"video", timeout=1200)
+        bounded_motion_result(function, tmp_path, b"video", timeout=1200, **OWNER)
     receipt = json.loads((tmp_path / "motion-call.json").read_text())
+    assert_owner(receipt)
     assert receipt["status"] == "submission_uncertain"
     assert receipt["functionCallId"] is None
     with pytest.raises(FileExistsError):
         bounded_motion_result(function, tmp_path, b"video", timeout=1200)
     function.spawn.assert_called_once()
+
+
+def test_existing_legacy_receipt_prevents_submission(tmp_path):
+    path = tmp_path / "motion-call.json"
+    legacy = '{"schema":"wander.motion-call/1","functionCallId":"fc-legacy"}\n'
+    path.write_text(legacy)
+    function = Mock()
+
+    with pytest.raises(FileExistsError):
+        bounded_motion_result(function, tmp_path, b"video", timeout=1200, **OWNER)
+
+    function.spawn.assert_not_called()
+    assert path.read_text() == legacy
 
 
 @pytest.mark.parametrize("timeout", [0, -1, True, 1.5, "600"])
@@ -97,6 +125,9 @@ def test_motion_entrypoint_wires_bounded_wait_without_changing_default(
     tmp_path, monkeypatch, bounded
 ):
     import modal
+    from click.testing import CliRunner
+    from modal import config as modal_config
+    from modal.cli.entry_point import entrypoint_cli
 
     monkeypatch.delenv("WANDER_WORKER_TIMEOUT_SECONDS", raising=False)
     if bounded:
@@ -118,21 +149,63 @@ def test_motion_entrypoint_wires_bounded_wait_without_changing_default(
     call.get.return_value = result
     main = namespace["main"]
     main.__globals__["reconstruct"] = function
+    main.__globals__["app"] = Mock(app_id="ap-entrypoint")
     source = tmp_path / "source.mp4"
     source.write_bytes(b"original")
     destination = tmp_path / "output"
-    main(str(source), str(destination), experiment="pi3x")
+    receipt_path = destination / "motion-call.json"
+
+    def spawn(*args, **kwargs):
+        receipt = json.loads(receipt_path.read_text())
+        assert receipt["status"] == "submitting"
+        assert receipt["functionCallId"] is None
+        assert receipt["appId"] == "ap-entrypoint"
+        assert receipt["modalProfile"] == "cli-selected"
+        return call
+
+    function.spawn.side_effect = spawn
+    monkeypatch.setattr(modal_config, "_profile", "environment-selected")
+    monkeypatch.setattr(
+        modal_config, "_user_config", {"environment-selected": {}, "cli-selected": {}}
+    )
+    with patch.dict("os.environ", {"MODAL_PROFILE": "environment-selected"}, clear=True):
+        if bounded:
+            cli = CliRunner().invoke(entrypoint_cli, ["--profile", "cli-selected", "run", "--help"])
+            assert cli.exit_code == 0, cli.output
+        main(str(source), str(destination), experiment="pi3x")
     if bounded:
         function.remote.assert_not_called()
         function.spawn.assert_called_once_with(
             b"original", experiment="pi3x", batch=16, anchor_lock=False
         )
         call.get.assert_called_once_with(timeout=1200)
-        assert (destination / "motion-call.json").exists()
+        assert json.loads(receipt_path.read_text())["functionCallId"] == "fc-entrypoint"
     else:
         function.remote.assert_called_once_with(b"original", "pi3x", 16, False)
         function.spawn.assert_not_called()
-        assert not (destination / "motion-call.json").exists()
+        assert not receipt_path.exists()
+
+
+@pytest.mark.parametrize(
+    "configured, override, expected",
+    [
+        (True, None, "configured-alias"),
+        (False, None, None),
+        (True, "MODAL_TOKEN_ID", None),
+        (True, "MODAL_OAUTH_REFRESH_TOKEN", None),
+    ],
+)
+def test_profile_alias_requires_a_configured_profile_without_credential_overrides(
+    monkeypatch, configured, override, expected
+):
+    from modal import config as modal_config
+    from worker.modal_motion import _effective_modal_profile
+
+    profiles = {"configured-alias": {"active": True}} if configured else {}
+    monkeypatch.setattr(modal_config, "_user_config", profiles)
+    monkeypatch.setattr(modal_config, "_profile", modal_config._config_active_profile())
+    with patch.dict("os.environ", {override: "synthetic"} if override else {}, clear=True):
+        assert _effective_modal_profile() == expected
 
 
 def test_pinned_sdk_empty_poll_raises_builtin_timeout():
