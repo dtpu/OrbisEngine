@@ -610,9 +610,13 @@ class Pipeline:
             raise SkipStage(f"only {doc['trackCount']} person track(s) in this clip")
         track = doc["tracks"][idx]
         ident = self.ctx / "identity.json"
-        if ident.exists() and track["track"] in (
-            json.loads(ident.read_text()).get("failedTracks") or []
-        ):
+        identity = json.loads(ident.read_text()) if ident.exists() else {}
+        if self.a.all_people and (identity.get("ok") is False or identity.get("failedTracks")):
+            raise RuntimeError(
+                "the retained identity audit failed and --all-people forbids dropping tracks. "
+                f"Repair tracking before preparing or generating avatars; see {ident}."
+            )
+        if track["track"] in (identity.get("failedTracks") or []):
             raise SkipStage(f"track {track['track']} failed the identity audit (changed person)")
         return track
 
@@ -1897,6 +1901,11 @@ class Pipeline:
         if p.returncode == 3:
             doc = json.loads((self.ctx / "identity.json").read_text())
             failed = doc.get("failedTracks") or []
+            if self.a.all_people:
+                raise RuntimeError(
+                    "the identity audit failed and --all-people forbids dropping failed tracks. "
+                    f"Preserve the tracking evidence and repair the tracks; see {self.ctx / 'identity.json'}."
+                )
             if failed and len(failed) < len(doc.get("tracks", [])) and not doc.get("reason"):
                 # some tracks changed person, some did not: build the ones that held (the swap
                 # control passed, so the ok verdicts mean something) and skip the rest

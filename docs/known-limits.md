@@ -3,6 +3,14 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- The fresh city tracking baseline assigned person poses to street lamps and split the main
+  walker across tracks. Four of five retained tracks failed the source-appearance identity audit;
+  202 Mask R-CNN detections lacked a pose partner. These counts do not establish how many real
+  pedestrians were missed. The runner formerly marked tracking successful by skipping the failed
+  subset, even with `--all-people`. All-person runs now stop on any failed identity audit rather
+  than discarding those tracks. This repairs acceptance, not the tracker: no avatar or world was
+  generated from this result. Evidence: `.context/evidence/city-recovery-20261120/`.
+
 - The forest scale gate fails on distant background, not on the route. Replaying the run's own
   scale diagnostic (unchanged inputs, scale0 0.7414, whole-frame p10 0.842–0.848) split by each
   frame's source-depth quartiles: rays within about 4 body-heights mostly stay inside the unchanged
