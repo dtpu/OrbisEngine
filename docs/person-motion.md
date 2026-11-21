@@ -118,9 +118,11 @@ change the stage retry budget, or distinguish pedestrians from people pictured o
 statues. `detection-audit.json` records crop bounds, detections, recoveries and pose origins;
 track summaries record call counts and motion observations preserve their origin.
 
-The geometry and submission plumbing have CPU tests. Actual model recovery and visual
-quality have not yet been established; do not enable this by default or treat recovered
-detections as an accepted all-people reconstruction.
+The geometry and submission plumbing have CPU tests. In the first city GPU trial, 186 crop
+calls produced only five mask-supported poses; none met the unchanged track-start score.
+No additional person track survived and source overlays still missed pedestrians. The reviewed
+advertisement exclusions worked, but all-person reconstruction failed. Keep crop recovery off
+by default; `recoveredCropPoses` counts supported detections, not surviving tracks.
 
 ## Reviewed depictions and statues
 
