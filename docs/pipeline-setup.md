@@ -184,6 +184,35 @@ fetched during resume, including headers. Any partial `.git` files left by an ol
 on the volume and are omitted from the final runtime inventory. Existing receipt and recovery
 checks still apply.
 
+#### Reconcile a failed LHM range recovery
+
+The final recovery slot is `lhm-resume-reconciled`. Before launching it, verify that the prior
+Modal app and call have terminated. Compute `PRIOR_RESUME_SHA256` over the exact saved bytes of
+the volume's `lhm-resume-attempt.json`, including whitespace. This phase requires a failed
+`lhm-resume` receipt with a call ID, `TimeoutError`, the exact message
+`cache staging deadline exhausted`, and an empty step list. The original `lhm` failure guard
+still applies, and `data.incomplete` must exist with `data` absent.
+
+Use one authorized launcher. Before invoking Modal, exclusively create and durably persist a
+fixed local launch claim for this workspace, environment and LHM volume. Use exclusive-create
+mode (`open(..., "x")`) and retain the claim even if launch or completion is uncertain. An
+existing claim blocks another launch. The Modal volume receipt alone cannot enforce an atomic
+cap across independent launchers.
+
+```sh
+uv run --locked modal --profile "$STAGING_PROFILE" run worker/modal_stage_weights.py::main \
+  --phase lhm-resume-reconciled --deadline-epoch "$DEADLINE_EPOCH" \
+  --prior-resume-sha256 "$PRIOR_RESUME_SHA256" \
+  --out "$STAGING_RECEIPT_DIR/lhm-resume-2.json"
+```
+
+The worker commits `setup-receipts/lhm-resume-2-attempt.json` before reading archive ranges.
+It records both call IDs, the prior receipt hash, `totalAttempt: 3` and `rangeAttempt: 2`.
+The original receipts and their counters are preserved. Any existing final receipt consumes the
+slot, including a partial or completed receipt. Inspect it directly after a lost response. This
+path allows one initial staging attempt and at most two range recoveries. It uses the same
+Git-metadata exclusion and resource limits as ordinary range recovery.
+
 Staging is outside the paid-stage ledger. The function requests one CPU and 1 GiB of memory,
 with limits of two CPUs and 4 GiB, one container per function configuration, zero function retries
 and a two-second scaledown window. Modal's execution timeout is 1,800 seconds. On function entry,
