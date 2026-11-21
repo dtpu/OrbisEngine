@@ -9,11 +9,11 @@ persist remotely; downloaded evidence is local and must remain untracked.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import modal
 
 if modal.is_local():
+    from worker.stages.modal_profile import effective_modal_profile as _effective_modal_profile
     from worker.stages.worker_resources import inference_resources
 else:
     from worker_resources import inference_resources
@@ -177,26 +177,6 @@ def reconstruct(
         (out / "modal-run.json").write_text(json.dumps(report, indent=2))
         archive.add(out / "modal-run.json", arcname="modal-run.json")
     return dict(report=report, archive=buf.getvalue())
-
-
-def _effective_modal_profile() -> str | None:
-    from modal import config as modal_config
-
-    # Modal 1.5.5 updates this selection for CLI --profile before entering main.
-    profile = modal_config._profile
-    if profile not in modal_config.config_profiles():
-        return None
-    # The SDK resolves credential settings from the environment before the profile.
-    credential_overrides = (
-        "MODAL_TOKEN_ID",
-        "MODAL_TOKEN_SECRET",
-        "MODAL_OAUTH_REFRESH_TOKEN",
-        "MODAL_OAUTH_CLIENT_ID",
-        "MODAL_OAUTH_CLIENT_SECRET",
-    )
-    if any(name in os.environ for name in credential_overrides):
-        return None
-    return profile
 
 
 @app.local_entrypoint()

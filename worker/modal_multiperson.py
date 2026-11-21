@@ -228,6 +228,59 @@ def track(
     return {"report": report, "archive": buf.getvalue()}
 
 
+def _tracking_result(dest, *inputs):
+    from worker.stages.lhm_recovery import atomic_json
+    from worker.stages.modal_profile import effective_modal_profile
+
+    execution_timeout = INFERENCE_RESOURCES["timeout"]
+    # Modal 1.5.5 uses the execution timeout when startup_timeout is omitted.
+    timeout = INFERENCE_RESOURCES.get("startup_timeout", execution_timeout) + execution_timeout
+    path = dest / "tracking-call.json"
+    receipt = {
+        "schema": "wander.tracking-call/1",
+        "status": "submitting",
+        "appId": app.app_id,
+        "modalProfile": effective_modal_profile(),
+        "functionCallId": None,
+        "resultTimeoutSeconds": timeout,
+    }
+    # Reserve this destination exclusively even if submission never returns a call ID.
+    with path.open("x") as stream:
+        stream.write("{}\n")
+    atomic_json(path, receipt)
+    try:
+        call = track.spawn(*inputs)
+    except BaseException:
+        receipt["status"] = "submission_uncertain"
+        atomic_json(path, receipt)
+        raise
+
+    try:
+        receipt.update(functionCallId=call.object_id, status="waiting")
+        atomic_json(path, receipt)
+        result = call.get(timeout=timeout)
+    except BaseException as error:
+        timed_out = isinstance(error, TimeoutError)
+        receipt["status"] = "wait_timeout" if timed_out else "wait_interrupted"
+        try:
+            call.cancel()
+            receipt["cancellation"] = "requested"
+        except BaseException as cancellation_error:
+            receipt["cancellation"] = "unknown"
+            receipt["cancellationErrorType"] = type(cancellation_error).__name__
+        atomic_json(path, receipt)
+        if timed_out:
+            raise RuntimeError(
+                f"Tracking result wait timed out after {timeout}s; cancellation "
+                f"{receipt['cancellation']}. Inspect {path} before any recovery; do not resubmit."
+            ) from error
+        raise
+
+    receipt["status"] = "result_received"
+    atomic_json(path, receipt)
+    return result
+
+
 @app.local_entrypoint()
 def main(
     video: str,
@@ -246,7 +299,8 @@ def main(
 
     dest = Path(out)
     dest.mkdir(parents=True, exist_ok=True)
-    result = track.remote(
+    result = _tracking_result(
+        dest,
         Path(video).read_bytes(),
         Path(cameras).read_bytes() if cameras else None,
         fps,
