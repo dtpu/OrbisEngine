@@ -16,8 +16,16 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   202 unmatched instance observations still include real background pedestrians and people
   pictured on signage. Do not animate every unmatched detection or call the single-track
   result accepted. Its body projection also remains misaligned with the observed silhouette.
-  Experimental `--pose-crops` adds calibrated inference for unmatched masks, but has no GPU
-  quality result yet and remains off by default; see [person motion](person-motion.md#experimental-tracking-crop-recovery).
+  A third paid trial used experimental `--pose-crops` plus explicit source-reviewed exclusions
+  for 16 advertisement observations. Of 186 crop calls, 67 returned poses and only five passed
+  the unchanged mask-support test. All five scored 0.160–0.220, below the existing 0.30 threshold
+  for starting a track; no additional track survived. The main walker retained all 94 samples,
+  but background people remained missing in source overlays. The median crop joint-box height
+  was 0.406 observed body-heights, with a median center offset of 0.214 body-heights (image-space
+  diagnostics, not physical measurements). Do not treat support counts as surviving tracks,
+  lower thresholds to declare success, or repeat this crop recipe unchanged. All three ordinary
+  paid tracking executions are used. The option stays off by default; see
+  [person motion](person-motion.md#experimental-tracking-crop-recovery).
   Evidence: `.context/evidence/city-recovery-20261120/`.
 
 - The forest scale gate fails on distant background, not on the route. Replaying the run's own

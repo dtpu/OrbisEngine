@@ -149,6 +149,7 @@ CODE_FILES = {
         "worker/stages/track_people.py",
         "worker/stages/pose_instances.py",
         "worker/stages/pose_crops.py",
+        "worker/stages/person_exclusions.py",
     ),
     "worker/modal_multiperson.py::animate": (
         "worker/stages/worker_resources.py",
@@ -188,6 +189,7 @@ NUMBER_FLAGS = {
 }
 TEXT_FLAGS = {"--experiment", "--mask-backend", "--alignment", "--depth-roi", "--refine-prompt"}
 INPUT_FLAGS = {
+    "--person-exclusions",
     "--image",
     "--cameras",
     "--masks-in",

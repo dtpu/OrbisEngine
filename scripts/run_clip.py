@@ -1840,6 +1840,10 @@ class Pipeline:
 
     def tracks(self):
         """Every person in the clip, linked into identity-stable tracks (one MultiHMR pass)."""
+        if getattr(self.a, "person_exclusions", None):
+            from worker.stages.person_exclusions import load_video_exclusions
+
+            load_video_exclusions(self.a.person_exclusions, self.clip, fps=self.a.fps)
         self.paid_run(
             "tracks",
             [
@@ -1855,6 +1859,11 @@ class Pipeline:
                 "--det-thresh",
                 str(self.a.det_thresh),
                 *(["--pose-crops"] if getattr(self.a, "pose_crops", False) else []),
+                *(
+                    ["--person-exclusions", str(self.a.person_exclusions)]
+                    if getattr(self.a, "person_exclusions", None)
+                    else []
+                ),
                 "--out",
                 str(self.ctx / "tracks"),
             ],
@@ -4360,6 +4369,9 @@ def main():
         help="MultiHMR detection threshold for the tracking stage",
     )
     ap.add_argument(
+        "--person-exclusions", default="", help="source-bound reviewed non-person instances"
+    )
+    ap.add_argument(
         "--pose-crops",
         action="store_true",
         help="experimental crop pose recovery for unmatched tracked instances",
@@ -4446,8 +4458,10 @@ def main():
         animation_options(execution_timeout=a.execution_timeout)
     except ValueError as error:
         ap.error(str(error))
-    if a.pose_crops and (not (a.people or a.all_people) or a.orchestrated):
-        ap.error("--pose-crops requires direct tracked runs; use wander step for stage parameters")
+    if (a.pose_crops or a.person_exclusions) and (not (a.people or a.all_people) or a.orchestrated):
+        ap.error(
+            "pose crops/exclusions require direct tracked runs; use wander step for stage parameters"
+        )
     if a.lower_body_provenance is not None:
         if not a.lower_body_provenance.strip():
             ap.error("--lower-body-provenance must be a nonempty measured statement")
