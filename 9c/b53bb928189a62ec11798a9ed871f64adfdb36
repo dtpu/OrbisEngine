@@ -1,0 +1,53 @@
+docs/known-limits.md
+  s_c6018019842afa::t_789b849d6513ea 19-20
+scripts/tests/test_pose_crops.py
+  s_a3c43d2a2443ce::t_6aef5c63bc611a 48-52,57,69-83,89-102,110-112,120-130,136-151,153-161
+  s_c6018019842afa::t_82eeffa9057f81 1-47,53-56,58-68,84-88,103-109,113-119,131-135,152,162-171
+worker/stages/pose_crops.py
+  s_c6018019842afa::t_82eeffa9057f81 1-24,29-110
+  s_a3c43d2a2443ce::t_6aef5c63bc611a 25-28
+docs/person-motion.md
+  s_a3c43d2a2443ce::t_7ab8341a902fea 105-123
+orchestrator/steps.py
+  s_c6018019842afa::t_428cf153da519e 121-126
+scripts/run_clip.py
+  s_c6018019842afa::t_81ac4d1e8e9ba9 1857,4362-4366,4449-4450
+scripts/stage_attempts.py
+  s_a3c43d2a2443ce::t_7a463fcbec6a9b 151,164
+scripts/tests/test_pose_instances.py
+  s_a3c43d2a2443ce::t_8861c76c0e889a 10,55-67
+scripts/tests/test_stage_attempts.py
+  s_c6018019842afa::t_8a5f031f6a4a62 693-704
+scripts/tests/test_tracking_submission.py
+  s_a3c43d2a2443ce::t_64ccf49ba5e340 101,119-121,200-231
+worker/modal_multiperson.py
+  s_a3c43d2a2443ce::t_8d61cb10359387 153,200-201,298,304-305,318
+worker/stages/pose_instances.py
+  s_a3c43d2a2443ce::t_7d4df56786031d 42-62
+worker/stages/track_people.py
+  s_a3c43d2a2443ce::t_19da00e8b8aa47 170-174,176-177,188-189,220-222,242-243,313-392,402-403,462,605,714-716
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9cb53bb928189a62ec11798a9ed871f64adfdb36",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
