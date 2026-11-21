@@ -118,6 +118,11 @@ MARBLE_POLL_PARAMETERS = tunables(
     ),
 )
 TRACK_PARAMETERS = tunables(
+    person_exclusions=knob(
+        "string",
+        "",
+        "path to source-bound reviewed depiction/statue exclusions; no automatic semantic approval",
+    ),
     pose_crops=knob(
         "boolean",
         False,

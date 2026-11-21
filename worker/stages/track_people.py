@@ -172,9 +172,17 @@ def main():
         action="store_true",
         help="experimental calibrated crop inference for unmatched person instances",
     )
+    ap.add_argument(
+        "--person-exclusions",
+        default="",
+        help="source-bound reviewed depictions/statues to preserve",
+    )
     a = ap.parse_args()
     if a.pose_crops and (a.no_maskrcnn or not a.cameras):
         ap.error("--pose-crops requires instance masks and source cameras")
+
+    if a.person_exclusions and a.no_maskrcnn:
+        ap.error("--person-exclusions requires independent instance masks")
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -194,7 +202,25 @@ def main():
     Accelerator()
 
     source_sha = hashlib.sha256(Path(a.video).read_bytes()).hexdigest()
+    exclusions = None
+    exclusions_sha = None
+    if a.person_exclusions:
+        from person_exclusions import load_exclusions, match_exclusions
+
+        probe = cv2.VideoCapture(a.video)
+        width, height = (
+            int(probe.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        )
+        probe.release()
+        exclusions = load_exclusions(a.person_exclusions, source_sha, width, height)
+        exclusions_sha = hashlib.sha256(Path(a.person_exclusions).read_bytes()).hexdigest()
+        (out / "person-exclusions.json").write_bytes(Path(a.person_exclusions).read_bytes())
     indices, times, src_fps, count, duration = sample_indices(a.video, a.fps)
+    if exclusions and {entry["sourceIndex"] for entry in exclusions["entries"]} - set(
+        map(int, indices)
+    ):
+        raise ValueError("reviewed exclusions contain frames outside the tracking schedule")
     camera_doc = json.loads(Path(a.cameras).read_text()) if a.cameras else None
     cameras = camera_doc["cameras"] if camera_doc else None
     # Cameras are matched by the source frame they describe, not by position. The solve records
@@ -241,6 +267,7 @@ def main():
     detection_audit = []
     crop_inference_calls = 0
     recovered_crop_poses = 0
+    excluded_instances_total = 0
     w = h = None
 
     for sample, (index, timestamp) in enumerate(zip(indices, times)):
@@ -310,6 +337,10 @@ def main():
         ]
         boxes = [joints_box(joints, w, h) for joints in projected]
         matches = match_pose_instances(boxes, inst_boxes) if rcnn is not None else {}
+        excluded = match_exclusions(exclusions, int(index), inst_boxes) if exclusions else {}
+        # Keep excluded masks as competing evidence; never reassign their poses to a neighbor.
+        matches = {pose: pair for pose, pair in matches.items() if pair[0] not in excluded}
+        excluded_instances_total += len(excluded)
         pose_origins = ["full_frame"] * len(detected)
         crop_audit = []
         if a.pose_crops:
@@ -319,7 +350,7 @@ def main():
                 )
             original_used = {pair[0] for pair in matches.values()}
             for instance_i, instance_box in enumerate(inst_boxes):
-                if instance_i in original_used:
+                if instance_i in original_used or instance_i in excluded:
                     continue
                 bounds = crop_bounds(instance_box, w, h)
                 x0, y0, x1, y1 = bounds
@@ -402,11 +433,14 @@ def main():
                 poseOrigins=pose_origins,
                 cropPasses=crop_audit,
                 instanceBoxes=inst_boxes,
+                excludedInstances=[dict(instance=i, **entry) for i, entry in excluded.items()],
                 matches=[
                     dict(pose=i, instance=pair[0], iou=pair[1]) for i, pair in matches.items()
                 ],
                 unassignedPoses=rejected,
-                unmatchedInstances=[i for i in range(len(inst_boxes)) if i not in used_inst],
+                unmatchedInstances=[
+                    i for i in range(len(inst_boxes)) if i not in used_inst and i not in excluded
+                ],
                 maskSupportRequired=rcnn is not None,
             )
         )
@@ -462,7 +496,7 @@ def main():
                     poseOrigin=pose_origins[det_i],
                 )
             )
-        unmatched_rcnn_total += len(inst_boxes) - len(used_inst)
+        unmatched_rcnn_total += len(inst_boxes) - len(used_inst) - len(excluded)
 
         # ---- association ----------------------------------------------------
         live = [t for t in tracks if t.missed <= a.max_gap]
@@ -711,6 +745,15 @@ def main():
         maskrcnnDetectionsWithoutPose=unmatched_rcnn_total,
         unassignedPoseDetections=unassigned_pose_total,
         maskSupportRequired=not a.no_maskrcnn,
+        personExclusions=(
+            dict(
+                sha256=exclusions_sha,
+                reviewer=exclusions["reviewer"],
+                excludedObservations=excluded_instances_total,
+            )
+            if exclusions
+            else None
+        ),
         poseCrops=a.pose_crops,
         cropInferenceCalls=crop_inference_calls,
         recoveredCropPoses=recovered_crop_poses,

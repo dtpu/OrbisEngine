@@ -98,7 +98,7 @@ def test_tracking_receipt_is_durable_before_spawn_and_wait(launch, monkeypatch):
     launch.call.get.side_effect = get
     launch.run(fps=15.0, det_thresh=0.3, gate=0.4, max_gap=4, min_track_samples=6, overlay_every=2)
     launch.function.spawn.assert_called_once_with(
-        b"video bytes", b"camera bytes", 15.0, 0.3, 0.4, 4, 6, 2, False
+        b"video bytes", b"camera bytes", 15.0, 0.3, 0.4, 4, 6, 2, False, None
     )
     launch.call.cancel.assert_not_called()
     assert launch.receipt() == initial | {"status": "result_received", "functionCallId": "fc-track"}
@@ -117,7 +117,7 @@ def test_tracking_default_wait_and_reported_inference_failure(launch, monkeypatc
     with pytest.raises(RuntimeError, match="see the downloaded track.log"):
         launch.run(cameras="")
     launch.function.spawn.assert_called_once_with(
-        b"video bytes", None, 12, 0.15, 0.22, 8, 8, 0, False
+        b"video bytes", None, 12, 0.15, 0.22, 8, 8, 0, False, None
     )
     launch.call.get.assert_called_once_with(timeout=7200)
     launch.call.cancel.assert_not_called()
@@ -203,7 +203,7 @@ def test_crop_option_forwarded_without_extra_provider_submissions(launch):
     launch.call.get.return_value = tracking_output()
     launch.run(pose_crops=True)
     launch.function.spawn.assert_called_once()
-    assert launch.function.spawn.call_args.args[-1] is True
+    assert launch.function.spawn.call_args.args[-2] is True
 
 
 def test_crops_without_calibration_stop_before_claim_or_submission(launch):
@@ -229,3 +229,46 @@ def test_runner_forwards_crop_option_only_when_requested(tmp_path, enabled):
     pipeline.paid_run.assert_called_once()
     command = pipeline.paid_run.call_args.args[1]
     assert ("--pose-crops" in command) is enabled
+
+
+def test_reviewed_exclusions_forward_exact_bytes_after_validation(launch, tmp_path, monkeypatch):
+    from worker.stages import person_exclusions
+
+    path = tmp_path / "review.json"
+    path.write_bytes(b"reviewed bytes")
+    validate = Mock(return_value={})
+    monkeypatch.setattr(person_exclusions, "load_video_exclusions", validate)
+    launch.call.get.return_value = tracking_output()
+    launch.run(person_exclusions=str(path))
+    validate.assert_called_once()
+    launch.function.spawn.assert_called_once()
+    assert launch.function.spawn.call_args.args[-1] == b"reviewed bytes"
+
+
+def test_invalid_review_stops_before_submission(launch, monkeypatch):
+    from worker.stages import person_exclusions
+
+    monkeypatch.setattr(
+        person_exclusions, "load_video_exclusions", Mock(side_effect=ValueError("stale source"))
+    )
+    with pytest.raises(ValueError, match="stale source"):
+        launch.run(person_exclusions="stale.json")
+    launch.function.spawn.assert_not_called()
+    assert not launch.destination.exists()
+
+
+def test_runner_validates_review_before_paid_claim(tmp_path, monkeypatch):
+    from worker.stages import person_exclusions
+    import run_clip
+
+    pipeline = object.__new__(run_clip.Pipeline)
+    pipeline.ctx = tmp_path
+    pipeline.clip = tmp_path / "source.mp4"
+    pipeline.a = SimpleNamespace(fps=12, det_thresh=0.15, person_exclusions="stale.json")
+    pipeline.paid_run = Mock()
+    monkeypatch.setattr(
+        person_exclusions, "load_video_exclusions", Mock(side_effect=ValueError("stale source"))
+    )
+    with pytest.raises(ValueError, match="stale source"):
+        pipeline.tracks()
+    pipeline.paid_run.assert_not_called()

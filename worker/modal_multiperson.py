@@ -151,6 +151,7 @@ def track(
     min_track_samples: int,
     overlay_every: int,
     pose_crops: bool = False,
+    person_exclusions: bytes | None = None,
 ):
     import io
     import os
@@ -199,6 +200,9 @@ def track(
         cmd += ["--cameras", str(root / "cameras.json")]
     if pose_crops:
         cmd += ["--pose-crops"]
+    if person_exclusions is not None:
+        (root / "person-exclusions.json").write_bytes(person_exclusions)
+        cmd += ["--person-exclusions", str(root / "person-exclusions.json")]
     try:
         with (out / "track.log").open("w") as log:
             proc = subprocess.Popen(
@@ -296,6 +300,7 @@ def main(
     min_track_samples: int = 8,
     overlay_every: int = 0,
     pose_crops: bool = False,
+    person_exclusions: str = "",
 ):
     import io
     import json
@@ -303,6 +308,12 @@ def main(
 
     if pose_crops and not cameras:
         raise ValueError("--pose-crops requires source cameras")
+    exclusion_bytes = None
+    if person_exclusions:
+        from worker.stages.person_exclusions import load_video_exclusions
+
+        load_video_exclusions(person_exclusions, video, fps=fps)
+        exclusion_bytes = Path(person_exclusions).read_bytes()
     dest = Path(out)
     dest.mkdir(parents=True, exist_ok=True)
     result = _tracking_result(
@@ -316,6 +327,7 @@ def main(
         min_track_samples,
         overlay_every,
         pose_crops,
+        exclusion_bytes,
     )
     with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:
         archive.extractall(dest, filter="data")

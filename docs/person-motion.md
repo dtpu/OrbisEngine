@@ -121,3 +121,24 @@ track summaries record call counts and motion observations preserve their origin
 The geometry and submission plumbing have CPU tests. Actual model recovery and visual
 quality have not yet been established; do not enable this by default or treat recovered
 detections as an accepted all-people reconstruction.
+
+## Reviewed depictions and statues
+
+`--person-exclusions review.json` (or the tracking stage's `person_exclusions` parameter)
+accepts explicit source-bound observations of a depiction or statue. It does not classify
+objects automatically. Unreviewed observations remain eligible for pose recovery and tracking,
+including small or stationary pedestrians. An exclusion must be visually reviewed with source
+context; an agent-authored review must identify its author as an agent, not a human approval.
+
+The `wander.person-exclusions/1` JSON includes `sourceSha256`, source `width` and `height`,
+`reviewer` (`kind`, `name`), and `entries`. Each entry records `sourceIndex`, a source-pixel
+`box` in xyxy order, `label` (`depiction` or `statue`), a specific `reason`, and an `evidence`
+reference. Every reviewed box must uniquely match a detector box at IoU strictly above 0.95.
+Stale source/dimensions, ambiguous matches and missing detections fail rather than silently
+excluding something else. Entries outside the tracking schedule are rejected.
+
+Excluded instances remain competing evidence during pose assignment, so a pose belonging to a
+pictured person is not reassigned to its neighbor. They are recorded in `excludedInstances`
+separately from unresolved `unmatchedInstances`; the exact review is retained with its SHA-256
+and reviewer in the track receipt. The review content participates in the paid-attempt identity.
+It does not change retry caps or establish all-person recall, identity or scene acceptance.

@@ -1311,3 +1311,23 @@ class PaidRunIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_person_exclusion_content_changes_attempt_identity(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    review = tmp_path / "review.json"
+    review.write_text(
+        '{"entries": [{"sourceIndex": 0, "box": [0, 0, 10, 10], "label": "depiction"}]}'
+    )
+    command = [
+        "modal",
+        "run",
+        "worker/modal_multiperson.py::main",
+        "--person-exclusions",
+        str(review),
+    ]
+    first = command_identity(command, root)
+    review.write_text(
+        '{"entries": [{"sourceIndex": 0, "box": [0, 0, 20, 20], "label": "depiction"}]}'
+    )
+    assert command_identity(command, root) != first
