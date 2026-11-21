@@ -20,6 +20,18 @@ Code identifiers, env vars and the package still use the project's old name, Wan
 The source video owns the timeline; the XR runtime owns head motion. Scene manifests and media
 stay outside Git. Viewer installation and builds do not launch inference or download model weights.
 
+## Person tracking
+
+Multi-person tracking requires independent Mask R-CNN support for each pose by default.
+Pose boxes and instance boxes are matched one-to-one, maximizing supported pairs first and
+then total overlap, with the existing strict IoU > 0.2 threshold. Unsupported poses cannot
+create rectangular person masks or compete for a track. The explicit `--no-maskrcnn` worker
+mode remains unverified and uses rectangles. This is not a detector recall guarantee:
+unmatched person instances still lack animation poses and must be reviewed before delivery.
+`detection-audit.json` retains per-sample pose/instance boxes, assignments and unmatched indices;
+`tracks.json` reports unsupported pose and unmatched instance counts separately. Counts are
+observations across frames, not unique people. Original source images and quality gates are unchanged.
+
 ## Viewer notes
 
 Open **http://127.0.0.1:5399/demo.html**. The root URL redirects here. The local Bun server loads

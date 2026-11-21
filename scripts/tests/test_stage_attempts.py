@@ -680,6 +680,16 @@ class CommandIdentityTests(unittest.TestCase):
                 _, after, _ = command_identity(command, self.root)
                 self.assertNotEqual(before[helper], after[helper])
 
+    def test_tracking_instance_matching_changes_are_fingerprinted(self):
+        helper = "worker/stages/pose_instances.py"
+        command = ["modal", "run", "worker/modal_multiperson.py::main"]
+        _, before, _ = command_identity(command, self.root)
+        self.assertIn(helper, before)
+        path = self.root / helper
+        path.write_bytes(path.read_bytes() + b"\n# changed independent mask support\n")
+        _, after, _ = command_identity(command, self.root)
+        self.assertNotEqual(before[helper], after[helper])
+
     def test_single_person_lhm_deadline_guard_changes_are_fingerprinted(self):
         helper = "worker/stages/lhm_execution.py"
         command = ["modal", "run", "worker/modal_lhm.py"]
