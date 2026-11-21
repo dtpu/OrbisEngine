@@ -1,0 +1,61 @@
+scripts/tests/test_stage_attempts.py
+  s_c6018019842afa::t_06dc9ef339729d 1314-1333
+worker/stages/person_exclusions.py
+  s_c6018019842afa::t_2bee299f3c30fa 103,108-109,139-148,155-166
+  s_c6018019842afa::t_a1fef1d22765b7 46-48,124-131
+  s_c6018019842afa::t_bdc41cc1909269 1-45,49-102,104-107,110-123,132-138,149-154,167-201
+scripts/tests/test_tracking_submission.py
+  s_a3c43d2a2443ce::t_845b8fb8a629f7 101,120,206,232-235,237-249,254-257,261,272
+  s_c6018019842afa::t_06dc9ef339729d 236,250-253,269-271
+  s_c6018019842afa::t_445d234ae398bf 258-260,262-268,273-274
+worker/stages/track_people.py
+  s_c6018019842afa::t_06dc9ef339729d 175-176,179,211-214,220-223,441-443,748-756
+  s_c6018019842afa::t_5da55ea3763df3 184-186,205-210,215-218,270,340-343,353,436,499
+  s_c6018019842afa::t_ce601934c4a736 177-178
+scripts/run_clip.py
+  s_c6018019842afa::t_06dc9ef339729d 1862-1866,4373,4462-4464
+  s_a3c43d2a2443ce::t_ae62756451886e 4372
+  s_a3c43d2a2443ce::t_845b8fb8a629f7 1843-1845
+  s_c6018019842afa::t_5da55ea3763df3 4461
+  s_c6018019842afa::t_5a4c7cac279e55 1846
+  s_a3c43d2a2443ce::t_4e737b01a3cf9a 4371
+docs/person-motion.md
+  s_c6018019842afa::t_06dc9ef339729d 124-144
+scripts/tests/test_person_exclusions.py
+  s_c6018019842afa::t_2bee299f3c30fa 255-256,261-275,295-307,313-322
+  s_a3c43d2a2443ce::t_3e9b1104dc0f11 257-260,276-294,308-312
+  s_c6018019842afa::t_a1fef1d22765b7 21-24,26-34,101-103,109-124,131-154,176,208-220
+  s_c6018019842afa::t_89f0b4ffda3ad8 1-20,25,35-100,104-108,125-130,155-175,177-207,221-254
+worker/modal_multiperson.py
+  s_c6018019842afa::t_5da55ea3763df3 154,203-205,303,311-312,314,316,330
+  s_a3c43d2a2443ce::t_845b8fb8a629f7 313
+  s_c6018019842afa::t_5a4c7cac279e55 315
+scripts/stage_attempts.py
+  s_c6018019842afa::t_5da55ea3763df3 152,192
+orchestrator/steps.py
+  s_c6018019842afa::t_06dc9ef339729d 121-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9eae5a3fbc975267f1b94d845386474e2202048b",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
