@@ -1,16 +1,23 @@
 """Offline tests for streamed cache extraction and bounded HTTP range recovery."""
 
 import io
+import json
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, call, patch
+
+import pytest
+from modal._functions import synchronizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker" / "scripts"))
 from modal_stage_weights import extract_missing_priors, extract_priors
+import modal_stage_weights as staging
 
 
 def archive_bytes(files):
@@ -28,6 +35,190 @@ class Response(io.BytesIO):
         super().__init__(body)
         self.headers = headers
         self.status = status
+
+
+@pytest.mark.parametrize(
+    "phase, mount_paths",
+    [
+        ("clean-only", ("/clean",)),
+        ("clean-motion", ("/source", "/clean", "/motion")),
+        ("clean-motion-repair", ("/source", "/clean", "/motion")),
+        ("clean-motion-repair-v2", ("/source", "/clean", "/motion")),
+        ("clean-instance", ("/clean", "/lhm")),
+        ("lhm", ("/lhm",)),
+        ("lhm-resume", ("/lhm",)),
+        ("dino", ("/lhm",)),
+        ("gfpgan", ("/lhm",)),
+    ],
+)
+def test_local_entrypoint_uses_real_sdk_variant_with_only_phase_dependencies(
+    tmp_path, phase, mount_paths
+):
+    base = synchronizer._translate_in(staging.stage)
+    volume_type = type(synchronizer._translate_in(staging.VOLUMES["/clean"]))
+    assert not any(isinstance(dep, volume_type) for dep in base._deps_())
+    report = {"phase": phase, "status": "complete", "steps": []}
+    deadline = time.time() + 1200
+    out = tmp_path / "receipt.json"
+    invocations = []
+
+    def remote(function, selected_phase, deadline_epoch):
+        variant = synchronizer._translate_in(function)
+        assert variant._base_function is base
+        assert tuple(path for path, _ in variant._options.validated_volumes) == mount_paths
+        assert variant._deps_() == [
+            synchronizer._translate_in(staging.VOLUMES[p]) for p in mount_paths
+        ]
+        invocations.append((selected_phase, deadline_epoch))
+        return report
+
+    with patch.object(type(staging.stage), "remote", remote):
+        staging.main(phase, deadline, str(out))
+    assert invocations == [(phase, deadline)]
+    assert json.loads(out.read_text()) == report
+
+
+def test_local_entrypoint_rejects_unknown_phase_without_invoking(tmp_path):
+    out = tmp_path / "receipt.json"
+    with patch.object(staging, "stage") as function, pytest.raises(ValueError, match="unknown"):
+        staging.main("unknown", time.time() + 1200, str(out))
+    function.with_options.assert_not_called()
+    function.remote.assert_not_called()
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "phase", ["clean-only", "clean-motion", "clean-motion-repair", "clean-motion-repair-v2"]
+)
+def test_clean_staging_outputs_and_receipts(tmp_path, phase):
+    combined = phase != "clean-only"
+    clean = tmp_path / "clean"
+    motion = tmp_path / "motion"
+    clean.mkdir()
+    motion.mkdir()
+    receipts = clean / "setup-receipts"
+    receipts.mkdir()
+    pi = motion / "huggingface/hub/models--yyfz233--Pi3X"
+    segformer_name = "models--nvidia--segformer-b0-finetuned-ade-512-512"
+    segformer = clean / "huggingface/hub" / segformer_name
+    snapshot = segformer / "snapshots" / staging.SEGFORMER_REV
+
+    if combined:
+        source = tmp_path / "source/hub/models--yyfz233--Pi3X/blobs"
+        source.mkdir(parents=True)
+        if phase == "clean-motion":
+            (source / "blob").write_bytes(b"pi3x")
+        else:
+            (source.parent.parent / "shared").write_bytes(b"pi3x")
+            (source / "blob").symlink_to("../../shared")
+            pending = pi.with_name(pi.name + ".incomplete") / "blobs"
+            pending.mkdir(parents=True)
+            (pending / "blob").symlink_to("../../shared")
+            (receipts / "clean-motion-attempt.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error": "cache has a broken or escaping symlink",
+                        "steps": [],
+                    }
+                )
+            )
+    else:
+        (pi / "blobs").mkdir(parents=True)
+        (pi / "blobs/blob").write_bytes(b"existing inference cache")
+        (receipts / "segformer.json").write_text("legacy receipt")
+    motion_before = sorted(motion.rglob("*"))
+
+    def container_path(value):
+        path = Path(value)
+        if path.is_absolute() and path.parts[1] in {"source", "clean", "motion", "lhm"}:
+            if not combined:
+                assert path.parts[1] == "clean", f"clean-only accessed {path}"
+            return tmp_path.joinpath(*path.parts[1:])
+        return path
+
+    def download_snapshot(*args, **kwargs):
+        snapshot.mkdir(parents=True)
+        (snapshot / "model.safetensors").write_bytes(b"segformer")
+        return str(snapshot)
+
+    download = Mock(side_effect=download_snapshot)
+    volumes = {mount: Mock() for mount in staging.VOLUMES}
+    raw_stage = synchronizer._translate_in(staging.stage)._raw_f
+    with (
+        patch.object(staging, "Path", side_effect=container_path),
+        patch.object(staging, "VOLUMES", volumes),
+        patch.object(staging.modal, "current_function_call_id", return_value="fc-offline"),
+        patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}),
+        patch("signal.signal"),
+        patch("signal.alarm") as alarm,
+        patch(
+            "urllib.request.urlopen", return_value=Response(b"lama", {"Content-Length": "4"})
+        ) as fetch,
+    ):
+        deadline = time.time() + 1800
+        report = raw_stage(phase, deadline)
+        assert raw_stage(phase, deadline) == report
+
+    download.assert_called_once_with(
+        "nvidia/segformer-b0-finetuned-ade-512-512",
+        revision=staging.SEGFORMER_REV,
+        cache_dir="/clean/huggingface/hub",
+        allow_patterns=["config.json", "preprocessor_config.json", "model.safetensors"],
+        max_workers=1,
+    )
+    fetch.assert_called_once_with(staging.LAMA_URL, timeout=45)
+    assert alarm.call_args_list == [call(1750), call(0)]
+    assert report["status"] == "complete"
+    assert report["functionCallId"] == "fc-offline"
+    assert json.loads((receipts / f"{phase}-attempt.json").read_text()) == report
+    assert [step["name"] for step in report["steps"]] == (
+        ["pi3x", "segformer", "lama"] if combined else ["segformer", "lama"]
+    )
+    assert (clean / "lama/big-lama.pt").read_bytes() == b"lama"
+    assert (segformer / "refs/main").read_text() == staging.SEGFORMER_REV
+    assert volumes["/clean"].commit.call_count == len(report["steps"]) + 2
+    volumes["/source"].commit.assert_not_called()
+    volumes["/lhm"].commit.assert_not_called()
+    if combined:
+        assert (pi / "blobs/blob").read_bytes() == b"pi3x"
+        assert (motion / "huggingface/hub" / segformer_name / "refs/main").is_file()
+        assert json.loads((receipts / "pi3x.json").read_text())["sourceVolume"] == "wander-weights"
+        assert (receipts / "segformer.json").is_file()
+        assert (receipts / "lama.json").is_file()
+        assert volumes["/motion"].commit.call_count == volumes["/clean"].commit.call_count
+        if phase != "clean-motion":
+            assert [repair["blob"] for repair in report["repairs"]] == ["blob"]
+    else:
+        assert (pi / "blobs/blob").read_bytes() == b"existing inference cache"
+        assert sorted(motion.rglob("*")) == motion_before
+        assert (receipts / "segformer.json").read_text() == "legacy receipt"
+        assert (receipts / "clean-only-segformer.json").is_file()
+        assert (receipts / "clean-only-lama.json").is_file()
+        volumes["/motion"].commit.assert_not_called()
+
+
+def test_clean_only_refuses_an_incomplete_attempt_before_downloading(tmp_path):
+    receipt = tmp_path / "clean/setup-receipts/clean-only-attempt.json"
+    receipt.parent.mkdir(parents=True)
+    previous = '{"status": "failed", "steps": []}'
+    receipt.write_text(previous)
+    volumes = {"/clean": Mock()}
+    download = Mock()
+    raw_stage = synchronizer._translate_in(staging.stage)._raw_f
+    with (
+        patch.object(staging, "Path", side_effect=lambda path: tmp_path / path.lstrip("/")),
+        patch.object(staging, "VOLUMES", volumes),
+        patch.object(staging.modal, "current_function_call_id", return_value="fc-offline"),
+        patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}),
+        patch("urllib.request.urlopen") as fetch,
+        pytest.raises(RuntimeError, match="prior incomplete attempt"),
+    ):
+        raw_stage("clean-only", time.time() + 1200)
+    download.assert_not_called()
+    fetch.assert_not_called()
+    volumes["/clean"].commit.assert_not_called()
+    assert receipt.read_text() == previous
 
 
 class StageWeightsTest(unittest.TestCase):
