@@ -483,6 +483,7 @@ def animate(
 
     from worker.stages.lhm_execution import animation_options
     from worker.stages.lhm_recovery import atomic_json, new_receipt, recover_outputs, submit_once
+    from worker.stages.modal_profile import effective_modal_profile
 
     scale_flags, options = animation_options(fixed_world_scale, execution_timeout)
     if options:
@@ -528,6 +529,12 @@ def animate(
         function,
         receipt_path,
         inputs,
+        result_timeout_seconds=INFERENCE_RESOURCES.get(
+            "startup_timeout", options.get("timeout", INFERENCE_RESOURCES["timeout"])
+        )
+        + options.get("timeout", INFERENCE_RESOURCES["timeout"]),
+        app_id=app.app_id,
+        modal_profile=effective_modal_profile(),
         flags=flags,
         execution_timeout=execution_timeout,
         **({"recover_missing_poses": True} if recover_missing_poses else {}),

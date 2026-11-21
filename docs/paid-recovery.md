@@ -650,3 +650,16 @@ Submission, cancellation and extraction are outside that wait. A timeout or inte
 requests cancellation of the owned call and records whether the request outcome is known.
 This receipt tracks the provider call. Tracking outputs still arrive through the returned
 archive, and `result_received` precedes extraction and checks of the tracking report.
+
+### Bounded avatar result waits
+
+Frozen and tracked-avatar entrypoints record the owning app/profile and a local result deadline
+before submission. The wait budget is the effective startup timeout plus execution timeout;
+shortened tracked-animation execution deadlines shorten the corresponding wait. This does not
+increase the provider deadline, retry allowance or spending budget.
+
+On timeout or interruption the wrapper requests cancellation of only the call it submitted and
+retains the recovery receipt. A cancellation request does not certify termination or a complete
+checkpoint: inspect provider state and use the existing recovery path. Neither a wait failure
+nor a missing checkpoint authorizes resubmission. The result wait still excludes image builds
+and final output download; retain an overall operator deadline.

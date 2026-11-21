@@ -138,6 +138,8 @@ CODE_FILES = {
         "worker/wander_worker/source_timing.py",
     ),
     "worker/modal_lhm.py": (
+        "worker/stages/lhm_recovery.py",
+        "worker/stages/modal_profile.py",
         "worker/stages/worker_resources.py",
         "worker/stages/lhm_execution.py",
         "worker/stages/lhm_person.py",
@@ -152,6 +154,7 @@ CODE_FILES = {
         "worker/stages/person_exclusions.py",
     ),
     "worker/modal_multiperson.py::animate": (
+        "worker/stages/modal_profile.py",
         "worker/stages/worker_resources.py",
         "worker/stages/lhm_execution.py",
         "worker/stages/lhm_recovery.py",
