@@ -174,6 +174,16 @@ the cleaning volume's `setup-receipts/`. Legacy attempt and step receipt paths a
 An incomplete attempt requires inspection and reconciliation. A complete attempt returns its
 saved report without downloading again, though a new CLI invocation can still launch a container.
 
+LHM prior staging excludes entries with an exact `.git` path component. This skips the Git LFS
+object stored alongside the runtime Sapiens `.pt2` checkpoint and preserves the checkpoint at
+its original path. A fresh `lhm` run still reads and hashes the entire source archive. `lhm-resume`
+validates the declared source length and pins the ETag on every range. It reads the headers for
+skipped entries and seeks past their file payloads. `skippedGitEntries` counts excluded members
+and `skippedGitBytes` sums their declared sizes. `rangeBytesReceived` reports the bytes actually
+fetched during resume, including headers. Any partial `.git` files left by an older attempt stay
+on the volume and are omitted from the final runtime inventory. Existing receipt and recovery
+checks still apply.
+
 Staging is outside the paid-stage ledger. The function requests one CPU and 1 GiB of memory,
 with limits of two CPUs and 4 GiB, one container per function configuration, zero function retries
 and a two-second scaledown window. Modal's execution timeout is 1,800 seconds. On function entry,
