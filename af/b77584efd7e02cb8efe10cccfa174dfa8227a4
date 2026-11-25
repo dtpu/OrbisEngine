@@ -1,0 +1,29 @@
+scripts/test-scene-playback.js
+  s_a3c43d2a2443ce::t_e39cfeef86ecd2 105-129,131-143
+  s_a3c43d2a2443ce::t_028291a12e2006 130
+src/fourd-runtime.js
+  s_a3c43d2a2443ce::t_e39cfeef86ecd2 41,3087-3088,3100,4386-4391,4670,4937
+  s_a3c43d2a2443ce::t_1d2eb95c3fc2fa 4938
+src/clip-controls.js
+  s_a3c43d2a2443ce::t_e39cfeef86ecd2 1-48
+fourd.html
+  s_a3c43d2a2443ce::t_e39cfeef86ecd2 29-82,116-126,130,145-146,153-169
+docs/DEVELOPING.md
+  s_a3c43d2a2443ce::t_85c85ba0a9755e 63-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "afb77584efd7e02cb8efe10cccfa174dfa8227a4",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
