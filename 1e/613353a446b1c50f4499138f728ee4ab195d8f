@@ -1,0 +1,21 @@
+scripts/retained_scene.py
+  s_a3c43d2a2443ce::t_e148af5686c185 455-459
+scripts/tests/test_retained_scene.py
+  s_a3c43d2a2443ce::t_1e5fc76e64dab5 589-612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e613353a446b1c50f4499138f728ee4ab195d8f",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
