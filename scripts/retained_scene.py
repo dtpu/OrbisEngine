@@ -452,6 +452,11 @@ class RetainedScene:
             if name in files_out or name in _REQUIRED or name.endswith("/sequence.json"):
                 continue
             target = _confined(fresh_world, name)
+            if name in self.source_media:
+                _require(
+                    not (fresh_world / "media").is_symlink() and not target.is_symlink(),
+                    "unsafe staging source-media symlink",
+                )
             # Fresh packaging may already have emitted this same lossless delivery.
             # Reuse only exact media bytes; every other staging collision still fails.
             _require(

@@ -586,3 +586,27 @@ def test_real_pcm_delivery_survives_retained_overlay(scene, tmp_path):
     for name in ("source.mp4", "original.wav", "provenance.json"):
         assert (fresh / "media" / name).read_bytes() == (old / "media" / name).read_bytes()
     assert digest(clip.read_bytes()) == source_hash
+
+
+@pytest.mark.parametrize("kind", ["directory", "file", "dangling"])
+def test_staging_source_media_symlinks_fail_before_writes(scene, kind):
+    import shutil
+
+    config, clip, old, fresh, world = scene
+    config = config.with_name("media-config.json")
+    add_source_media(old, digest(clip.read_bytes()))
+    prepare_config(old, world, clip, config)
+    shutil.copytree(old / "media", fresh / "media")
+    if kind == "directory":
+        (fresh / "media").rename(fresh / "saved-media")
+        (fresh / "media").symlink_to("saved-media", target_is_directory=True)
+    else:
+        (fresh / "media/source.mp4").rename(fresh / "media/saved.mp4")
+        (fresh / "media/source.mp4").symlink_to("saved.mp4" if kind == "file" else "missing.mp4")
+    before = {p: p.read_bytes() for p in fresh.glob("*.json")}
+    with pytest.raises(ValueError, match="symlink"):
+        RetainedScene(config, clip).apply(
+            fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mp4"
+        )
+    assert {p: p.read_bytes() for p in fresh.glob("*.json")} == before
+    assert not (fresh.parent.parent / "delivered.spz").exists()
