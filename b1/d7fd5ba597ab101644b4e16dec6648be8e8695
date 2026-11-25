@@ -1,0 +1,23 @@
+docs/pipeline-validation.md
+  s_a3c43d2a2443ce::t_a752e03c9ef97f 132-133
+orchestrator/api/viewer.py
+  s_a3c43d2a2443ce::t_0dab63fe66eb4d 281,310,315-316
+scripts/tests/test_pipeline_viewer.py
+  s_a3c43d2a2443ce::t_55ead42fe88f6c 456,471
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1d7fd5ba597ab101644b4e16dec6648be8e8695",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
