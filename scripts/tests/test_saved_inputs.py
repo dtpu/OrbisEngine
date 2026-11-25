@@ -250,3 +250,25 @@ def test_retry_cannot_change_prepared_run_or_unpause_it(prepared):
     assert response.status_code == 409
     assert app.state.repository.events_after("delivery", 0) == before
     assert (app.state.runs._dir("delivery") / "paused").is_file()
+
+
+def test_saved_inputs_pin_complete_browser_media_delivery(prepared):
+    from scripts.tests.test_retained_scene import add_source_media
+
+    client, app, source = prepared
+    package = source / "public/worlds/original-4d"
+    add_source_media(package, digest(source / "source.mp4"))
+    response = client.post(
+        "/api/pipeline/runs/original/saved-inputs", headers=AUTH, json={"id": "media-delivery"}
+    )
+    assert response.status_code == 201, response.text
+    destination = app.state.runs._dir("media-delivery")
+    manifest = json.loads((destination / "run.json").read_text())
+    verify_delivery_inputs(destination, manifest["retainedDelivery"])
+    for name in ("source.mp4", "original.wav", "provenance.json"):
+        assert (destination / "retained/package/media" / name).read_bytes() == (
+            package / "media" / name
+        ).read_bytes()
+    (destination / "retained/package/media/source.mp4").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="digest mismatch"):
+        verify_delivery_inputs(destination, manifest["retainedDelivery"])

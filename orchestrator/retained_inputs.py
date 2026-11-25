@@ -13,7 +13,7 @@ from pathlib import Path
 
 from orchestrator.api.viewer import WORLD_SUFFIXES, run_name
 from orchestrator.journal import Journal
-from scripts.retained_scene import RetainedScene, prepare_config
+from scripts.retained_scene import RetainedScene, prepare_config, source_media_files
 
 SCHEMA = "wander.saved-inputs/1"
 GOAL = """Perform exactly one detached local package_people stage using the pinned retained scene. No provider calls, inference, retries, other stages, edits to inputs, or quality acceptance. Start package_people once and end the turn. On the next turn inspect its result and ask for human viewer review. If blocked or failed, ask for help; never retry or finish the run automatically."""
@@ -198,6 +198,7 @@ def inspect_inputs(root: Path, summary: dict) -> dict:
         return value
 
     audio = read(package, "audio.json")
+    files.update(source_media_files(package, audio, manifest["sourceSha256"]))
     if audio.get("original"):
         files.add(asset(audio["original"]["url"]))
     if (package / "objects.json").exists() or (package / "objects.json").is_symlink():
