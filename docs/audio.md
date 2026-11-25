@@ -44,6 +44,12 @@ hashes while still requiring the original exported source. The standalone printe
 also selects the delivery MP4. These local checks establish media preservation; browser
 playback and audible synchronization still require actual viewer checks.
 
+Saved-input preparation and retained-scene delivery preserve all three lossless media files
+(`media/source.mp4`, `media/original.wav`, and `media/provenance.json`) as one source-bound
+set. Their receipt is validated before snapshotting, and every file is hash-pinned. If fresh
+packaging has already emitted identical delivery bytes, recovery reuses them; conflicting bytes
+stop before overlay writes. This does not import placement or reconstruction acceptance.
+
 An identical generated manifest can be reused. An existing manifest with different content,
 including authored external audio or reviewed stems, stops packaging before it changes the
 package. The runner performs the same check before deleting a destination for a rebuild. Use a fresh output directory and explicitly review/preserve that authored audio;
@@ -59,11 +65,16 @@ Extend the package with `spatialMixComplete: true` and `tracks`. Each concurrent
   "defaultMode": "spatial",
   "tracks": [
     {
-      "id": "voice-a", "kind": "dialogue", "url": "audio/voice-a.wav",
-      "offsetSeconds": 0, "personId": "person-1",
-      "reviewed": true, "provenance": "supplied-stem",
+      "id": "voice-a",
+      "kind": "dialogue",
+      "url": "audio/voice-a.wav",
+      "offsetSeconds": 0,
+      "personId": "person-1",
+      "reviewed": true,
+      "provenance": "supplied-stem",
       "anchor": {
-        "url": "person-1/head.json", "space": "person-local",
+        "url": "person-1/head.json",
+        "space": "person-local",
         "offsetBodyHeights": [0, 0, 0]
       }
     },
@@ -99,7 +110,6 @@ These checks establish graph behavior and rendered binaural direction for a synt
 
 The design uses the documented [Web Audio media source](https://webaudio.github.io/web-audio-api/#MediaElementAudioSourceNode), [buffer scheduling](https://webaudio.github.io/web-audio-api/#AudioBufferSourceNode), and [Three.js XR camera](https://threejs.org/docs/pages/WebXRManager.html) APIs. Audio unlock follows [Chrome's official autoplay guidance](https://developer.chrome.com/blog/autoplay/).
 
-
 ## Preparing supplied speaker stems offline
 
 The recovered originals are 48 kHz stereo mixes whose channels have no verified speaker identity. No separation or diarization stage is shipped in this repository. Moving the original stereo mix onto a character would move every other voice and environmental sound with it. Use authentic isolated dialogue inputs rather than treating stereo channels as speaker stems.
@@ -113,15 +123,21 @@ The shortest reliable next step is a user-supplied isolated mono WAV per charact
   "personIds": ["person-1", "person-2"],
   "tracks": [
     {
-      "id": "voice-1", "kind": "dialogue", "file": "voice-1.wav",
-      "personId": "person-1", "reviewed": true,
+      "id": "voice-1",
+      "kind": "dialogue",
+      "file": "voice-1.wav",
+      "personId": "person-1",
+      "reviewed": true,
       "provenance": "supplied-isolated-dialogue",
       "anchorFile": "person-1-head.json",
       "offsetBodyHeights": [0, 0, 0]
     },
     {
-      "id": "voice-2", "kind": "dialogue", "file": "voice-2.wav",
-      "personId": "person-2", "reviewed": true,
+      "id": "voice-2",
+      "kind": "dialogue",
+      "file": "voice-2.wav",
+      "personId": "person-2",
+      "reviewed": true,
       "anchorFile": "person-2-head.json"
     },
     { "id": "room-bed", "kind": "ambience", "file": "dialogue-free-bed.wav" }

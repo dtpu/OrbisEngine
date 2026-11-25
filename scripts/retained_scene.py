@@ -16,10 +16,18 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from orchestrator.api.viewer import PRESENTATION_PARAMS, valid_presentation_value
+from scripts.package_source_audio import validate_source_media
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _OPTIONAL = {"objects.json"}
 _REQUIRED = {"people.json", "cameras.json", "audio.json", "scene.json"}
+
+
+def source_media_files(package: Path, audio: dict, source_hash: str) -> set[str]:
+    """Keep the lossless browser delivery and its source-bound receipt together."""
+    if validate_source_media(package, audio, source_hash) is None:
+        return set()
+    return {"media/source.mp4", "media/original.wav", "media/provenance.json"}
 
 
 def _require(ok: bool, message: str) -> None:
@@ -225,6 +233,8 @@ class RetainedScene:
                 "invalid scene parameter",
             )
         self.audio = _json(self.package / "audio.json")
+        self.source_media = source_media_files(self.package, self.audio, self.source_hash)
+        needed.update(self.source_media)
         _require(self.audio.get("schema") == "wander.audio/1", "unsupported audio schema")
         _require(
             not self.audio.get("tracks") and not self.audio.get("spatialMixComplete"),
@@ -442,7 +452,18 @@ class RetainedScene:
             if name in files_out or name in _REQUIRED or name.endswith("/sequence.json"):
                 continue
             target = _confined(fresh_world, name)
-            _require(not target.exists(), "retained asset would overwrite staging asset")
+            if name in self.source_media:
+                _require(
+                    not (fresh_world / "media").is_symlink() and not target.is_symlink(),
+                    "unsafe staging source-media symlink",
+                )
+            # Fresh packaging may already have emitted this same lossless delivery.
+            # Reuse only exact media bytes; every other staging collision still fails.
+            _require(
+                not target.exists()
+                or (name in self.source_media and _digest(target) == self.files[name]),
+                "retained asset would overwrite staging asset",
+            )
         for name, doc in files_out.items():
             target = _confined(fresh_world, name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -453,7 +474,8 @@ class RetainedScene:
                 continue
             target = _confined(fresh_world, name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(_confined(self.package, name), target)
+            if not target.exists():
+                shutil.copyfile(_confined(self.package, name), target)
             _require(_digest(target) == expected, "copied asset digest mismatch")
             copied[name] = expected
         shutil.copyfile(self.world, world_target)
@@ -488,6 +510,7 @@ def prepare_config(package: Path, world: Path, clip: Path, out: Path) -> dict:
         needed.add(_relative(person.get("sequence"), package))
     needed |= {name for name in _OPTIONAL if (package / name).exists()}
     audio = _json(_confined(package, "audio.json"))
+    needed.update(source_media_files(package, audio, source))
     if audio.get("original") is not None:
         needed.add(_relative(audio["original"].get("url"), package, root_ref=True))
     if "objects.json" in needed:

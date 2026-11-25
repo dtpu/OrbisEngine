@@ -447,3 +447,166 @@ def test_retained_frame_appearing_after_snapshot_is_rechecked(scene):
     with pytest.raises(ValueError, match="retained frame digest mismatch"):
         overlay.apply(fresh, fresh.parent.parent / "new.spz", "/clips/new/source.mp4")
     assert not (fresh / "scene.json").exists()
+
+
+def add_source_media(package, source_hash):
+    media = package / "media"
+    media.mkdir()
+    (media / "source.mp4").write_bytes(b"browser-compatible-stream-copy")
+    (media / "original.wav").write_bytes(b"original-pcm-stream-copy")
+    write_json(
+        media / "provenance.json",
+        {
+            "schema": "wander.source-media/1",
+            "sourceSha256": source_hash,
+            "video": {
+                "url": "source.mp4",
+                "sha256": digest((media / "source.mp4").read_bytes()),
+                "mode": "stream-copy",
+            },
+            "audio": {
+                "url": "original.wav",
+                "sha256": digest((media / "original.wav").read_bytes()),
+                "mode": "stream-copy",
+            },
+        },
+    )
+    write_json(
+        package / "audio.json",
+        {
+            "schema": "wander.audio/1",
+            "source": {"hasAudio": False, "sha256": source_hash, "videoUrl": "media/source.mp4"},
+            "timeline": {"durationSeconds": 1},
+            "original": {"url": "media/original.wav", "offsetSeconds": 0},
+            "provenance": {"delivery": "media/provenance.json"},
+        },
+    )
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_retained_source_media_is_pinned_and_delivered(scene, existing):
+    import shutil
+    from scripts.package_source_audio import validate_source_media
+
+    config, clip, old, fresh, world = scene
+    config = config.with_name("media-config.json")
+    add_source_media(old, digest(clip.read_bytes()))
+    prepare_config(old, world, clip, config)
+    expected = {"media/source.mp4", "media/original.wav", "media/provenance.json"}
+    assert expected <= read_json(config)["files"].keys()
+    if existing:
+        shutil.copytree(old / "media", fresh / "media")
+    retained = RetainedScene(config, clip)
+    retained.apply(fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mp4")
+    assert (
+        validate_source_media(fresh, read_json(fresh / "audio.json"), digest(clip.read_bytes()))
+        == "media/source.mp4"
+    )
+    for name in expected:
+        assert (fresh / name).read_bytes() == (old / name).read_bytes()
+
+
+def test_retained_source_media_conflict_precedes_writes(scene):
+    import shutil
+
+    config, clip, old, fresh, world = scene
+    config = config.with_name("media-config.json")
+    add_source_media(old, digest(clip.read_bytes()))
+    prepare_config(old, world, clip, config)
+    shutil.copytree(old / "media", fresh / "media")
+    (fresh / "media/source.mp4").write_bytes(b"other video")
+    before = (fresh / "people.json").read_bytes()
+    with pytest.raises(ValueError, match="overwrite"):
+        RetainedScene(config, clip).apply(
+            fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mp4"
+        )
+    assert (fresh / "people.json").read_bytes() == before
+    assert not (fresh.parent.parent / "delivered.spz").exists()
+
+
+def test_retained_source_media_requires_matching_receipt(scene):
+    config, clip, old, _, world = scene
+    config = config.with_name("media-config.json")
+    add_source_media(old, digest(clip.read_bytes()))
+    (old / "media/source.mp4").write_bytes(b"changed video")
+    with pytest.raises(ValueError, match="provenance"):
+        prepare_config(old, world, clip, config)
+
+
+def test_real_pcm_delivery_survives_retained_overlay(scene, tmp_path):
+    import subprocess
+    from scripts.package_source_audio import prepare_source_media, validate_source_media
+
+    config, _, old, fresh, world = scene
+    clip = tmp_path / "source.mov"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=96x64:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "pcm_s16le",
+            str(clip),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    source_hash = digest(clip.read_bytes())
+    for package in (old, fresh):
+        for name in ("people.json", "person/sequence.json", "person_01/sequence.json"):
+            doc = read_json(package / name)
+            doc["sourceSha256"] = source_hash
+            write_json(package / name, doc)
+        # The fixture's authored audio belongs to its previous synthetic source.
+        (package / "audio.json").unlink()
+        audio = prepare_source_media(clip, 1.0, package)
+        write_json(package / "audio.json", audio)
+    config = config.with_name("real-media.json")
+    prepare_config(old, world, clip, config)
+    RetainedScene(config, clip).apply(
+        fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mov"
+    )
+    assert (
+        validate_source_media(fresh, read_json(fresh / "audio.json"), source_hash)
+        == "media/source.mp4"
+    )
+    for name in ("source.mp4", "original.wav", "provenance.json"):
+        assert (fresh / "media" / name).read_bytes() == (old / "media" / name).read_bytes()
+    assert digest(clip.read_bytes()) == source_hash
+
+
+@pytest.mark.parametrize("kind", ["directory", "file", "dangling"])
+def test_staging_source_media_symlinks_fail_before_writes(scene, kind):
+    import shutil
+
+    config, clip, old, fresh, world = scene
+    config = config.with_name("media-config.json")
+    add_source_media(old, digest(clip.read_bytes()))
+    prepare_config(old, world, clip, config)
+    shutil.copytree(old / "media", fresh / "media")
+    if kind == "directory":
+        (fresh / "media").rename(fresh / "saved-media")
+        (fresh / "media").symlink_to("saved-media", target_is_directory=True)
+    else:
+        (fresh / "media/source.mp4").rename(fresh / "media/saved.mp4")
+        (fresh / "media/source.mp4").symlink_to("saved.mp4" if kind == "file" else "missing.mp4")
+    before = {p: p.read_bytes() for p in fresh.glob("*.json")}
+    with pytest.raises(ValueError, match="symlink"):
+        RetainedScene(config, clip).apply(
+            fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mp4"
+        )
+    assert {p: p.read_bytes() for p in fresh.glob("*.json")} == before
+    assert not (fresh.parent.parent / "delivered.spz").exists()
