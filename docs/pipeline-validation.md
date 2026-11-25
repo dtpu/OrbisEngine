@@ -131,6 +131,11 @@ delivery or exported presentation defaults leave placement disabled. Only the sc
 the check, because it hashes those inputs; progress polling only asks whether a scene exists.
 Applying a placement never changes the delivered `qualityStatus`: a run that failed acceptance
 still reports it.
+A current, size-checked placement also starts desktop previews in grounded walking mode
+(`walk=1`), using body-relative speed instead of flying speed based on the entire world bounds.
+An explicit `&walk=0` retains flying inspection. Unplaced, stale and recovered presentation-only
+previews retain flying mode. Walking mode uses the existing inferred support/collision logic;
+it does not establish floor, collision or headset acceptance.
 
 Recovered packages can preserve reviewed presentation settings in
 `public/worlds/<run-name>-4d/scene.json`, using `wander.viewer-scene/1` with a string-valued

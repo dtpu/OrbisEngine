@@ -50,6 +50,7 @@ def test_scene_asset_range_head_and_auth(packaged):
     assert response.status_code == 200
     params = response.json()["params"]
     assert params["world"] == "none" and params["place"] == "0"
+    assert params["walk"] == "0"
     assert params["cam"] == "0,0,0,0,0,-1"
     assert params["ruler"] == "0"
     assert case.client.head(prefix + "scene.json", headers=AUTH).content == b""
@@ -439,6 +440,7 @@ def test_preview_applies_a_current_placement_without_promoting_quality(packaged)
     url = "/api/pipeline/runs/viewer-run"
     params = case.client.get(url + "/viewer/scene.json", headers=AUTH).json()["params"]
     assert params["place"] == "1"
+    assert params["walk"] == "1"
     assert params["placement"] == f"{url}/viewer/assets/worlds/{world.name}/placement.json"
     served = case.client.get(params["placement"], headers=AUTH)
     assert served.status_code == 200 and served.json()["registrationScale"] == 0.8
@@ -500,6 +502,7 @@ def test_preview_leaves_a_stale_or_unproven_placement_off(packaged, change):
     params = response.json()["params"]
     assert params["place"] == "0"
     assert "placement" not in params
+    assert params["walk"] == "0"
 
 
 @pytest.mark.parametrize(

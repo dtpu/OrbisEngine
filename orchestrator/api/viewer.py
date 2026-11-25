@@ -230,6 +230,7 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
             "person": asset_url(run_id, person),
             "video": asset_url(run_id, video),
             "place": "0",
+            "walk": "0",
             # Packaged scenes use camera 0 at the origin looking down -Z. Starting
             # outside the generated world's full bounds can hide the entire replay.
             # This is a navigation default, not evidence of camera registration.
@@ -304,6 +305,9 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
         elif placement and placement_applies(root, run_id):
             # A recovered scene's exported defaults above keep their own measured alignment.
             params["place"] = "1"
+            # A measured body scale makes walking speed independent of world bounds.
+            # This enables navigation, not acceptance of floor or collision geometry.
+            params["walk"] = "1"
             params["placement"] = asset_url(run_id, base + "placement.json")
         return {"schema": "wander.viewer-scene/1", "params": params}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
