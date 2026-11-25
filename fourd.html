@@ -13,12 +13,17 @@
     background: #111;
     overflow: hidden;
     font:
-      12px ui-monospace,
-      monospace;
+      13px 'Manrope Variable',
+      sans-serif;
     color: #ddd;
   }
   :root {
     color-scheme: dark;
+  }
+  #audio-controls button,
+  #audio-credit,
+  #walk-map button {
+    font-family: 'Manrope Variable', sans-serif !important;
   }
   button,
   summary,
@@ -42,7 +47,7 @@
     gap: 12px;
     pointer-events: none;
     font:
-      13px system-ui,
+      13px 'Manrope Variable',
       sans-serif;
     text-shadow: 0 1px 8px #000;
   }
@@ -76,7 +81,9 @@
   #hud summary {
     cursor: pointer;
     white-space: normal;
-    font: 13px system-ui;
+    font:
+      13px 'Manrope Variable',
+      sans-serif;
     padding: 13px 0;
     min-height: 44px;
     box-sizing: border-box;
@@ -96,7 +103,7 @@
     border-radius: 16px;
     padding: 12px 16px 6px;
     font:
-      13px system-ui,
+      13px 'Manrope Variable',
       sans-serif;
     box-shadow: 0 8px 32px #0004;
   }
@@ -122,7 +129,9 @@
     border-radius: 8px;
     min-height: 44px;
     padding: 0 14px;
-    font: 500 13px system-ui;
+    font:
+      500 13px 'Manrope Variable',
+      sans-serif;
     cursor: pointer;
   }
   #clip-controls [data-play] {
@@ -198,7 +207,9 @@
     padding: 16px;
     background: #211;
     color: #fff;
-    font: 16px system-ui;
+    font:
+      16px 'Manrope Variable',
+      sans-serif;
   }
   @media (max-width: 760px) {
     #viewer-heading {
@@ -285,7 +296,9 @@
       background: #000a;
       padding: 6px 12px;
       border-radius: 6px;
-      font: 14px system-ui;
+      font:
+        14px 'Manrope Variable',
+        sans-serif;
       color: #eee;
       display: none;
     "
@@ -335,6 +348,7 @@
   window.addEventListener('unhandledrejection', reportStartupFailure);
 </script>
 <script type="module">
+  import '@fontsource-variable/manrope';
   import { startFourD } from '/src/fourd-session.js';
   startFourD(document.getElementById('scene-template'));
 </script>
