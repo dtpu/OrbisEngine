@@ -150,6 +150,7 @@ def track(
     max_gap: int,
     min_track_samples: int,
     overlay_every: int,
+    pose_crops: bool = False,
 ):
     import io
     import os
@@ -196,6 +197,8 @@ def track(
     ]
     if cameras:
         cmd += ["--cameras", str(root / "cameras.json")]
+    if pose_crops:
+        cmd += ["--pose-crops"]
     try:
         with (out / "track.log").open("w") as log:
             proc = subprocess.Popen(
@@ -292,11 +295,14 @@ def main(
     max_gap: int = 8,
     min_track_samples: int = 8,
     overlay_every: int = 0,
+    pose_crops: bool = False,
 ):
     import io
     import json
     import tarfile
 
+    if pose_crops and not cameras:
+        raise ValueError("--pose-crops requires source cameras")
     dest = Path(out)
     dest.mkdir(parents=True, exist_ok=True)
     result = _tracking_result(
@@ -309,6 +315,7 @@ def main(
         max_gap,
         min_track_samples,
         overlay_every,
+        pose_crops,
     )
     with tarfile.open(fileobj=io.BytesIO(result["archive"]), mode="r:gz") as archive:
         archive.extractall(dest, filter="data")

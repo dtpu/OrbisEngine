@@ -39,3 +39,24 @@ def match_pose_instances(pose_boxes, instance_boxes):
         for row, col in zip(rows, cols)
         if col < len(instances) and supported[row, col]
     }
+
+
+def match_crop_instance(pose_boxes, instance_boxes, target):
+    """Recover at most one pose only when its unique best support is the target.
+
+    Competing masks include already matched people. Ambiguous equal support is
+    refused so a neighboring person's crop pose cannot be relabelled as recovery.
+    """
+    eligible = []
+    for pose_i, box in enumerate(pose_boxes):
+        overlaps = [match_pose_instances([box], [instance]) for instance in instance_boxes]
+        target_pair = overlaps[target].get(0)
+        if target_pair is None:
+            continue
+        if any(
+            i != target and pair and pair[0][1] >= target_pair[1] for i, pair in enumerate(overlaps)
+        ):
+            continue
+        eligible.append(pose_i)
+    selected = match_pose_instances([pose_boxes[i] for i in eligible], [instance_boxes[target]])
+    return {eligible[i]: (target, pair[1]) for i, pair in selected.items()}

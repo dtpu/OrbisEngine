@@ -1853,6 +1853,7 @@ class Pipeline:
                 str(self.a.fps),
                 "--det-thresh",
                 str(self.a.det_thresh),
+                *(["--pose-crops"] if getattr(self.a, "pose_crops", False) else []),
                 "--out",
                 str(self.ctx / "tracks"),
             ],
@@ -4378,6 +4379,11 @@ def main():
         help="MultiHMR detection threshold for the tracking stage",
     )
     ap.add_argument(
+        "--pose-crops",
+        action="store_true",
+        help="experimental crop pose recovery for unmatched tracked instances",
+    )
+    ap.add_argument(
         "--shot",
         type=int,
         metavar="N",
@@ -4459,6 +4465,8 @@ def main():
         animation_options(execution_timeout=a.execution_timeout)
     except ValueError as error:
         ap.error(str(error))
+    if a.pose_crops and (not (a.people or a.all_people) or a.orchestrated):
+        ap.error("--pose-crops requires direct tracked runs; use wander step for stage parameters")
     if a.lower_body_provenance is not None:
         if not a.lower_body_provenance.strip():
             ap.error("--lower-body-provenance must be a nonempty measured statement")

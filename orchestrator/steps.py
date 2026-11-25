@@ -118,6 +118,12 @@ MARBLE_POLL_PARAMETERS = tunables(
     ),
 )
 TRACK_PARAMETERS = tunables(
+    pose_crops=knob(
+        "boolean",
+        False,
+        "experimental additional calibrated pose pass for unmatched person instances; "
+        "adds inference cost and does not distinguish depicted from real people",
+    ),
     fps=knob(
         "number",
         12,

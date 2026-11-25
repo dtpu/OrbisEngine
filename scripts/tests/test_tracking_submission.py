@@ -98,7 +98,7 @@ def test_tracking_receipt_is_durable_before_spawn_and_wait(launch, monkeypatch):
     launch.call.get.side_effect = get
     launch.run(fps=15.0, det_thresh=0.3, gate=0.4, max_gap=4, min_track_samples=6, overlay_every=2)
     launch.function.spawn.assert_called_once_with(
-        b"video bytes", b"camera bytes", 15.0, 0.3, 0.4, 4, 6, 2
+        b"video bytes", b"camera bytes", 15.0, 0.3, 0.4, 4, 6, 2, False
     )
     launch.call.cancel.assert_not_called()
     assert launch.receipt() == initial | {"status": "result_received", "functionCallId": "fc-track"}
@@ -116,7 +116,9 @@ def test_tracking_default_wait_and_reported_inference_failure(launch, monkeypatc
     launch.call.get.return_value = tracking_output("inference failed")
     with pytest.raises(RuntimeError, match="see the downloaded track.log"):
         launch.run(cameras="")
-    launch.function.spawn.assert_called_once_with(b"video bytes", None, 12, 0.15, 0.22, 8, 8, 0)
+    launch.function.spawn.assert_called_once_with(
+        b"video bytes", None, 12, 0.15, 0.22, 8, 8, 0, False
+    )
     launch.call.get.assert_called_once_with(timeout=7200)
     launch.call.cancel.assert_not_called()
     assert launch.receipt()["status"] == "result_received"
@@ -195,3 +197,35 @@ def test_receipt_write_failure_after_spawn_cancels_before_waiting(launch, monkey
     assert receipt["status"] == "wait_interrupted"
     assert receipt["functionCallId"] == "fc-track"
     assert receipt["cancellation"] == "requested"
+
+
+def test_crop_option_forwarded_without_extra_provider_submissions(launch):
+    launch.call.get.return_value = tracking_output()
+    launch.run(pose_crops=True)
+    launch.function.spawn.assert_called_once()
+    assert launch.function.spawn.call_args.args[-1] is True
+
+
+def test_crops_without_calibration_stop_before_claim_or_submission(launch):
+    with pytest.raises(ValueError, match="requires source cameras"):
+        launch.run(pose_crops=True, cameras="")
+    launch.function.spawn.assert_not_called()
+    assert not launch.destination.exists()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_runner_forwards_crop_option_only_when_requested(tmp_path, enabled):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import run_clip
+
+    pipeline = object.__new__(run_clip.Pipeline)
+    pipeline.ctx = tmp_path
+    pipeline.clip = tmp_path / "source.mp4"
+    pipeline.a = SimpleNamespace(fps=12, det_thresh=0.15, pose_crops=enabled)
+    pipeline.paid_run = Mock()
+    pipeline.track_doc = lambda: {"trackCount": 0, "tracks": []}
+    pipeline.identity_guard = Mock()
+    pipeline.tracks()
+    pipeline.paid_run.assert_called_once()
+    command = pipeline.paid_run.call_args.args[1]
+    assert ("--pose-crops" in command) is enabled
