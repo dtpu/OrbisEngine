@@ -277,6 +277,7 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
                     params["floor"] = str(-ground / factor)
             else:
                 params["scale"] = "1"
+        exported_alignment = False
         defaults_path = root / "public" / base / "scene.json"
         if defaults_path.exists():
             defaults = read_json(asset_path(root, base + "scene.json"))
@@ -302,8 +303,10 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
             elif "height" in values:
                 params.pop("scale", None)
             params.update(values)
-        elif placement and placement_applies(root, run_id):
-            # A recovered scene's exported defaults above keep their own measured alignment.
+            # Navigation preferences do not replace the measured body/world alignment.
+            # All other presentation settings may change that alignment or its calibration.
+            exported_alignment = bool(values.keys() - {"cam", "clamp", "box"})
+        if not exported_alignment and placement and placement_applies(root, run_id):
             params["place"] = "1"
             # A measured body scale makes walking speed independent of world bounds.
             # This enables navigation, not acceptance of floor or collision geometry.

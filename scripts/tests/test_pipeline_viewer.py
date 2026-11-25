@@ -453,6 +453,60 @@ def test_preview_applies_a_current_placement_without_promoting_quality(packaged)
 
 
 @pytest.mark.parametrize(
+    "defaults", [{}, {"cam": "0,0,0,0,0,-1"}, {"clamp": "1", "box": "-1,-1,-1,1,1,1"}]
+)
+@pytest.mark.parametrize("current", [True, False])
+def test_navigation_defaults_preserve_only_current_placement(packaged, defaults, current):
+    case, root, world, source = packaged
+    spz, report = place_run(root, world)
+    (world / "scene.json").write_text(
+        json.dumps({"schema": "wander.viewer-scene/1", "params": defaults})
+    )
+    if not current:
+        report.write_text("{}")
+    params = case.client.get(
+        "/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH
+    ).json()["params"]
+    assert params["place"] == ("1" if current else "0")
+    assert params["walk"] == ("1" if current else "0")
+    assert ("placement" in params) is current
+    assert all(params[key] == value for key, value in defaults.items())
+    assert params["scale"] == "0.8"
+
+
+@pytest.mark.parametrize(
+    "alignment",
+    [
+        {"scale": "0.8"},
+        {"height": "1.7"},
+        {"pos": "0,0,0"},
+        {"floor": "-0.8"},
+        {"feetmode": "sfm"},
+        {"feetlock": "0"},
+        {"camdrift": "1"},
+        {"fovsrc": "50"},
+    ],
+)
+def test_alignment_defaults_never_mix_with_fitted_placement(packaged, alignment):
+    case, root, world, source = packaged
+    place_run(root, world)
+    (world / "scene.json").write_text(
+        json.dumps(
+            {
+                "schema": "wander.viewer-scene/1",
+                "params": {"cam": "0,0,0,0,0,-1", **alignment},
+            }
+        )
+    )
+    params = case.client.get(
+        "/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH
+    ).json()["params"]
+    assert params["place"] == "0" and params["walk"] == "0"
+    assert "placement" not in params
+    assert all(params[key] == value for key, value in alignment.items())
+
+
+@pytest.mark.parametrize(
     "change",
     [
         "world",

@@ -127,7 +127,9 @@ naming the run-scoped `placement.json`) only when the runner would: `place_fit` 
 passing size check, and its receipt still matches the final world, the report and every input
 the solve read, including the source, packaged frames, scale, floor and measurement code. The
 check reuses the runner's `placement_is_current`. Any change, a missing receipt, a retained
-delivery or exported presentation defaults leave placement disabled. Only the scene route runs
+delivery or exported alignment defaults leave placement disabled. Camera/navigation-only
+defaults (`cam`, `clamp`, `box`) preserve a current placement; an empty defaults object also
+leaves that decision to the receipt check. Only the scene route runs
 the check, because it hashes those inputs; progress polling only asks whether a scene exists.
 Applying a placement never changes the delivered `qualityStatus`: a run that failed acceptance
 still reports it.
