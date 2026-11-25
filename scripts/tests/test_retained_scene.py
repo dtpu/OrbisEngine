@@ -531,3 +531,58 @@ def test_retained_source_media_requires_matching_receipt(scene):
     (old / "media/source.mp4").write_bytes(b"changed video")
     with pytest.raises(ValueError, match="provenance"):
         prepare_config(old, world, clip, config)
+
+
+def test_real_pcm_delivery_survives_retained_overlay(scene, tmp_path):
+    import subprocess
+    from scripts.package_source_audio import prepare_source_media, validate_source_media
+
+    config, _, old, fresh, world = scene
+    clip = tmp_path / "source.mov"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=96x64:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "pcm_s16le",
+            str(clip),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    source_hash = digest(clip.read_bytes())
+    for package in (old, fresh):
+        for name in ("people.json", "person/sequence.json", "person_01/sequence.json"):
+            doc = read_json(package / name)
+            doc["sourceSha256"] = source_hash
+            write_json(package / name, doc)
+        # The fixture's authored audio belongs to its previous synthetic source.
+        (package / "audio.json").unlink()
+        audio = prepare_source_media(clip, 1.0, package)
+        write_json(package / "audio.json", audio)
+    config = config.with_name("real-media.json")
+    prepare_config(old, world, clip, config)
+    RetainedScene(config, clip).apply(
+        fresh, fresh.parent.parent / "delivered.spz", "/clips/new/source.mov"
+    )
+    assert (
+        validate_source_media(fresh, read_json(fresh / "audio.json"), source_hash)
+        == "media/source.mp4"
+    )
+    for name in ("source.mp4", "original.wav", "provenance.json"):
+        assert (fresh / "media" / name).read_bytes() == (old / "media" / name).read_bytes()
+    assert digest(clip.read_bytes()) == source_hash
