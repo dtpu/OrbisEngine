@@ -60,6 +60,12 @@ Use its **Walk around the bench** link for a single-scene view. The original gym
 the comparison baseline. See [the gym delivery notes](archive/gym-delivery.md) for the accepted asset
 version, retained limitations, and the older review page’s historical work-in-progress labels.
 
+The standalone viewer has visible clip play/pause, replay and timeline controls. Scrubbing pauses
+the recording and holds the final pose at the end instead of looping to zero. These controls stop
+any camera tour without moving the inspection camera; the existing tour shortcuts remain.
+Scene diagnostics and authoring shortcuts are in the expandable **Scene details** panel.
+Focused controls own their keys, so timeline arrows do not walk or nudge the scene.
+
 Walk mode is the default. `?walk=0` restores the authoring camera. The source clip, reconstruction,
 and audio share one playback timeline. Recorded stereo mixes do not imply separated speakers.
 

@@ -38,6 +38,7 @@ import { disposeScene, SceneScope } from './scene-scope.js';
 import { ALL } from './scene-catalog.ts';
 import { resolveSceneConfig } from './scene-config.ts';
 import { cameraReelMode } from './scene-playback.js';
+import { bindClipControls } from './clip-controls.js';
 
 // A cancelled asynchronous XR setup must finish cleanup before another scene uses its renderer.
 const rendererActivations = new WeakMap();
@@ -3083,7 +3084,8 @@ export async function createFourD({ search, renderer, root, scope }) {
     window,
     'pointerdown',
     (e) => {
-      if (e.isTrusted && !e.target.closest?.('#audio-controls')) void unlockAudio();
+      if (e.isTrusted && !e.target.closest?.('#audio-controls, #clip-controls, summary'))
+        void unlockAudio();
     },
     { capture: true },
   );
@@ -3095,7 +3097,7 @@ export async function createFourD({ search, renderer, root, scope }) {
         e.isTrusted &&
         !e.repeat &&
         ['Enter', 'NumpadEnter', 'Space'].includes(e.code) &&
-        !e.target.closest?.('button,input,textarea,select,a') &&
+        !e.target.closest?.('button,input,textarea,select,a,summary') &&
         !e.target.isContentEditable
       )
         void unlockAudio();
@@ -4381,6 +4383,12 @@ export async function createFourD({ search, renderer, root, scope }) {
     }
   };
   scope.listenActive(window, 'keydown', (e) => {
+    // Focused transport controls own arrows, letters and Space; none may nudge the scene.
+    if (
+      e.target.isContentEditable ||
+      e.target.closest?.('button, input, textarea, select, a, summary')
+    )
+      return;
     const enter = e.code === 'Enter' || e.code === 'NumpadEnter';
     if (
       (enter || e.code === 'Space') &&
@@ -4659,6 +4667,7 @@ export async function createFourD({ search, renderer, root, scope }) {
       status();
       st.textContent += '\n' + q2;
     }
+    updateClipControls();
     if (exact) {
       exact.setTime(t);
       exact.render(renderer, scene, camera);
@@ -4924,6 +4933,8 @@ export async function createFourD({ search, renderer, root, scope }) {
       );
     }
   }
+
+  const updateClipControls = bindClipControls(root, api, scope);
 
   let activation = null;
   let activationTask = null;
