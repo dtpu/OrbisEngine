@@ -102,3 +102,42 @@ test.each([false, true])('pausing preserves mute with cameraReel=%s', (cameraRee
   expect(playbackState(api).running).toBe(true);
   expect(unlocks).toBe(1);
 });
+
+test('clip transport stops a camera tour without starting another or unmuting on pause', async () => {
+  const { setClipPlaying, seekClip } = await import('../src/clip-controls.js');
+  const calls = [];
+  const api = {
+    dur: 7.765,
+    reel: {},
+    showreel(on) {
+      calls.push(['tour', on]);
+      this.reel = null;
+    },
+    play(on) {
+      calls.push(['play', on]);
+    },
+    setTime(t) {
+      calls.push(['seek', t]);
+    },
+    unlockAudio() {
+      calls.push(['audio']);
+    },
+  };
+  seekClip(api, 100);
+  expect(calls).toEqual([
+    ['tour', false],
+    ['play', false],
+    ['seek', api.dur - 0.001],
+  ]);
+  calls.length = 0;
+  seekClip(api, -10);
+  expect(calls).toEqual([
+    ['play', false],
+    ['seek', 0],
+  ]);
+  calls.length = 0;
+  seekClip(api, NaN);
+  expect(calls).toEqual([]);
+  setClipPlaying(api, true);
+  expect(calls).toEqual([['audio'], ['play', true]]);
+});

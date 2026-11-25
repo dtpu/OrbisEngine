@@ -26,6 +26,60 @@
     line-height: 1.45;
     white-space: pre;
   }
+  #hud summary {
+    cursor: pointer;
+    white-space: normal;
+    font: 13px system-ui;
+  }
+  #hud:not([open]) {
+    padding: 10px 12px;
+  }
+  #clip-controls {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    z-index: 30;
+    width: min(480px, calc(100vw - 370px));
+    box-sizing: border-box;
+    background: #111e;
+    border: 1px solid #555;
+    border-radius: 10px;
+    padding: 10px;
+    font: 13px system-ui;
+  }
+  #clip-controls .transport-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #clip-controls button {
+    background: #242c38;
+    color: white;
+    border: 1px solid #687487;
+    border-radius: 6px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  #clip-controls button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  #clip-controls output {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  #clip-controls input {
+    width: 100%;
+    margin: 10px 0 0;
+    accent-color: #a8d5ff;
+  }
+  #clip-controls :focus-visible {
+    outline: 2px solid #a8d5ff;
+    outline-offset: 3px;
+  }
+  #clip-controls [data-loading] {
+    margin: 0 0 8px;
+  }
   #pip {
     position: fixed;
     right: 12px;
@@ -59,10 +113,21 @@
       white-space: pre-wrap;
       padding: 6px 7px;
     }
+    #clip-controls {
+      left: 6px;
+      bottom: 6px;
+      width: calc(100vw - 12px);
+    }
+    #audio-controls {
+      bottom: 112px !important;
+    }
+    #audio-credit {
+      bottom: 96px !important;
+    }
     #pip {
       width: 150px;
       right: 6px;
-      bottom: 6px;
+      bottom: 112px;
     }
     #hint {
       font-size: 11px !important;
@@ -77,13 +142,31 @@
   }
 </style>
 <template id="scene-template">
-  <div id="hud">
+  <details id="hud">
+    <summary>Scene details and keyboard controls</summary>
     <span id="help"
       >W A S D move · Q/E down/up · drag to look · Shift faster · R home person: I/K ±z J/L ±x U/O
       ±y [ ] yaw - = scale · Enter / Space play/pause · , . step frame · V video · N snap keyframes
       · H hide help</span
     >
     <span id="st">loading…</span>
+  </details>
+  <div id="clip-controls" role="group" aria-label="Clip playback">
+    <p data-loading role="status">Loading scene…</p>
+    <div class="transport-row">
+      <button type="button" data-play disabled>Play clip</button>
+      <button type="button" data-replay disabled>Replay</button>
+      <output aria-label="Playback time">0:00.0 / 0:00.0</output>
+    </div>
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step="0.001"
+      value="0"
+      aria-label="Clip timeline"
+      disabled
+    />
   </div>
   <div
     id="hint"
