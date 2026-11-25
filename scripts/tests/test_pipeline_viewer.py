@@ -453,7 +453,7 @@ def test_preview_applies_a_current_placement_without_promoting_quality(packaged)
 
 
 @pytest.mark.parametrize(
-    "defaults", [{}, {"cam": "0,0,0,0,0,-1"}, {"clamp": "1", "box": "-1,-1,-1,1,1,1"}]
+    "defaults", [{}, {"cam": "2,1,3,0,0,0"}, {"clamp": "1", "box": "-1,-1,-1,1,1,1"}]
 )
 @pytest.mark.parametrize("current", [True, False])
 def test_navigation_defaults_preserve_only_current_placement(packaged, defaults, current):
@@ -468,7 +468,7 @@ def test_navigation_defaults_preserve_only_current_placement(packaged, defaults,
         "/api/pipeline/runs/viewer-run/viewer/scene.json", headers=AUTH
     ).json()["params"]
     assert params["place"] == ("1" if current else "0")
-    assert params["walk"] == ("1" if current else "0")
+    assert params["walk"] == ("1" if current and "cam" not in defaults else "0")
     assert ("placement" in params) is current
     assert all(params[key] == value for key, value in defaults.items())
     assert params["scale"] == "0.8"

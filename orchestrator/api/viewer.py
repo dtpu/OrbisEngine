@@ -278,6 +278,7 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
             else:
                 params["scale"] = "1"
         exported_alignment = False
+        exported_camera = False
         defaults_path = root / "public" / base / "scene.json"
         if defaults_path.exists():
             defaults = read_json(asset_path(root, base + "scene.json"))
@@ -306,11 +307,13 @@ def scene_manifest(root: Path, *, placement: bool = False) -> dict | None:
             # Navigation preferences do not replace the measured body/world alignment.
             # All other presentation settings may change that alignment or its calibration.
             exported_alignment = bool(values.keys() - {"cam", "clamp", "box"})
+            exported_camera = "cam" in values
         if not exported_alignment and placement and placement_applies(root, run_id):
             params["place"] = "1"
             # A measured body scale makes walking speed independent of world bounds.
             # This enables navigation, not acceptance of floor or collision geometry.
-            params["walk"] = "1"
+            # Walking initialization resets the viewpoint; preserve an authored camera.
+            params["walk"] = "0" if exported_camera else "1"
             params["placement"] = asset_url(run_id, base + "placement.json")
         return {"schema": "wander.viewer-scene/1", "params": params}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):

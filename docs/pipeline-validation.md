@@ -129,7 +129,8 @@ the solve read, including the source, packaged frames, scale, floor and measurem
 check reuses the runner's `placement_is_current`. Any change, a missing receipt, a retained
 delivery or exported alignment defaults leave placement disabled. Camera/navigation-only
 defaults (`cam`, `clamp`, `box`) preserve a current placement; an empty defaults object also
-leaves that decision to the receipt check. Only the scene route runs
+leaves that decision to the receipt check. An authored `cam` keeps flying mode because
+grounded walking initialization resets the viewpoint; placement still applies. Only the scene route runs
 the check, because it hashes those inputs; progress polling only asks whether a scene exists.
 Applying a placement never changes the delivered `qualityStatus`: a run that failed acceptance
 still reports it.
