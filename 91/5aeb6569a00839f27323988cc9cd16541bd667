@@ -1,0 +1,37 @@
+orchestrator/retained_inputs.py
+  s_a3c43d2a2443ce::t_bbd99380781a82 16,201
+scripts/tests/test_retained_scene.py
+  s_a3c43d2a2443ce::t_1a35fc5ebd3077 453,455-486,495-496,498,500-504,516-524,531-532
+  s_c6018019842afa::t_8e3bf1f9e8d91a 492,513,529
+  s_c6018019842afa::t_5737e19a5dba80 450-452,454,487-491,493-494,497,499,505-512,514-515,525-528,530,533
+scripts/retained_scene.py
+  s_a3c43d2a2443ce::t_bbd99380781a82 19,26-32,236-237,455-461,472-473,508
+scripts/tests/test_saved_inputs.py
+  s_a3c43d2a2443ce::t_1a35fc5ebd3077 253-274
+docs/audio.md
+  s_a3c43d2a2443ce::t_8686a890f79048 47-52,68-74,76-77,126-130,136-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "915aeb6569a00839f27323988cc9cd16541bd667",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
