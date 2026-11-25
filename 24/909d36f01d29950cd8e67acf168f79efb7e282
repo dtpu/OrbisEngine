@@ -1,0 +1,19 @@
+fourd.html
+  s_a3c43d2a2443ce::t_417a50bce8ed7b 16-17,23-27,50,84-86,106,132-134,210-212,299-301,351
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24909d36f01d29950cd8e67acf168f79efb7e282",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
