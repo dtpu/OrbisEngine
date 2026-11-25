@@ -1,0 +1,19 @@
+scripts/tests/test_retained_scene.py
+  s_c6018019842afa::t_32604b1308d0a9 534-588
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9f9b56b6261a3f6cd5dfdc405d269b67059f535",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
