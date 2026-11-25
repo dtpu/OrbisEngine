@@ -33,6 +33,16 @@ describe('private scene configuration', () => {
     expect(query.has('world')).toBe(false);
   });
 
+  test('a placed run defaults to walking but an explicit flying choice wins', async () => {
+    const { scope } = fixture(manifest({ place: '1', walk: '1' }));
+    const path = 'scene=/api/pipeline/runs/example/viewer/scene.json';
+    const walking = await resolveSceneConfig(new URLSearchParams(path), catalog, scope);
+    expect(walking.get('walk')).toBe('1');
+    const flying = await resolveSceneConfig(new URLSearchParams(`${path}&walk=0`), catalog, scope);
+    expect(flying.get('walk')).toBe('0');
+    expect(flying.get('place')).toBe('1');
+  });
+
   test('explicit scene path overrides catalog selection; historical ids need no manifest', async () => {
     const { scope, requests } = fixture();
     await resolveSceneConfig(
