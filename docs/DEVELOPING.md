@@ -65,6 +65,9 @@ the recording and holds the final pose at the end instead of looping to zero. Th
 any camera tour without moving the inspection camera; the existing tour shortcuts remain.
 Scene diagnostics and authoring shortcuts are in the expandable **Scene details** panel.
 Focused controls own their keys, so timeline arrows do not walk or nudge the scene.
+The responsive viewer keeps sound above playback and the original-video inset clear of both.
+Controls use visible keyboard focus and 44 px buttons; the viewport preserves browser zoom
+and accounts for safe-area insets. Diagnostics scroll independently on short screens.
 
 Walk mode is the default. `?walk=0` restores the authoring camera. The source clip, reconstruction,
 and audio share one playback timeline. Recorded stereo mixes do not imply separated speakers.

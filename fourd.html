@@ -1,4 +1,6 @@
-<!doctype html><meta charset="utf-8" /><title>Marble world + moving person</title>
+<!doctype html><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Wander · Scene viewer</title>
 <link
   rel="icon"
   href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23111'/%3E%3Ccircle cx='8' cy='8' r='4' fill='%23bcd'/%3E%3C/svg%3E"
@@ -15,37 +17,98 @@
       monospace;
     color: #ddd;
   }
+  :root {
+    color-scheme: dark;
+  }
+  button,
+  summary,
+  input {
+    touch-action: manipulation;
+  }
+  button:focus-visible,
+  summary:focus-visible,
+  input:focus-visible,
+  a:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 4px;
+  }
+  #viewer-heading {
+    position: fixed;
+    top: max(20px, env(safe-area-inset-top));
+    left: max(20px, env(safe-area-inset-left));
+    z-index: 9;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    pointer-events: none;
+    font:
+      13px system-ui,
+      sans-serif;
+    text-shadow: 0 1px 8px #000;
+  }
+  #viewer-heading strong {
+    font-size: 20px;
+    letter-spacing: -0.6px;
+    color: #fff;
+  }
+  #viewer-heading span {
+    border-left: 1px solid #ffffff60;
+    padding-left: 12px;
+    color: #eee;
+  }
   #hud {
     position: fixed;
-    left: 12px;
-    top: 12px;
-    z-index: 9;
-    background: #000a;
-    padding: 8px 10px;
-    border-radius: 6px;
-    line-height: 1.45;
-    white-space: pre;
+    left: max(20px, env(safe-area-inset-left));
+    top: max(64px, calc(env(safe-area-inset-top) + 44px));
+    z-index: 31;
+    max-width: calc(100vw - 40px);
+    max-height: calc(100dvh - 240px);
+    box-sizing: border-box;
+    overflow: auto;
+    background: #111f;
+    border: 1px solid #383838;
+    padding: 0 14px;
+    border-radius: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    box-shadow: 0 8px 32px #0003;
   }
   #hud summary {
     cursor: pointer;
     white-space: normal;
     font: 13px system-ui;
+    padding: 13px 0;
+    min-height: 44px;
+    box-sizing: border-box;
   }
-  #hud:not([open]) {
-    padding: 10px 12px;
+  #hud[open] {
+    padding-bottom: 14px;
   }
   #clip-controls {
     position: fixed;
-    left: 12px;
-    bottom: 12px;
+    left: max(20px, env(safe-area-inset-left));
+    bottom: max(20px, env(safe-area-inset-bottom));
     z-index: 30;
-    width: min(480px, calc(100vw - 370px));
+    width: min(520px, calc(100vw - 384px));
     box-sizing: border-box;
-    background: #111e;
-    border: 1px solid #555;
-    border-radius: 10px;
-    padding: 10px;
-    font: 13px system-ui;
+    background: #111f;
+    border: 1px solid #383838;
+    border-radius: 16px;
+    padding: 12px 16px 6px;
+    font:
+      13px system-ui,
+      sans-serif;
+    box-shadow: 0 8px 32px #0004;
+  }
+  .transport-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .transport-heading span {
+    color: #a1a1a1;
+    font-size: 12px;
   }
   #clip-controls .transport-row {
     display: flex;
@@ -53,12 +116,26 @@
     gap: 8px;
   }
   #clip-controls button {
-    background: #242c38;
-    color: white;
-    border: 1px solid #687487;
-    border-radius: 6px;
-    padding: 8px 10px;
+    background: #202020;
+    color: #fafafa;
+    border: 1px solid #444;
+    border-radius: 8px;
+    min-height: 44px;
+    padding: 0 14px;
+    font: 500 13px system-ui;
     cursor: pointer;
+  }
+  #clip-controls [data-play] {
+    background: #ededed;
+    color: #171717;
+    border-color: #ededed;
+    min-width: 94px;
+  }
+  #clip-controls button:hover:not(:disabled) {
+    background: #333;
+  }
+  #clip-controls [data-play]:hover:not(:disabled) {
+    background: #fff;
   }
   #clip-controls button:disabled {
     opacity: 0.5;
@@ -66,29 +143,50 @@
   }
   #clip-controls output {
     margin-left: auto;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    color: #bdbdbd;
+    font-size: 12px;
   }
   #clip-controls input {
+    display: block;
     width: 100%;
-    margin: 10px 0 0;
-    accent-color: #a8d5ff;
-  }
-  #clip-controls :focus-visible {
-    outline: 2px solid #a8d5ff;
-    outline-offset: 3px;
+    height: 32px;
+    margin: 2px 0 0;
+    accent-color: #ededed;
+    cursor: pointer;
   }
   #clip-controls [data-loading] {
     margin: 0 0 8px;
+    color: #bdbdbd;
+  }
+  #audio-controls {
+    left: max(20px, env(safe-area-inset-left));
+    right: auto !important;
+    bottom: max(158px, calc(env(safe-area-inset-bottom) + 138px)) !important;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 40px);
+  }
+  #audio-controls button {
+    min-height: 44px;
+    background: #171717 !important;
+    border-color: #444 !important;
+  }
+  #audio-credit {
+    left: 20px;
+    right: auto !important;
+    bottom: 210px !important;
   }
   #pip {
     position: fixed;
-    right: 12px;
-    bottom: 12px;
+    right: max(20px, env(safe-area-inset-right));
+    bottom: max(20px, env(safe-area-inset-bottom));
     z-index: 9;
     width: 320px;
-    border: 1px solid #444;
-    border-radius: 4px;
+    border: 1px solid #ffffff40;
+    border-radius: 12px;
     background: #000;
+    box-shadow: 0 8px 32px #0004;
   }
   #pip.hidden {
     display: none;
@@ -102,48 +200,53 @@
     color: #fff;
     font: 16px system-ui;
   }
-  /* phone: the HUD is 950 px of pre-formatted text and the PiP is 320 px wide, so both run off a
-   narrow screen. Wrap one and shrink the other; nothing changes above 760 px. */
   @media (max-width: 760px) {
+    #viewer-heading {
+      top: max(16px, env(safe-area-inset-top));
+      left: 12px;
+    }
     #hud {
-      font-size: 10px;
-      left: 6px;
-      top: 6px;
-      right: 6px;
-      white-space: pre-wrap;
-      padding: 6px 7px;
+      left: 12px;
+      max-width: calc(100vw - 24px);
+      font-size: 11px;
     }
     #clip-controls {
-      left: 6px;
-      bottom: 6px;
-      width: calc(100vw - 12px);
+      left: 12px;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      width: calc(100vw - 24px);
+      padding-inline: 12px;
     }
     #audio-controls {
-      bottom: 112px !important;
+      left: 12px;
+      bottom: max(150px, calc(env(safe-area-inset-bottom) + 138px)) !important;
+      max-width: calc(100vw - 24px);
     }
     #audio-credit {
-      bottom: 96px !important;
+      left: 12px;
+      bottom: 200px !important;
     }
     #pip {
       width: 150px;
-      right: 6px;
-      bottom: 112px;
+      right: 12px;
+      bottom: max(220px, calc(env(safe-area-inset-bottom) + 208px));
+    }
+    .transport-heading span {
+      display: none;
     }
     #hint {
-      font-size: 11px !important;
-      padding: 4px 8px !important;
-      bottom: 8px !important;
-      left: 6px !important;
-      right: 6px !important;
-      transform: none !important;
-      text-align: center;
-      margin-bottom: 96px;
+      display: none !important;
+    }
+  }
+  @media (max-height: 500px) and (min-width: 761px) {
+    #hud {
+      max-height: calc(100dvh - 100px);
     }
   }
 </style>
 <template id="scene-template">
+  <div id="viewer-heading"><strong>Wander</strong><span>Scene preview</span></div>
   <details id="hud">
-    <summary>Scene details and keyboard controls</summary>
+    <summary>Scene details &amp; controls</summary>
     <span id="help"
       >W A S D move · Q/E down/up · drag to look · Shift faster · R home person: I/K ±z J/L ±x U/O
       ±y [ ] yaw - = scale · Enter / Space play/pause · , . step frame · V video · N snap keyframes
@@ -152,6 +255,9 @@
     <span id="st">loading…</span>
   </details>
   <div id="clip-controls" role="group" aria-label="Clip playback">
+    <div class="transport-heading">
+      <strong>Playback</strong><span>WASD to move · Drag to look</span>
+    </div>
     <p data-loading role="status">Loading scene…</p>
     <div class="transport-row">
       <button type="button" data-play disabled>Play clip</button>
@@ -186,7 +292,7 @@
   >
     P = 20 s showreel · WASD + drag = free camera · Enter / Space = play/pause · V = source video
   </div>
-  <video id="pip" muted loop playsinline autoplay></video>
+  <video id="pip" aria-label="Original source video" muted loop playsinline autoplay></video>
   <div
     id="edgefade"
     style="
