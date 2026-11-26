@@ -3,6 +3,29 @@
 Approaches already measured to fail.
 Do not retry one without a new idea, and add a line here when you measure a new dead end.
 
+- The fresh corridor produces a playable preview, but source-depth agreement does not establish
+  its geometry. The completed anchor audit passes silhouette, camera trace and observation-mask
+  checks, but fails the independent ruler and contact-noise checks. The ruler's 79.6% disagreement
+  survives camera-transform and image-resize checks; correcting the saved focal summaries leaves
+  79.1%. This is an unresolved conflict between learned depth and an assumed avatar ruler, not a
+  measurement that the physical room is wrong by that percentage. Held-out contact RMS is 0.01420
+  body-heights against a 0.01774 noise floor. Camera displacement is only 0.07852 body-heights,
+  limiting independent parallax evidence.
+  - Two local source-depth warps fitted frame 18 and kept the five other evaluation frames fixed.
+    A depth-layer fade introduced folds in 402 of 19,971 sampled changed splats. Applying the same
+    positive angular scale along whole rays eliminated those folds in 23,351 sampled points, but
+    still left the original pipeline diagnostic at p10 0.899–0.900 and p90 1.170–1.173: **zero of five depth bands passed**.
+    Compared coverage also declined in three views. The second warp moved splats by
+    0.476 / 2.335 / 9.696 body-heights at median / p90 / maximum, including inferred rear surfaces.
+  - Both candidates transformed covariances with the position-map Jacobian. Actual viewer
+    comparisons still rejected streaked or wavy column edges and side distortion against the
+    unchanged baseline. Better depth statistics and a positive Jacobian are insufficient to
+    preserve coherent architecture. Neither candidate was promoted; no paid fitting or replacement
+    world was run. The original inputs and quality thresholds remain unchanged.
+  - Evidence: `.context/evidence/corridor-geometry-20261126/`, including the independent ruler
+    audit, fixed-view maps and real-viewer captures. The comparison camera uses source focal and
+    forward direction but omits its small roll; baseline and candidate cameras are identical.
+
 - Geometric-mean scale convergence can move a previously passing per-frame median outside the
   fixed band as visible depth support changes. After normal convergence, the automatic fitter
   retains the earlier median-passing probe closest to unit geometric mean only if the final
