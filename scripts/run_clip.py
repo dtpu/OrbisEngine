@@ -2764,6 +2764,8 @@ class Pipeline:
                 "silhouette_rows.py",
                 "motion_silhouette.py",
                 "camera_gravity.py",
+                "floor_support.py",
+                "world_ruler.py",
             )
         ]
         code_paths.append(ROOT / "worker/wander_worker/source_timing.py")

@@ -11,6 +11,19 @@ Do not retry one without a new idea, and add a line here when you measure a new 
   measurement that the physical room is wrong by that percentage. Held-out contact RMS is 0.01420
   body-heights against a 0.01774 noise floor. Camera displacement is only 0.07852 body-heights,
   limiting independent parallax evidence.
+  - A subsequent placement audit found that the local floor fitter returned its unfitted seed
+    when only 333 points supported it. The source-visible floor, independently checked against
+    source depth, lies about 2.2 **original-avatar** body-heights below that seed. A fallback using
+    visible world points below the source feet gives 6,970 plane inliers without moving the room.
+    The corrected placement passes silhouette (IoU 0.877, area 0.989), camera trace, contact-noise
+    and observation-mask checks. Ruler disagreement falls to 29.9%, still above the unchanged
+    15% limit; the world depth-spread gate remains failed. This corrects avatar placement, not
+    generated side geometry. Evidence: `.context/evidence/corridor-surface-repair-20261126/`.
+  - A four-parameter projective depth probe preserves lines and planes but does not resolve this
+    disagreement. Its unconstrained fit put a pole inside the retained geometry. Requiring a
+    positive denominator over the entire point-cloud convex hull avoids that invalidity, but all
+    five unchanged depth bands still fail (p10 about 0.886, p90 about 1.21). Neither probe exported
+    a scene or spent provider credits; do not repeat it as an established architecture repair.
   - Two local source-depth warps fitted frame 18 and kept the five other evaluation frames fixed.
     A depth-layer fade introduced folds in 402 of 19,971 sampled changed splats. Applying the same
     positive angular scale along whole rays eliminated those folds in 23,351 sampled points, but
