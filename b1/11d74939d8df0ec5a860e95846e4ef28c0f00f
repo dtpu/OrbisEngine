@@ -1,0 +1,24 @@
+orchestrator/cli.py
+  s_c6018019842afa::t_3437da7f5bcb4a 138-139
+docs/automatic-uploads.md
+  s_c6018019842afa::t_a092a0b4074f8b 9-13
+scripts/tests/test_pipeline_plan.py
+  s_c6018019842afa::t_3437da7f5bcb4a 73
+  s_c6018019842afa::t_a092a0b4074f8b 79-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b111d74939d8df0ec5a860e95846e4ef28c0f00f",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
