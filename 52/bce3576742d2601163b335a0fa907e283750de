@@ -1,0 +1,29 @@
+docs/DEVELOPING.md
+  s_c6018019842afa::t_0f11242821eaeb 221-225
+scripts/bake_video_colours.py
+  s_c6018019842afa::t_b75f93e19cf847 542-545,553-560,562-563,583,586-596,927-931,1099-1101
+  s_c6018019842afa::t_5a1d3b58e3ec5c 550-552
+  s_c6018019842afa::t_988821260c10c0 561,564-582,584-585
+scripts/tests/test_bake_stage.py
+  s_c6018019842afa::t_b75f93e19cf847 134,157
+  s_c6018019842afa::t_e2cd45a6db4789 221-289,325-340
+  s_c6018019842afa::t_191c12d943b46e 290-324
+scripts/run_clip.py
+  s_c6018019842afa::t_b75f93e19cf847 3014-3015
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52bce3576742d2601163b335a0fa907e283750de",
+  "prompts": {},
+  "sessions": {
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
