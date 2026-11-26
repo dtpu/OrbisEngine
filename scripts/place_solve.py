@@ -201,6 +201,10 @@ def splat_footprints(seq_json: Path):
 
 
 # ---------------------------------------------------------------- surfaces
+class PlaneFitError(ValueError):
+    """Finite point observations lack sufficient independent support for a plane."""
+
+
 def fit_plane(R, y0_pct=12, band=0.055, iters=12, seed=None):
     """y = c0 x + c1 z + c2 through the dominant low surface (share/elevator-status.md section 3).
 
@@ -208,18 +212,55 @@ def fit_plane(R, y0_pct=12, band=0.055, iters=12, seed=None):
     reading 15-25 cm low, because Marble leaves fuzz under a polished floor and a percentile walks
     straight into it; on living it is 50 cm low, onto a layer below the flat entirely. The caller
     passes the MODE of the splat heights in a band around the feet instead, which is the surface.
+    Refuse unsupported or degenerate fits rather than returning the seed as measured geometry.
     """
+    R = np.asarray(R, dtype=np.float64)
+    if R.ndim != 2 or R.shape[1] != 3 or not np.isfinite(R).all():
+        raise ValueError("Plane fit requires a finite N x 3 point array")
+    if not np.isfinite(band) or band <= 0:
+        raise ValueError("Plane fit band must be finite and positive")
+    if isinstance(iters, (bool, np.bool_)) or not isinstance(iters, (int, np.integer)) or iters < 1:
+        raise ValueError("Plane fit requires a positive integer iteration count")
+    if not np.isfinite(y0_pct) or not 0 <= y0_pct <= 100:
+        raise ValueError("Plane fit seed percentile must be finite and between 0 and 100")
+    if seed is not None and not np.isfinite(seed):
+        raise ValueError("Plane fit seed must be finite")
+    if len(R) < 500:
+        raise PlaneFitError(f"Plane fit requires at least 500 inliers; found {len(R)} points")
     coef = np.array([0.0, 0.0, np.percentile(R[:, 1], y0_pct) if seed is None else seed])
-    inl = np.ones(len(R), bool)
-    for _ in range(iters):
-        d = R[:, 1] - (R[:, 0] * coef[0] + R[:, 2] * coef[1] + coef[2])
+
+    def support(coef):
+        with np.errstate(over="ignore", invalid="ignore"):
+            d = R[:, 1] - (R[:, 0] * coef[0] + R[:, 2] * coef[1] + coef[2])
+        if not np.isfinite(d).all():
+            raise ValueError("Plane fit residuals must be finite")
         inl = np.abs(d) < band
-        if inl.sum() < 500:
-            break
-        A = np.stack([R[inl, 0], R[inl, 2], np.ones(int(inl.sum()))], 1)
-        coef, *_ = np.linalg.lstsq(A, R[inl, 1], rcond=None)
+        count = int(inl.sum())
+        if count < 500:
+            raise PlaneFitError(f"Plane fit requires at least 500 inliers; found {count}")
+        return inl, np.stack([R[inl, 0], R[inl, 2], np.ones(count)], 1)
+
+    try:
+        for _ in range(iters):
+            inl, A = support(coef)
+            coef, _, rank, _ = np.linalg.lstsq(A, R[inl, 1], rcond=None)
+            if not np.isfinite(coef).all():
+                raise ValueError("Plane fit coefficients must be finite")
+            if rank < 3:
+                raise PlaneFitError(
+                    "Plane fit support is degenerate: x/z positions do not span a plane"
+                )
+        # The last update can lose support too. Report the returned plane's inliers, not the seed's.
+        inl, A = support(coef)
+        if np.linalg.matrix_rank(A) < 3:
+            raise PlaneFitError("Plane fit final support is degenerate")
+    except np.linalg.LinAlgError as error:
+        raise ValueError("Plane fit numerical solve failed") from error
     n = np.array([-coef[0], 1.0, -coef[1]])
-    L = np.linalg.norm(n)
+    with np.errstate(over="ignore", invalid="ignore"):
+        L = np.linalg.norm(n)
+    if not np.isfinite(L) or L <= 0:
+        raise ValueError("Plane fit normal must have finite positive length")
     return coef, n / L, coef[2] / L, int(inl.sum())  # plane: p.n = d
 
 
@@ -1151,7 +1192,43 @@ def main():
         )
         hy, ey = np.histogram(W[reg][:, 1], 90)
         seed = float(0.5 * (ey[hy.argmax()] + ey[hy.argmax() + 1]))
-        coef, nrm, dpl, nin = fit_plane(W[reg], seed=seed)
+        try:
+            coef, nrm, dpl, nin = fit_plane(W[reg], seed=seed)
+        except PlaneFitError as error:
+            # Initial avatar depth is not a floor measurement. If its neighbourhood cannot
+            # support a plane, look below the observed source feet instead of returning a seed.
+            if len(tracks) != 1:
+                raise PlaneFitError(
+                    f"{error}; source floor recovery requires one independently masked person"
+                ) from error
+            from floor_support import single_person_floor_masks, source_floor_points
+
+            mask_file = a.single_person_masks or masks_path
+            if not mask_file.is_file():
+                raise
+            world_dir = Path(tracks[0][1]).parent.parent
+            floor_cameras = json.load(open(ROOT / cfg["cameras"]))["cameras"]
+            floor_masks = single_person_floor_masks(mask_file, a.clip, world_dir)
+            supported, receipt = source_floor_points(W, floor_cameras, scale, floor_masks)
+            if len(supported) < 500:
+                raise PlaneFitError(
+                    f"{error}; source-visible floor has only {len(supported)} unique points"
+                ) from error
+            histogram, edges = np.histogram(supported[:, 1], 90)
+            source_seed = float((edges[histogram.argmax()] + edges[histogram.argmax() + 1]) / 2)
+            coef, nrm, dpl, nin = fit_plane(supported, seed=source_seed)
+            # Image proximity alone cannot distinguish a floor from a steep wall or stair face.
+            # This recovery is deliberately limited to near-horizontal support in world-up.
+            recovered_tilt = float(np.degrees(np.arctan(np.hypot(coef[0], coef[1]))))
+            if recovered_tilt > 15:
+                raise PlaneFitError(
+                    f"Source-visible support tilts {recovered_tilt:.2f} degrees; "
+                    "automatic floor recovery requires at most 15 degrees"
+                )
+            receipt["maxTiltDegrees"] = 15
+            receipt["initialFitRefusal"] = str(error)
+            meta["sourceFloorSupport"] = receipt
+            print(f"  floor support: {nin} inliers below observed source feet", flush=True)
         tilt = float(np.degrees(np.arctan(np.hypot(coef[0], coef[1]))))
         yc = float(coef[0] * mx + coef[1] * mz + coef[2])
         print(

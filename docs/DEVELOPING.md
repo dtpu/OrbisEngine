@@ -240,6 +240,18 @@ must agree with the registration's within 10%. The fitted placement must show th
 `world_ruler.py` then bands that camera by the stature band times the measured ratio, not the
 handheld prior.
 
+The floor fit requires at least 500 finite, nondegenerate inliers after fitting; an unsupported
+height seed is never returned as a measured plane. For a single-person run whose initial avatar
+neighbourhood lacks support, placement samples frontmost world points just below the observed
+source feet. It uses source-indexed masks, skips unknown or cropped silhouettes, and deduplicates
+points across views before applying the same plane-fit requirement. `surface.sourceFloorSupport`
+records this inferred surface and the initial refusal. This fallback does not change world
+geometry or establish physical scale; the existing silhouette, size and anchor checks still apply.
+Unsupported multi-person fits stop rather than treating a union mask as one person's body, even
+when the package selected one avatar from an archive with several tracks. Recovered support must
+tilt no more than 15 degrees from world-up; image proximity alone cannot identify a steep wall as
+a floor. These additional restrictions apply to recovery, not previously supported local fits.
+
 The silhouette fit matches the edge the viewer draws to the mask's edge, not splat centres.
 
 - **What is drawn.** `motion_silhouette.splat_coverage` reproduces Spark's footprint. It matched the
