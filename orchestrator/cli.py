@@ -135,6 +135,8 @@ def run_clip_command(context: RunContext, step: str, extra: list[str]) -> list[s
     command += ["--marble", options.marble]
     if options.people > 1 or options.all_people:
         command += ["--people", str(options.people)]
+    if options.all_people:
+        command.append("--all-people")
     if not options.objects:
         command.append("--no-objects")
     if not options.finetune:
