@@ -6,6 +6,11 @@ the server and supervisor must remain running. API clients can select the same o
 `POST /api/pipeline/runs/upload` or source-artifact submission. Existing runs and callers that
 omit the option keep the manual workflow.
 
+Tracked-person uploads preserve both the explicit people limit and the strict identity-audit
+flag when invoking stages. An identity failure must not silently drop a track and continue
+avatar generation. The people limit still caps packaged tracks; this check does not establish
+that the detector found every visible person.
+
 Configure the worker's credentials, model caches, authorized provider access and provider-side
 spending controls once, following [pipeline setup](pipeline-setup.md). A supervisor restricted
 with `--run-id` only processes that run; a service intended to process new uploads must watch

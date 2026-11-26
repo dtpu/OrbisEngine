@@ -70,9 +70,29 @@ def test_commands_preserve_one_person_tracking_and_optional_stages(tmp_path, mon
     )
     command = run_clip_command(context, "person_prep_00", [])
     assert command[command.index("--people") + 1] == "1"
+    assert "--all-people" in command
     assert "--no-objects" in command and "--skip-finetune" in command
     assert "--reject-cuts" in command and "--one-shot" not in command
     assert command[command.index("--stage-ledger") + 1] == str(tmp_path / "paid-ledger.json")
+
+
+@pytest.mark.parametrize("people", [1, 3])
+@pytest.mark.parametrize("all_people", [False, True])
+def test_commands_preserve_identity_policy_and_explicit_people_cap(tmp_path, people, all_people):
+    context = RunContext(
+        "test",
+        tmp_path / "test",
+        "test",
+        tmp_path / "source.mp4",
+        Path.cwd(),
+        {"all_people": all_people, "people": people},
+    )
+    command = run_clip_command(context, "tracks", [])
+    assert ("--all-people" in command) is all_people
+    if all_people or people > 1:
+        assert command[command.index("--people") + 1] == str(people)
+    else:
+        assert "--people" not in command
 
 
 def test_object_detection_and_review_wait_for_required_outputs():
