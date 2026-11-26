@@ -539,22 +539,61 @@ def depth_ratio_distance_bands(ratios, source_depths):
 class PersonMasks:
     """Person masks from a pipeline mask archive, looked up by source frame index.
 
-    Reads the bit-packed archives the runner writes: `single-person-masks.npz` (`packedMasks`,
-    `sourceIndices`, optional per-frame `status`) and tracked `masks.npz` (`masks`,
-    `source_indices`). Each mask is dilated by `dilate_fraction` of the frame height so clothing
+    Reads source-indexed bit-packed arrays and tracked `t<track>_s<sample>` archives. Tracking
+    samples use the shared ruler loader's per-track motion mapping, or explicit packaged
+    source indices for legacy archives without motion records. Each mask is dilated by
+    `dilate_fraction` of the mask height so clothing
     edges never colour the background. A frame without a known mask comes back fully masked, so it
     contributes nothing rather than being treated as person-free.
     """
 
-    def __init__(self, path: Path, dilate_fraction: float = 0.015):
-        archive = np.load(path, allow_pickle=False)
-        if "packedMasks" in archive.files:
-            packed, index = archive["packedMasks"], archive["sourceIndices"]
-        elif "masks" in archive.files:
-            packed, index = archive["masks"], archive["source_indices"]
-        else:
-            raise ValueError(f"{path} is not a pipeline person-mask archive")
-        frames, height, width = (int(x) for x in archive["shape"])
+    def __init__(
+        self, path: Path, dilate_fraction: float = 0.015, *, world_dir: Path | None = None
+    ):
+        with np.load(path, allow_pickle=False) as archive:
+            if "packedMasks" in archive.files:
+                packed, index = archive["packedMasks"], archive["sourceIndices"]
+                frames, height, width = (int(x) for x in archive["shape"])
+            elif "masks" in archive.files:
+                packed, index = archive["masks"], archive["source_indices"]
+                frames, height, width = (int(x) for x in archive["shape"])
+            elif "shape" in archive.files:
+                from silhouette_rows import load_track_motion
+                from world_ruler import person_masks_for
+
+                present = {
+                    tuple(int(part[1:]) for part in key.split("_"))
+                    for key in archive.files
+                    if key != "shape"
+                }
+                # Inspect motion declarations even for tracks with no remaining mask keys.
+                # No record means this person was not observed there; an explicit empty mask
+                # remains valid. A declared observation without its mask is unknown, not absent.
+                missing_sources = set()
+                tracks = {
+                    int(directory.name[6:])
+                    for directory in path.parent.glob("track_*")
+                    if directory.name[6:].isdigit()
+                }
+                for track in tracks:
+                    motion = load_track_motion(path, track)
+                    for source, record in (motion or {}).items():
+                        if (track, record["sample"]) not in present:
+                            missing_sources.add(source)
+                mapped = person_masks_for("", masks=path, world_dir=world_dir, dilate=False)
+                for source in missing_sources & mapped.keys():
+                    mapped[source][:] = True
+                index = np.array(sorted(mapped), dtype=np.int64)
+                height, width = mapped[int(index[0])].shape
+                frames = len(index)
+                packed = np.stack([np.packbits(mapped[int(i)], axis=-1) for i in index])
+            else:
+                raise ValueError(f"{path} is not a pipeline person-mask archive")
+            known = (
+                archive["status"] == "known"
+                if "status" in archive.files
+                else np.ones(frames, dtype=bool)
+            )
         if (
             packed.dtype != np.uint8
             or packed.shape != (frames, height, (width + 7) // 8)
@@ -564,11 +603,6 @@ class PersonMasks:
             raise ValueError(f"{path} has inconsistent mask shapes or source indices")
         if not np.isfinite(dilate_fraction) or dilate_fraction < 0:
             raise ValueError("Mask dilation must be a nonnegative fraction of frame height")
-        known = (
-            archive["status"] == "known"
-            if "status" in archive.files
-            else np.ones(frames, dtype=bool)
-        )
         self.packed, self.height, self.width = packed, height, width
         self.by_source = {int(s): i for i, s in enumerate(index) if known[i]}
         self.grow = int(round(dilate_fraction * height))
@@ -891,6 +925,11 @@ def main():
         help="pipeline person-mask archive (single-person-masks.npz or tracks masks.npz), by source index",
     )
     ap.add_argument(
+        "--mask-world-dir",
+        type=Path,
+        help="packaged world directory for tracked mask source-index mapping (people.json)",
+    )
+    ap.add_argument(
         "--mask-dilate-fraction",
         type=float,
         default=0.015,
@@ -1057,7 +1096,9 @@ def main():
             scene_points=scene,
             depth_dir=a.depth_dir,
             mask_dir=a.mask_dir,
-            person_masks=PersonMasks(a.person_masks, a.mask_dilate_fraction)
+            person_masks=PersonMasks(
+                a.person_masks, a.mask_dilate_fraction, world_dir=a.mask_world_dir
+            )
             if a.person_masks
             else None,
         )

@@ -131,6 +131,7 @@ def test_bake_stage_uses_native_cameras_masks_and_the_reviewed_recipe(pipeline, 
     assert value("--cameras") == str(p.ctx / "pi3x" / "cameras.json")
     assert value("--anchors") == str(p.ctx / "pi3x" / "anchors.npz")
     assert value("--person-masks") == str(p.ctx / "single-person-masks.npz")
+    assert value("--mask-world-dir") == str(public / "worlds" / "fixture-4d")
     assert value("--scale0") == "0.750000"
     assert value("--depth-agreement") == str(run_clip.BAKE_DEPTH_AGREEMENT)
     assert value("--shift-radius-body-heights") == str(run_clip.BAKE_SHIFT_RADIUS_BODY_HEIGHTS)
@@ -153,6 +154,7 @@ def test_tracked_runs_bake_with_the_tracked_masks(pipeline, monkeypatch):
     p.bake()
     ((cmd, _),) = commands
     assert cmd[cmd.index("--person-masks") + 1] == str(p.ctx / "tracks" / "masks.npz")
+    assert cmd[cmd.index("--mask-world-dir") + 1] == str(public / "worlds" / "fixture-4d")
 
 
 def test_bake_needs_a_fitted_scale(pipeline, monkeypatch):
@@ -214,6 +216,126 @@ def test_frames_without_a_known_mask_are_fully_masked(tmp_path):
     assert masks.get(4).sum() == 1
     assert masks.get(6).min() == 1
     assert masks.get(99).min() == 1
+
+
+def tracked_mask_archive(tmp_path, *, records=True):
+    path = tmp_path / "tracks/masks.npz"
+    path.parent.mkdir()
+    masks = {}
+    for track, sample, row, col in [(0, 0, 20, 8), (0, 2, 4, 2), (1, 0, 12, 5), (1, 3, 7, 6)]:
+        mask = np.zeros((40, 16), bool)
+        mask[row, col] = True
+        masks[track, sample] = mask
+    np.savez(
+        path,
+        shape=[80, 32, 0.5],
+        **{f"t{track}_s{sample:03d}": np.packbits(mask) for (track, sample), mask in masks.items()},
+    )
+    if records:
+        for track, pairs in {0: [(10, 0), (90, 2)], 1: [(90, 0), (10, 3)]}.items():
+            motion = path.parent / f"track_{track:02d}/motion.json"
+            motion.parent.mkdir()
+            motion.write_text(
+                json.dumps(
+                    {
+                        "frames": [
+                            {"sourceIndex": source, "sample": sample, "box": [1, 1, 20, 60]}
+                            for source, sample in pairs
+                        ]
+                    }
+                )
+            )
+    world = tmp_path / "world"
+    world.mkdir()
+    (world / "people.json").write_text(json.dumps({"sourceIndices": [90, 10]}))
+    return path, world, masks
+
+
+@pytest.mark.parametrize("selected", [[90], [90, 10]])
+def test_tracking_masks_use_motion_source_indices_not_packaged_sample_order(tmp_path, selected):
+    path, world, expected = tracked_mask_archive(tmp_path)
+    (world / "people.json").write_text(json.dumps({"sourceIndices": selected}))
+    masks = bake.PersonMasks(path, 0, world_dir=world)
+    np.testing.assert_array_equal(masks.get(10), expected[0, 0] | expected[1, 3])
+    np.testing.assert_array_equal(masks.get(90), expected[0, 2] | expected[1, 0])
+    assert masks.get(0).min() == 1, "sample zero is not source frame zero"
+    assert masks.get(89).min() == 1, "never borrow a nearby source frame's mask"
+    # Native camera order and packaged order need not match. JsonSource requests source indices.
+    cameras = tmp_path / "cameras.json"
+    cameras.write_text(json.dumps({"cameras": [{"sourceIndex": 10}, {"sourceIndex": 90}]}))
+    source = bake.JsonSource(cameras, (32, 80), (16, 40), person_masks=masks)
+    np.testing.assert_array_equal(source.mask(source.frames[0]), expected[0, 0] | expected[1, 3])
+    grown = bake.PersonMasks(path, 2 / 40, world_dir=world).get(10)
+    assert grown[22, 8] == 1 and grown[20, 10] == 1
+    assert grown[23, 8] == 0, "apply bake dilation once, without the ruler's extra dilation"
+
+
+def test_legacy_tracking_masks_require_explicit_source_mapping(tmp_path):
+    path, world, expected = tracked_mask_archive(tmp_path, records=False)
+    with pytest.raises(ValueError, match="no source-frame mapping"):
+        bake.PersonMasks(path)
+    (world / "people.json").write_text(json.dumps({"sourceIndices": [90, 40, 10, 70]}))
+    # Include an explicitly empty observation rather than interpreting a missing mask as empty.
+    with np.load(path) as archive:
+        payload = dict(archive)
+    payload["t0_s001"] = np.packbits(np.zeros((40, 16), bool))
+    np.savez(path, **payload)
+    masks = bake.PersonMasks(path, 0, world_dir=world)
+    np.testing.assert_array_equal(masks.get(90), expected[0, 0] | expected[1, 0])
+    np.testing.assert_array_equal(masks.get(10), expected[0, 2])
+    assert masks.get(40).max() == 0
+    assert masks.get(41).min() == 1
+
+
+@pytest.mark.parametrize("missing", [["t1_s003"], ["t1_s000", "t1_s003"]])
+def test_missing_declared_person_mask_excludes_frame_even_when_another_person_has_a_mask(
+    tmp_path, missing
+):
+    path, world, expected = tracked_mask_archive(tmp_path)
+    with np.load(path) as archive:
+        payload = {key: archive[key] for key in archive.files if key not in missing}
+    np.savez(path, **payload)
+    masks = bake.PersonMasks(path, 0, world_dir=world)
+    assert masks.get(10).min() == 1, "track 0 must not hide track 1's missing observation"
+    if "t1_s000" in missing:
+        assert masks.get(90).min() == 1, "even a track with no remaining archive keys is checked"
+    else:
+        np.testing.assert_array_equal(masks.get(90), expected[0, 2] | expected[1, 0])
+
+
+@pytest.mark.parametrize("absence", ["not-observed", "explicit-empty-mask"])
+def test_absent_person_does_not_invalidate_another_person_mask(tmp_path, absence):
+    path, world, expected = tracked_mask_archive(tmp_path)
+    with np.load(path) as archive:
+        payload = dict(archive)
+    if absence == "not-observed":
+        del payload["t1_s003"]
+        motion = path.parent / "track_01/motion.json"
+        data = json.loads(motion.read_text())
+        data["frames"] = [frame for frame in data["frames"] if frame["sourceIndex"] != 10]
+        motion.write_text(json.dumps(data))
+    else:
+        payload["t1_s003"] = np.packbits(np.zeros((40, 16), bool))
+    np.savez(path, **payload)
+    masks = bake.PersonMasks(path, 0, world_dir=world)
+    np.testing.assert_array_equal(masks.get(10), expected[0, 0])
+    np.testing.assert_array_equal(masks.get(90), expected[0, 2] | expected[1, 0])
+
+
+@pytest.mark.parametrize("failure", ["missing-sample", "duplicate-sample"])
+def test_invalid_tracking_mappings_never_fall_back_to_sample_indices(tmp_path, failure):
+    path, world, _ = tracked_mask_archive(tmp_path)
+    motion = path.parent / "track_00/motion.json"
+    if failure == "missing-sample":
+        (world / "people.json").write_text(json.dumps({"sourceIndices": [40]}))
+        message = "no masks for packaged source frames"
+    else:
+        data = json.loads(motion.read_text())
+        data["frames"][1]["sample"] = 0
+        motion.write_text(json.dumps(data))
+        message = "duplicate or conflicting"
+    with pytest.raises(ValueError, match=message):
+        bake.PersonMasks(path, world_dir=world)
 
 
 def test_inconsistent_mask_archives_are_refused(tmp_path):

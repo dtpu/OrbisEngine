@@ -218,6 +218,11 @@ The optional local colour bake (`--bake-colours`, or the `bake` run option) runs
 `marble-<name>-baked.spz` plus a `-bake.npz` receipt; placement, anchors, verify and the viewer then
 use that world, and the viewer never falls back to the unbaked one.
 
+Tracked colour bakes read the track mask archive using each track's recorded source-frame mapping.
+The runner supplies `--mask-world-dir` for packaged metadata; standalone bakes should supply it
+with `--person-masks`. Missing frame masks exclude the whole frame, rather than exposing a person
+to the colour transfer. Tracking sample numbers are not source-video frame numbers.
+
 The bake changes colour only, never geometry. Splats whose depth agrees with the source within
 about 10% take the observed colour. Other observed splats keep their generated brightness and borrow
 only the observed hue, and nearby unobserved splats take a fading colour shift. The receipt records

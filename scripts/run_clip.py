@@ -3011,6 +3011,8 @@ class Pipeline:
                 f"{s:.6f}",
                 "--person-masks",
                 str(masks),
+                "--mask-world-dir",
+                str(wdir),
                 "--depth-agreement",
                 str(BAKE_DEPTH_AGREEMENT),
                 "--gated-chroma",
