@@ -1,0 +1,62 @@
+scripts/tests/test_place_plane.py
+  s_c6018019842afa::t_bbf2954ddaec78 25,47,57,65,67,85,87,90-92,94,97-103,108,110,122
+  s_c6018019842afa::t_593228e8064bfd 1-2,4-24,26-46,48-56,58-64,66,68-84,86,88-89,93,95-96,104-107,109,111-120,123-125
+  s_c6018019842afa::t_b4a2784cf43756 3,121,126-128,130,132,136,148-155,158-233
+  s_c6018019842afa::t_10ee29f33d4e22 129,131,133-135,137-147,256,291-324,326-328
+  s_c6018019842afa::t_dbce5f01c19a44 156-157
+  s_c6018019842afa::t_71f397b99ecc11 234-255,257-290
+  s_c6018019842afa::t_86389e42c82c14 325
+scripts/tests/test_single_person_masks.py
+  s_c6018019842afa::t_0cecb766f54773 319-321
+scripts/place_solve.py
+  s_c6018019842afa::t_4fcb7f924bc69a 1195-1199,1205-1210,1212-1219,1229-1231
+  s_c6018019842afa::t_8f73082c663db5 215,217,220-227,231-236,238-239,241-249,253-255,257-258,260-263
+  s_c6018019842afa::t_a37163176636a1 1200-1203
+  s_a3c43d2a2443ce::t_70f64d34fe39cd 251-252
+  s_c6018019842afa::t_4cd9889c7448dc 1204,1211,1220-1228
+  s_c6018019842afa::t_bbf2954ddaec78 204-207,218-219,228-229,240,250,256
+scripts/tests/test_floor_support.py
+  s_a3c43d2a2443ce::t_966c8c63ecdaa4 301-304,321-323,331-333
+  s_c6018019842afa::t_04ec94bfd363a5 3,11,237-300,305-320,324-330,334-353
+  s_c6018019842afa::t_b13378d19b9469 55,209-211,219-226
+  s_c6018019842afa::t_2f3c9459052f2f 92-116
+  s_c6018019842afa::t_94c3b144de28ac 151-166
+  s_c6018019842afa::t_e3d394ee3af4ed 1-2,4-10,12-54,56-91,117-150,167-208,212-218,227-236
+docs/known-limits.md
+  s_c6018019842afa::t_0cecb766f54773 14-21
+  s_c6018019842afa::t_999f6096f01819 22-26
+scripts/run_clip.py
+  s_c6018019842afa::t_0cb71d1884098d 2767-2768
+docs/DEVELOPING.md
+  s_c6018019842afa::t_999f6096f01819 250-253
+  s_c6018019842afa::t_0cecb766f54773 243-249,254
+scripts/floor_support.py
+  s_c6018019842afa::t_04ec94bfd363a5 7-37,39-55,64
+  s_a3c43d2a2443ce::t_966c8c63ecdaa4 38
+  s_c6018019842afa::t_7659574654fb9f 84-87
+  s_a3c43d2a2443ce::t_7b7e9f984c5897 1-6,56-63,65-83,88-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88852dcccf51ffb7fd5a0c45f7ba063bdb024bc1",
+  "prompts": {},
+  "sessions": {
+    "s_a3c43d2a2443ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "unknown"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    },
+    "s_c6018019842afa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d54a-f477-7382-b7b0-9d4243b60903",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Austin Jian <austin.jian07@gmail.com>"
+    }
+  }
+}
